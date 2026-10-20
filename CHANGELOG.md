@@ -8,6 +8,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- Project maps may carry `held_by:`, the name of whoever else is moving the map. It
+  is read leniently: a value that is not a plain name, or that names you (`me`, `I`, `myself`) or
+  nobody (`tbd`, `someone`, …), reads as absent, so the map counts and nothing fails; the key is
+  reserved from `set_frontmatter` (RFC 0006 §8.2). The values that name you or nobody are the
+  vault's `[projects] holder_sentinels` list in `.cuaderno/config.toml`, whose default is the
+  words above plus `(mine)` and the other placeholders; set it to `[]` to accept any name (a
+  blank value names nobody under any list).
 - A one-time read-through of parked deadlines: `cdno migrate --dry-run` lists the hard dates on
   parked maps that are back in the register, overdue first, and `cdno lint` warns on the overdue
   ones until the vault records RLM 1.1 (RFC 0006 §7.1, §8.1).

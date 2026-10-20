@@ -629,3 +629,32 @@ fn method_gate_decides_every_case() {
         );
     }
 }
+
+#[test]
+fn a_vault_declaring_a_project_held_by_schema_field_opens() {
+    // The zero-code trial (RFC 0006 §10) declares `held_by` as a project
+    // schema field. The key is reserved from `set_frontmatter` only, never
+    // hard-reserved, so a vault that ran the trial still opens.
+    let raw = "[schemas.project.fields.held_by]\ntype = \"string\"\n";
+    let config: VaultConfig = toml::from_str(raw).expect("config parses");
+    assert!(
+        config
+            .schema_for("project")
+            .unwrap()
+            .fields
+            .contains_key("held_by")
+    );
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    store
+        .write_file(
+            &VaultPath::new("projects/harbour.md").unwrap(),
+            "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-09-01\n\
+             held_by: \"the harbour office\"\n---\n# Harbour\n",
+        )
+        .unwrap();
+    let (vault, _report) = Vault::new(store, index, config).expect("the trial's vault opens");
+    let active = vault.active_projects().expect("active_projects");
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].1.held_by.as_deref(), Some("the harbour office"));
+}

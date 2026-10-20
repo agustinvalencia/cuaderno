@@ -721,3 +721,37 @@ fn set_frontmatter_allows_closed_on_a_custom_type_that_declares_it() {
     let raw = store.read_file(&path).unwrap();
     assert!(raw.contains("closed: 2026-09-29"), "file: {raw}");
 }
+
+#[test]
+fn held_by_is_reserved_even_when_declared_settable() {
+    // `held_by:` changes only by the hand-off verb, which logs it (RFC 0006
+    // §8.2). A vault declaring it settable still cannot move the cap through
+    // the generic setter, and that declaration does not stop the vault opening.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-07-01\n\
+                   core_question: null\nheld_by: null\n---\n\n# Harbour\n";
+    let path = VaultPath::new("projects/harbour.md").unwrap();
+    store.write_file(&path, project).unwrap();
+    let mut schema = SchemaExtension::default();
+    schema.fields.insert(
+        "held_by".to_owned(),
+        field(FieldType::String, Some(true), None, None),
+    );
+    let mut config = VaultConfig::default();
+    config.schemas.insert("project".to_owned(), schema);
+    let (vault, _report) = Vault::new(Arc::clone(&store), index, config).expect("Vault::new");
+
+    match vault.set_frontmatter(
+        moment(),
+        "projects/harbour.md",
+        "held_by",
+        "the harbour office",
+    ) {
+        Err(DomainError::ReservedSchemaField { note_type, field }) => {
+            assert_eq!((note_type.as_str(), field.as_str()), ("project", "held_by"));
+        }
+        other => panic!("expected ReservedSchemaField(held_by), got {other:?}"),
+    }
+    assert_eq!(store.read_file(&path).unwrap(), project, "file untouched");
+}

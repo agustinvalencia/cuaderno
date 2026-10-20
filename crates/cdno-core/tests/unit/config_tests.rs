@@ -1,4 +1,6 @@
-use cdno_core::config::{Aggregate, DerivedExpr, PlotKind, StateOverflow, VaultConfig};
+use cdno_core::config::{
+    Aggregate, DerivedExpr, PlotKind, ProjectsConfig, StateOverflow, VaultConfig,
+};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -1438,4 +1440,72 @@ folder = \"\"
         matches!(err, cdno_core::error::ConfigError::MethodVersion { .. }),
         "got: {err:?}"
     );
+}
+
+// --- `[projects] holder_sentinels` (RFC 0006 §8.2) ------------------------
+
+#[test]
+fn holder_sentinels_default_to_the_deny_list_when_the_key_is_absent() {
+    let dir = TempDir::new().unwrap();
+    write_config(dir.path(), "[vault]\nname = \"Test\"\n");
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let expected = [
+        "me", "I", "myself", "(mine)", "someone", "somebody", "nobody", "unknown", "tbd", "n/a",
+        "none", "-", "?",
+    ];
+    assert_eq!(config.projects.holder_sentinels, expected);
+    // A config with no file at all, and the in-code default, agree.
+    assert_eq!(
+        VaultConfig::default().projects.holder_sentinels,
+        config.projects.holder_sentinels
+    );
+    let empty = TempDir::new().unwrap();
+    assert_eq!(
+        VaultConfig::load(empty.path()).unwrap().projects,
+        config.projects
+    );
+}
+
+#[test]
+fn holder_sentinels_an_empty_projects_table_keeps_the_default() {
+    let dir = TempDir::new().unwrap();
+    write_config(dir.path(), "[projects]\n");
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert_eq!(config.projects, ProjectsConfig::default());
+}
+
+#[test]
+fn holder_sentinels_a_custom_list_replaces_the_default() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[projects]\nholder_sentinels = [\"nadie\", \"yo\"]\n",
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert_eq!(config.projects.holder_sentinels, ["nadie", "yo"]);
+}
+
+#[test]
+fn holder_sentinels_an_empty_list_is_kept_empty() {
+    let dir = TempDir::new().unwrap();
+    write_config(dir.path(), "[projects]\nholder_sentinels = []\n");
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.projects.holder_sentinels.is_empty());
+}
+
+#[test]
+fn projects_section_rejects_an_unknown_key() {
+    // As `[focus]` does: a misspelt key must not silently keep the default.
+    let dir = TempDir::new().unwrap();
+    write_config(dir.path(), "[projects]\nholder_sentinel = [\"tbd\"]\n");
+    let err = error_chain(&VaultConfig::load(dir.path()).unwrap_err());
+    assert!(err.contains("holder_sentinel"), "{err}");
+}
+
+#[test]
+fn holder_sentinels_must_be_strings() {
+    let dir = TempDir::new().unwrap();
+    write_config(dir.path(), "[projects]\nholder_sentinels = [1, 2]\n");
+    let err = error_chain(&VaultConfig::load(dir.path()).unwrap_err());
+    assert!(err.contains("holder_sentinels"), "{err}");
 }

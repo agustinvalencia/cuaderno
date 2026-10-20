@@ -82,3 +82,15 @@ state_overflow = "reject"
 # paused_lookback_days = 14
 # max_window_days = 366
 
+# [projects] — policy for project maps (RFC 0006).
+#
+# holder_sentinels — values of a map's `held_by:` that name you or nobody,
+# so they read as no holder and the map stays yours. Trimmed, compared in
+# any case. A blank `held_by:` names nobody whatever this list says. Setting
+# the key replaces the whole list; `[]` accepts any name. An unknown key in
+# this section is an error.
+#
+# [projects]
+# holder_sentinels = ["me", "I", "myself", "(mine)", "someone", "somebody",
+#   "nobody", "unknown", "tbd", "n/a", "none", "-", "?"]
+

@@ -48,6 +48,48 @@ impl Default for FocusConfig {
     }
 }
 
+/// The default `[projects] holder_sentinels`: the values of a project map's
+/// `held_by:` that name the person (`me`, `I`, `myself`, and `(mine)`, the
+/// stand-in a `holder on` log entry prints for an absent holder) or nobody
+/// (placeholders such as `tbd`). A blank value names nobody under any list,
+/// so it is not listed here (RFC 0006 §7.2, §8.2).
+pub const DEFAULT_HOLDER_SENTINELS: &[&str] = &[
+    "me", "I", "myself", "(mine)", "someone", "somebody", "nobody", "unknown", "tbd", "n/a",
+    "none", "-", "?",
+];
+
+fn default_holder_sentinels() -> Vec<String> {
+    DEFAULT_HOLDER_SENTINELS
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect()
+}
+
+/// The `[projects]` section: policy for project maps (RFC 0006 §8.2).
+///
+/// Denies unknown fields, as `[focus]` does: a misspelt key is an error
+/// rather than silently keeping the default. A key that must be read by
+/// older binaries belongs in `[vault]` instead.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct ProjectsConfig {
+    /// Values of a project map's `held_by:` that name the person or nobody.
+    /// Such a value reads as no holder, so the map counts toward the cap.
+    /// Trimmed and compared case-insensitively. Absent gives
+    /// [`DEFAULT_HOLDER_SENTINELS`]; `[]` accepts any name. A blank value
+    /// names nobody whatever the list says.
+    #[serde(default = "default_holder_sentinels")]
+    pub holder_sentinels: Vec<String>,
+}
+
+impl Default for ProjectsConfig {
+    fn default() -> Self {
+        Self {
+            holder_sentinels: default_holder_sentinels(),
+        }
+    }
+}
+
 /// Top-level vault configuration, loaded from `.cuaderno/config.toml`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -95,6 +137,9 @@ pub struct VaultConfig {
     /// The focus reader's windows (RFC 0005).
     #[serde(default)]
     pub focus: FocusConfig,
+    /// Policy for project maps, `[projects]` (RFC 0006 §8.2).
+    #[serde(default)]
+    pub projects: ProjectsConfig,
 }
 
 /// The `[vault]` section — basic vault metadata.

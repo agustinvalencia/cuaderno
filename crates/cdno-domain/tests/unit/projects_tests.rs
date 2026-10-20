@@ -9,7 +9,9 @@ use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::TopAction;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
-use cdno_domain::frontmatter::{Context, EnergyLevel, ProjectFrontmatter, ProjectStatus};
+use cdno_domain::frontmatter::{
+    Context, EnergyLevel, HolderSentinels, ProjectFrontmatter, ProjectStatus,
+};
 use chrono::NaiveDate;
 
 use super::support::{FailingStore, RacingStore, lint_day};
@@ -5664,4 +5666,169 @@ fn a_project_closed_by_the_verb_shows_up_in_the_window() {
     assert_eq!(rows[0].slug, "surrogate");
     assert_eq!(rows[0].outcome, ProjectStatus::Completed);
     assert_eq!(rows[0].closed_on, day(2026, 9, 29));
+}
+
+// ---------------------------------------------------------------------
+// held_by: the lenient reader and the counting predicate (RFC 0006 §8.2)
+// ---------------------------------------------------------------------
+
+/// An active map whose frontmatter carries `held_by:` written as `holder`,
+/// verbatim YAML.
+fn held_map(status: &str, holder: &str, title: &str) -> String {
+    format!(
+        "---\ntype: project\ncontext: work\nstatus: {status}\ncreated: 2026-09-01\n\
+         held_by: {holder}\n---\n# {title}\n"
+    )
+}
+
+#[test]
+fn active_projects_does_not_fail_on_an_unquoted_wikilink_holder() {
+    // `held_by: [[people/ana]]` unquoted is a nested YAML sequence. Read
+    // through `optional_field::<String>` it would fail the map, and with it
+    // every view that scans the live maps.
+    let vault = vault_with_notes(&[
+        (
+            "projects/harbour.md",
+            &held_map("active", "[[people/ana]]", "Harbour"),
+        ),
+        (
+            "projects/other.md",
+            &project_body("work", "active", "2026-09-02", "Other"),
+        ),
+    ]);
+
+    let active = vault.active_projects().expect("active_projects");
+    let mut paths: Vec<_> = active.iter().map(|(p, _)| p.to_string()).collect();
+    paths.sort();
+    assert_eq!(paths, vec!["projects/harbour.md", "projects/other.md"]);
+    let harbour = active
+        .iter()
+        .find(|(p, _)| p == &vp("projects/harbour.md"))
+        .unwrap();
+    assert_eq!(harbour.1.held_by, None, "a sequence reads as no holder");
+
+    let today = chrono::Local::now().date_naive();
+    let stuck = vault.stuck_projects(today, 0).expect("stuck_projects");
+    let slugs: Vec<_> = stuck.iter().map(|s| s.slug.as_str()).collect();
+    assert_eq!(slugs, vec!["harbour", "other"]);
+    let days = vault
+        .stuck_project_days(today, 0)
+        .expect("stuck_project_days");
+    assert_eq!(days.len(), 2);
+    vault
+        .orientation_context(today)
+        .expect("orientation still opens");
+    vault
+        .create_project(dt(2026, 10, 20, 9, 0), "Third", Context::Work, None)
+        .expect("create still cap-checks");
+}
+
+#[test]
+fn counts_toward_cap_table() {
+    let sentinels = HolderSentinels::from_config(&VaultConfig::default());
+    let rows: &[(&str, Option<&str>, bool)] = &[
+        ("active", None, true),
+        ("active", Some("\"the harbour office\""), false),
+        ("parked", None, false),
+        ("parked", Some("\"the harbour office\""), false),
+        ("active", Some("me"), true),
+        ("active", Some("\" Myself \""), true),
+        ("active", Some("tbd"), true),
+        ("active", Some("\"\""), true),
+        ("active", Some("[[people/ana]]"), true),
+        ("active", Some("\"[[people/ana]]\""), false),
+        ("active", Some("2026-10-20"), true),
+        ("active", Some("null"), true),
+        ("completed", None, false),
+        ("dropped", None, false),
+    ];
+    for (status, holder, counts) in rows {
+        let raw = match holder {
+            Some(h) => held_map(status, h, "Row"),
+            None => project_body("work", status, "2026-09-01", "Row"),
+        };
+        let fm = frontmatter_of(&raw);
+        assert_eq!(
+            fm.counts_toward_cap(&sentinels),
+            *counts,
+            "status {status}, held_by {holder:?}"
+        );
+    }
+}
+
+#[test]
+fn counts_toward_cap_reads_the_configured_list() {
+    // The deny-list is the vault's, not a literal: a vault that lists
+    // `nadie` refuses it, and one that lists nothing accepts `me`.
+    let mut config = VaultConfig::default();
+    config.projects.holder_sentinels = vec!["nadie".to_owned()];
+    let custom = HolderSentinels::from_config(&config);
+    let nadie = frontmatter_of(&held_map("active", "nadie", "Row"));
+    assert!(
+        nadie.counts_toward_cap(&custom),
+        "a configured placeholder counts"
+    );
+    let me = frontmatter_of(&held_map("active", "me", "Row"));
+    assert!(
+        !me.counts_toward_cap(&custom),
+        "`me` is a name once the list leaves it out"
+    );
+
+    config.projects.holder_sentinels = Vec::new();
+    let none = HolderSentinels::from_config(&config);
+    assert!(!me.counts_toward_cap(&none), "`[]` accepts any name");
+    assert!(!nadie.counts_toward_cap(&none));
+    let blank = frontmatter_of(&held_map("active", "\"  \"", "Row"));
+    assert!(blank.counts_toward_cap(&none), "a blank names nobody");
+}
+
+#[test]
+fn a_vault_configuring_holder_sentinels_opens_and_reads_them() {
+    // The same through a vault: its own config is what `from_config` reads.
+    let mut config = VaultConfig::default();
+    config.projects.holder_sentinels = vec!["nadie".to_owned()];
+    let vault = vault_with_notes_and_config(
+        &[("projects/row.md", &held_map("active", "nadie", "Row"))],
+        config,
+    );
+    let sentinels = HolderSentinels::from_config(vault.config());
+    let active = vault.active_projects().expect("active_projects");
+    assert_eq!(active.len(), 1);
+    assert!(active[0].1.counts_toward_cap(&sentinels));
+}
+
+#[test]
+fn a_map_with_an_unknown_optional_key_parses_and_counts() {
+    // Version skew: a map written by a newer cdno carries a key this one
+    // does not know. It still parses, and counts as it did before.
+    let raw = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-09-01\n\
+               outcome: \"[[outcomes/harbour]]\"\nsome_future_key: [1, 2]\n---\n# Skew\n";
+    let fm = frontmatter_of(raw);
+    let sentinels = HolderSentinels::from_config(&VaultConfig::default());
+    assert!(fm.counts_toward_cap(&sentinels));
+    let vault = vault_with_notes(&[("projects/skew.md", raw)]);
+    assert_eq!(vault.active_projects().expect("active_projects").len(), 1);
+}
+
+#[test]
+fn project_status_has_exactly_four_variants() {
+    // §6 P7's tripwire: holding a map is a field, never a lifecycle state.
+    // A fifth variant fails to compile here, and must be argued for.
+    fn arity(status: ProjectStatus) -> u8 {
+        match status {
+            ProjectStatus::Active => 1,
+            ProjectStatus::Parked => 2,
+            ProjectStatus::Completed => 3,
+            ProjectStatus::Dropped => 4,
+        }
+    }
+    let all = [
+        ProjectStatus::Active,
+        ProjectStatus::Parked,
+        ProjectStatus::Completed,
+        ProjectStatus::Dropped,
+    ];
+    let mut seen: Vec<u8> = all.iter().map(|s| arity(*s)).collect();
+    seen.dedup();
+    assert_eq!(seen, vec![1, 2, 3, 4]);
 }

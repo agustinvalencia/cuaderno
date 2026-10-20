@@ -2027,3 +2027,38 @@ fn drop_commitment_not_found_lists_the_open_commitments() {
         "the hint must name the commitments that do exist: {msg}"
     );
 }
+
+#[test]
+fn a_map_with_an_unreadable_holder_keeps_its_dates_in_the_register() {
+    // `held_by: [[people/ana]]` unquoted is a nested YAML sequence. The
+    // register reads each map through `cached_project_context`, which drops a
+    // map whose frontmatter fails to parse; a strict reader would make the
+    // map's hard milestone and action dues vanish without a word.
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n\
+               held_by: [[people/ana]]\n---\n\n# Harbour\n\n## Milestones\n\
+               - [ ] Survey filed — hard: 2026-06-01\n\n## Next Actions\n";
+    let (vault, _store) = vault_with_seeded_store(&[
+        ("projects/harbour.md", map),
+        (
+            "actions/hull-check.md",
+            &action_note_for("harbour", "Hull check", "2026-05-28"),
+        ),
+    ]);
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    let summary: Vec<(&str, &CommitmentSource)> =
+        got.iter().map(|c| (c.title.as_str(), &c.source)).collect();
+    assert_eq!(
+        summary,
+        vec![
+            (
+                "Hull check",
+                &CommitmentSource::ActionNote("harbour".to_owned())
+            ),
+            (
+                "Survey filed",
+                &CommitmentSource::ProjectMilestone("harbour".to_owned())
+            ),
+        ],
+    );
+}
