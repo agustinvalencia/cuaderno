@@ -5798,6 +5798,36 @@ fn a_vault_configuring_holder_sentinels_opens_and_reads_them() {
 }
 
 #[test]
+fn holder_name_reads_the_configured_list() {
+    // The summary's holder is read against the vault's list, not a literal:
+    // with `nadie` listed, `nadie` names no one and `me` is a name.
+    let mut config = VaultConfig::default();
+    config.projects.holder_sentinels = vec!["nadie".to_owned()];
+    let custom = HolderSentinels::from_config(&config);
+    let nadie = frontmatter_of(&held_map("active", "nadie", "Row"));
+    assert_eq!(nadie.holder_name(&custom), None);
+    assert!(nadie.counts_toward_cap(&custom));
+    let me = frontmatter_of(&held_map("active", "me", "Row"));
+    assert_eq!(me.holder_name(&custom).as_deref(), Some("me"));
+    assert!(!me.counts_toward_cap(&custom));
+
+    // The same through a vault's summary.
+    let vault = vault_with_notes_and_config(
+        &[
+            ("projects/row.md", &held_map("active", "nadie", "Row")),
+            ("projects/oar.md", &held_map("active", "me", "Oar")),
+        ],
+        config,
+    );
+    let row = vault.project_summary("row").expect("row");
+    assert_eq!(row.held_by, None);
+    assert!(row.counts);
+    let oar = vault.project_summary("oar").expect("oar");
+    assert_eq!(oar.held_by.as_deref(), Some("me"));
+    assert!(!oar.counts);
+}
+
+#[test]
 fn a_map_with_an_unknown_optional_key_parses_and_counts() {
     // Version skew: a map written by a newer cdno carries a key this one
     // does not know. It still parses, and counts as it did before.
