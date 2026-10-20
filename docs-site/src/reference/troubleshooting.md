@@ -122,8 +122,9 @@ isn't a TTY (it's piped or redirected). See [CLI overview](cli/overview.md#inter
 
 ## Can't create a sixth project
 
-That's the [five-project cap](../concepts/business-rules.md#the-five-project-cap). Free a slot first:
-park an active project, or close one that has finished or is not going to happen.
+That's the [five-project cap](../concepts/business-rules.md#the-five-project-cap): five projects
+count, that is, are active and name no one else as their holder. Free a slot first: park an active
+project, or close one that has finished or is not going to happen.
 
 ```bash
 cdno project park --slug some-active-project       # or: project complete / project drop
@@ -131,6 +132,49 @@ cdno project activate --slug the-one-you-want
 ```
 
 (New projects created while at the cap are created **parked** rather than rejected.)
+
+## My handed-off project still counts
+
+A project you handed off is counted again when its `held_by:` does not read as a name. Run
+`cdno project show <slug>`: it ends with `Counts toward the cap: yes` or `no`, and prints
+`Held by: <name>` only when the holder is honoured. `cdno lint` names the cause. The three usual
+ones:
+
+- **A sentinel.** The value names you or nobody: `me`, `myself`, `(mine)`, `someone`, `tbd`, `?`,
+  … A map with such a value is yours, so it counts, and lint warns. Name who really has it with
+  `cdno project hand-off --slug <slug> --to "<name>"`. The list is the vault's
+  [`[projects] holder_sentinels`](configuration.md#projects); if the holder's real name is on it
+  (added when you replaced the default list), take it off.
+- **A placeholder.** A blank `held_by:` names nobody under any list, whatever the config says.
+  Fill it in, or delete the line.
+- **An unquoted wikilink.** `held_by: [[people/ana]]` is a YAML list, not a name, so the holder is
+  not honoured and lint reports an error. Quote it: `held_by: "[[people/ana]]"`. The same goes for
+  a number or a date.
+
+If you cannot name who has the project, it is yours, and counting it is right. Handing it off is
+not a way to make room at the cap: park, complete or drop a project instead.
+
+The reverse also happens: `held_by: "<your own name>"` does **not** count, because cdno cannot know
+your name. Take the project back (`cdno project take-back --slug <slug>`), and add your name to
+`holder_sentinels` if you want it refused in future.
+
+## Writes are refused with a method version error
+
+The vault records the version of the Research Logbook Method it follows (`[vault] method_version`,
+see [configuration](configuration.md#method-version)), and every write checks it under the write
+lock. Reads keep working; only writes are refused, when the major version differs:
+
+- **"…an older major version than the RLM … this cdno implements"**: the vault needs migrating.
+  Run `cdno migrate --dry-run` to see what changes, then
+  [`cdno migrate`](cli/migrate.md). Migration is CLI-only, so an MCP client hitting this error
+  needs you to run it in a terminal.
+- **"…a newer major version than the RLM … this cdno implements — upgrade cdno to write to it"**:
+  another machine, or a newer cdno, migrated the vault. Upgrade this cdno (and restart any MCP
+  server running the old binary).
+
+A **minor** difference never refuses a write; it prints a one-line notice on stderr instead. Do not
+edit `method_version` by hand to silence either error: the stamp goes with the migration's log
+entry and any file steps.
 
 ## `--json` output won't parse
 

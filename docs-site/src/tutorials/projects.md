@@ -90,6 +90,68 @@ cdno project park --slug surrogate-model        # -> projects/_parked/, frees a 
 cdno project activate --slug surrogate-model     # bring it back (must be under the cap)
 ```
 
+A parked map is still a **complete map**. Parking changes two things only: the project stops
+counting, and you read it at the monthly review instead of every day. You can keep writing on it
+exactly as on an active one, without activating it first:
+
+```bash
+cdno action add --project bayesian-opt --title "Re-read the acquisition-function survey" --energy light
+cdno project state --slug bayesian-opt --text "Shelved until the ICML submission is in"
+cdno project milestone add --slug bayesian-opt --title "Decide whether to restart" --date 2026-07-01
+```
+
+Its hard milestones and dated actions stay in [`cdno commitments`](commitments.md): a deadline on a
+parked map is still a promise. What a parked map refuses is *work*: `cdno action start` (and
+`switch` and `resume`) needs an active project, because a project you are working on is one you are
+moving. If you find yourself working on a parked map, activate it, parking another if the cap is
+full.
+
+## Hand a project off
+
+Some projects stay open while someone else is moving them: the survey is with the harbour office,
+the draft is with your co-author. Name the holder, and the map says so:
+
+```bash
+cdno project hand-off --slug hull-survey --to "the harbour office"
+# Handed hull-survey to the harbour office (projects/hull-survey.md)
+```
+
+The map gains `held_by: "the harbour office"`, today's daily note gets an entry:
+
+```text
+- **09:10**: holder on [[hull-survey]]
+  was: (mine)
+  now: the harbour office
+```
+
+and the project, if active, no longer counts toward the cap: `cdno project list` shows it with a
+`held by: the harbour office · does not count toward the cap` line. It stays where it is, keeps its
+actions, log and deadlines, and is still read at the weekly review, where the question is not "did
+it move?" but "what came back, and what is waiting on my decision?". Say what you are waiting for:
+
+```bash
+cdno project waiting add --slug hull-survey --description "Inspection report from the harbour office"
+```
+
+When the work comes back to you, take it back:
+
+```bash
+cdno project take-back --slug hull-survey
+# Took hull-survey back (projects/hull-survey.md)
+```
+
+That logs `holder on [[hull-survey]]` with `now: (mine)`, and an active project counts again, so at
+the cap the take-back is refused with the projects that count. A parked project stays parked; taking
+it back only clears the name.
+
+Three guards keep it honest:
+
+- **If you cannot name who has it, it is yours.** `--to tbd`, `--to someone` or `--to me` is refused
+  (the list is [`[projects] holder_sentinels`](../reference/configuration.md#projects)).
+- **A hand-off is not made mid-work.** While an action on the project is in focus, pause it first.
+- **Handing off is never how you make room at the cap.** Name a holder only when someone else really
+  has the project. To free a slot, park, complete or drop one.
+
 ## Close a project
 
 A project ends one of two ways, and the log records which:

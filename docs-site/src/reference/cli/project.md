@@ -28,6 +28,13 @@ cdno project [OPTIONS] <COMMAND>
 Write subcommands honour `--json` (a `{path, message}` result, run non-interactively); `list`/`show`
 emit their data under `--json`.
 
+A parked project is a complete map, so every subcommand that writes a project's body (`state`,
+`core-question`, `hand-off`, `take-back`, `milestone`, `waiting`, and the
+[`cdno action`](action.md) verbs that take `--project`, except `start`, `switch` and `resume`) accepts an active or a
+parked slug. When `--slug` is omitted in a terminal, the picker and shell completion offer the active
+and parked projects; `park` offers active projects only. See
+[Business rules](../../concepts/business-rules.md#parked-projects-are-complete-maps).
+
 ---
 
 ## `cdno project create`
@@ -327,7 +334,8 @@ cdno project waiting resolve --slug surrogate-model --query "cluster quota"
 [`park_project`](../mcp/creation-and-lifecycle.md),
 [`complete_project`](../mcp/creation-and-lifecycle.md),
 [`drop_project`](../mcp/creation-and-lifecycle.md),
-[`activate_project`](../mcp/creation-and-lifecycle.md), [`list_projects`](../mcp/reads.md),
+[`activate_project`](../mcp/creation-and-lifecycle.md),
+[`hand_off_project`](../mcp/creation-and-lifecycle.md#the-holder), [`list_projects`](../mcp/reads.md),
 [`get_project_context`](../mcp/reads.md), [`add_milestone`](../mcp/writes.md),
 [`complete_milestone`](../mcp/writes.md), [`set_core_question`](../mcp/writes.md),
 [`add_waiting_on`](../mcp/writes.md),

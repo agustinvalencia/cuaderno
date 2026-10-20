@@ -20,15 +20,61 @@ are picked up without a manual reindex.
 
 ## The five-project cap
 
-At most **five** projects are active at once. Creating a project at the cap creates it parked;
-the cap is checked on activation, so activating a sixth stops you — you must
-[park](../reference/cli/project.md) one first. Parked projects live in
-`projects/_parked/` and don't count toward the cap, and neither do closed ones: a project that is
+At most **five** projects count at once. A project counts when it is **active and names no one
+else as its holder**: parked projects don't count, closed ones don't, and neither does an active
+project that someone else is moving ([below](#handed-off-projects)). Creating a project at the cap
+creates it parked; the cap is checked whenever a project that did not count begins to: on
+activation, so activating a sixth stops you — you must [park](../reference/cli/project.md) one
+first — and when you take an active project back from its holder. Parked projects live in
+`projects/_parked/`. Closed ones are not open at all: a project that is
 finished is [completed](../reference/cli/project.md#cdno-project-complete), and one that is not
 going to happen is [dropped](../reference/cli/project.md#cdno-project-drop), both into
 `projects/_done/<year>/`. Closing never needs a slot, and a parked project can be closed directly. The limit is configurable via `config.toml`
 (see [Configuration](configuration.md)); five is the default because it's the point past which
 "active" stops meaning anything.
+
+## Parked projects are complete maps
+
+Parking changes two things only: the project does not count, and you read it at the monthly
+review rather than daily. A parked map takes every plan write an active one does: next actions,
+Current State, milestones, waiting-on items, the core question and a holder, from the CLI and over
+MCP alike, so you never activate a project just to write on it. Its hard milestones and action
+due dates stay in the [commitments register](#commitments-are-aggregated-not-stored-in-one-place).
+
+Only **starting, switching or resuming work, and parking** need an active project
+([`cdno action start`](../reference/cli/action.md), `switch`, `resume`, and
+[`cdno project park`](../reference/cli/project.md#cdno-project-park)): a project you start work on is
+a project you are moving, so it counts. Activate it first, parking another if the cap is full.
+
+## Handed-off projects
+
+An open project may name **who else is moving it** in a `held_by:` line at the top of its map:
+`held_by: "the harbour office"`. [`cdno project hand-off`](../reference/cli/project.md#cdno-project-hand-off)
+writes it and [`take-back`](../reference/cli/project.md#cdno-project-take-back) clears it, each
+logging a `holder on [[<slug>]]` entry in today's daily note. An active project that names a holder
+stays where it is, keeps its actions, its log and its dates in the register, and does not count
+toward the cap: the cap counts your attention, not someone else's.
+
+Three guards keep it honest. If you cannot name who has it, it is yours. A handed-off map says what
+you are waiting for in its Waiting On. And handing off is never the answer to a full cap: name a
+holder only when someone else really has the project. To make room, park, complete or drop one.
+
+**The deny-list.** A `held_by:` value that names you or nobody (`me`, `tbd`, `someone`, `?`, …)
+reads as no holder, so the map stays yours and counts, and the hand-off verb refuses it. Those
+values are a config key, [`[projects] holder_sentinels`](../reference/configuration.md#projects),
+with a default list you can replace, or set to `[]` to accept any name. Its stated limit: **the tool
+cannot know your own name**, so `held_by: "<your name>"` is read as someone else unless you add your
+name to the list. A value that is not a plain name (an unquoted wikilink, a number, a date) also
+reads as no holder; [`cdno lint`](../reference/cli/lint.md) reports it so you can quote it.
+
+## The method version
+
+The vault records which version of the [Research Logbook Method](rlm.md) it follows, as
+`[vault] method_version` in `.cuaderno/config.toml`. That is the method's version, not cdno's:
+`cdno init` writes the version this cdno implements, and only
+[`cdno migrate`](../reference/cli/migrate.md) changes it. A vault with no key is read as RLM 1.0. A
+cdno refuses to write to a vault on another **major** version (an older one: migrate it; a newer
+one: upgrade cdno), while reads keep working; a minor difference only prints a notice.
 
 ## Append-only notes
 
@@ -41,7 +87,8 @@ next.)
 A project's **Current State** is the one piece of freely-mutable prose in the vault. To keep history
 intact, every time you update it (via [`cdno project state`](../reference/cli/project.md) or the MCP
 `update_project_state` tool) the *previous* state is auto-logged to today's daily note **before** the
-new text overwrites it. You get a clean current view and a full audit trail in the journal.
+new text overwrites it. You get a clean current view and a full audit trail in the journal. A
+hand-off or take-back logs the same way, as `holder on [[<slug>]]` with `was:` and `now:` lines.
 
 ## Commitments are aggregated, not stored in one place
 

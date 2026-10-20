@@ -7,10 +7,12 @@ worked examples you can adapt.
 ## Where the examples live
 
 The repo's [`examples/skills/`](https://github.com/agustinvalencia/cuaderno/tree/main/examples/skills)
-directory contains two reference skills:
+directory contains three reference skills:
 
 - **`quick-capture`** — capture a thought into the inbox with minimal friction.
 - **`daily-orientation`** — read your orientation and help set the day's intention.
+- **`weekly-review`** — celebrate the week's wins first, scan stewardship habits, walk the projects,
+  look two weeks ahead, and pick one goal for next week, written to the weekly notes.
 
 Each is a directory with a `SKILL.md` (YAML frontmatter + a Markdown body of steps), plus shared
 `references/`. The README there documents the authoring pattern.
@@ -27,6 +29,21 @@ A skill typically:
 For example, a *daily orientation* skill calls `get_orientation`, presents the commitments and the
 suggested start, asks for your intention, and writes it with
 `upsert_daily_section(section="Intention", ...)`.
+
+A *weekly review* skill calls `get_weekly_context`, whose `projects` carry the
+[review fields](reads.md#review-fields), and asks each project the question its relationship
+implies rather than one question of all of them:
+
+| The project | The question |
+|---|---|
+| Yours (`counts: true`) | Did it move? |
+| Handed off, and `changed_this_week` | What came back, and what is waiting on your decision? |
+| Handed off over an empty Waiting On (`waiting_on_empty`) | A name over an empty Waiting On is a parked map wearing a name: park it, or take it back? |
+| Handed off, with `focus_days_while_held` of two or more | Offered as evidence: take it back, or change the name to whoever really has it? |
+
+The skill asks and never concludes: the fields are evidence, and the person decides. It never
+offers a hand-off as a way to make room at the cap. See
+[Weekly review](../../tutorials/weekly-review.md#a-question-per-relationship).
 
 ## Graceful degradation
 

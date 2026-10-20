@@ -311,6 +311,7 @@ context: work
 status: active
 created: 2026-01-15
 core_question: "[[questions/research/surrogate-cost-reduction]]"
+# held_by: "the harbour office"   # optional (RLM 1.1, §5.3.2): who else is moving it
 closed: null
 ---
 
@@ -360,6 +361,8 @@ Milestones are extracted into a first-class `milestones(project_id, name, date, 
 **5-project cap**: maximum 5 projects that count, across all contexts; the count is the maps that are neither parked nor handed off (RLM 1.1, §5.3.2). Parked projects move to `projects/_parked/`. Enforced by the tool — creating a project at the cap creates it parked; the cap is checked on activation.
 
 **Lifecycle**: `status` is one of `active`, `parked`, `completed` or `dropped`, and each has one folder: `projects/`, `projects/_parked/`, and `projects/_done/<year>/` for both closed states. A closed map also carries `closed: <date>`, the day it closed; the key is `null` on an open project and is written last in the frontmatter. `complete` is the claim that the work was done; `drop` records that it is not going to happen, with an optional reason. Both work from active or parked and never need a slot. While an action or milestone is open, closing is refused with the list: `complete` stays refused until each is completed or dropped, while `drop` can let them go with it on request, logging each as a drop (`reason: project dropped`, or `reason: project dropped (<reason>)` when a reason was given) and archiving attached action notes as dropped. Standalone commitments that name the project are never touched. A closed project is not terminal: `activate` brings it back (clearing `closed:`, under the cap), and it can be closed again the other way as a new, logged decision. Every transition logs one line in a fixed shape — `project [[slug]] parked`, `project [[slug]] activated`, `project completed [[slug]] — <title>`, `project dropped on [[slug]] — <title>` with an indented `reason:` line. A map whose status disagrees with its folder is a lint error.
+
+**Holder** (RLM 1.1, §5.3.2): an open map, active or parked, may carry `held_by:`, the name of whoever else is moving it. `held_by` is orthogonal to `status`: handing off changes neither the status nor the folder. `cdno project hand-off` and `hand_off_project` write it quoted (`held_by: "the harbour office"`); `cdno project take-back` and `hand_off_project` with `take_back: true` write `held_by: null`. Both log one entry, `holder on [[slug]]` with indented `was:` / `now:` lines, the side with no holder written `(mine)` (§7). An active map that names a holder does not count toward the cap, so the cap is checked when such a map is taken back; taking back a parked map clears the name only and never activates it. A hand-off is refused while an action on the map is in focus, for a closed map, and for a value that names the person or nobody: the vault's `[projects] holder_sentinels` (§9). A `held_by:` the reader cannot take as a plain name (an unquoted wikilink, a number, a date) reads as no holder, so the map counts, and `cdno lint` reports it as an error; a sentinel or blank value is a warning. The key is reserved from `set_frontmatter`: only the hand-off verb writes it through the tool.
 
 **Milestones with hard deadlines** are picked up by the commitments aggregation query while the project is open, active or parked: a hard date on a parked map is still a promise (RFC 0006 §7.1). A completed or dropped project's milestones leave the register until it is activated again.
 
@@ -821,6 +824,22 @@ The project map is the primary mutable note. To prevent loss of historical conte
   now: 20-seed ablation confirmed. CI [0.82, 0.87]. Ready to test on full geometry.
 ```
 
+Two more entries share the `was:` / `now:` shape (RLM 1.1). Handing a project off or taking it back (§5.3) writes `holder on [[<slug>]]`, the side with no holder written `(mine)`:
+
+```markdown
+- **09:10**: holder on [[hull-survey]]
+  was: (mine)
+  now: the harbour office
+```
+
+and `cdno migrate` writes `vault migrated`, which carries no wikilink, with `was: unstamped (read as 1.0)` for a vault that recorded no version (§9):
+
+```markdown
+- **08:30**: vault migrated
+  was: unstamped (read as 1.0)
+  now: 1.1
+```
+
 **To trace a project’s full evolution**: search the daily log for `state on [[surrogate-model]]` — returns the complete chronological sequence of state changes.
 
 **Next actions** are also logged on completion:
@@ -990,6 +1009,22 @@ The vault configuration lives at `.cuaderno/config.toml`:
 [vault]
 name = "My Research Vault"
 
+# The version of the Research Logbook Method the vault follows (§1, "The
+# method and its version"): the method's version, never cdno's crate
+# version. `cdno init` writes the version this cdno implements; only
+# `cdno migrate` changes it, after `cdno migrate --dry-run` has shown what
+# it changes. A vault with no key is unstamped and read as RLM 1.0. Domain
+# writes re-read it under the write lock and are refused when the vault is
+# on another major version than the binary (an older major: migrate first;
+# a newer one: upgrade cdno); reads keep working. A newer minor writes, and
+# both cdno and `cdno lint` say so. The key stays in [vault], which every
+# released binary reads without denying unknown keys.
+method_version = "1.1"
+
+# The active-project cap: how many maps count, that is, maps that are
+# active and name no holder (§5.3.2). Default 5.
+max_active_projects = 5
+
 # Length ceiling on a project's `## Current State` section. Current
 # State is a snapshot, not a log — every update auto-logs the previous
 # body to the daily note, so the long-form history is preserved there
@@ -1016,6 +1051,20 @@ state_overflow = "reject"
 # backlinks (and the active-project count), but never deletes it — the
 # file stays on disk and `cdno reindex` reports how many were excluded.
 ignore = ["CLAUDE.md", "README.md"]
+
+# Values of a project map's `held_by:` that name the person or nobody.
+# Such a value reads as no holder, so the map stays the person's and
+# counts toward the cap; `cdno project hand-off` and `hand_off_project`
+# refuse it. Trimmed and compared in any case. Absent gives the default
+# below; setting the key replaces the whole list, and `[]` accepts any
+# name (a blank value names nobody under any list). The stated limit: the
+# tool cannot know the person's own name, so a person who wants their name
+# refused adds it here. An unknown key in [projects] is a load error.
+[projects]
+holder_sentinels = [
+  "me", "I", "myself", "(mine)",
+  "someone", "somebody", "nobody", "unknown", "tbd", "n/a", "none", "-", "?",
+]
 
 # Per-type frontmatter schema extensions.
 # Built-in required fields are always enforced.
@@ -1170,6 +1219,11 @@ cdno project create "Surrogate Model" --context work \
 cdno project state surrogate-model \
   "20-seed ablation confirmed. Ready for full geometry."
                          # Update current state (auto-logs previous)
+cdno project hand-off --slug hull-survey --to "the harbour office"
+                         # Name who else is moving it (held_by:); an active
+                         # map that names a holder does not count
+cdno project take-back --slug hull-survey
+                         # Clear the holder; cap-checked on an active map
 cdno project park bayesian-opt-survey
                          # Move to _parked/
 cdno project activate bayesian-opt-survey
@@ -1306,6 +1360,9 @@ cdno lint --strict       # Treat warnings (broken wikilinks, frontmatter-order
                          # drift, malformed dashboard bullets) as failures too
 cdno normalise           # Reorder note frontmatter to canonical per-type order
 cdno normalise --check   # Report out-of-order notes (non-zero exit), write nothing
+cdno migrate --dry-run   # Show what recording this cdno's method version changes
+cdno migrate             # Record it in [vault] method_version, run any file
+                         # migrations, log `vault migrated`; CLI only
 ```
 
 ### CLI ergonomics: interactive prompts and confirmation
@@ -1457,6 +1514,22 @@ list_projects(include_closed?)
   → active and parked maps; closed ones on request
 ```
 
+Holder (RFC 0006, RLM 1.1):
+
+```
+hand_off_project(project, holder?, take_back?)
+  → exactly one of `holder` (writes held_by: "<name>") or take_back: true
+    (writes held_by: null), on an active or parked map
+  → logs `holder on [[slug]]` with was:/now: lines, `(mine)` for no holder
+  → refused with empty_field for a [projects] holder_sentinels value,
+    project_in_focus while an action on it is in focus, project_not_active
+    on a closed map, and project_cap_reached for a take-back that would
+    make an active map count over the cap
+```
+
+There is no MCP tool for `cdno migrate`, and no migration runs when a vault opens: the method
+version changes only when the person runs the CLI verb (RFC 0006 §8.4).
+
 The optional `vars?` parameter (a `name -> value` map) supplies values for a template's
 `[variables.prompt]` placeholders (§9 Tier 3) — the MCP analogue of the CLI's repeatable
 `--var name=value`. It is accepted on every create tool that gathers prompted variables
@@ -1484,7 +1557,7 @@ remove.
 |Skill                              |Changes                                                                                                                                                                                                                 |
 |-----------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 |**start-day → daily-orientation**  |Gather from `get_orientation` instead of task-focused queries. Show commitments (48h), one project to start with, energy prompt. Remove meetings/agenda step. Keep emotional architecture.                              |
-|**weekly-review**                  |Add stewardship scan step. Use `get_weekly_context` for wins pre-population, including `closed_projects` (a completion is a win; a drop is a decision worth naming). Add commitments 2-week lookahead. Keep celebration-first structure.|
+|**weekly-review**                  |Add stewardship scan step. Use `get_weekly_context` for wins pre-population, including `closed_projects` (a completion is a win; a drop is a decision worth naming). Add commitments 2-week lookahead. Ask each project the question its relationship implies, from `get_weekly_context`'s per-project fields: the person's own (`counts`), "did it move?"; handed off and `changed_this_week`, "what came back, and what is waiting on your decision?"; handed off over an empty Waiting On (`waiting_on_empty`), "park it or take it back?"; `focus_days_while_held` of two or more, offered as evidence for taking it back or changing the name. Keep celebration-first structure.|
 |**monthly-report → monthly-review**|Restructure as interactive strategic scan using `get_monthly_context`. Walk through: wins patterns, questions review, portfolio staleness, project stuck-check (complete, drop or park), `closed_projects` and the `parked_projects` shelf, stewardship habits, 6-week commitments, slot allocation.|
 |**create-project**                 |Generate project map template. Add `core_question` linking. Enforce 5-project cap. At the cap, offer to park, complete or drop an active project to free a slot.                                                       |
 |**create-task → add-action**       |Default: append inline next action to project map via `add_action`. Set `with_note=true` only for action-as-investigation cases (§5.11) — the heavier form is exceptional, not default.                                  |
