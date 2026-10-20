@@ -266,3 +266,104 @@ fn migrate_on_a_newer_vault_exits_non_zero() {
     }
     assert_eq!(tree(dir.path()), before, "a refused run writes nothing");
 }
+
+#[test]
+fn dry_run_lists_the_parked_hard_dates_overdue_first() {
+    // An unstamped vault (read as 1.0, below 1.1) with a parked map carrying
+    // an overdue and a future hard milestone and an overdue action-note due.
+    // The dates are far from the real clock so the test holds on any day.
+    // The register's own source order would list both milestones before
+    // the action; the read-through puts the overdue dates first. An active
+    // map's overdue milestone is not part of the read-through.
+    let dir = vault_with_method_line(None);
+    let root = dir.path();
+    fs::create_dir_all(root.join("projects/_parked")).unwrap();
+    fs::write(
+        root.join("projects/_parked/beta.md"),
+        "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2020-01-10\nclosed: null\n---\n\n# Beta\n\n## Milestones\n- [ ] Grant report — hard: 2020-03-01\n- [ ] Final review — hard: 2099-06-01\n\n## Next Actions\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("projects/alpha.md"),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2020-01-10\nclosed: null\n---\n\n# Alpha\n\n## Milestones\n- [ ] Alpha deadline — hard: 2020-02-01\n\n## Next Actions\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("actions")).unwrap();
+    fs::write(
+        root.join("actions/shelved-draft.md"),
+        "---\ntype: action\nstatus: active\nproject: beta\nenergy: deep\nmilestone: null\ndue: 2020-05-01\ncreated: 2020-04-01\ncompleted: null\nblocker: null\ncriteria: null\ntags: []\n---\n\n# Shelved draft\n",
+    )
+    .unwrap();
+    let before = tree(root);
+
+    let text = stdout_of(root, &["migrate", "--dry-run"]);
+    let section: Vec<&str> = text
+        .lines()
+        .skip_while(|line| !line.starts_with("  read-through"))
+        .collect();
+    assert_eq!(
+        section,
+        vec![
+            "  read-through (hard dates on parked maps, overdue first; drop or re-date each):",
+            "    2020-03-01  Grant report  (hard milestone on [[beta]], overdue)",
+            "    2020-05-01  Shelved draft  (action due on [[beta]], overdue)",
+            "    2099-06-01  Final review  (hard milestone on [[beta]])",
+        ],
+        "{text}"
+    );
+
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout_of(root, &["migrate", "--dry-run", "--json"])).expect("JSON");
+    let listed: Vec<(&str, bool)> = json["read_through"]
+        .as_array()
+        .expect("an array")
+        .iter()
+        .map(|entry| {
+            (
+                entry["title"].as_str().unwrap(),
+                entry["is_overdue"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            ("Grant report", true),
+            ("Shelved draft", true),
+            ("Final review", false)
+        ]
+    );
+    assert_eq!(tree(root), before, "a dry run writes nothing");
+}
+
+#[test]
+fn dry_run_on_a_vault_stamped_1_0_prints_nothing_to_do_and_the_read_through() {
+    // The maintainer's case while this cdno implements RLM 1.0: the vault is
+    // stamped "1.0", so there is nothing to migrate, but it is below 1.1 and
+    // `cdno lint` warns on its overdue parked date, so the dry run lists the
+    // date too. (Once the binary implements 1.1, this vault plans a stamp
+    // instead, and the read-through prints in the full report.)
+    let dir = vault_with_method_line(Some("method_version = \"1.0\""));
+    let root = dir.path();
+    fs::create_dir_all(root.join("projects/_parked")).unwrap();
+    fs::write(
+        root.join("projects/_parked/beta.md"),
+        "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2020-01-10\nclosed: null\n---\n\n# Beta\n\n## Milestones\n- [ ] Grant report — hard: 2020-03-01\n\n## Next Actions\n",
+    )
+    .unwrap();
+    let before = tree(root);
+
+    let text = stdout_of(root, &["migrate", "--dry-run"]);
+    assert_eq!(
+        text,
+        "vault is at RLM 1.0; nothing to do\n  \
+         read-through (hard dates on parked maps, overdue first; drop or re-date each):\n    \
+         2020-03-01  Grant report  (hard milestone on [[beta]], overdue)\n",
+    );
+
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout_of(root, &["migrate", "--dry-run", "--json"])).expect("JSON");
+    assert_eq!(json["outcome"], "nothing_to_do");
+    assert_eq!(json["read_through"][0]["title"], "Grant report");
+    assert_eq!(tree(root), before, "a dry run writes nothing");
+}

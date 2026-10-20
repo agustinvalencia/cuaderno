@@ -68,7 +68,7 @@
 
 use std::sync::Arc;
 
-use chrono::NaiveDateTime;
+use chrono::{NaiveDate, NaiveDateTime};
 
 use cdno_core::config::{MethodVersion, method_version_from_str};
 use cdno_core::config_edit::set_method_version;
@@ -82,6 +82,7 @@ use super::Vault;
 use super::commitments::CommitmentEntry;
 use super::config::{ConfigDocument, read_config_from, validate_config_str};
 use super::index_entry::build_index_entry_for;
+use super::parked_dates::READ_THROUGH_BELOW;
 use crate::error::DomainError;
 use crate::method_version::{MethodSkew, UNSTAMPED_READS_AS};
 use crate::type_registry::NoteTypeDescriptor;
@@ -184,8 +185,12 @@ pub struct MigrationReport {
     /// The file migrations that apply, in order; empty for a vault already
     /// on the binary's major.
     pub steps: Vec<MigrationStep>,
-    /// The dates a minor version asks to be read through once. Filled by the
-    /// parked read-through (RFC 0006 §8.1, plan T12); empty until then.
+    /// The dates a minor version asks to be read through once: every hard
+    /// date on a parked map, overdue first ([`Vault::parked_live_dates`],
+    /// RFC 0006 §8.1, plan T12). Filled whenever the vault's effective
+    /// version is below [`READ_THROUGH_BELOW`], whether or not the run
+    /// stamps; empty otherwise, since a vault at RLM 1.1 or later has had
+    /// its read-through.
     pub read_through: Vec<CommitmentEntry>,
 }
 
@@ -231,15 +236,17 @@ impl Vault {
     /// The dry run: what [`Vault::migrate`] would do with `steps` and a binary
     /// at `binary`, the file migrations, their writes and the stamp, without
     /// writing anything or taking the lock. Refuses as the real run would.
+    /// `today` dates the read-through's overdue flags.
     ///
     /// `binary` and `steps` are parameters so tests inject a synthetic step
     /// and version; the CLI passes `METHOD_VERSION` and [`FILE_MIGRATIONS`].
     pub fn plan_migration(
         &self,
+        today: NaiveDate,
         binary: MethodVersion,
         steps: &[FileMigration],
     ) -> Result<MigrationReport, DomainError> {
-        Ok(self.prepare_migration(binary, steps)?.report)
+        Ok(self.prepare_migration(today, binary, steps)?.report)
     }
 
     /// Move the vault to `binary`: run the file migrations in `steps` that
@@ -264,7 +271,7 @@ impl Vault {
         // The lock first, then every read: the version, the config the stamp
         // is built from, and the files the steps plan against.
         let mut tx = self.transaction_ungated()?;
-        let prepared = self.prepare_migration(binary, steps)?;
+        let prepared = self.prepare_migration(at.date(), binary, steps)?;
         let Some(entry) = prepared.report.log_entry() else {
             // Already at the binary's version: nothing to do, and the
             // transaction drops with nothing buffered.
@@ -325,6 +332,7 @@ impl Vault {
     /// plan, fence and filter the applicable steps' writes. Writes nothing.
     fn prepare_migration(
         &self,
+        today: NaiveDate,
         binary: MethodVersion,
         steps: &[FileMigration],
     ) -> Result<Prepared, DomainError> {
@@ -346,6 +354,12 @@ impl Vault {
             steps: Vec::new(),
             read_through: Vec::new(),
         };
+        // The read-through depends on the vault's version alone, not on
+        // whether this run stamps: a vault stamped at a binary below 1.1 has
+        // nothing to migrate and still has its parked dates to read through.
+        if from.unwrap_or(UNSTAMPED_READS_AS) < READ_THROUGH_BELOW {
+            report.read_through = self.parked_live_dates(today)?;
+        }
         if !report.stamps() {
             return Ok(Prepared {
                 report,

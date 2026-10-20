@@ -10,6 +10,8 @@ use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
+use super::support::lint_day;
+
 fn moment() -> NaiveDateTime {
     NaiveDate::from_ymd_opt(2026, 4, 26)
         .unwrap()
@@ -194,7 +196,7 @@ fn capture_upserts_the_index_so_lint_can_see_the_note() {
     let (vault, _) = make_vault();
     vault.capture_to_inbox(moment(), "indexed note").unwrap();
 
-    let report = vault.lint_all_notes().expect("lint");
+    let report = vault.lint_all_notes(lint_day()).expect("lint");
     // `inbox` is a known NoteType, so a vanilla capture should
     // produce no lint issues — proving the index has the entry
     // (lint iterates the index, not the filesystem).
@@ -321,7 +323,7 @@ fn a_capture_during_a_focus_is_tagged_and_the_discard_line_carries_it() {
         "{raw}"
     );
     // The inbox schema accepts the field: lint raises nothing for it.
-    let report = vault.lint_all_notes().unwrap();
+    let report = vault.lint_all_notes(lint_day()).unwrap();
     assert!(
         report
             .issues

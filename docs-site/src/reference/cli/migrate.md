@@ -36,7 +36,20 @@ will change.
     now: 1.0
   ```
 
-- A vault already at this cdno's version prints `vault is at RLM X; nothing to do`.
+- A vault below RLM 1.1 gets a **read-through**, whether or not it is stamped: every hard date on a parked map (a hard
+  milestone, or an action note's `due:`), which the commitments register now keeps, listed with
+  its map, overdue first. Drop or re-date each; [`cdno lint`](lint.md) warns on the overdue ones
+  until the vault records RLM 1.1.
+
+  ```text
+    read-through (hard dates on parked maps, overdue first; drop or re-date each):
+      2026-04-15  Grant report  (hard milestone on [[beta]], overdue)
+      2026-05-01  Shelved draft  (action due on [[beta]], overdue)
+      2026-11-01  Final review  (hard milestone on [[beta]])
+  ```
+
+- A vault already at this cdno's version prints `vault is at RLM X; nothing to do`, followed by
+  the read-through when the vault is below RLM 1.1 and has parked hard dates.
 - A vault on a **newer** version than this cdno is refused with a non-zero exit: upgrade cdno
   instead.
 

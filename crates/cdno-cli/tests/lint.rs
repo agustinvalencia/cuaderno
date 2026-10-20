@@ -3,7 +3,18 @@
 use std::fs;
 
 use cdno_cli::commands::{init, lint};
+use chrono::NaiveDate;
 use tempfile::tempdir;
+
+/// A day before every date the fixtures write, so the parked read-through
+/// rule (overdue dates on parked maps) stays out of these tests. These run
+/// `lint::run` in process with this fixed date; the tests that run the real
+/// `cdno lint` binary (`cli.rs`, `init.rs`, `migrate.rs`, `note.rs`) use the
+/// real clock, so their fixtures must not put a past hard date on a parked
+/// map unless they mean to see the read-through row.
+fn lint_day() -> NaiveDate {
+    NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()
+}
 
 #[test]
 fn lint_succeeds_silently_on_a_freshly_inited_vault() {
@@ -12,7 +23,7 @@ fn lint_succeeds_silently_on_a_freshly_inited_vault() {
 
     // Post-#87 the index is empty after init (templates under
     // `.cuaderno/` are excluded from the scan), so lint finds nothing.
-    lint::run(dir.path(), false).expect("lint should succeed on empty vault");
+    lint::run(dir.path(), lint_day(), false).expect("lint should succeed on empty vault");
 }
 
 #[test]
@@ -25,7 +36,7 @@ fn lint_returns_err_when_a_note_has_an_unknown_type() {
     )
     .unwrap();
 
-    let err = lint::run(dir.path(), false).expect_err("lint should fail");
+    let err = lint::run(dir.path(), lint_day(), false).expect_err("lint should fail");
     let msg = format!("{err}");
     assert!(msg.contains("1 error(s)"), "unexpected error: {msg}");
 }
@@ -41,10 +52,11 @@ fn lint_warns_on_frontmatter_order_drift_and_strict_makes_it_fatal() {
     fs::write(&daily, "---\ndate: 2026-04-19\ntype: daily\n---\n# Note\n").unwrap();
 
     // Non-strict: a warning is non-fatal, so lint still succeeds.
-    lint::run(dir.path(), false).expect("order drift is non-fatal without --strict");
+    lint::run(dir.path(), lint_day(), false).expect("order drift is non-fatal without --strict");
 
     // --strict: the warning becomes a failure.
-    let err = lint::run(dir.path(), true).expect_err("strict lint should fail on the drift");
+    let err =
+        lint::run(dir.path(), lint_day(), true).expect_err("strict lint should fail on the drift");
     assert!(
         format!("{err}").contains("1 warning(s)"),
         "unexpected error: {err}"
@@ -55,7 +67,7 @@ fn lint_warns_on_frontmatter_order_drift_and_strict_makes_it_fatal() {
 fn lint_errors_when_target_is_not_a_vault() {
     let dir = tempdir().unwrap();
 
-    let err = lint::run(dir.path(), false).expect_err("lint without vault must fail");
+    let err = lint::run(dir.path(), lint_day(), false).expect_err("lint without vault must fail");
     let msg = format!("{err}");
     assert!(msg.contains("no Cuaderno vault"), "unexpected error: {msg}");
 }
@@ -78,11 +90,12 @@ fn lint_warns_on_malformed_stewardship_dashboard_line_and_strict_makes_it_fatal(
     .unwrap();
 
     // Non-strict: a warning is non-fatal, so lint still succeeds.
-    lint::run(dir.path(), false).expect("dashboard warning is non-fatal without --strict");
+    lint::run(dir.path(), lint_day(), false)
+        .expect("dashboard warning is non-fatal without --strict");
 
     // --strict: the warning becomes a failure.
-    let err =
-        lint::run(dir.path(), true).expect_err("strict lint should fail on the dashboard warning");
+    let err = lint::run(dir.path(), lint_day(), true)
+        .expect_err("strict lint should fail on the dashboard warning");
     assert!(
         format!("{err}").contains("1 warning(s)"),
         "unexpected error: {err}"
@@ -119,7 +132,7 @@ fn lint_resolves_an_on_disk_attachment_embed_through_the_filesystem() {
     .unwrap();
 
     // Strict: the on-disk embed raises no warning, so the vault is clean.
-    lint::run(dir.path(), true).expect("an on-disk embed is not a broken link");
+    lint::run(dir.path(), lint_day(), true).expect("an on-disk embed is not a broken link");
 
     // Now point the embed at a file that does not exist.
     fs::write(
@@ -127,7 +140,7 @@ fn lint_resolves_an_on_disk_attachment_embed_through_the_filesystem() {
         "---\ntype: daily\ndate: 2026-04-19\n---\n# Day\n\n![[assets/missing.png]]\n",
     )
     .unwrap();
-    let err = lint::run(dir.path(), true).expect_err("a missing embed warns");
+    let err = lint::run(dir.path(), lint_day(), true).expect_err("a missing embed warns");
     assert!(
         format!("{err}").contains("1 warning(s)"),
         "unexpected error: {err}"

@@ -546,7 +546,7 @@ fn dispatch(cli: Cli) -> Result<()> {
         }
         Commands::Lint { strict } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::lint::run(&root, strict)
+            commands::lint::run(&root, Local::now().date_naive(), strict)
         }
         Commands::Reindex => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

@@ -10,6 +10,8 @@ use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::{LintSeverity, TemplateSyncStatus, Vault};
 
+use super::support::lint_day;
+
 const OVERRIDE_PATH: &str = ".cuaderno/templates/project.md";
 
 /// A project override ejected before `closed:` existed, with a key of the
@@ -178,7 +180,7 @@ fn lint_warns_on_a_stale_override_and_is_clean_after_sync() {
     let (vault, _store) = vault_with(&[(OVERRIDE_PATH, STALE_PROJECT)]);
 
     let rows: Vec<_> = vault
-        .lint_all_notes()
+        .lint_all_notes(lint_day())
         .unwrap()
         .issues
         .into_iter()
@@ -194,7 +196,7 @@ fn lint_warns_on_a_stale_override_and_is_clean_after_sync() {
     vault.sync_template("project", true).expect("sync");
     assert!(
         vault
-            .lint_all_notes()
+            .lint_all_notes(lint_day())
             .unwrap()
             .issues
             .iter()

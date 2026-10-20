@@ -8,6 +8,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- A one-time read-through of parked deadlines: `cdno migrate --dry-run` lists the hard dates on
+  parked maps that are back in the register, overdue first, and `cdno lint` warns on the overdue
+  ones until the vault records RLM 1.1 (RFC 0006 §7.1, §8.1).
 - `cdno migrate [--dry-run]` records the method version this cdno implements in the vault and
   runs any file migrations; a vault on an older or newer method version than this cdno gets a
   one-line notice on stderr (RFC 0006 §8.4).

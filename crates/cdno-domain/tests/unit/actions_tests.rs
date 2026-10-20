@@ -17,7 +17,7 @@ use cdno_domain::frontmatter::{ActionFrontmatter, ActionStatus, EnergyLevel, Pro
 use cdno_domain::vault::WriteOutcome;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
-use super::support::FailingStore;
+use super::support::{FailingStore, lint_day};
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
@@ -1645,7 +1645,7 @@ fn a_promotion_line_written_by_promote_action_is_not_flagged_by_lint() {
         .promote_action(dt(2026, 5, 26, 10, 0), "alpha", "Draft methods")
         .unwrap();
 
-    let report = vault.lint_all_notes().unwrap();
+    let report = vault.lint_all_notes(lint_day()).unwrap();
     assert!(
         !report
             .issues

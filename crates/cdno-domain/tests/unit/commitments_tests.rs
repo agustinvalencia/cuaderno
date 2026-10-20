@@ -866,6 +866,64 @@ fn park_keeps_the_milestone_in_the_register_without_a_reindex() {
 }
 
 #[test]
+fn parked_live_dates_lists_overdue_first_and_omits_active_and_closed_maps() {
+    // A parked map with a future hard milestone and an overdue action due:
+    // the register's source order (milestones, then action notes) would put
+    // the milestone first, so the overdue-first order is the query's own.
+    // Every date, not a window: the far-future milestone is listed. Active
+    // and closed maps, and a soft or completed milestone, contribute nothing.
+    let parked = "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-01-10\n---\n\n# Beta\n\n## Milestones\n- [ ] Grant report — hard: 2027-03-01\n- [ ] Old symposium — hard: 2026-04-15\n- [ ] Polish — target: 2026-03-01\n- [x] Kickoff — hard: 2026-02-01\n\n## Next Actions\n";
+    let (vault, _store) = vault_with_seeded_store(&[
+        ("projects/_parked/beta.md", parked),
+        (
+            "projects/alpha.md",
+            &project_with_hard_milestone("Alpha", "active", "Alpha deadline", "2026-04-01"),
+        ),
+        (
+            "projects/_done/2026/gamma.md",
+            &project_with_hard_milestone("Gamma", "completed", "Gamma deadline", "2026-04-02"),
+        ),
+        (
+            "projects/_done/2026/delta.md",
+            &project_with_hard_milestone("Delta", "dropped", "Delta deadline", "2026-04-03"),
+        ),
+        (
+            "actions/shelved-draft.md",
+            &action_note_for("beta", "Shelved draft", "2026-03-20"),
+        ),
+        (
+            "actions/next-chapter.md",
+            &action_note_for("beta", "Next chapter", "2026-09-01"),
+        ),
+        (
+            "actions/alpha-work.md",
+            &action_note_for("alpha", "Alpha work", "2026-03-21"),
+        ),
+        (
+            "actions/gamma-leftover.md",
+            &action_note_for("gamma", "Gamma leftover", "2026-03-22"),
+        ),
+    ]);
+
+    let got = vault.parked_live_dates(ymd(2026, 5, 26)).unwrap();
+    let summary: Vec<(NaiveDate, &str, &CommitmentSource, bool)> = got
+        .iter()
+        .map(|c| (c.date, c.title.as_str(), &c.source, c.is_overdue))
+        .collect();
+    let milestone = CommitmentSource::ProjectMilestone("beta".to_owned());
+    let action = CommitmentSource::ActionNote("beta".to_owned());
+    assert_eq!(
+        summary,
+        vec![
+            (ymd(2026, 3, 20), "Shelved draft", &action, true),
+            (ymd(2026, 4, 15), "Old symposium", &milestone, true),
+            (ymd(2026, 9, 1), "Next chapter", &action, false),
+            (ymd(2027, 3, 1), "Grant report", &milestone, false),
+        ],
+    );
+}
+
+#[test]
 fn commitments_keeps_standalone_commitment_of_closed_project() {
     // A commitment is a promise to someone else: closing the project it
     // came from does not retire it, so the register keeps it.
