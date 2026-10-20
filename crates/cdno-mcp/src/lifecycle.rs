@@ -89,7 +89,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Activate a parked or closed project: move it back to `projects/` from `projects/_parked/` or `projects/_done/<year>/` and flip its status to active; a closed project also has its `closed:` date cleared, so it can be closed again later. Logs `project [[slug]] activated`. This is where the active-project cap (`slots.cap` on `get_orientation` and `list_projects`, default 5) is checked, and only for a project that will count: one that will count needs a free slot. At the cap the call is refused with `project_cap_reached`, whose `active_projects` lists the projects that count, to choose from. Offer to park, complete or drop one of them, or to leave this one parked, where it already takes actions and milestones; nothing else makes room."
+        description = "Activate a parked or closed project: move it back to `projects/` from `projects/_parked/` or `projects/_done/<year>/` and flip its status to active; a closed project also has its `closed:` date cleared, so it can be closed again later. Logs `project [[slug]] activated`. This is where the active-project cap (`slots.cap` on `get_orientation` and `list_projects`, default 5) is checked, and only a project that will count needs a free slot. At the cap the call is refused with `project_cap_reached`, whose `active_projects` lists the projects that count, to choose from. Offer to park, complete or drop one of them, or to leave this one parked, where it already takes actions and milestones; nothing else makes room."
     )]
     pub async fn activate_project(
         &self,
