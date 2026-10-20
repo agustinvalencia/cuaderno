@@ -701,6 +701,49 @@ fn add_on_a_parked_project_succeeds() {
 }
 
 #[test]
+fn add_on_a_parked_project_reports_the_parked_map() {
+    // Both success lines name the map where it is: the plain bullet's
+    // path comes from the domain, and `--note` names the map beside the
+    // new note, so neither may say `projects/<slug>.md` for a parked map.
+    let dir = vault();
+    create_project(
+        dir.path(),
+        moment(2026, 5, 2, 9, 0),
+        "Shelved",
+        Context::Work,
+    );
+    park(dir.path(), moment(2026, 5, 2, 9, 30), "shelved");
+
+    for (title, note) in [("Reread the reviews", false), ("Sketch the rebuttal", true)] {
+        let mut cmd = cdno_in(dir.path());
+        cmd.args([
+            "--no-interactive",
+            "action",
+            "add",
+            "--project",
+            "shelved",
+            "--title",
+            title,
+            "--energy",
+            "light",
+        ]);
+        if note {
+            cmd.arg("--note");
+        }
+        let out = cmd.env("NO_COLOR", "1").assert().success();
+        let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+        assert!(
+            stdout.contains("Action added to projects/_parked/shelved.md"),
+            "names the parked map (note: {note}):\n{stdout}"
+        );
+        assert!(
+            !stdout.contains("projects/shelved.md"),
+            "not the active path (note: {note}):\n{stdout}"
+        );
+    }
+}
+
+#[test]
 fn list_on_a_parked_project_names_the_parked_map() {
     // The header names the map where it is: a parked map lives under
     // `projects/_parked/`, so `projects/<slug>.md` would point nowhere.

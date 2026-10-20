@@ -387,7 +387,10 @@ fn add(
         crate::output::emit_write_result(
             json,
             &path.to_string(),
-            &format!("Action added to projects/{project}.md with note {path}"),
+            &format!(
+                "Action added to {} with note {path}",
+                map_path(vault, &project)?
+            ),
         )?;
     } else {
         let path = vault
