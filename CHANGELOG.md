@@ -11,6 +11,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - `cdno project hand-off --slug … --to …` and `cdno project take-back --slug …`;
   `project list` and `show` print the holder, and `cdno orient` suggests from projects that count
   (RFC 0006 §8.2).
+- The weekly context lists each active project with `held_by`, `counts`,
+  `waiting_on_empty`, `changed_this_week` and, for a handed-off one, the days this week with work
+  started on it, as evidence for the review; the monthly context's parked and stuck projects carry
+  `held_by`, `counts` and `waiting_on_empty`, and so do `get_orientation`'s projects, which share
+  the summary shape (RFC 0006 §8.5).
 - `Vault::hand_off` records whose move a project is, logging `holder on [[slug]]`
   with `was:`/`now:` lines; taking back clears the name, is cap-checked only on an active map and
   never activates a parked one; a hand-off is refused while an action on that project is in focus
@@ -22,6 +27,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   vault's `[projects] holder_sentinels` list in `.cuaderno/config.toml`, whose default is the
   words above plus `(mine)` and the other placeholders; set it to `[]` to accept any name (a
   blank value names nobody under any list).
+- `cdno lint` warns when the projects that count exceed the cap, reports a `held_by` that is not a
+  plain name as an error, and warns on one that names you or nobody (RFC 0006 §8.2).
 - A one-time read-through of parked deadlines: `cdno migrate --dry-run` lists the hard dates on
   parked maps that are back in the register, overdue first, and `cdno lint` warns on the overdue
   ones until the vault records RLM 1.1 (RFC 0006 §7.1, §8.1).
