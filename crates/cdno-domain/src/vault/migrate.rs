@@ -187,9 +187,10 @@ pub struct MigrationReport {
     pub steps: Vec<MigrationStep>,
     /// The dates a minor version asks to be read through once: every hard
     /// date on a parked map, overdue first ([`Vault::parked_live_dates`],
-    /// RFC 0006 §8.1, plan T12). Filled for a run that stamps a vault whose
-    /// effective version is below [`READ_THROUGH_BELOW`]; empty otherwise,
-    /// since a vault at RLM 1.1 or later has had its read-through.
+    /// RFC 0006 §8.1, plan T12). Filled whenever the vault's effective
+    /// version is below [`READ_THROUGH_BELOW`], whether or not the run
+    /// stamps; empty otherwise, since a vault at RLM 1.1 or later has had
+    /// its read-through.
     pub read_through: Vec<CommitmentEntry>,
 }
 
@@ -353,15 +354,18 @@ impl Vault {
             steps: Vec::new(),
             read_through: Vec::new(),
         };
+        // The read-through depends on the vault's version alone, not on
+        // whether this run stamps: a vault stamped at a binary below 1.1 has
+        // nothing to migrate and still has its parked dates to read through.
+        if from.unwrap_or(UNSTAMPED_READS_AS) < READ_THROUGH_BELOW {
+            report.read_through = self.parked_live_dates(today)?;
+        }
         if !report.stamps() {
             return Ok(Prepared {
                 report,
                 config,
                 writes: Vec::new(),
             });
-        }
-        if from.unwrap_or(UNSTAMPED_READS_AS) < READ_THROUGH_BELOW {
-            report.read_through = self.parked_live_dates(today)?;
         }
 
         // The steps above the vault's major, up to the binary's, in order.

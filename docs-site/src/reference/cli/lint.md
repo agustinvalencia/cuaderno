@@ -54,9 +54,9 @@ customised template it cannot read (for instance one that is not UTF-8) as an er
 edits. Lint cannot tell a new key from one you removed on purpose, so a built-in key you deleted from
 your template is reported too.
 
-While the vault records a method version below RLM 1.1 (an unstamped vault reads as 1.0), it warns
-once per **overdue** hard date on a parked project map, which the commitments register keeps since
-RLM 1.1: the one-time read-through of parked deadlines. The row sits on the map for a hard
+While the vault records a method version below RLM 1.1 (an unstamped vault reads as 1.0), it gives
+one warning per **overdue** hard date on a parked project map, on every run, since the commitments
+register keeps those dates as of RLM 1.1: the one-time read-through of parked deadlines. The row sits on the map for a hard
 milestone and on the action note for a `due:`, and names the fix:
 
 ```text

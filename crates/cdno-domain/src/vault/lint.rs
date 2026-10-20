@@ -25,6 +25,7 @@ use super::context::{
     RECORD_TIME_FORMATS, RecordTime, parse_focus_marker, parse_log_entry_heads,
     parse_promotion_marker, record_time, records_of, str_field,
 };
+use super::method_status::MethodStatus;
 use super::orient::{ACTIVE_HABITS_SECTION, parse_habit_line};
 use super::projects::actions::{
     LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_ACTION_PAUSED_PREFIX,
@@ -335,8 +336,22 @@ impl Vault {
         issues.extend(self.tracking_record_order_issues()?);
         issues.extend(self.focus_marker_issues()?);
         issues.extend(self.stale_template_issues()?);
-        issues.extend(self.method_version_issues()?);
-        issues.extend(self.read_through_issues(today)?);
+        // The method version is read once, for both rules that consult it.
+        // One that cannot be read is an `Error`, and the read-through rule
+        // then has no version to compare and adds nothing.
+        match self.method_status() {
+            Ok(status) => {
+                issues.extend(method_version_issues(status)?);
+                issues.extend(self.read_through_issues(today, status)?);
+            }
+            Err(err @ DomainError::Config(ConfigError::MethodVersion { .. })) => {
+                issues.push(LintIssue::error(
+                    VaultPath::new(CONFIG_FILE)?,
+                    err.to_string(),
+                ));
+            }
+            Err(err) => return Err(err),
+        }
 
         Ok(LintReport { issues })
     }
@@ -1259,42 +1274,31 @@ impl Vault {
     }
 }
 
-impl Vault {
-    /// At most one row on `.cuaderno/config.toml`, from
-    /// [`Vault::method_status`], which re-reads the file: a newer minor is a
-    /// `Warning` (writes proceed); a newer or an older major is an `Error`
-    /// worded as the write gate's refusal, since writes are refused. A
-    /// version that cannot be read (a file that is no longer TOML, a
-    /// malformed value) is an `Error` carrying the config error's message,
-    /// which names the key, and never aborts the pass: a long-running
-    /// server's config can be edited under it.
-    fn method_version_issues(&self) -> Result<Vec<LintIssue>, DomainError> {
-        let path = VaultPath::new(CONFIG_FILE)?;
-        let status = match self.method_status() {
-            Ok(status) => status,
-            Err(err @ DomainError::Config(ConfigError::MethodVersion { .. })) => {
-                return Ok(vec![LintIssue::error(path, err.to_string())]);
+/// At most one row on `.cuaderno/config.toml`, from the status
+/// [`Vault::method_status`] read off the file for this pass: a newer minor
+/// is a `Warning` (writes proceed); a newer or an older major is an
+/// `Error` worded as the write gate's refusal, since writes are refused.
+/// A version that cannot be read is reported by `lint_all_notes` itself,
+/// as an `Error` that never aborts the pass.
+fn method_version_issues(status: MethodStatus) -> Result<Vec<LintIssue>, DomainError> {
+    let path = VaultPath::new(CONFIG_FILE)?;
+    let (vault, binary) = (status.vault, status.binary);
+    Ok(match status.skew {
+        MethodSkew::NewerMinor => {
+            vec![LintIssue::warning(path, newer_minor_message(vault, binary))]
+        }
+        MethodSkew::NewerMajor => vec![LintIssue::error(
+            path,
+            DomainError::MethodVersionAhead {
+                vault: vault.unwrap_or(UNSTAMPED_READS_AS),
+                binary,
             }
-            Err(err) => return Err(err),
-        };
-        let (vault, binary) = (status.vault, status.binary);
-        Ok(match status.skew {
-            MethodSkew::NewerMinor => {
-                vec![LintIssue::warning(path, newer_minor_message(vault, binary))]
-            }
-            MethodSkew::NewerMajor => vec![LintIssue::error(
-                path,
-                DomainError::MethodVersionAhead {
-                    vault: vault.unwrap_or(UNSTAMPED_READS_AS),
-                    binary,
-                }
-                .to_string(),
-            )],
-            MethodSkew::OlderMajor => vec![LintIssue::error(
-                path,
-                DomainError::VaultNeedsMigration { vault, binary }.to_string(),
-            )],
-            MethodSkew::Equal | MethodSkew::OlderMinor => Vec::new(),
-        })
-    }
+            .to_string(),
+        )],
+        MethodSkew::OlderMajor => vec![LintIssue::error(
+            path,
+            DomainError::VaultNeedsMigration { vault, binary }.to_string(),
+        )],
+        MethodSkew::Equal | MethodSkew::OlderMinor => Vec::new(),
+    })
 }

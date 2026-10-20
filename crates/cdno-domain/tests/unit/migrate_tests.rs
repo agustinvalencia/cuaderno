@@ -679,3 +679,33 @@ fn a_newer_vault_is_refused() {
         assert_eq!(snapshot(&*store), before, "a newer vault was written to");
     }
 }
+
+#[test]
+fn a_vault_stamped_below_1_1_carries_the_read_through_with_nothing_to_migrate() {
+    // A vault stamped at a 1.0 binary's version has nothing to migrate, but
+    // it is still below RLM 1.1, so its parked hard dates are read through
+    // (plan T12): the no-op report carries them. A vault stamped 1.1, at a
+    // 1.1 binary, has had its read-through and carries none.
+    let parked = "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-01-05\ncore_question: null\nclosed: null\n---\n\n# Beta\n\n## Milestones\n- [ ] Grant report — hard: 2026-03-01\n\n## Next Actions\n";
+    for (stamp, expected) in [(version(1, 0), 1), (version(1, 1), 0)] {
+        let store = seeded(&[
+            (CONFIG, &stamped_config(stamp)),
+            ("projects/_parked/beta.md", parked),
+        ]);
+        let (vault, _index) = open(store.clone());
+
+        let report = vault.plan_migration(at().date(), stamp, &[]).unwrap();
+
+        assert!(!report.stamps(), "stamped {stamp}: nothing to migrate");
+        let titles: Vec<(&str, bool)> = report
+            .read_through
+            .iter()
+            .map(|entry| (entry.title.as_str(), entry.is_overdue))
+            .collect();
+        assert_eq!(
+            titles,
+            vec![("Grant report", true)][..expected].to_vec(),
+            "stamped {stamp}"
+        );
+    }
+}

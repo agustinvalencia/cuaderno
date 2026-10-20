@@ -22,11 +22,11 @@
 use chrono::NaiveDate;
 
 use cdno_core::config::MethodVersion;
-use cdno_core::error::ConfigError;
 use cdno_core::path::VaultPath;
 
 use super::Vault;
 use super::commitments::{CommitmentEntry, CommitmentSource, ProjectDateCache};
+use super::method_status::MethodStatus;
 use crate::error::DomainError;
 use crate::frontmatter::ProjectStatus;
 use crate::lint::LintIssue;
@@ -79,19 +79,15 @@ impl Vault {
     }
 
     /// Lint's read-through rows: one `Warning` per overdue date on a parked
-    /// map, while the vault's effective method version is below
-    /// [`READ_THROUGH_BELOW`]. A version that cannot be read gives no rows
-    /// here: the method-version rule reports it as an error already.
+    /// map, while the vault's effective method version in `status` (the
+    /// pass's one read of [`Vault::method_status`]) is below
+    /// [`READ_THROUGH_BELOW`].
     pub(in crate::vault) fn read_through_issues(
         &self,
         today: NaiveDate,
+        status: MethodStatus,
     ) -> Result<Vec<LintIssue>, DomainError> {
-        let vault = match self.method_status() {
-            Ok(status) => status.vault,
-            Err(DomainError::Config(ConfigError::MethodVersion { .. })) => return Ok(Vec::new()),
-            Err(err) => return Err(err),
-        };
-        if vault.unwrap_or(UNSTAMPED_READS_AS) >= READ_THROUGH_BELOW {
+        if status.vault.unwrap_or(UNSTAMPED_READS_AS) >= READ_THROUGH_BELOW {
             return Ok(Vec::new());
         }
         Ok(self

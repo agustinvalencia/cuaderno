@@ -7,7 +7,11 @@ use chrono::NaiveDate;
 use tempfile::tempdir;
 
 /// A day before every date the fixtures write, so the parked read-through
-/// rule (overdue dates on parked maps) stays out of these tests.
+/// rule (overdue dates on parked maps) stays out of these tests. These run
+/// `lint::run` in process with this fixed date; the tests that run the real
+/// `cdno lint` binary (`cli.rs`, `init.rs`, `migrate.rs`, `note.rs`) use the
+/// real clock, so their fixtures must not put a past hard date on a parked
+/// map unless they mean to see the read-through row.
 fn lint_day() -> NaiveDate {
     NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()
 }

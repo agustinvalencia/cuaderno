@@ -67,10 +67,15 @@ fn to_json(report: &MigrationReport, dry_run: bool) -> serde_json::Value {
 
 /// The human-readable report.
 fn render(report: &MigrationReport, dry_run: bool, at: NaiveDateTime) -> String {
-    if !report.stamps() {
-        return format!("vault is at RLM {}; nothing to do\n", report.to);
-    }
     let mut out = String::new();
+    if !report.stamps() {
+        out.push_str(&format!("vault is at RLM {}; nothing to do\n", report.to));
+        // A vault stamped below RLM 1.1 still has its read-through.
+        if !report.read_through.is_empty() {
+            render_read_through(report, &mut out);
+        }
+        return out;
+    }
     if dry_run {
         out.push_str("Dry run: nothing written.\n");
     } else {
@@ -123,22 +128,28 @@ fn render(report: &MigrationReport, dry_run: bool, at: NaiveDateTime) -> String 
     if report.read_through.is_empty() {
         out.push_str("  read-through: none\n");
     } else {
-        out.push_str(
-            "  read-through (hard dates on parked maps, overdue first; drop or re-date each):\n",
-        );
-        for entry in &report.read_through {
-            let (kind, map) = match &entry.source {
-                CommitmentSource::ProjectMilestone(slug) => ("hard milestone", slug),
-                CommitmentSource::ActionNote(slug) => ("action due", slug),
-                CommitmentSource::Stewardship(slug)
-                | CommitmentSource::StandaloneCommitment(slug) => ("date", slug),
-            };
-            let overdue = if entry.is_overdue { ", overdue" } else { "" };
-            out.push_str(&format!(
-                "    {}  {}  ({kind} on [[{map}]]{overdue})\n",
-                entry.date, entry.title
-            ));
-        }
+        render_read_through(report, &mut out);
     }
     out
+}
+
+/// The read-through section: every hard date on a parked map, overdue first.
+fn render_read_through(report: &MigrationReport, out: &mut String) {
+    out.push_str(
+        "  read-through (hard dates on parked maps, overdue first; drop or re-date each):\n",
+    );
+    for entry in &report.read_through {
+        let (kind, map) = match &entry.source {
+            CommitmentSource::ProjectMilestone(slug) => ("hard milestone", slug),
+            CommitmentSource::ActionNote(slug) => ("action due", slug),
+            CommitmentSource::Stewardship(slug) | CommitmentSource::StandaloneCommitment(slug) => {
+                ("date", slug)
+            }
+        };
+        let overdue = if entry.is_overdue { ", overdue" } else { "" };
+        out.push_str(&format!(
+            "    {}  {}  ({kind} on [[{map}]]{overdue})\n",
+            entry.date, entry.title
+        ));
+    }
 }
