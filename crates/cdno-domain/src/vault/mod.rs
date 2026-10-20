@@ -121,7 +121,7 @@ pub use migrate::{
     VAULT_MIGRATED_PREFIX,
 };
 pub use monthly::{MonthlyNoteView, MonthlySection};
-pub use monthly_context::MonthlyContext;
+pub use monthly_context::{MonthlyContext, ParkedProject};
 pub use normalise::NormaliseReport;
 pub use note_ref::{Miss, NoteRef, PeriodRef, RefResolution, RelativeDay};
 pub use notes::NoteView;
@@ -147,7 +147,7 @@ pub use templating::{
 };
 pub use tracking::TrackingEntryDraft;
 pub use weekly::{WeeklyNoteView, WeeklySection};
-pub use weekly_context::WeeklyContext;
+pub use weekly_context::{ReviewProject, WeeklyContext};
 pub use write_outcome::WriteOutcome;
 
 // Re-exported for the targeted test in `tests/unit/projects_tests.rs`

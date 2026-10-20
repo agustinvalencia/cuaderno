@@ -8,6 +8,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- The weekly context lists each active project with `held_by`, `counts`,
+  `waiting_on_empty`, `changed_this_week` and, for a handed-off one, the days this week with work
+  started on it, as evidence for the review; the monthly context's parked and stuck projects carry
+  `held_by`, `counts` and `waiting_on_empty` (RFC 0006 §8.5).
 - Project maps may carry `held_by:`, the name of whoever else is moving the map. It
   is read leniently: a value that is not a plain name, or that names you (`me`, `I`, `myself`) or
   nobody (`tbd`, `someone`, …), reads as absent, so the map counts and nothing fails; the key is

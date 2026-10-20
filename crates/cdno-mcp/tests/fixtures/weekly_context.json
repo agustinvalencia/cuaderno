@@ -72,6 +72,17 @@
       "time": "09:00:00"
     }
   ],
+  "projects": [
+    {
+      "changed_this_week": true,
+      "core_question": null,
+      "counts": true,
+      "focus_days_while_held": 0,
+      "held_by": null,
+      "slug": "live",
+      "waiting_on_empty": true
+    }
+  ],
   "state_changes": [
     {
       "date": "{today}",

@@ -2532,6 +2532,8 @@ async fn get_monthly_context_includes_parked_and_closed_projects() {
 // date in the payload is normalised to an offset from today (`week_of`,
 // which depends on the weekday, to `{monday}`; a `/YYYY/` path folder to
 // `/{year}/`). Set `CDNO_BLESS_FIXTURES=1` to rewrite the captures.
+// Re-blessed once since (RFC 0006 T22) for added keys only: the weekly
+// `projects` slice and the parked entries' holder fields.
 
 /// A vault touching every slice of both review contexts: logs and a
 /// state change today, an inline-bullet completion today, a note-backed
@@ -2716,4 +2718,61 @@ async fn get_monthly_context_matches_the_capture_from_main() {
             .expect("get_monthly_context"),
     );
     assert_matches_capture(value, "monthly_context.json");
+}
+
+#[tokio::test]
+async fn weekly_context_carries_the_review_fields() {
+    // A handed-off map with two starts today (one day) and the person's
+    // own map with a start today: only the held one reports days.
+    let date = today().format("%Y-%m-%d").to_string();
+    let harbour = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\n\
+                   held_by: \"the harbour office\"\n---\n\n# Harbour\n\n## Current State\nN/A.\n\n\
+                   ## Next Actions\n\n## Waiting On\n- Berth survey from the harbour office\n";
+    let quay = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\n\
+                core_question: \"[[questions/research/tides]]\"\n---\n\n# Quay\n\n\
+                ## Current State\nN/A.\n\n## Next Actions\n\n## Waiting On\n(nothing yet)\n";
+    let daily = format!(
+        "---\ndate: {date}\ntype: daily\n---\n\n# {date}\n\n## Logs\n\
+         - **09:00**: started [[harbour]] \u{2014} Read the survey (light)\n\
+         - **11:00**: started [[harbour]] \u{2014} Check the berths (medium)\n\
+         - **14:00**: started [[quay]] \u{2014} Draft the plan (deep)\n"
+    );
+    let daily_path = cdno_core::paths::daily_note_relpath(today());
+    let server = server_with_notes(&[
+        ("projects/harbour.md", harbour),
+        ("projects/quay.md", quay),
+        (&daily_path, &daily),
+    ]);
+
+    let value = decode_json(
+        &server
+            .get_weekly_context(Parameters(EmptyInput::default()))
+            .await
+            .expect("get_weekly_context"),
+    );
+
+    assert_eq!(
+        value["projects"],
+        serde_json::json!([
+            {
+                "slug": "harbour",
+                "held_by": "the harbour office",
+                "counts": false,
+                "waiting_on_empty": false,
+                "core_question": null,
+                "changed_this_week": true,
+                "focus_days_while_held": 1,
+            },
+            {
+                "slug": "quay",
+                "held_by": null,
+                "counts": true,
+                "waiting_on_empty": true,
+                "core_question": "[[questions/research/tides]]",
+                "changed_this_week": true,
+                "focus_days_while_held": 0,
+            },
+        ]),
+        "{value}"
+    );
 }

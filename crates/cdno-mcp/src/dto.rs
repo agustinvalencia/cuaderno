@@ -52,6 +52,15 @@ pub struct ProjectSummaryDto {
     /// The project's most recent pause still open for resuming, with its
     /// `next:` hint and `reason:` if given. Null when nothing is paused.
     pub last_paused: Option<LastPauseDto>,
+    /// Who else is moving the map (frontmatter `held_by:`), as written;
+    /// null when absent or unreadable.
+    pub held_by: Option<String>,
+    /// Whether the map holds one of the active-project slots: active and
+    /// held by no one else. Branch on this, never on the holder's name.
+    pub counts: bool,
+    /// Whether `## Waiting On` says nothing (missing, empty, or only
+    /// `(nothing yet)`).
+    pub waiting_on_empty: bool,
 }
 
 impl From<ProjectSummary> for ProjectSummaryDto {
@@ -62,6 +71,9 @@ impl From<ProjectSummary> for ProjectSummaryDto {
             state_snippet: p.state_snippet,
             top_action: p.top_action.map(Into::into),
             last_paused: p.last_paused.map(Into::into),
+            held_by: p.held_by,
+            counts: p.counts,
+            waiting_on_empty: p.waiting_on_empty,
         }
     }
 }
@@ -822,6 +834,46 @@ pub struct WeeklyContextDto {
     /// figure). Overdue rows from the standing 30-day look-back
     /// still surface — `is_overdue` flags them.
     pub commitments: Vec<CommitmentEntryDto>,
+    /// Every active project, handed-off ones included, sorted by slug
+    /// (RFC 0006 §8.5). Parked projects are read monthly.
+    pub projects: Vec<ReviewProjectDto>,
+}
+
+/// One active project in `get_weekly_context.projects`: what the review
+/// needs to ask the question the person's relationship to the map implies.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ReviewProjectDto {
+    pub slug: String,
+    /// Who else is moving the map (frontmatter `held_by:`), as written;
+    /// null when absent or unreadable.
+    pub held_by: Option<String>,
+    /// Whether the map holds one of the active-project slots.
+    pub counts: bool,
+    /// Whether `## Waiting On` says nothing.
+    pub waiting_on_empty: bool,
+    /// The frontmatter `core_question:` wikilink, or null.
+    pub core_question: Option<String>,
+    /// Whether the map file was modified this ISO week (an over-report
+    /// when a tool touches it without changing it).
+    pub changed_this_week: bool,
+    /// For a handed-off map, the number of distinct days this week with a
+    /// focus started or resumed on it; 0 for any other map. Evidence for
+    /// the person to weigh: no log line records who did the work.
+    pub focus_days_while_held: usize,
+}
+
+impl From<cdno_domain::ReviewProject> for ReviewProjectDto {
+    fn from(p: cdno_domain::ReviewProject) -> Self {
+        Self {
+            slug: p.slug,
+            held_by: p.held_by,
+            counts: p.counts,
+            waiting_on_empty: p.waiting_on_empty,
+            core_question: p.core_question,
+            changed_this_week: p.changed_this_week,
+            focus_days_while_held: p.focus_days_while_held,
+        }
+    }
 }
 
 impl From<cdno_domain::WeeklyContext> for WeeklyContextDto {
@@ -841,6 +893,7 @@ impl From<cdno_domain::WeeklyContext> for WeeklyContextDto {
             closed_projects: ctx.closed_projects.into_iter().map(Into::into).collect(),
             state_changes: ctx.state_changes.into_iter().map(Into::into).collect(),
             commitments: ctx.commitments.into_iter().map(Into::into).collect(),
+            projects: ctx.projects.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -885,8 +938,10 @@ pub struct MonthlyContextDto {
     /// Projects completed or dropped in the past 30 days, by closing
     /// date.
     pub closed_projects: Vec<ClosedProjectDto>,
-    /// Every parked project: the shelf the monthly review decides on.
-    pub parked_projects: Vec<ProjectListEntryDto>,
+    /// Every parked project: the shelf the monthly review decides on,
+    /// each with its holder fields so "someday" reads apart from
+    /// "someone has it".
+    pub parked_projects: Vec<ParkedProjectDto>,
     /// Every question with `status: active`, sorted by (domain, slug).
     pub active_questions: Vec<QuestionSummaryDto>,
     /// Every portfolio with its evidence count and staleness.
@@ -901,6 +956,34 @@ pub struct MonthlyContextDto {
     pub commitments: Vec<CommitmentEntryDto>,
     /// Active-project slots against the cap.
     pub slots: ProjectSlotsDto,
+}
+
+/// One parked project in `get_monthly_context.parked_projects`: the
+/// `list_projects` row (slug and frontmatter) plus the holder fields.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ParkedProjectDto {
+    pub slug: String,
+    pub frontmatter: ProjectFrontmatterDto,
+    /// Who else has the map (frontmatter `held_by:`), as written; null
+    /// when absent or unreadable.
+    pub held_by: Option<String>,
+    /// Whether the map holds a slot; false for a parked map.
+    pub counts: bool,
+    /// Whether `## Waiting On` says nothing.
+    pub waiting_on_empty: bool,
+}
+
+impl From<cdno_domain::ParkedProject> for ParkedProjectDto {
+    fn from(p: cdno_domain::ParkedProject) -> Self {
+        let ProjectListEntryDto { slug, frontmatter } = (p.path, p.frontmatter).into();
+        Self {
+            slug,
+            frontmatter,
+            held_by: p.held_by,
+            counts: p.counts,
+            waiting_on_empty: p.waiting_on_empty,
+        }
+    }
 }
 
 impl From<cdno_domain::MonthlyContext> for MonthlyContextDto {
