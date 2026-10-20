@@ -3430,6 +3430,10 @@ async fn start_action_on_a_parked_project_is_project_not_active() {
     assert_eq!(rejection["code"], "project_not_active");
     assert_eq!(rejection["details"]["slug"], "glacier-survey");
     assert_eq!(rejection["details"]["status"], "parked");
+    // O7: the message an agent reads on a parked map must not send it round
+    // the activate-first loop; the focus verb is what was refused.
+    let message = rejection["message"].as_str().expect("message");
+    assert!(!message.contains("activate"), "{message}");
 }
 
 /// A pause on a map parked since is "picking up work you had set down"
@@ -3460,6 +3464,8 @@ async fn resume_action_on_a_since_parked_project_is_project_not_active() {
     assert_eq!(rejection["code"], "project_not_active");
     assert_eq!(rejection["details"]["slug"], "surrogate-model");
     assert_eq!(rejection["details"]["status"], "parked");
+    let message = rejection["message"].as_str().expect("message");
+    assert!(!message.contains("activate"), "{message}");
     assert_eq!(todays_daily(&store), before, "nothing is logged");
 }
 

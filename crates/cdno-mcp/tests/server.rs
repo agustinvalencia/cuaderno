@@ -757,15 +757,7 @@ fn cap_clause_is_pinned_on_the_four_project_descriptions() {
     ] {
         let desc = description_of(name);
         let lower = desc.to_lowercase();
-        for banned in [
-            "hand off",
-            "hand-off",
-            "handing off",
-            "handed off",
-            "hand_off",
-            "holder",
-            "held_by",
-        ] {
+        for banned in HAND_OFF_WORDS {
             assert!(
                 !lower.contains(banned),
                 "tool '{name}' must not mention handing off ({banned:?}): {desc}"
@@ -798,12 +790,15 @@ fn cap_clause_is_pinned_on_the_four_project_descriptions() {
 }
 
 /// Handing off is stage 3 (RFC 0006 §8.2): no T14 text may mention it.
-const HAND_OFF_WORDS: [&str; 7] = [
+const HAND_OFF_WORDS: [&str; 10] = [
     "hand off",
     "hand-off",
-    "handing off",
-    "handed off",
+    "handoff",
     "hand_off",
+    "hand it off",
+    "hand over",
+    "handed",
+    "handing",
     "holder",
     "held_by",
 ];
@@ -909,4 +904,42 @@ fn no_switched_tool_description_says_an_active_project() {
         "{resume}"
     );
     assert!(resume.chars().count() <= CLIENT_CUT, "{resume}");
+}
+
+/// RFC 0006 §2 O7: no text an agent reads before an ordinary write on a
+/// parked map may send it to activate first. `park_project` names
+/// activate_project as the way back, and `add_action` says "never activate
+/// it first"; both are the rule, not the loop, so only the advice is barred.
+#[test]
+fn no_project_description_advises_activating_first() {
+    for name in [
+        "add_action",
+        "complete_action",
+        "drop_action",
+        "promote_action",
+        "update_project_state",
+        "set_core_question",
+        "add_milestone",
+        "complete_milestone",
+        "drop_milestone",
+        "add_waiting_on",
+        "resolve_waiting_on",
+        "create_project",
+        "park_project",
+        "resume_action",
+    ] {
+        let desc = description_of(name).replace("never activate it first", "");
+        let lower = desc.to_lowercase();
+        for advice in [
+            "activate_project first",
+            "activate it first",
+            "activate first",
+            "takes actions once activate_project",
+        ] {
+            assert!(
+                !lower.contains(advice),
+                "tool '{name}' must not advise activating first ({advice:?}): {desc}"
+            );
+        }
+    }
 }

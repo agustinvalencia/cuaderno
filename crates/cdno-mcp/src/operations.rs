@@ -115,7 +115,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Complete an open milestone on an open (active or parked) project: ticks the bullet in `## Milestones`. `query` is a case-insensitive substring of the milestone title (the `-- <keyword>: <date>` suffix is ignored); already-completed bullets are skipped. Use this ONLY when the milestone was actually reached. If it was superseded, mis-typed or is not going to happen, use `drop_milestone` instead -- ticking it writes `milestone done on ...` into the daily log, so the vault would assert a milestone nobody met."
+        description = "Complete a milestone on an open (active or parked) project: ticks the bullet in `## Milestones`. `query` is a case-insensitive substring of the milestone title (the `-- <keyword>: <date>` suffix is ignored); already-completed bullets are skipped. Use this ONLY when the milestone was actually reached. If it was superseded, mis-typed or is not going to happen, use `drop_milestone` instead -- ticking it writes `milestone done on ...` into the daily log, so the vault would assert a milestone nobody met."
     )]
     pub async fn complete_milestone(
         &self,
@@ -439,7 +439,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Append a next-action bullet to an open project, active or parked. This is the default way to capture an action — a bullet on the project map, not a note per task. Three next actions per project is a ceiling rather than a backlog, so prefer replacing a stale bullet to stacking a fourth. With `with_note: true`, also creates an action note (design §5.11) and rewrites the bullet to wikilink it. `energy` is one of `deep`, `medium`, `light`. Only a completed or dropped project is refused, with `project_not_active`. A parked map takes actions as it is, so never activate it first to add one: the active-project cap is checked only by activate_project (`project_cap_reached` lists the active projects to choose from), and only starting work (start_action and its kin) needs an active map."
+        description = "Append a next-action bullet to an open project, active or parked. This is the default way to capture an action — a bullet on the project map, not a note per task. Three next actions per project is a ceiling rather than a backlog, so prefer replacing a stale bullet to stacking a fourth. With `with_note: true`, also creates an action note (design §5.11) and rewrites the bullet to wikilink it. `energy` is one of `deep`, `medium`, `light`. Only a completed or dropped project is refused, with `project_not_active`. A parked map takes actions as it is, so never activate it first to add one: the active-project cap is checked only by activate_project (`project_cap_reached` lists the active projects to choose from), and only starting or picking up work, and parking, need an active map."
     )]
     pub async fn add_action(
         &self,
