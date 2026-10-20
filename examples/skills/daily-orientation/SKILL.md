@@ -3,7 +3,7 @@ name: daily-orientation
 description: Start the day with a low-friction, calendar-aware orientation. Surfaces commitments due soon, suggests ONE project to start with, reality-checks the day against your actual free time, and persists a standup, intention, and agenda to the daily note. ADHD-friendly — minimal overwhelm, maximum momentum. Use when the user says good morning, wants to start their day, asks what's on the agenda, or says "orient me", "standup", or "daily standup".
 metadata:
   author: cuaderno
-  version: "1.2"
+  version: "1.3"
 compatibility: Requires the cuaderno MCP server (cdno-mcp) with a vault configured. Calendar awareness additionally uses the apple-calendar MCP server; the skill degrades gracefully without it.
 ---
 
@@ -24,6 +24,9 @@ What the cuaderno MCP can and can't do here, so steps stay bound to real tools:
 - **History is append-only.** `## Logs` only grows, via `append_to_log(text)` (single timestamped lines). Never try to write `Logs`/`Notes` through `upsert_daily_section`.
 - **Focus is read from the log, never stored.** `get_orientation.focus` is the same value `current_focus` returns: `{ project, action, started, date, carried, origin }` or `null`. `carried: true` means it was left open on an earlier day. It is changed only by the focus tools (`start_action`, `resume_action`, `pause_action`, `switch_action`), each on the person's word, and each writes its own log line. Never write a focus line with `append_to_log`.
 - **The server never refuses a write for being outside the focus**, and it refuses a second `start_action` while one is open (`focus_open`). On `focus_open`, don't retry: follow the refusal's `remedy` (`already_focused`: carry on, ask nothing; `resume_action` or `switch_action`: ask the person first).
+- **Suggest only from projects that count.** Each `projects[]` entry carries `counts`: true when the project is the person's own and holds one of the active slots, false when it names someone else in `held_by` (handed off). Branch on `counts`, never on the holder's name. A handed-off project is still open and still listed, but it is not a unit of the person's attention this week: never suggest it, and never ask whether it moved.
+- **The cap is read, never remembered.** `get_orientation.slots` is `{ active, counted, cap }`: `slots.counted` is the number of projects that hold a slot, `slots.cap` the vault's configured limit, `slots.active` every active project shown, handed off or not. Whenever the cap comes up, quote `slots.counted` and `slots.cap`; never write a number from memory.
+- **Several maps of one inquiry read as one undertaking.** `get_orientation.groups` lists the projects under their core question where one is set: a group with a non-null `parent` (`{ kind: "question", path }`) is one line with its member projects as its fronts; a group with a null `parent` is its single project.
 - **Calendar is a separate MCP** (`apple-calendar`). If unavailable, skip the schedule and ask once — never block.
 
 ## MCP Tools Used
@@ -33,6 +36,7 @@ What the cuaderno MCP can and can't do here, so steps stay bound to real tools:
 | `get_orientation` | cdno-mcp | Commitments due soon, active projects with their top action, lapsed stewardship habits |
 | `get_weekly_context` | cdno-mcp | Recently completed actions (for the wins line + standup) |
 | `read_daily_note` | cdno-mcp | Check for pre-planned intention/agenda before writing |
+| `read_note` | cdno-mcp | Optional: a group's question title, when the slate is shown |
 | `upsert_daily_section` | cdno-mcp | Persist the Standup / Intention / Agenda sections |
 | `resume_action` | cdno-mcp | Pick a carried focus (or, when nothing is open, a project's latest pause) up again, on the person's yes |
 | `start_action` | cdno-mcp | Start the action the person picked, when nothing is open |
@@ -40,6 +44,7 @@ What the cuaderno MCP can and can't do here, so steps stay bound to real tools:
 | `switch_action` | cdno-mcp | Move from the open focus to a different action the person named or accepted |
 | `switch_unplanned_action` | cdno-mcp | Same, for work not on the map yet |
 | `pause_action` | cdno-mcp | Set the open focus aside, on the person's yes |
+| `resolve_waiting_on` | cdno-mcp | Strike what came back from a project's Waiting On, when the person says it has |
 | `today_schedule` | apple-calendar | Today's meetings and events |
 | `find_free_slots` | apple-calendar | Available deep-work windows |
 
@@ -49,9 +54,12 @@ What the cuaderno MCP can and can't do here, so steps stay bound to real tools:
 
 Call in parallel; don't dump raw output on the user:
 
-- `get_orientation` — `{ commitments, projects, lapsed_habits, focus }`.
+- `get_orientation` — `{ commitments, projects, groups, lapsed_habits, slots, focus }`.
   - `commitments[]`: `{ date, title, source: { kind, slug }, is_overdue }`. `kind` ∈ `project_milestone | stewardship | standalone_commitment | action_note`.
   - `projects[]`: `{ slug, status, state_snippet, top_action: { text, energy } | null, last_paused: { project, action, title, at, date, next, reason } | null }`. `energy` ∈ `deep | medium | light` or absent. `last_paused` is that project's latest pause not yet picked up again; `next` is the re-entry hint it left, or null.
+  - Each project also carries `{ held_by, counts, waiting_on_empty, core_question }`. `held_by` is null unless the map names someone else; `counts` is the one to branch on (see the surface notes).
+  - `groups[]`: `{ parent: { kind, path } | null, projects: [slug] }`, in the order of the flat `projects` list.
+  - `slots`: `{ active, counted, cap }`.
   - `focus`: `{ project, action, started, date, carried, origin } | null`. `action` is the logged text with its energy suffix, e.g. `Fit baseline (deep)`.
   - `lapsed_habits[]`: `{ stewardship, detail }`.
 - `get_weekly_context` — read `completed_actions[]` (`{ slug, project, title, completed, path, source }`); keep those completed yesterday/today for the wins line + standup. `source` is `bullet` or `note`. **A bullet carries `slug: null` and `path: null`, and the bullet is the DEFAULT form of an action — so null is the common case, not the exception.** Every entry has `title` and `project`.
@@ -67,10 +75,19 @@ Brief — establish time, then the shape of the day:
 
 ```
 Good morning! It's [Day], [Date].
-[N] active projects on the go, [M] commitment(s) due soon.
+[N] projects of yours on the go, [M] commitment(s) due soon.
 ```
 
-No active projects: "Clean slate — no active projects. Want to start one?"
+`[N]` is `slots.counted`: the person's own projects. Handed-off projects are not counted here and not mentioned (see "Something came back" below).
+
+If you show the slate at all (only when asked, or when it fits in three lines), show it by `groups`, one line per group, and only the projects that count. A group with a `parent` is one line: the question, then its projects as its fronts. `parent` carries the question's `path`, not its title: name it by the title in the question note's frontmatter (`read_note(note: <the path>)`) when you have it, or else by the path's last segment read as words (`questions/research/estuary-tides` → "estuary tides").
+
+```
+→ How do tides shape the estuary? — fieldwork season, sensor rebuild
+→ Kitchen renovation
+```
+
+No projects that count: "Clean slate — nothing of yours on the go. Want to start one?"
 
 ### 3. Celebrate before problems
 
@@ -129,6 +146,8 @@ I suggest picking it up there (Recommended), or pausing it with a note on where 
 
 If the focus is deep (`action` ends `(deep)`) and they said light, lead with the pause instead: "That's a deep one and today sounds light — want to pause it with a note on where you got to, and start something lighter? Or pick it up anyway." Their call; offer, don't push.
 
+Steps b and c pick only from projects with `counts: true`. A handed-off project is never the suggestion, even when its top action fits the energy or it has a pause to pick up.
+
 **b. Nothing open, and the project you'd recommend has a `last_paused`.** (With a focus open, `resume_action(project)` is refused, so this applies only when `focus` is null.) Offer to pick that up, and quote `last_paused.next` when it is present (never invent one):
 
 ```
@@ -136,13 +155,15 @@ You paused [title] on [project] [yesterday / on date]. You left yourself: "[next
 I suggest picking it up there (Recommended).
 ```
 
-**c. Otherwise** (nothing open, no pause to offer) match energy to a project whose `top_action.energy` fits (deep top-action for deep energy, etc.; fall back to any active project with a top action):
+**c. Otherwise** (nothing open, no pause to offer) match energy to a project that counts whose `top_action.energy` fits (deep top-action for deep energy, etc.; fall back to any project that counts with a top action):
 
 ```
 I'd start with:
 → [project] — [top_action.text]
   (current state: [state_snippet])
 ```
+
+If the project is one front of a group with a `parent`, name the undertaking with it: "→ [project] (one front of [question]) — [top_action.text]".
 
 Let them pick another, but offer the one — don't list all.
 
@@ -215,9 +236,20 @@ You're set — [project], starting with: [smallest first step, e.g. "open the fi
 Go get it. I'm here if you need me.
 ```
 
+## Something came back
+
+A handed-off project comes up only when the person says something has come back on it ("the harbour office replied", "the contractor sent the drawings"). Then, and only then:
+
+1. Acknowledge it in a line, and offer to strike it from the project's Waiting On (`resolve_waiting_on`) if it was listed there, on their yes.
+2. Ask one question: "Is anything on it waiting on your decision now?" If there is, it can be today's pick like any other work, on their word (step 9).
+
+Never ask whether a handed-off project moved, never list handed-off projects unprompted, and never suggest one as the day's pick. Whether it should come back to the person is a question for the weekly review, not the morning.
+
 ## What NOT to do
 
 - Don't list every active project or commitment — one project, commitments capped at 3.
+- Don't suggest, list, or ask after a handed-off project (`counts: false`) unless the person says something came back on it. Never ask whether it moved.
+- Don't write the project cap as a number from memory; quote `slots.cap`. Never suggest handing a project off to make room under the cap.
 - Don't ask open-ended "what do you want to do?" — recommend.
 - Don't write `Logs`/`Notes` via `upsert_daily_section` — they're append-only; the call is rejected. Log lines go through `append_to_log`.
 - Don't overwrite a pre-filled Intention or Agenda — acknowledge or merge (you read them in step 1).
@@ -233,7 +265,7 @@ Go get it. I'm here if you need me.
 "Late" is by the clock, not a judgement. Greet by time of day: morning before 12:00, afternoon 12:00–17:00, evening after 17:00. When the first orientation of the day lands in the afternoon or later there's less runway to plan, so compress: greet for the time of day ("Hey — it's [Day] afternoon, let's orient quick"), show only calendar time from now onward, and shrink the ask to one action. Still write the standup and suggest one action. No shame for a later start — just less day left.
 
 ### Nothing active
-No active projects: offer `/create-project`. No commitments and no actions: "Clean slate — what's one thing worth a dent today?"
+No projects that count: offer `/create-project`. If the person wants a new project while `slots.counted` has reached `slots.cap`, say so with those two numbers: a new project is created parked, and the choice of what to park or finish is theirs. No commitments and no actions: "Clean slate — what's one thing worth a dent today?"
 
 ### Quick mode
 If the user seems rushed or says "quick"/"fast": greeting + the single most time-sensitive thing (overdue commitment, else the suggested action) + write the standup silently. With a carried focus, make the one suggestion the pick-up, in a line. Skip energy, agenda, intention. Movement over process.

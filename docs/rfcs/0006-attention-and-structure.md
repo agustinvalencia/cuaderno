@@ -124,6 +124,12 @@ begins past the point where Claude Code truncates them (measured by the surfaces
 character 2,073 of a 2,048 cut), so an agent's whole briefing on projects is the tool
 descriptions.
 
+*Corrected after implementation (2026-10-20).* The specimens motivate the design; they do not
+gate it. No count, threshold or configuration taken from any one vault, O4's list or O5's cap
+among them, decides what the method defines or what cdno ships: the method is written for any
+vault, and a vault's state is the person's, read only through the tool's own config and never
+assumed in its code. The diagnostic in §10 is accordingly a practice note, not a gate.
+
 ## 3. Diagnosis
 
 ### 3.1 One primitive, several jobs
@@ -191,7 +197,10 @@ it. Each new real situation then wants a new status (a state for "agents move it
 "waiting on a planning office", a state for "weekends only", a state for "not yet started").
 That does not scale, and it muddles kinds of fact that vary independently. *Who holds the map*
 changes at a moment, deserves its log line, and changes the review's question. *Cadence* is an
-attribute. *Counts toward the cap* should be derived from the rest, never stored. Questions have
+attribute. *Counts toward the cap* should be derived from the rest, never stored; and every value that
+decides it (the cap itself, the names that mean "nobody" or "me") is the person's to set in
+the vault's config, with a default equal to the method as published, never a number or a list
+fixed in the tool (*corrected after implementation*, P8). Questions have
 the same four-value status and nobody complains, because nothing counts questions and nothing
 refuses writes on a parked one; the overload is the shared predicate, not the enum's arity.
 
@@ -260,6 +269,12 @@ Corrected after review where marked.
 - **The agent's briefing.** The MCP server instructions are the agent's whole briefing on the
   method, and Claude Code truncates them at 2,048 characters; the cap sentence sits past that
   point. In practice an agent's briefing on projects is the tool descriptions.
+- *Corrected after implementation (2026-10-20).* Everything above describes the code at the
+  time of writing. The config already carried the cap (`max_active_projects`) and the focus
+  window (`[focus] carry_over_days`) as keys with defaults; the implementation adds the holder
+  deny-list as `[projects] holder_sentinels` on the same footing, and leaves no policy value
+  fixed in code (P8). The method's version numbers are the one constant, because they are the
+  method's identity.
 
 ## 5. Prior art and approaches already considered
 
@@ -384,6 +399,14 @@ changes who holds it (the weekly review notices the pattern and asks).
 
 **P7. Keep the closed-enum pressure.** Two new distinctions, each a practice of the method with
 its own specimens and its own page or line, is the budget. Neither is a lifecycle variant.
+
+**P8. No policy value is hardcoded** (*added after implementation, 2026-10-20*). Every
+threshold, window, list or cap the method leaves to the person is a key in the vault's config,
+with a default that reproduces the method as published, so an unchanged vault behaves as it did
+under 1.0. A rule the method states as part of itself (the week runs Monday to Sunday; the
+version a vault records) is the method's and stays a constant; a value the person may
+reasonably set differently (how many maps count, which names mean nobody) is theirs. The tool
+never carries a number or a list that a person could want otherwise.
 
 ## 7. The method: Research Logbook Method 1.1 and 1.2
 
@@ -722,16 +745,21 @@ Settled by the two review rounds and the maintainer:
   test is on pages; the runner stamps; existing vaults are stamped by `cdno migrate`.
 - **The diagnostic**: run by hand on the current active set, under the settled sentence, before
   implementation starts (the zero-code trial: a `held_by` schema block in config, which §8.2's
-  reservation must not break), and again after 8.1 ships; never a `cdno` command. If one map
-  stops counting, the practice earns its place; if three, the cap is too low and no practice
-  would hide it.
+  reservation must not break), and again after 8.1 ships; never a `cdno` command. *Corrected
+  by the maintainer on 2026-10-20:* it is a practice note, not a gate. The first draft made
+  implementation wait on how many maps stop counting in one vault, with thresholds; that
+  coupled what the method defines to one vault's state, which is the wrong direction. Nothing
+  waits on its result.
 
-Open, for the implementation plan rather than this RFC:
+Settled in the implementation plan (2026-10-20), recorded here:
 
-- The exact wording of the review questions in the skills, and the threshold for "changed since
-  last week" on a handed-off map.
-- The placeholder list for `held_by` (`tbd`, `someone`, `?`, …) and its documentation.
-- Whether `list_actions` on a parked map is switched with the other verbs (the seats say yes).
+- **"Changed this week"** on a handed-off map: the map's file was modified within the current
+  week, Monday to today; the tool reads the file's modification time. The method says only
+  "changed this week"; the review questions' wording is the skills' (§8.5).
+- **The names that mean nobody or me** (`tbd`, `someone`, `me`, …) are the default of a config
+  key, `[projects] holder_sentinels`, never a list in code (P8); the documented limit stands,
+  that the tool cannot know the person's own name, so a person who wants it refused adds it.
+- **`list_actions` on a parked map** is switched with the other verbs.
 
 ## 11. Verification, in advance
 
