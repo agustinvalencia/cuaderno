@@ -130,6 +130,16 @@ impl ProjectFrontmatter {
         }
     }
 
+    /// The holder's name, trimmed, only when `held_by` names someone else
+    /// ([`HolderReading::Named`]); `None` when the map is the person's own
+    /// (absent, or a sentinel) or the value is unreadable.
+    pub fn holder_name(&self, sentinels: &HolderSentinels) -> Option<String> {
+        match self.holder(sentinels) {
+            HolderReading::Named(name) => Some(name),
+            HolderReading::Absent | HolderReading::NotAString | HolderReading::Sentinel(_) => None,
+        }
+    }
+
     /// Whether this map takes one of the `max_active_projects` slots: it is
     /// active and does not name someone else as its holder (RFC 0006 §7.2).
     /// A holder that is not a plain name, names the person or names nobody

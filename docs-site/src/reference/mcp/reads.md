@@ -5,7 +5,7 @@ anything. Inputs marked optional may be omitted.
 
 | Tool | Inputs | Returns |
 |------|--------|---------|
-| `get_orientation` | `energy?` (`deep`\|`medium`\|`light`) | Commitments due soon (milestones and action dates of active and parked projects, standalone commitments, stewardship lines), active projects, lapsed stewardship habits, and a suggested starting point. Also `focus` (the [`current_focus`](#focus-fields) shape, or `null`) and, on each project, `last_paused` (its most recent unresolved pause, or `null`) beside `top_action`, plus `held_by`, `counts`, `waiting_on_empty` and `core_question` as in the [review fields](#review-fields), and [`slots`](#slots-and-counts) (as on `list_projects`). Parked projects are not listed; suggest the day's work from the projects that count. The MCP form of [`cdno orient`](../cli/orient.md), which does not render those two. |
+| `get_orientation` | `energy?` (`deep`\|`medium`\|`light`) | Commitments due soon (milestones and action dates of active and parked projects, standalone commitments, stewardship lines), active projects, lapsed stewardship habits, and a suggested starting point. Also `focus` (the [`current_focus`](#focus-fields) shape, or `null`) and, on each project, `last_paused` (its most recent unresolved pause, or `null`) beside `top_action`, plus `held_by`, `counts`, `waiting_on_empty` and `core_question` as in the [review fields](#review-fields), and [`slots`](#slots-and-counts) (as on `list_projects`). Parked projects are not listed; suggest the day's work from the projects that count. The MCP form of [`cdno orient`](../cli/orient.md), which renders neither `focus` nor `last_paused`. |
 | `get_project_context` | `project` (slug) | A project's state, next actions, milestones, waiting-on items, and links. Resolves active, parked and closed (`_done/<year>/`) projects. Also `last_paused`, as on `get_orientation`, so the re-entry hint is there when the project is opened and not only in the morning. The frontmatter carries `held_by`, and the payload [`counts`](#slots-and-counts). |
 | `get_portfolio_contents` | `portfolio` (slug) | Portfolio metadata plus its evidence inventory. |
 | `get_weekly_context` | `date?` (any day in the week) | The weekly note's sections (Wins, Challenges, One Improvement, This Week's Goal), plus the week's logs, `completed_actions`, the projects completed or dropped that week (`closed_projects`) and project state changes. Also `projects`: every active project, handed-off ones included, with the [review fields](#review-fields). |
@@ -36,7 +36,7 @@ Each element of `get_weekly_context.projects`:
 
 | Field | Meaning |
 |-------|---------|
-| `held_by` | The map's `held_by:` as written, or `null` when it has none or the value is not a plain string. |
+| `held_by` | The name of whoever else is moving the map, trimmed, only when `held_by:` names someone else. `null` when the map is the person's own (no `held_by:`, or a value on [`[projects] holder_sentinels`](../configuration.md#keys)) or the value is unreadable (not a plain string). |
 | `counts` | `true` when the map holds one of the [`max_active_projects`](../configuration.md#keys) slots: active, and naming no one else as its holder. Branch on this, never on the name. |
 | `waiting_on_empty` | `true` when `## Waiting On` is missing, empty, or only `(nothing yet)`. A holder over an empty Waiting On is a parked map wearing a name. |
 | `core_question` | The map's `core_question:` as written, or `null`. |
@@ -64,7 +64,8 @@ review tells a project shelved for someday from one someone else has.
 
 Each `list_projects` row (active, parked and closed) and the `get_project_context` payload carry
 `counts`, with the meaning in the [review fields](#review-fields), and their `frontmatter` carries
-`held_by` as written. Branch on `counts`, never on the holder's name. `list_projects` stays a
+`held_by` exactly as written, since it is the frontmatter view: a sentinel comes through as its
+text there, while the summaries' `held_by` reads `null` for it. Branch on `counts`, never on the holder's name. `list_projects` stays a
 listing that reads no map body, so its rows carry no `waiting_on_empty`; the orientation projects
 carry it.
 

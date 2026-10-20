@@ -2935,12 +2935,26 @@ async fn list_projects_entries_carry_counts() {
 
 #[tokio::test]
 async fn a_map_with_an_unreadable_holder_reports_null_and_counts() {
-    // An unquoted wikilink is a nested YAML sequence, not a name: the map
-    // stays the person's, and every surface says so.
-    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\n\
-               held_by: [[people/a-colleague]]\n---\n\n# Atlas\n\n## Current State\nN/A.\n\n\
-               ## Next Actions\n\n## Waiting On\n- Map tiles from a colleague\n";
-    let server = server_with_notes(&[("projects/atlas.md", map)]);
+    // Two maps that stay the person's: one whose holder is an unquoted
+    // wikilink (a nested YAML sequence, not a name) and one whose holder is
+    // on the vault's configured sentinel list. The summaries report a null
+    // holder and count both; the frontmatter view keeps the raw text.
+    let atlas = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\n\
+                 held_by: [[people/a-colleague]]\n---\n\n# Atlas\n\n## Current State\nN/A.\n\n\
+                 ## Next Actions\n\n## Waiting On\n- Map tiles from a colleague\n";
+    let globe = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\n\
+                 held_by: \"Nobody Yet\"\n---\n\n# Globe\n\n## Current State\nN/A.\n";
+    let mut config = VaultConfig::default();
+    config.projects.holder_sentinels = vec!["nobody yet".to_owned()];
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    for (path, body) in [("projects/atlas.md", atlas), ("projects/globe.md", globe)] {
+        store
+            .write_file(&VaultPath::new(path).unwrap(), body)
+            .unwrap();
+    }
+    let (vault, _r) = Vault::new(store, index, config).unwrap();
+    let server = CuadernoServer::new(Arc::new(vault));
 
     let orientation = decode_json(
         &server
@@ -2948,12 +2962,28 @@ async fn a_map_with_an_unreadable_holder_reports_null_and_counts() {
             .await
             .expect("get_orientation"),
     );
-    let project = &orientation["projects"][0];
-    assert_eq!(project["slug"], "atlas");
-    assert_eq!(project["held_by"], serde_json::Value::Null);
-    assert_eq!(project["counts"], true);
-    assert_eq!(project["waiting_on_empty"], false);
-    assert_eq!(orientation["slots"]["counted"], 1);
+    for slug in ["atlas", "globe"] {
+        let project = orientation["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["slug"] == slug)
+            .unwrap_or_else(|| panic!("{slug} missing: {orientation}"));
+        assert_eq!(project["held_by"], serde_json::Value::Null, "{slug}");
+        assert_eq!(project["counts"], true, "{slug}");
+    }
+    assert_eq!(orientation["slots"]["counted"], 2);
+
+    let weekly = decode_json(
+        &server
+            .get_weekly_context(Parameters(EmptyInput::default()))
+            .await
+            .expect("get_weekly_context"),
+    );
+    for project in weekly["projects"].as_array().unwrap() {
+        assert_eq!(project["held_by"], serde_json::Value::Null, "{project}");
+        assert_eq!(project["counts"], true, "{project}");
+    }
 
     let listing = decode_json(
         &server
@@ -2961,10 +2991,23 @@ async fn a_map_with_an_unreadable_holder_reports_null_and_counts() {
             .await
             .expect("list_projects"),
     );
-    let row = &listing["active"][0];
-    assert_eq!(row["frontmatter"]["held_by"], serde_json::Value::Null);
-    assert_eq!(row["counts"], true);
-    assert_eq!(listing["slots"]["counted"], 1);
+    let row = |slug: &str| {
+        listing["active"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["slug"] == slug)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(
+        row("atlas")["frontmatter"]["held_by"],
+        serde_json::Value::Null
+    );
+    assert_eq!(row("atlas")["counts"], true);
+    assert_eq!(row("globe")["frontmatter"]["held_by"], "Nobody Yet");
+    assert_eq!(row("globe")["counts"], true);
+    assert_eq!(listing["slots"]["counted"], 2);
 
     let context = decode_json(
         &server
@@ -2975,5 +3018,72 @@ async fn a_map_with_an_unreadable_holder_reports_null_and_counts() {
             .expect("get_project_context"),
     );
     assert_eq!(context["frontmatter"]["held_by"], serde_json::Value::Null);
+    assert_eq!(context["counts"], true);
+}
+
+#[tokio::test]
+async fn a_parked_map_with_a_sentinel_holder_reports_null_on_the_monthly_shelf() {
+    let parked = "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-01-01\n\
+                  held_by: \"nobody yet\"\n---\n\n# Kite\n\n## Current State\nN/A.\n";
+    let mut config = VaultConfig::default();
+    config.projects.holder_sentinels = vec!["Nobody Yet".to_owned()];
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    store
+        .write_file(&VaultPath::new("projects/_parked/kite.md").unwrap(), parked)
+        .unwrap();
+    let (vault, _r) = Vault::new(store, index, config).unwrap();
+    let server = CuadernoServer::new(Arc::new(vault));
+
+    let monthly = decode_json(
+        &server
+            .get_monthly_context(Parameters(EmptyInput::default()))
+            .await
+            .expect("get_monthly_context"),
+    );
+    let kite = &monthly["parked_projects"][0];
+    assert_eq!(kite["slug"], "kite");
+    assert_eq!(kite["held_by"], serde_json::Value::Null);
+    assert_eq!(kite["frontmatter"]["held_by"], "nobody yet");
+    assert_eq!(kite["counts"], false);
+}
+
+#[tokio::test]
+async fn a_map_whose_holder_is_me_reports_null_and_counts() {
+    // `me` names the person: the summary reports no holder and the map
+    // counts, while the frontmatter view keeps the text as written.
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\n\
+               held_by: me\n---\n\n# Sundial\n\n## Current State\nN/A.\n";
+    let server = server_with_notes(&[("projects/sundial.md", map)]);
+
+    let orientation = decode_json(
+        &server
+            .get_orientation(Parameters(GetOrientationInput { energy: None }))
+            .await
+            .expect("get_orientation"),
+    );
+    let project = &orientation["projects"][0];
+    assert_eq!(project["slug"], "sundial");
+    assert_eq!(project["held_by"], serde_json::Value::Null);
+    assert_eq!(project["counts"], true);
+
+    let listing = decode_json(
+        &server
+            .list_projects(Parameters(ListProjectsInput::default()))
+            .await
+            .expect("list_projects"),
+    );
+    assert_eq!(listing["active"][0]["frontmatter"]["held_by"], "me");
+    assert_eq!(listing["active"][0]["counts"], true);
+
+    let context = decode_json(
+        &server
+            .get_project_context(Parameters(cdno_mcp::server::ProjectSlugInput {
+                project: "sundial".to_owned(),
+            }))
+            .await
+            .expect("get_project_context"),
+    );
+    assert_eq!(context["frontmatter"]["held_by"], "me");
     assert_eq!(context["counts"], true);
 }

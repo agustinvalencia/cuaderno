@@ -52,8 +52,10 @@ pub struct ProjectSummaryDto {
     /// The project's most recent pause still open for resuming, with its
     /// `next:` hint and `reason:` if given. Null when nothing is paused.
     pub last_paused: Option<LastPauseDto>,
-    /// Who else is moving the map (frontmatter `held_by:`), as written;
-    /// null when absent or unreadable.
+    /// Who else is moving the map: the `held_by:` name, trimmed, only when
+    /// it names someone else; null when the map is the person's own (no
+    /// holder, or one on `[projects] holder_sentinels`) or the value is
+    /// unreadable.
     pub held_by: Option<String>,
     /// Whether the map holds one of the active-project slots: active and
     /// held by no one else. Branch on this, never on the holder's name.
@@ -847,8 +849,9 @@ pub struct WeeklyContextDto {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ReviewProjectDto {
     pub slug: String,
-    /// Who else is moving the map (frontmatter `held_by:`), as written;
-    /// null when absent or unreadable.
+    /// Who else is moving the map, only when `held_by:` names someone
+    /// else; null when the map is the person's own or the value is
+    /// unreadable.
     pub held_by: Option<String>,
     /// Whether the map holds one of the active-project slots.
     pub counts: bool,
@@ -971,8 +974,9 @@ pub struct MonthlyContextDto {
 pub struct ParkedProjectDto {
     pub slug: String,
     pub frontmatter: ProjectFrontmatterDto,
-    /// Who else has the map (frontmatter `held_by:`), as written; null
-    /// when absent or unreadable.
+    /// Who else has the map, only when `held_by:` names someone else; null
+    /// when the map is the person's own or the value is unreadable. The
+    /// raw text is under `frontmatter.held_by`.
     pub held_by: Option<String>,
     /// Whether the map holds a slot; false for a parked map.
     pub counts: bool,
@@ -1029,9 +1033,11 @@ pub struct ProjectFrontmatterDto {
     /// The date the project was completed or dropped; `None` while it is
     /// active or parked.
     pub closed: Option<NaiveDate>,
-    /// The frontmatter `held_by:` text as written (who else is moving the
-    /// map); null when absent or not a plain string. What it means is the
-    /// `counts` beside this frontmatter: never read the name.
+    /// The frontmatter `held_by:` text exactly as written, since this is
+    /// the frontmatter view: a sentinel such as `me`, or an unquoted date,
+    /// comes through as text; only a value YAML does not read as text (an
+    /// unquoted wikilink, a number, a bool) is null. What it means is the
+    /// `counts` beside this frontmatter, never the name.
     pub held_by: Option<String>,
 }
 
@@ -1065,7 +1071,7 @@ impl ProjectListEntryDto {
     /// the map counts ([`cdno_domain::Vault::project_counts`]): the slug
     /// is the file stem (`projects/<slug>.md` for active,
     /// `projects/_parked/<slug>.md` for parked).
-    pub fn new(
+    pub(crate) fn new(
         path: &VaultPath,
         fm: cdno_domain::frontmatter::ProjectFrontmatter,
         counts: bool,

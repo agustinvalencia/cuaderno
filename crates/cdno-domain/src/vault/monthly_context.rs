@@ -67,7 +67,9 @@ pub struct MonthlyContext {
 pub struct ParkedProject {
     pub path: VaultPath,
     pub frontmatter: ProjectFrontmatter,
-    /// The frontmatter `held_by:` as the lenient reader keeps it.
+    /// The holder's name only when the map names someone else; `None`
+    /// when it is the person's own or the value is unreadable. See
+    /// [`ProjectSummary::held_by`](super::ProjectSummary::held_by).
     pub held_by: Option<String>,
     /// Whether the map holds a slot: always `false` for a parked map,
     /// carried so every review entry answers the same question.
