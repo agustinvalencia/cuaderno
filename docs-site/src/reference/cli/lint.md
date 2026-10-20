@@ -45,7 +45,9 @@ parked map carrying one should have `closed: null`.
 It reads each open map's `held_by:` (the name of whoever else is moving it) against the vault's
 `[projects] holder_sentinels` list (see [configuration](../configuration.md)). A value that is not a
 plain name, such as an unquoted wikilink, is an error, because the holder you wrote is not honoured
-and the map still counts toward the cap; the message says to quote it:
+and the map still counts toward the cap (or would, once a parked map is activated). For an unquoted
+wikilink the message says to quote it; for anything else (a number, a date, a list) it says to write a
+single quoted name:
 
 ```text
 [error] projects/harbour.md: project `held_by:` is not a plain name, so the holder is not honoured and the map counts toward the cap; quote it: `held_by: "[[people/ana]]"`
@@ -65,6 +67,10 @@ cap, so this catches a cap lowered in config or maps edited by hand:
 ```text
 [warning] .cuaderno/config.toml: 6 projects count toward the cap of 5 (`max_active_projects`): [[alpha]], [[bravo]], [[charlie]], [[delta]], [[echo]], [[foxtrot]]; park or close one until no more than 5 count
 ```
+
+If a project map cannot be read at all (an unknown `status`, a missing `context` or `created`), the
+count is unknown, and the same file gets an error saying so: `could not count the projects against
+the cap: …`. The project verbs fail on such a map too, so fix it first.
 
 It also warns when a customised template (`.cuaderno/templates/<type>.md`) lacks a frontmatter key that
 the built-in template has, typically one a release added after you customised it, and reports a

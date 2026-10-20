@@ -104,7 +104,7 @@ fn lint_flags_a_note_with_an_unknown_type() {
 
 #[test]
 fn lint_flags_a_missing_extra_required_field() {
-    let body = "---\ntype: project\ntitle: A project without an owner\n---\n# Body\n";
+    let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ntitle: A project without an owner\n---\n# Body\n";
     let mut config = VaultConfig::default();
     config.schemas.insert(
         "project".to_string(),
@@ -130,7 +130,7 @@ fn lint_flags_a_missing_extra_required_field() {
 
 #[test]
 fn lint_passes_when_extra_required_field_is_present() {
-    let body = "---\ntype: project\ntitle: A project\nowner: alice\n---\n# Body\n";
+    let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ntitle: A project\nowner: alice\n---\n# Body\n";
     let mut config = VaultConfig::default();
     config.schemas.insert(
         "project".to_string(),
@@ -173,7 +173,7 @@ fn lint_skips_extra_required_check_when_type_is_unknown() {
 fn lint_treats_explicit_null_value_as_missing() {
     // YAML `owner: ~` round-trips to JSON `null`. From a schema
     // perspective the field is unset, so lint should flag it.
-    let body = "---\ntype: project\ntitle: nulled out\nowner: ~\n---\n# Body\n";
+    let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ntitle: nulled out\nowner: ~\n---\n# Body\n";
     let mut config = VaultConfig::default();
     config.schemas.insert(
         "project".to_string(),
@@ -294,7 +294,7 @@ fn lint_skips_the_type_check_for_an_absent_declared_field() {
     // A declared field the note simply omits is out of scope for the
     // type-check (presence is the required-field lint's concern). A non-required
     // field's absence produces no issue at all.
-    let body = "---\ntype: project\ntitle: P\n---\n# Body\n";
+    let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ntitle: P\n---\n# Body\n";
     let config = config_with_field("project", "meds", bool_field());
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
@@ -3025,13 +3025,15 @@ fn an_unquoted_wikilink_holder_is_an_error_naming_the_fix() {
         &[
             ("projects/harbour.md", &held_map("active", "[[people/ana]]")),
             ("projects/_parked/dock.md", &held_map("parked", "2")),
+            ("projects/quay.md", &held_map("active", "2026-01-05")),
+            ("projects/pier.md", &held_map("active", "{name: ana}")),
         ],
         VaultConfig::default(),
     );
 
     let rows = holder_rows(&vault.lint_all_notes(lint_day()).unwrap());
 
-    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(rows.len(), 4, "{rows:?}");
     assert!(
         rows.iter()
             .all(|(_, s, _)| *s == cdno_domain::LintSeverity::Error),
@@ -3048,9 +3050,85 @@ fn an_unquoted_wikilink_holder_is_an_error_naming_the_fix() {
         "{rows:?}"
     );
     assert!(
-        rows.iter().any(|(p, _, _)| p == "projects/_parked/dock.md"),
-        "a parked map is linted too: {rows:?}"
+        harbour.2.contains("the map counts toward the cap;"),
+        "{rows:?}"
     );
+
+    // A number, a date or a mapping is not fixed by quoting.
+    let row = |path: &str| {
+        rows.iter()
+            .find(|(p, _, _)| p == path)
+            .unwrap_or_else(|| panic!("{path} has a row: {rows:?}"))
+            .2
+            .clone()
+    };
+    for path in [
+        "projects/_parked/dock.md",
+        "projects/quay.md",
+        "projects/pier.md",
+    ] {
+        let message = row(path);
+        assert!(
+            message.ends_with("; write a single quoted name"),
+            "{message}"
+        );
+        assert!(!message.contains("quote it"), "{message}");
+    }
+    // A parked map does not count yet.
+    assert!(
+        row("projects/_parked/dock.md")
+            .contains("the map would count toward the cap once activated;"),
+        "{rows:?}"
+    );
+}
+
+#[test]
+fn a_closed_map_has_no_holder_row() {
+    let vault = vault_with_notes(
+        &[
+            (
+                "projects/_done/2026/won.md",
+                &held_map("completed", "me").replace("closed: null", "closed: 2026-09-01"),
+            ),
+            (
+                "projects/_done/2026/lost.md",
+                &held_map("dropped", "[[people/ana]]")
+                    .replace("closed: null", "closed: 2026-09-01"),
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).unwrap();
+
+    assert!(holder_rows(&report).is_empty(), "{:?}", report.issues);
+}
+
+#[test]
+fn an_unreadable_project_map_is_an_error_on_the_cap_count() {
+    let vault = vault_with_notes(
+        &[
+            ("projects/alpha.md", &project_map("active", "null")),
+            ("projects/bogus.md", &project_map("bogus", "null")),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault
+        .lint_all_notes(lint_day())
+        .expect("an unreadable map never aborts the pass");
+
+    let rows: Vec<_> = report
+        .issues
+        .iter()
+        .filter(|i| {
+            i.message
+                .starts_with("could not count the projects against the cap: ")
+        })
+        .collect();
+    assert_eq!(rows.len(), 1, "{:?}", report.issues);
+    assert_eq!(rows[0].path.to_string(), CONFIG_TOML);
+    assert_eq!(rows[0].severity, cdno_domain::LintSeverity::Error);
 }
 
 #[test]
@@ -3071,6 +3149,22 @@ fn a_sentinel_holder_is_a_warning() {
         assert_eq!(*severity, cdno_domain::LintSeverity::Warning, "{rows:?}");
         assert!(message.contains(ADVICE), "{message}");
     }
+    // The value is quoted back as written, untrimmed and in its own case.
+    let quoted = |path: &str| {
+        rows.iter()
+            .find(|(p, _, _)| p == path)
+            .unwrap_or_else(|| panic!("{path} has a row: {rows:?}"))
+            .2
+            .clone()
+    };
+    assert!(
+        quoted("projects/mine.md").contains("`held_by: \" Me \"`"),
+        "{rows:?}"
+    );
+    assert!(
+        quoted("projects/blank.md").contains("`held_by: \"TBD\"`"),
+        "{rows:?}"
+    );
 
     // A custom list: `nadie` warns, and `me`, off the list, is a name.
     let mut config = VaultConfig::default();
