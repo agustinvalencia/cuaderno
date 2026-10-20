@@ -111,6 +111,11 @@ new file there rather than growing `mod.rs`.
   transaction with a `toml_edit` setter (never `save_config_raw`), and is CLI-only: never at
   open, never over MCP. Steps never touch the journal or an append-only note, and the
   readers accept every historical line shape for ever.
+- **A key a vault may declare is never hard-reserved.** A project's `held_by` (like `closed`) is
+  reserved from `set_frontmatter` through `is_reserved_key` (`vault/set_frontmatter.rs`) only,
+  **never** through `hard_reserved_fields` (`type_registry.rs`): `validate_reserved_schema_fields`
+  refuses to open a vault whose config declares a hard-reserved key, and the zero-code trial
+  declares `[schemas.project.fields.held_by]` (RFC 0006 §8.2, §10).
 - **Errors are values**: library crates use `thiserror` with layer-specific enums
   (`StoreError`/`IndexError` → `DomainError` → interface error), binaries use `anyhow`. Translate at
   the boundary; don't leak `anyhow` into a library.

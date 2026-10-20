@@ -11,6 +11,7 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 use super::context::Context;
+use super::holder::{HolderReading, HolderSentinels, holder_reading_from_yaml};
 
 /// Lifecycle state of a project. Park/activate transitions cap-check
 /// against `max_active_projects`. `Completed` and `Dropped` are the two
@@ -105,6 +106,38 @@ pub struct ProjectFrontmatter {
     /// while it is active or parked, and on a map written before the
     /// field existed.
     pub closed: Option<NaiveDate>,
+    /// The raw `held_by:` text, the name of whoever else is moving the map
+    /// (RFC 0006 §8.2). `None` when absent, null, or not a string: the key
+    /// is read leniently, never through `optional_field::<String>`, so a
+    /// hand-written `held_by: [[people/ana]]` (a nested YAML sequence) never
+    /// fails the map. What the text means needs the vault's configured
+    /// `[projects] holder_sentinels`: see [`holder`](Self::holder).
+    pub held_by: Option<String>,
+}
+
+impl ProjectFrontmatter {
+    /// What `held_by` says, classified against the configured list.
+    pub fn holder(&self, sentinels: &HolderSentinels) -> HolderReading {
+        let value = self.held_by.clone().map(serde_yaml::Value::String);
+        holder_reading_from_yaml(value.as_ref(), sentinels)
+    }
+
+    /// Whether this map takes one of the `max_active_projects` slots: it is
+    /// active and does not name someone else as its holder (RFC 0006 §7.2).
+    /// A holder that is not a plain name, names the person or names nobody
+    /// leaves the map counted.
+    pub fn counts_toward_cap(&self, sentinels: &HolderSentinels) -> bool {
+        if self.status != ProjectStatus::Active {
+            return false;
+        }
+        match self.holder(sentinels) {
+            HolderReading::Named(_) => false,
+            HolderReading::Absent
+            | HolderReading::NotAString
+            | HolderReading::Yours(_)
+            | HolderReading::Placeholder(_) => true,
+        }
+    }
 }
 
 impl TryFrom<Frontmatter> for ProjectFrontmatter {
@@ -117,6 +150,16 @@ impl TryFrom<Frontmatter> for ProjectFrontmatter {
             created: fm.require_field::<NaiveDate>("created")?,
             core_question: fm.optional_field::<String>("core_question")?,
             closed: fm.optional_field::<NaiveDate>("closed")?,
+            held_by: lenient_string(&fm, "held_by"),
         })
+    }
+}
+
+/// Read an optional string field that must never fail the map: anything but
+/// a YAML string (absent, null, a sequence, a number, …) reads as `None`.
+fn lenient_string(fm: &Frontmatter, name: &str) -> Option<String> {
+    match fm.optional_field::<serde_yaml::Value>(name) {
+        Ok(Some(serde_yaml::Value::String(text))) => Some(text),
+        _ => None,
     }
 }

@@ -48,6 +48,58 @@ impl Default for FocusConfig {
     }
 }
 
+/// The default `[projects] holder_sentinels` entries that name the person
+/// themself (RFC 0006 §7.2, "a map that names you is yours"). `(mine)` is
+/// the stand-in a `holder on` log entry prints for an absent holder, which
+/// someone copying from the log will write.
+///
+/// Part of the default value of [`ProjectsConfig::holder_sentinels`], and
+/// nothing else: the configured list decides which values are refused, and
+/// this list only tells a refused value that names the person from one that
+/// names nobody.
+pub const DEFAULT_SELF_HOLDER_SENTINELS: &[&str] = &["me", "I", "myself", "(mine)"];
+
+/// The default `[projects] holder_sentinels` entries that name nobody: the
+/// placeholders someone writes when they cannot say who holds the map,
+/// including the blank string. The rest of the default value of
+/// [`ProjectsConfig::holder_sentinels`].
+pub const DEFAULT_PLACEHOLDER_HOLDER_SENTINELS: &[&str] = &[
+    "someone", "somebody", "nobody", "unknown", "tbd", "n/a", "none", "-", "?", "",
+];
+
+fn default_holder_sentinels() -> Vec<String> {
+    DEFAULT_SELF_HOLDER_SENTINELS
+        .iter()
+        .chain(DEFAULT_PLACEHOLDER_HOLDER_SENTINELS)
+        .map(|s| (*s).to_owned())
+        .collect()
+}
+
+/// The `[projects]` section: policy for project maps (RFC 0006 §8.2).
+///
+/// Denies no unknown fields, so a key a later release adds here is ignored
+/// by this one rather than failing the vault's open.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ProjectsConfig {
+    /// Values of a project map's `held_by:` that do not name someone else:
+    /// the person's own sentinels and placeholders that name nobody. Such a
+    /// value reads as no holder, so the map counts toward the cap. Trimmed
+    /// and compared case-insensitively. Absent gives the default
+    /// ([`DEFAULT_SELF_HOLDER_SENTINELS`] followed by
+    /// [`DEFAULT_PLACEHOLDER_HOLDER_SENTINELS`]); `[]` accepts any name.
+    #[serde(default = "default_holder_sentinels")]
+    pub holder_sentinels: Vec<String>,
+}
+
+impl Default for ProjectsConfig {
+    fn default() -> Self {
+        Self {
+            holder_sentinels: default_holder_sentinels(),
+        }
+    }
+}
+
 /// Top-level vault configuration, loaded from `.cuaderno/config.toml`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -95,6 +147,9 @@ pub struct VaultConfig {
     /// The focus reader's windows (RFC 0005).
     #[serde(default)]
     pub focus: FocusConfig,
+    /// Policy for project maps, `[projects]` (RFC 0006 §8.2).
+    #[serde(default)]
+    pub projects: ProjectsConfig,
 }
 
 /// The `[vault]` section — basic vault metadata.

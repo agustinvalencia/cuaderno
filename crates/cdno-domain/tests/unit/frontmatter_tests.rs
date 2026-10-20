@@ -1,8 +1,10 @@
+use cdno_core::config::VaultConfig;
 use cdno_core::error::ValidationError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_domain::frontmatter::{
     ActionFrontmatter, ActionStatus, CommitmentFrontmatter, CommitmentStatus, Context, EnergyLevel,
-    ProjectFrontmatter, ProjectStatus,
+    HolderReading, HolderSentinels, ProjectFrontmatter, ProjectStatus, classify_holder_text,
+    holder_reading_from_json, holder_reading_from_yaml,
 };
 
 fn parse_fm(yaml_body: &str) -> Frontmatter {
@@ -901,5 +903,188 @@ fn action_try_from_rejects_invalid_energy_value() {
     assert!(
         matches!(err, ValidationError::InvalidField { ref field, .. } if field == "energy"),
         "got {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// held_by — the lenient reader and the deny-list (RFC 0006 §8.2)
+// ---------------------------------------------------------------------
+
+fn default_sentinels() -> HolderSentinels {
+    HolderSentinels::from_config(&VaultConfig::default())
+}
+
+/// A project frontmatter body with `held_by:` written as `holder`, verbatim.
+fn held_by_yaml(holder: &str) -> String {
+    format!(
+        "type: project\ncontext: work\nstatus: active\ncreated: 2026-09-01\nheld_by: {holder}\n"
+    )
+}
+
+/// Values that are not a plain string, as YAML writes them.
+const NOT_A_STRING_ROWS: &[&str] = &[
+    "[[people/ana]]",
+    "2",
+    "true",
+    "2026-10-20",
+    "2026-10-20T09:30:00Z",
+    "{ name: ana }",
+    "[ana, bo]",
+];
+
+/// Values naming the person or nobody, as YAML writes them, with the
+/// reading each gets.
+const DENIED_ROWS: &[(&str, bool)] = &[
+    // (yaml, names_you)
+    ("\" Me \"", true),
+    ("MYSELF", true),
+    ("i", true),
+    ("\"(mine)\"", true),
+    ("TBD", false),
+    ("\"?\"", false),
+    ("\"\"", false),
+    ("\"   \"", false),
+    ("Someone", false),
+    ("n/a", false),
+    ("\"-\"", false),
+];
+
+/// Values naming someone else, with the name each reads as.
+const NAMED_ROWS: &[(&str, &str)] = &[
+    ("\"the harbour office\"", "the harbour office"),
+    ("the harbour office", "the harbour office"),
+    ("\"[[people/ana]]\"", "[[people/ana]]"),
+    ("\"  Bo Lindqvist \"", "Bo Lindqvist"),
+    ("\"2\"", "2"),
+    ("meadow", "meadow"),
+];
+
+#[test]
+fn held_by_that_is_not_a_string_reads_as_absent() {
+    for yaml in NOT_A_STRING_ROWS {
+        let fm = parse_fm(&held_by_yaml(yaml));
+        let pf = ProjectFrontmatter::try_from(fm.clone())
+            .unwrap_or_else(|e| panic!("`held_by: {yaml}` must not fail the map: {e:?}"));
+        // The map's own reading names no holder; the raw value, read through
+        // the parser's adapter, is reported as not a string (lint's Error).
+        assert!(
+            matches!(
+                pf.holder(&default_sentinels()),
+                HolderReading::Absent | HolderReading::NotAString
+            ),
+            "held_by: {yaml}"
+        );
+        let raw: Option<serde_yaml::Value> = fm.optional_field("held_by").unwrap();
+        assert_eq!(
+            holder_reading_from_yaml(raw.as_ref(), &default_sentinels()),
+            HolderReading::NotAString,
+            "held_by: {yaml}"
+        );
+        assert!(
+            pf.counts_toward_cap(&default_sentinels()),
+            "held_by: {yaml}"
+        );
+    }
+    // Null and absent both read as absent.
+    for body in [
+        held_by_yaml("null"),
+        held_by_yaml("~"),
+        "type: project\ncontext: work\nstatus: active\ncreated: 2026-09-01\n".to_owned(),
+    ] {
+        let pf = ProjectFrontmatter::try_from(parse_fm(&body)).unwrap();
+        assert_eq!(pf.held_by, None);
+        assert_eq!(pf.holder(&default_sentinels()), HolderReading::Absent);
+    }
+}
+
+#[test]
+fn held_by_naming_you_or_nobody_reads_as_absent_in_any_case() {
+    for (yaml, names_you) in DENIED_ROWS {
+        let pf = ProjectFrontmatter::try_from(parse_fm(&held_by_yaml(yaml))).unwrap();
+        let reading = pf.holder(&default_sentinels());
+        match (&reading, names_you) {
+            (HolderReading::Yours(_), true) | (HolderReading::Placeholder(_), false) => {}
+            other => panic!("held_by: {yaml} read as {other:?}"),
+        }
+        assert!(
+            pf.counts_toward_cap(&default_sentinels()),
+            "held_by: {yaml}"
+        );
+    }
+}
+
+#[test]
+fn held_by_with_a_name_reads_as_named() {
+    for (yaml, name) in NAMED_ROWS {
+        let pf = ProjectFrontmatter::try_from(parse_fm(&held_by_yaml(yaml))).unwrap();
+        assert_eq!(
+            pf.holder(&default_sentinels()),
+            HolderReading::Named((*name).to_owned()),
+            "held_by: {yaml}"
+        );
+        assert!(
+            !pf.counts_toward_cap(&default_sentinels()),
+            "held_by: {yaml}"
+        );
+    }
+}
+
+#[test]
+fn held_by_reads_the_configured_list_not_a_literal() {
+    let nadie = HolderSentinels::new(["Nadie "]);
+    assert_eq!(
+        classify_holder_text(" NADIE", &nadie),
+        HolderReading::Placeholder(" NADIE".to_owned())
+    );
+    // `me` is on the default list, not on this one: here it is a name.
+    assert_eq!(
+        classify_holder_text("me", &nadie),
+        HolderReading::Named("me".to_owned())
+    );
+    // A configured self-naming entry still reads as yours.
+    assert_eq!(
+        classify_holder_text("ME", &HolderSentinels::new(["me"])),
+        HolderReading::Yours("ME".to_owned())
+    );
+    // `[]` accepts any name, but a blank names nobody.
+    let none = HolderSentinels::new(Vec::<String>::new());
+    assert_eq!(
+        classify_holder_text("tbd", &none),
+        HolderReading::Named("tbd".to_owned())
+    );
+    assert_eq!(
+        classify_holder_text(" ", &none),
+        HolderReading::Placeholder(" ".to_owned())
+    );
+}
+
+#[test]
+fn the_yaml_and_json_adapters_agree_on_every_row() {
+    let sentinels = default_sentinels();
+    let mut rows: Vec<&str> = NOT_A_STRING_ROWS.to_vec();
+    rows.extend(DENIED_ROWS.iter().map(|(y, _)| *y));
+    rows.extend(NAMED_ROWS.iter().map(|(y, _)| *y));
+    rows.extend(["null", "~", "!custom tagged", "1.5"]);
+    for yaml in rows {
+        let fm = parse_fm(&held_by_yaml(yaml));
+        let raw: Option<serde_yaml::Value> = fm.optional_field("held_by").unwrap();
+        let from_yaml = holder_reading_from_yaml(raw.as_ref(), &sentinels);
+        let json = fm.as_json();
+        let from_json = holder_reading_from_json(json.get("held_by"), &sentinels);
+        assert_eq!(from_yaml, from_json, "held_by: {yaml} (json: {json})");
+        // And the parsed frontmatter's own reading is the same one.
+        let pf = ProjectFrontmatter::try_from(fm).unwrap();
+        let own = pf.holder(&sentinels);
+        let own_is_absent_or_same = own == from_yaml
+            || (own == HolderReading::Absent && from_yaml == HolderReading::NotAString);
+        assert!(
+            own_is_absent_or_same,
+            "held_by: {yaml}: {own:?} vs {from_yaml:?}"
+        );
+    }
+    // An absent key reads the same through both.
+    assert_eq!(
+        holder_reading_from_yaml(None, &sentinels),
+        holder_reading_from_json(None, &sentinels)
     );
 }

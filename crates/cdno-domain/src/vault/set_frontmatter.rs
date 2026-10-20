@@ -235,8 +235,14 @@ impl Vault {
 /// Whether `key` is engine-owned for `note_type` and therefore never settable
 /// through this generic path. The set is the per-type hard-reserved fields
 /// (`type` plus the calendar period key) unioned with `status`, which the
-/// lifecycle tools own for every type, and a project's `closed`, which the
-/// closing verbs own.
+/// lifecycle tools own for every type, a project's `closed`, which the
+/// closing verbs own, and a project's `held_by`, which the hand-off verb owns.
+///
+/// A project's `held_by` is reserved here and **never** through
+/// [`hard_reserved_fields`]: `validate_reserved_schema_fields` refuses to open
+/// a vault whose config declares a hard-reserved key, and the zero-code trial
+/// (RFC 0006 §10) declares `[schemas.project.fields.held_by]`, so reserving
+/// it there would stop that vault opening.
 fn is_reserved_key(note_type: &str, key: &str) -> bool {
     if key == "type" || key == "status" {
         return true;
@@ -244,6 +250,11 @@ fn is_reserved_key(note_type: &str, key: &str) -> bool {
     // A project's `closed:` date is stamped by `complete` and `drop` and
     // cleared by `activate`; a raw set would forge a closure (RFC 0004).
     if note_type == NoteType::Project.as_str() && key == "closed" {
+        return true;
+    }
+    // A project's `held_by:` changes only by the logged hand-off verb; a raw
+    // set would move the cap with no `holder on` entry (RFC 0006 §8.2).
+    if note_type == NoteType::Project.as_str() && key == "held_by" {
         return true;
     }
     // A config-defined custom type has no built-in period key; only the
