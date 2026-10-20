@@ -167,3 +167,35 @@ fn severity_decides_the_style_and_the_two_do_not_share_one() {
         "an error must not read like a warning"
     );
 }
+
+#[test]
+fn lint_reports_the_over_cap_warning() {
+    use assert_cmd::Command;
+    use predicates::prelude::*;
+
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+    // Six active maps, none held, against the init default cap of 5. No
+    // dates anywhere, so the real clock the binary reads adds no row.
+    for slug in ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"] {
+        fs::write(
+            dir.path().join(format!("projects/{slug}.md")),
+            "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\n\
+             core_question: null\nclosed: null\n---\n\n# Map\n\n## Current State\n\n\
+             ## Next Actions\n\n## Milestones\n\n## Waiting On\n",
+        )
+        .unwrap();
+    }
+
+    let mut cmd = Command::cargo_bin("cdno").expect("cdno binary built");
+    cmd.env_remove("CUADERNO_VAULT_PATH")
+        .current_dir(dir.path())
+        .arg("lint")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(".cuaderno/config.toml"))
+        .stdout(predicate::str::contains(
+            "6 projects count toward the cap of 5 (`max_active_projects`)",
+        ))
+        .stdout(predicate::str::contains("[[foxtrot]]"));
+}
