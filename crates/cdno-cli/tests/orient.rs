@@ -376,3 +376,42 @@ fn the_suggestion_prefers_a_map_that_counts_over_a_held_one() {
         "{out}"
     );
 }
+
+/// A held map inside a shared-question group names its holder on the
+/// group's line of fronts, so the reader can tell whose move each front is.
+#[test]
+fn a_held_front_in_a_shared_question_names_its_holder() {
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+    fs::write(
+        dir.path().join("questions/research/hull.md"),
+        "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-05-01\nupdated: 2026-05-01\n---\n\n# Does the hull hold?\n",
+    )
+    .unwrap();
+    let front = |body: &str, held: bool| {
+        let holder = if held { "held_by: \"Ana Ruiz\"\n" } else { "" };
+        body.replacen(
+            "created: 2026-04-01\n",
+            &format!(
+                "created: 2026-04-01\ncore_question: \"[[questions/research/hull]]\"\n{holder}"
+            ),
+            1,
+        )
+    };
+    fs::write(dir.path().join("projects/alpha.md"), front(ALPHA, true)).unwrap();
+    fs::write(dir.path().join("projects/beta.md"), front(BETA, false)).unwrap();
+
+    let out = orient::build_orientation(dir.path(), today(), None).expect("orient");
+    let fronts = out
+        .lines()
+        .find(|l| l.contains("beta: "))
+        .expect("the group's fronts line");
+    assert!(
+        fronts.contains("alpha (held by Ana Ruiz): Draft the methods section (deep)"),
+        "{out}"
+    );
+    assert!(
+        !fronts.contains("beta (held by"),
+        "a front that is yours names no holder: {out}"
+    );
+}

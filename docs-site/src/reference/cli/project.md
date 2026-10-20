@@ -84,9 +84,12 @@ question is a decision and has to be asked for.
 
 Record that someone else is moving an open (active or parked) project: the map gets
 `held_by: "<name>"`, and today's daily note gets a `holder on [[<slug>]]` entry with indented `was:` /
-`now:` lines, the side with no holder written `(mine)`. An active project that names a holder does
-not count toward the [active cap](../../concepts/business-rules.md#the-five-project-cap), so
-handing one off frees its slot; the map stays where it is, and its deadlines stay in
+`now:` lines, the side with no holder written `(mine)`. A hand-off records a fact about the
+project: someone else is moving it now, and the next move is theirs. Because the
+[active cap](../../concepts/business-rules.md#the-five-project-cap) counts the projects that are
+yours to move, an active project that names a holder is not counted; but handing off is never the
+answer to a full cap. Name a holder only when someone else really has the project; to make room,
+park, complete or drop one. The map stays where it is, and its deadlines stay in
 [`cdno commitments`](commitments.md).
 
 | Flag | Description |
@@ -99,14 +102,16 @@ cdno project hand-off --slug hull-survey --to "Ana Ruiz"
 # Handed hull-survey to Ana Ruiz (projects/hull-survey.md)
 ```
 
-Three refusals, each naming what to do instead:
+A hand-off is refused when:
 
-- A value that names you or nobody (`me`, `tbd`, `someone`, or another entry of
-  [`holder_sentinels`](../configuration.md#projects)) is refused: if you cannot name who has the project,
-  it is yours. Keep it, or run `cdno project take-back` if it was handed off.
-- While an action on the project is in [focus](../../concepts/contexts-and-energy.md#focus), the
-  hand-off is refused: pause it first with [`cdno action pause`](action.md).
-- A closed project cannot be handed off.
+- the value names you or nobody (`me`, `tbd`, `someone`, or another entry of
+  [`holder_sentinels`](../configuration.md#projects)): if you cannot name who has the project, it
+  is yours. Keep it, or run `cdno project take-back` if it was handed off;
+- the value is a date, which names no one: give the person's name instead;
+- an action on the project is in [focus](../../concepts/contexts-and-energy.md#focus): pause it
+  first with [`cdno action pause`](action.md), then hand it off;
+- the project is closed: only an active or parked project has a holder, so
+  [`activate`](#cdno-project-activate) it first if the work has come back.
 
 Handing a project to the holder it already names changes nothing and logs nothing.
 

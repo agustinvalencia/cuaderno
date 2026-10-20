@@ -587,11 +587,14 @@ fn hand_off(
             current,
             max,
             active_projects,
-        }) => anyhow::bail!(
-            "Taking {slug} back would make it count toward the cap, and {current} of {max} \
-             slots are in use by: {}. Park, complete or drop one of them first.",
-            active_projects.join(", ")
-        ),
+        }) => {
+            return Err(cap_reached(
+                &format!("Taking {slug} back"),
+                current,
+                max,
+                &active_projects,
+            ));
+        }
         Err(e) => {
             return Err(e).context(match change {
                 HolderChange::HandTo(_) => "handing off project",
@@ -911,11 +914,37 @@ fn activate(
         println!("Aborted.");
         return Ok(());
     }
-    let path = vault
-        .activate_project(at, &slug)
-        .context("activating project")?;
+    let path = match vault.activate_project(at, &slug) {
+        Ok(path) => path,
+        Err(cdno_domain::error::DomainError::ProjectCapReached {
+            current,
+            max,
+            active_projects,
+        }) => {
+            return Err(cap_reached(
+                &format!("Activating {slug}"),
+                current,
+                max,
+                &active_projects,
+            ));
+        }
+        Err(e) => return Err(e).context("activating project"),
+    };
     crate::output::emit_write_result(json, &path.to_string(), &format!("Activated at {path}"))?;
     Ok(())
+}
+
+/// The `ProjectCapReached` refusal as the CLI renders it, shared by every
+/// verb that can make a map begin to count (`activate`, `take-back`):
+/// what was attempted, the counted figure against the cap, the counted
+/// maps by slug, and what frees a slot. `attempt` is the verb phrase
+/// ("Activating alpha").
+fn cap_reached(attempt: &str, current: usize, max: usize, counted: &[String]) -> anyhow::Error {
+    anyhow::anyhow!(
+        "{attempt} would make it count toward the cap, and {current} of {max} slots are in use \
+         by: {}. Park, complete or drop one of them first.",
+        counted.join(", ")
+    )
 }
 
 /// `cdno project milestone add` — slug picker, title text, optional

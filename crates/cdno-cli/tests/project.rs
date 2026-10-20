@@ -1704,4 +1704,68 @@ fn list_and_show_print_the_holder_and_counts() {
     let json = serde_json::to_value(&held).unwrap();
     assert_eq!(json["held_by"], "Ana Ruiz");
     assert_eq!(json["counts"], false);
+    let json = serde_json::to_value(&mine).unwrap();
+    assert!(json["held_by"].is_null(), "{json}");
+    assert_eq!(json["counts"], true);
+}
+
+/// `activate` and `take-back` can each make a map begin to count, and both
+/// render the cap refusal the same way: the counted figure and the
+/// counted maps by slug. The cap is read from the vault, never assumed.
+#[test]
+fn activate_and_take_back_at_the_cap_list_the_counted_maps_alike() {
+    let dir = vault();
+    let at = moment(2026, 5, 2, 9, 0);
+    let cap = usize::from(
+        cdno_cli::bootstrap::open_vault(dir.path())
+            .unwrap()
+            .0
+            .slot_usage()
+            .unwrap()
+            .cap,
+    );
+    for i in 0..cap {
+        create_project(dir.path(), at, &format!("Front {i}"), Context::Work);
+    }
+    // At the cap, a new map is captured parked.
+    create_project(dir.path(), at, "Shelved", Context::Work);
+    // Hand one off, then fill its slot: the held map can no longer come back.
+    hand_off(dir.path(), at, "front-0", Some("Ana Ruiz")).expect("hand-off");
+    create_project(dir.path(), at, "Late", Context::Work);
+
+    let activate = project::run(
+        dir.path(),
+        at,
+        ProjectCommands::Activate {
+            slug: Some("shelved".to_owned()),
+        },
+        true,
+        false,
+    )
+    .expect_err("activate at the cap");
+    let take_back = project::run(
+        dir.path(),
+        at,
+        ProjectCommands::TakeBack {
+            slug: Some("front-0".to_owned()),
+        },
+        true,
+        false,
+    )
+    .expect_err("take-back at the cap");
+
+    let (activate, take_back) = (format!("{activate:#}"), format!("{take_back:#}"));
+    let tail = |msg: &str| msg.split_once(" would make it").map(|(_, t)| t.to_owned());
+    assert!(activate.starts_with("Activating shelved"), "{activate}");
+    assert!(take_back.starts_with("Taking front-0 back"), "{take_back}");
+    assert_eq!(tail(&activate), tail(&take_back));
+    assert!(
+        activate.contains(&format!("{cap} of {cap} slots are in use by: ")),
+        "{activate}"
+    );
+    assert!(activate.contains("late"), "{activate}");
+    assert!(
+        !activate.contains("front-0"),
+        "the held map is not counted: {activate}"
+    );
 }
