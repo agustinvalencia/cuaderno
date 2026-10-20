@@ -15,6 +15,7 @@ use cdno_core::path::VaultPath;
 use crate::error::DomainError;
 use crate::frontmatter::ProjectFrontmatter;
 
+use super::context::path_stem;
 use super::{
     ClosedProjectEntry, CommitmentEntry, CompletedActionEntry, PortfolioSummary, ProjectSummary,
     QuestionSummary, SlotUsage, StewardshipSummary, Vault,
@@ -39,13 +40,17 @@ pub struct MonthlyContext {
     pub completed_actions: Vec<CompletedActionEntry>,
     /// Projects completed or dropped in the window, by closing date.
     pub closed_projects: Vec<ClosedProjectEntry>,
-    /// Every parked project map, with its path and frontmatter.
-    pub parked_projects: Vec<(VaultPath, ProjectFrontmatter)>,
+    /// Every parked project map, with its path, frontmatter and the
+    /// holder fields, so the review tells "someday" from "someone has
+    /// it" (RFC 0006 §8.5).
+    pub parked_projects: Vec<ParkedProject>,
     /// Every question with `status: active`.
     pub active_questions: Vec<QuestionSummary>,
     /// Every portfolio with its evidence count and staleness.
     pub portfolios: Vec<PortfolioSummary>,
-    /// Active projects whose map has not changed in 14 days.
+    /// Active projects whose map has not changed in 14 days, held ones
+    /// included; each summary carries `held_by`, `counts` and
+    /// `waiting_on_empty`.
     pub stuck_projects: Vec<ProjectSummary>,
     /// Every stewardship dashboard.
     pub stewardships: Vec<StewardshipSummary>,
@@ -53,6 +58,23 @@ pub struct MonthlyContext {
     pub commitments: Vec<CommitmentEntry>,
     /// Active-project slots in use against the cap.
     pub slots: SlotUsage,
+}
+
+/// One parked project as the monthly review reads it: the map's path and
+/// frontmatter, plus the holder fields built through
+/// [`Vault::project_summary`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParkedProject {
+    pub path: VaultPath,
+    pub frontmatter: ProjectFrontmatter,
+    /// The frontmatter `held_by:` as the lenient reader keeps it.
+    pub held_by: Option<String>,
+    /// Whether the map holds a slot: always `false` for a parked map,
+    /// carried so every review entry answers the same question.
+    pub counts: bool,
+    /// Whether `## Waiting On` says nothing (missing, empty, or only the
+    /// placeholder).
+    pub waiting_on_empty: bool,
 }
 
 impl Vault {
@@ -63,7 +85,7 @@ impl Vault {
             since,
             completed_actions: self.completed_actions_between(since, today)?,
             closed_projects: self.closed_projects_between(since, today)?,
-            parked_projects: self.parked_projects()?,
+            parked_projects: self.parked_review_projects()?,
             active_questions: self.active_questions()?,
             portfolios: self.list_portfolios(today)?,
             stuck_projects: self.stuck_projects(today, STUCK_AFTER_DAYS)?,
@@ -71,5 +93,23 @@ impl Vault {
             commitments: self.commitments(today, MONTHLY_COMMITMENTS_LOOKAHEAD_DAYS)?,
             slots: self.slot_usage()?,
         })
+    }
+
+    /// Every parked map as a [`ParkedProject`], in the order
+    /// [`Vault::parked_projects`] lists them.
+    fn parked_review_projects(&self) -> Result<Vec<ParkedProject>, DomainError> {
+        self.parked_projects()?
+            .into_iter()
+            .map(|(path, frontmatter)| {
+                let summary = self.project_summary(&path_stem(&path))?;
+                Ok(ParkedProject {
+                    path,
+                    frontmatter,
+                    held_by: summary.held_by,
+                    counts: summary.counts,
+                    waiting_on_empty: summary.waiting_on_empty,
+                })
+            })
+            .collect()
     }
 }

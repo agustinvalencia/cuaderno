@@ -1454,7 +1454,7 @@ fn bullet_display_title(action: &str) -> String {
 /// may carry `[[projects/alpha]]` or `[[alpha|Alpha]]`. `project` is the
 /// field a consumer reaches for now that `slug` may be null, so the two
 /// halves must not disagree about how a project is named.
-fn normalise_project_target(target: &str) -> String {
+pub(in crate::vault) fn normalise_project_target(target: &str) -> String {
     let target = target.split_once('|').map_or(target, |(link, _)| link);
     let target = target.trim();
     target
@@ -1527,7 +1527,7 @@ pub(in crate::vault) fn monday_of_iso_week(date: NaiveDate) -> NaiveDate {
 /// instant conversion honours the same zone. During a DST "spring
 /// forward" 23:59:59 always exists, so `.single()`/`.earliest()` is safe;
 /// the `unwrap_or(0)` is a defensive floor, never expected.
-fn mtime_threshold_ns(today: NaiveDate, days: i64) -> u64 {
+pub(in crate::vault) fn mtime_threshold_ns(today: NaiveDate, days: i64) -> u64 {
     mtime_threshold_ns_in(today, days, &chrono::Local)
 }
 
@@ -1590,7 +1590,7 @@ fn daily_note_date(path: &VaultPath) -> Option<NaiveDate> {
 }
 
 /// Pull the filename stem from a vault path.
-fn path_stem(path: &VaultPath) -> String {
+pub(in crate::vault) fn path_stem(path: &VaultPath) -> String {
     path.as_path()
         .file_stem()
         .and_then(|s| s.to_str())

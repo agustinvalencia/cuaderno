@@ -201,7 +201,10 @@ it has none or the value is not a plain string; `counts` is `true` when the map 
 `held_by` of `me`, `tbd` or another entry of
 [`holder_sentinels`](configuration.md#keys) leaves it counted, so branch on `counts`, never on the
 name); and `waiting_on_empty` is `true` when the map's `## Waiting On` is missing, empty, or only
-`(nothing yet)`. `groups` arranges the same projects, by slug, under the
+`(nothing yet)`. MCP `get_orientation` projects, `get_weekly_context.projects` and
+`get_monthly_context`'s parked and stuck entries carry the same three keys; the weekly ones add
+`changed_this_week` and `focus_days_while_held` (see the
+[review fields](mcp/reads.md#review-fields)). `groups` arranges the same projects, by slug, under the
 core question they share: a short and a full link to one question group together, since the key is
 the question's vault path (or the link's raw target when it resolves to no note), and only the
 field counts, never a passing mention of the question in a map's body. Every project falls in

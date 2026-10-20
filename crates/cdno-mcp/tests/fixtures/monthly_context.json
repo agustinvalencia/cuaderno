@@ -66,6 +66,7 @@
   ],
   "parked_projects": [
     {
+      "counts": false,
       "frontmatter": {
         "closed": null,
         "context": "work",
@@ -73,7 +74,9 @@
         "created": "{today-40}",
         "status": "parked"
       },
-      "slug": "shelved"
+      "held_by": null,
+      "slug": "shelved",
+      "waiting_on_empty": true
     }
   ],
   "portfolios": [

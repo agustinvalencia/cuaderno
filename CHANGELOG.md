@@ -8,6 +8,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- The weekly context lists each active project with `held_by`, `counts`,
+  `waiting_on_empty`, `changed_this_week` and, for a handed-off one, the days this week with work
+  started on it, as evidence for the review; the monthly context's parked and stuck projects carry
+  `held_by`, `counts` and `waiting_on_empty`, and so do `get_orientation`'s projects, which share
+  the summary shape (RFC 0006 §8.5).
 - `Vault::hand_off` records whose move a project is, logging `holder on [[slug]]`
   with `was:`/`now:` lines; taking back clears the name, is cap-checked only on an active map and
   never activates a parked one; a hand-off is refused while an action on that project is in focus
