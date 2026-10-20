@@ -2,7 +2,8 @@
 
 Companion to [RFC 0006 — Attention and structure](0006-attention-and-structure.md) (reviewed on
 PR #779); RLM 1.1 only; tracked by #781, with T0–T25a filed as #782–#808 in order and T25b as
-#810 (#809 is T1's pull request). T0 is a human step recorded on its own issue; T1–T25b are each meant to be
+#810 (#809 is T1's pull request). T0 is a human step recorded on its own issue, with no gate on
+anything in this plan (amended 2026-10-20, below); T1–T25b are each meant to be
 one issue and one pull request: small enough to review in one sitting, independent where the
 dependency graph allows, and **done only when its probe passes**. Two rules carried over from the
 RFC 0002, 0004 and 0005 plans: a green suite is not a probe (a probe asserts the specific new
@@ -78,13 +79,23 @@ for exactly that.
 
 Taken here, from the review thread on PR #779 and the plan's review, where the RFC compresses it:
 
-- **The deny-list** (§10, open). Sentinels, which name the person: `me`, `I`, `myself`, and
+- **No policy value is hardcoded** (the maintainer, 2026-10-20). Every threshold, window, list
+  or cap the method leaves to the person is a key in `.cuaderno/config.toml`, read through
+  `VaultConfig`, with a default that reproduces RLM 1.0 behaviour so an unchanged vault behaves as
+  before. Already keys: `max_active_projects`, `[focus] carry_over_days`. New in this plan: the
+  `held_by` deny-list (`[projects] holder_sentinels`, T15). The exception, stated once: method
+  version numbers (`METHOD_VERSION`, the RLM 1.1 cut-off the read-through compares against) are
+  the method's identity, not tunables, and stay constants.
+- **The deny-list** (§10, open) is the default value of `[projects] holder_sentinels`, a list of
+  strings in config, trimmed and compared case-insensitively; set it to `[]` to accept any name.
+  Its default: sentinels, which name the person: `me`, `I`, `myself`, and
   `(mine)` (the log's own stand-in, which someone copying from a `holder on` entry will write;
   this plan's addition). Placeholders, which name nobody: `someone`, `somebody`, `nobody`,
   `unknown`, `tbd`, `n/a`, `none`, `-`, `?`, and the blank string. Trimmed, any case. One
-  function serves the reader, the verb's refusal and lint (T15). The limit is stated, not solved:
-  cdno cannot know the person's own name, so the list approximates §7.2's "a map that names you is
-  yours", and no config key is added for it.
+  function serves the reader, the verb's refusal and lint (T15), all reading the same configured
+  list. The limit is stated, not solved: cdno cannot know the person's own name, so the default
+  approximates §7.2's "a map that names you is yours"; a person who wants their own name refused
+  adds it to the list.
 - **`list_actions` on a parked map** (§10, open): switched with the other verbs, as all seats
   said (T10).
 - **`resume` is refused on any map that is not active** (T10): on a since-parked map, as §8.1
@@ -199,9 +210,6 @@ flowchart LR
         T25b["T25b reference pages"]
     end
 
-    T0 --> T1
-    T0 --> T15
-    T14 --> T0b
     T1 --> T4
     T2 --> T4
     T2 --> T3
@@ -248,7 +256,7 @@ flowchart LR
     S3 --> T25b
 ```
 
-T1, T2, T5 and T6 have no code prerequisites and can start in parallel once T0 is recorded. The
+T1, T2, T5 and T6 have no code prerequisites and can start in parallel. The
 dotted edges are the RFC's order, not a code dependency: stage 2 changes what users see, and the
 version gate and runner (stage 1) should ship in a release no later than the first stage-2 change,
 because binaries up to v0.42 check nothing and the gate protects only from the release that carries
@@ -281,18 +289,17 @@ outside the vault for want of a slot (the target is none), and **O5**, whether
 config, the remote server's checkout, and `slots.cap` as both report it). O4 is checked once more
 at the six-month mark, beside §11's cadence residue.
 
-**Gate.**
-- **Zero** maps stop counting: practice 8 has not earned its place on this evidence yet. Proceed
-  anyway, since a field that nobody writes costs no slot and changes no count, and record the
-  result for the six-month review.
-- **One or two**: the practice earns its place; proceed, recorded.
-- **Three or more**: the cap is too low and no practice would hide it. Stop before stage 3 and
-  take the result to the maintainer.
+**Gate.** None (amended 2026-10-20 by the maintainer). The first draft made stage 3 wait on the
+count of maps that would stop counting in one vault, with thresholds. That coupled the project's
+code to the state of a particular vault, which is the wrong direction: cuaderno implements the
+method for any vault, and no vault's count decides what the method defines. The diagnostic stays
+as a practice note for whoever runs it; nothing in this plan depends on its result, and no task
+reads it. The zero-code trial's schema block must still open once `held_by` is reserved, and T15's
+probe pins that regardless.
 
-**Depends on.** Nothing. T15 depends on it: the trial's schema block must still open once
-`held_by` is reserved, and T15's probe pins that.
+**Depends on.** Nothing, and nothing depends on it.
 
-**Deliverable.** Two comments on T0's issue. No PR, no CHANGELOG line.
+**Deliverable.** Optional notes on T0's issue. No PR, no CHANGELOG line.
 
 **Correct means.** The practice is tried on real maps under the exact sentence the tool will
 check, before any code depends on the answer, and the checks §11 leaves to a person have one.
@@ -322,7 +329,7 @@ the closure, and never a parent (the user seat's ask; the wire field stays, §8.
 
 **Deliverable.** The edits and one test.
 
-**Depends on.** T0.
+**Depends on.** Nothing.
 
 **Complexity.** M. Text in known places; the one test copies an existing pin.
 
@@ -1054,23 +1061,26 @@ propagates parse errors by design (`lifecycle.rs:36–50`), as do `stuck_project
 `list_projects` and the monthly context, and would silently drop the map's dates from the register
 through `cached_project_context`. The rule: the verb refuses; the parser never does. New
 `crates/cdno-domain/src/frontmatter/holder.rs`: `pub enum HolderReading { Absent, Named(String),
-NotAString, Yours(String), Placeholder(String) }`, one `classify_holder_text(&str)` holding the
-deny-list (above), and two adapters, from `serde_yaml::Value` (the parser) and from
+NotAString, Yours(String), Placeholder(String) }`, one `classify_holder_text(&str,
+&HolderSentinels)` taking the deny-list from the vault's config (the `[projects]
+holder_sentinels` key, under "Decisions", never a literal in code), and two adapters, from `serde_yaml::Value` (the parser) and from
 `serde_json::Value` (lint reads the index's frontmatter, produced by `Frontmatter::as_json`, which
 stringifies YAML scalars that have no JSON form, `cdno-core/src/frontmatter.rs:116–122`; the two
-adapters must agree on every input, and a probe holds them to it). `held_by` is `Some` only for
-`Named`. `ProjectFrontmatter::counts_toward_cap(&self) -> bool { self.status == Active &&
-self.held_by.is_none() }`, on the frontmatter because every cap site already holds `(path,
-ProjectFrontmatter)`. Reservation: `is_reserved_key`
+adapters must agree on every input, and a probe holds them to it). The parser keeps the raw string
+(`held_by: Option<String>`, `None` for absent or not-a-string); classification needs the config,
+so `ProjectFrontmatter::counts_toward_cap(&self, sentinels: &HolderSentinels) -> bool` is
+`self.status == Active && !matches!(classify(self.held_by, sentinels), Named(_))`, on the
+frontmatter because every cap site already holds `(path, ProjectFrontmatter)` and a `&VaultConfig`. Reservation: `is_reserved_key`
 (`crates/cdno-domain/src/vault/set_frontmatter.rs:240`) gains project `held_by`, as `closed` is
 reserved, with a doc comment saying **never** through `hard_reserved_fields`
 (`type_registry.rs:397`), because `validate_reserved_schema_fields` (`type_registry.rs:253–264`)
 refuses to open a vault whose config declares a hard-reserved key, and T0's trial declares this
 one. `CLAUDE.md`'s "Invariants" gains that sentence. No template change.
 
-**Deliverable.** The field, the reader, the deny-list, the predicate, the reservation, tests.
+**Deliverable.** The field, the reader, the deny-list as a config key, the predicate, the
+reservation, tests.
 
-**Depends on.** T0.
+**Depends on.** Nothing in code.
 
 **Complexity.** R. A reader that must never fail and must never let a mistyped or self-naming value
 free a slot, shared verbatim by three consumers over two value types; and a reservation whose
@@ -1097,7 +1107,8 @@ obvious implementation bricks vaults.
   `unit::vault_tests` with `a_vault_declaring_a_project_held_by_schema_field_opens`.
 - Mutation: read with `optional_field::<String>`; the `active_projects` test fails. Mutation: add
   `held_by` to `hard_reserved_fields`; the vault-opens test fails. Mutation: drop the sentinel
-  arm; the `counts_toward_cap_table` row for `me` fails. Mutation: let the JSON adapter treat a
+  arm; the `counts_toward_cap_table` row for `me` fails. Mutation: ignore the configured list and
+  use a literal; a test that sets `holder_sentinels = ["nadie"]` and writes `held_by: nadie` fails. Mutation: let the JSON adapter treat a
   stringified date as a name; the agreement test fails.
 
 **CHANGELOG.** "Project maps may carry `held_by:`, the name of whoever else is moving the map. It
@@ -1622,20 +1633,18 @@ method version is not the crate version. **`STATUS.md`:** an RFC 0006 row.
 
 ## Suggested order of work
 
-T0 first, by hand. Then two tracks in parallel: **A** the groundwork, T2 → T3 and T1, T2 → T4, with
+Two tracks in parallel: **A** the groundwork, T2 → T3 and T1, T2 → T4, with
 T5 alongside; **B** the method version, T6 → T7a (R) → T7b, and T7a → T8 (R) → T9. Nothing in
 stage 2 merges until A and B have landed in a release, because the gate protects only from the
 release that carries it. Stage 2 is T10, T11 (R) and T12 in one release, with T13 and T14 in any
-order, then T0's second recording. Stage 3 starts with T15 (R) and T16 (R); T17 (R) follows, and
+order. Stage 3 starts with T15 (R) and T16 (R); T17 (R) follows, and
 T18–T21 can then run in parallel. T22 is independent of stage 3's interface tasks once T16 is in.
 T23 is the gate on calling the work 1.1, after every task in stages 2 and 3. T24, T25a and T25b
 are the tail.
 
 ## Done when
 
-T1 to T25b are merged; T0 is recorded twice, the second time with the O4 check (no list of
-undertakings kept outside the vault for want of a slot) and the O5 check (`max_active_projects` at
-its default, committed, and the same on every surface); a parked map takes every plan write and
+T1 to T25b are merged; a parked map takes every plan write and
 keeps its hard dates in the register while `start` and `resume` still refuse it; a handed-off map
 does not count on any surface, and every well-formed hand edit of `held_by` either counts or is
 honoured but never breaks a view; `cdno migrate` stamps an existing vault with RLM 1.1 after
