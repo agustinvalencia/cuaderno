@@ -2989,3 +2989,160 @@ fn the_read_through_row_is_gone_once_the_vault_records_1_1() {
         );
     }
 }
+
+// ---------------------------------------------------------------------
+// `held_by:` and the counted maps over the cap (RFC 0006 §8.2, T18)
+// ---------------------------------------------------------------------
+
+fn held_map(status: &str, held_by: &str) -> String {
+    format!(
+        "---\ntype: project\ncontext: work\nstatus: {status}\ncreated: 2026-01-01\ncore_question: null\nclosed: null\nheld_by: {held_by}\n---\n\n# Map\n"
+    )
+}
+
+fn holder_rows(
+    report: &cdno_domain::LintReport,
+) -> Vec<(String, cdno_domain::LintSeverity, String)> {
+    report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("held_by"))
+        .map(|i| (i.path.to_string(), i.severity, i.message.clone()))
+        .collect()
+}
+
+fn over_cap_rows(report: &cdno_domain::LintReport) -> Vec<&cdno_domain::LintIssue> {
+    report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("count toward the cap of"))
+        .collect()
+}
+
+#[test]
+fn an_unquoted_wikilink_holder_is_an_error_naming_the_fix() {
+    let vault = vault_with_notes(
+        &[
+            ("projects/harbour.md", &held_map("active", "[[people/ana]]")),
+            ("projects/_parked/dock.md", &held_map("parked", "2")),
+        ],
+        VaultConfig::default(),
+    );
+
+    let rows = holder_rows(&vault.lint_all_notes(lint_day()).unwrap());
+
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert!(
+        rows.iter()
+            .all(|(_, s, _)| *s == cdno_domain::LintSeverity::Error),
+        "{rows:?}"
+    );
+    let harbour = rows
+        .iter()
+        .find(|(p, _, _)| p == "projects/harbour.md")
+        .expect("the active map has a row");
+    assert!(
+        harbour
+            .2
+            .contains("quote it: `held_by: \"[[people/ana]]\"`"),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|(p, _, _)| p == "projects/_parked/dock.md"),
+        "a parked map is linted too: {rows:?}"
+    );
+}
+
+#[test]
+fn a_sentinel_holder_is_a_warning() {
+    const ADVICE: &str = "delete the line, or name the holder; a holder that names you or nobody means the map is yours";
+
+    // The configured default list: one self-naming value, one placeholder.
+    let vault = vault_with_notes(
+        &[
+            ("projects/mine.md", &held_map("active", "\" Me \"")),
+            ("projects/blank.md", &held_map("active", "TBD")),
+        ],
+        VaultConfig::default(),
+    );
+    let rows = holder_rows(&vault.lint_all_notes(lint_day()).unwrap());
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    for (_, severity, message) in &rows {
+        assert_eq!(*severity, cdno_domain::LintSeverity::Warning, "{rows:?}");
+        assert!(message.contains(ADVICE), "{message}");
+    }
+
+    // A custom list: `nadie` warns, and `me`, off the list, is a name.
+    let mut config = VaultConfig::default();
+    config.projects.holder_sentinels = vec!["nadie".to_owned()];
+    let vault = vault_with_notes(
+        &[
+            ("projects/nadie.md", &held_map("active", "Nadie")),
+            ("projects/me.md", &held_map("active", "me")),
+        ],
+        config,
+    );
+    let rows = holder_rows(&vault.lint_all_notes(lint_day()).unwrap());
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, "projects/nadie.md");
+    assert_eq!(rows[0].1, cdno_domain::LintSeverity::Warning);
+    assert!(rows[0].2.contains(ADVICE), "{rows:?}");
+}
+
+#[test]
+fn a_named_holder_is_clean() {
+    let vault = vault_with_notes(
+        &[
+            (
+                "projects/harbour.md",
+                &held_map("active", "\"the harbour office\""),
+            ),
+            (
+                "projects/_parked/dock.md",
+                &held_map("parked", "\"[[people/ana]]\""),
+            ),
+            ("projects/plain.md", &project_map("active", "null")),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).unwrap();
+
+    assert!(holder_rows(&report).is_empty(), "{:?}", report.issues);
+}
+
+#[test]
+fn counted_maps_over_the_cap_warn() {
+    let six = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"];
+    let mut config = VaultConfig::default();
+    config.vault.max_active_projects = 5;
+
+    // Six active, none held: one row on the config file, naming all six.
+    let maps: Vec<(String, String)> = six
+        .iter()
+        .map(|s| (format!("projects/{s}.md"), project_map("active", "null")))
+        .collect();
+    let notes: Vec<(&str, &str)> = maps.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+    let vault = vault_with_notes(&notes, config.clone());
+    let report = vault.lint_all_notes(lint_day()).unwrap();
+    let rows = over_cap_rows(&report);
+    assert_eq!(rows.len(), 1, "{:?}", report.issues);
+    assert_eq!(rows[0].path.to_string(), CONFIG_TOML);
+    assert_eq!(rows[0].severity, cdno_domain::LintSeverity::Warning);
+    assert!(
+        rows[0]
+            .message
+            .starts_with("6 projects count toward the cap of 5")
+    );
+    for slug in six {
+        assert!(rows[0].message.contains(&format!("[[{slug}]]")), "{rows:?}");
+    }
+
+    // Six active, one held by someone else: five count, clean.
+    let mut maps = maps;
+    maps[5].1 = held_map("active", "\"the harbour office\"");
+    let notes: Vec<(&str, &str)> = maps.iter().map(|(p, b)| (p.as_str(), b.as_str())).collect();
+    let vault = vault_with_notes(&notes, config);
+    let report = vault.lint_all_notes(lint_day()).unwrap();
+    assert!(over_cap_rows(&report).is_empty(), "{:?}", report.issues);
+}

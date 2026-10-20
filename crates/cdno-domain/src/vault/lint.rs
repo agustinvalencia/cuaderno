@@ -16,6 +16,7 @@ use cdno_core::paths::CONFIG_FILE;
 use cdno_core::store::VaultStore;
 
 use crate::error::DomainError;
+use crate::frontmatter::holder::{HolderReading, HolderSentinels, holder_reading_from_json};
 use crate::lint::{LintIssue, LintReport};
 use crate::method_version::{MethodSkew, UNSTAMPED_READS_AS, newer_minor_message};
 use crate::note_type::NoteType;
@@ -78,6 +79,16 @@ impl Vault {
     ///   map that is overdue at `today`, while the vault's method version
     ///   is below [`READ_THROUGH_BELOW`](crate::READ_THROUGH_BELOW),
     ///   naming the fix for its source (RFC 0006 §8.1, plan T12).
+    /// - a project map's `held_by:` (RFC 0006 §8.2), read against the
+    ///   vault's `[projects] holder_sentinels`, on open (active or parked)
+    ///   maps: a value that is not a plain string (an unquoted
+    ///   `[[people/ana]]`) is an `Error` naming the fix, since the holder
+    ///   the person wrote is not honoured; a value that names you or nobody
+    ///   is a `Warning`. A plain name, or no `held_by:`, is clean.
+    /// - the counted maps over the cap: one `Warning` on
+    ///   `.cuaderno/config.toml` when the maps that count (active, naming no
+    ///   other holder; [`Vault::slot_usage`]) exceed `max_active_projects`,
+    ///   listing them (RFC 0006 §8.2, §11 O5).
     ///
     /// Per-type structural checks (e.g. `ProjectFrontmatter` invariants)
     /// land alongside their domain code in Phase 2/3.
@@ -196,6 +207,11 @@ impl Vault {
             // review query only skips the row): a Warning.
             if entry.note_type == "project" {
                 issues.extend(project_status_issues(&path, &entry.frontmatter));
+                issues.extend(project_holder_issues(
+                    &path,
+                    &entry.frontmatter,
+                    &self.holder_sentinels,
+                ));
             }
 
             // Attachment stub ↔ artefact-folder pairing, forward
@@ -336,6 +352,7 @@ impl Vault {
         issues.extend(self.tracking_record_order_issues()?);
         issues.extend(self.focus_marker_issues()?);
         issues.extend(self.stale_template_issues()?);
+        issues.extend(self.over_cap_issues()?);
         // The method version is read once, for both rules that consult it.
         // One that cannot be read is an `Error`, and the read-through rule
         // then has no version to compare and adds nothing.
@@ -1231,7 +1248,97 @@ fn project_status_issues(path: &VaultPath, frontmatter: &serde_json::Value) -> V
     issues
 }
 
+/// The example a `held_by` that is not a plain string is told to follow.
+const HOLDER_QUOTE_EXAMPLE: &str = "[[people/ana]]";
+
+/// The `held_by:` row for one project map, at most one (RFC 0006 §8.2).
+///
+/// Reads through the same JSON adapter and configured list as the cap
+/// count, so lint flags exactly the values the count does not honour.
+/// Closed maps are skipped: they hold no slot, so the field means nothing
+/// there.
+fn project_holder_issues(
+    path: &VaultPath,
+    frontmatter: &serde_json::Value,
+    sentinels: &HolderSentinels,
+) -> Vec<LintIssue> {
+    let field = |key: &str| frontmatter.as_object().and_then(|o| o.get(key));
+    if matches!(
+        field("status").and_then(|v| v.as_str()),
+        Some("completed" | "dropped")
+    ) {
+        return Vec::new();
+    }
+    let value = field("held_by");
+    match holder_reading_from_json(value, sentinels) {
+        HolderReading::Absent | HolderReading::Named(_) => Vec::new(),
+        HolderReading::NotAString => {
+            let example = value
+                .and_then(unquoted_wikilink_target)
+                .map_or_else(|| HOLDER_QUOTE_EXAMPLE.to_owned(), |t| format!("[[{t}]]"));
+            vec![LintIssue::error(
+                path.clone(),
+                format!(
+                    "project `held_by:` is not a plain name, so the holder is not honoured and \
+                     the map counts toward the cap; quote it: `held_by: \"{example}\"`"
+                ),
+            )]
+        }
+        HolderReading::Sentinel(text) => vec![LintIssue::warning(
+            path.clone(),
+            format!(
+                "project `held_by: \"{text}\"` does not name someone else: delete the line, or \
+                 name the holder; a holder that names you or nobody means the map is yours"
+            ),
+        )],
+    }
+}
+
+/// The target of an unquoted `[[target]]`, which YAML reads as a sequence
+/// holding a sequence holding one string, so the fix can quote what the
+/// person wrote.
+fn unquoted_wikilink_target(value: &serde_json::Value) -> Option<&str> {
+    match value.as_array()?.as_slice() {
+        [inner] => match inner.as_array()?.as_slice() {
+            [serde_json::Value::String(target)] => Some(target),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 impl Vault {
+    /// At most one `Warning` on `.cuaderno/config.toml`: the maps that
+    /// count exceed the cap (RFC 0006 §8.2, §11 O5). The verbs refuse to
+    /// go over it, so this catches a cap lowered in config or maps edited
+    /// by hand. The count is [`Vault::slot_usage`]'s, so lint and the
+    /// verbs agree; a project map that cannot be read leaves the count
+    /// unknown, and the row is skipped rather than aborting the pass.
+    fn over_cap_issues(&self) -> Result<Vec<LintIssue>, DomainError> {
+        let usage = match self.slot_usage() {
+            Ok(usage) => usage,
+            Err(DomainError::Validation(_) | DomainError::Parse(_)) => return Ok(Vec::new()),
+            Err(err) => return Err(err),
+        };
+        if usage.counted <= usize::from(usage.cap) {
+            return Ok(Vec::new());
+        }
+        let slugs = usage
+            .counted_slugs
+            .iter()
+            .map(|s| format!("[[{s}]]"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Ok(vec![LintIssue::warning(
+            VaultPath::new(CONFIG_FILE)?,
+            format!(
+                "{} projects count toward the cap of {} (`max_active_projects`): {slugs}; park \
+                 or close one until no more than {} count",
+                usage.counted, usage.cap, usage.cap
+            ),
+        )])
+    }
+
     /// One `Warning` per custom override of a built-in template that lacks
     /// built-in frontmatter keys (#699). Nothing breaks without them, but
     /// nothing else says the override has fallen behind.
