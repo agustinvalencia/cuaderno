@@ -92,7 +92,7 @@ Two project codes carry details a client is likely to branch on:
 
 | Code | `details` | When |
 |---|---|---|
-| `project_not_active` | `slug`, `status` (`parked`, `completed` or `dropped`), and `closed` when the map carries a date | Any verb that edits a project's body (`add_action`, `update_project_state`, `drop_milestone`, …) on a parked or closed project, and a close repeating the outcome a project already has. A `parked` status means `activate_project` first; a closed one means the project is finished, unless the user wants it back. |
+| `project_not_active` | `slug`, `status` (`parked`, `completed` or `dropped`), and `closed` when the map carries a date | A `parked` status means a focus verb (`start_action`, `resume_action`, `switch_action`, `start_unplanned_action`, `switch_unplanned_action`) or `park_project` was refused: starting or picking up work needs an active map, so activate it first only if the user wants to work on it now. Every other project-body verb (`add_action`, `update_project_state`, `add_milestone`, …) works on a parked map. A closed status means a body verb on a completed or dropped project, or a close repeating the outcome it already has: the project is finished, unless the user wants it back. |
 | `ambiguous_project` | `slug`, `candidates: [{path, note_type}]` | The slug names maps in more than one of `projects/`, `projects/_parked/` and `projects/_done/<year>/`. Nothing can pick for you: keep one of the files by hand. |
 
 The test is simply **whether a different argument would change the outcome**. A slug that matches no

@@ -28,7 +28,7 @@ use crate::verify::WriteShape;
 #[tool_router(router = lifecycle_router, vis = "pub")]
 impl CuadernoServer {
     #[tool(
-        description = "Park an active project: move it to `projects/_parked/` and flip its status to parked. A parked project does not count against the active-project cap (`slots.cap` on `get_orientation` and `list_projects`, default 5), so parking frees a slot. Park work that is not for now; activate_project brings it back, and activation is where the cap is checked."
+        description = "Park an active project: move it to `projects/_parked/` and flip its status to parked. A parked project does not count against the active-project cap (`slots.cap` on `get_orientation` and `list_projects`, default 5), so parking frees a slot. Park work that is not for now. The map stays complete: it keeps accepting next actions, state, milestones and waiting-on. Only start_action, resume_action, switch_action and their unplanned forms (start_unplanned_action, switch_unplanned_action) need an active map, and refuse a parked one with `project_not_active`: a map you start work on is a map that counts. activate_project brings it back, and activation is where the cap is checked."
     )]
     pub async fn park_project(
         &self,

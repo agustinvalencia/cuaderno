@@ -796,3 +796,117 @@ fn cap_clause_is_pinned_on_the_four_project_descriptions() {
         );
     }
 }
+
+/// Handing off is stage 3 (RFC 0006 §8.2): no T14 text may mention it.
+const HAND_OFF_WORDS: [&str; 7] = [
+    "hand off",
+    "hand-off",
+    "handing off",
+    "handed off",
+    "hand_off",
+    "holder",
+    "held_by",
+];
+
+/// RFC 0006 T14 (#797), §7.1 and §8.1: a parked map is a complete map, so
+/// `park_project` names the focus verbs as the only ones that need an
+/// active map, in the method's words, and says nothing about handing off.
+#[test]
+fn park_project_names_the_verbs_that_need_an_active_map() {
+    let park = description_of("park_project");
+    for verb in [
+        "start_action",
+        "resume_action",
+        "switch_action",
+        "start_unplanned_action",
+        "switch_unplanned_action",
+    ] {
+        assert!(park.contains(verb), "park_project must name {verb}: {park}");
+    }
+    for phrase in [
+        "Only start_action, resume_action, switch_action and their unplanned forms",
+        "need an active map",
+        "`project_not_active`",
+        "a map you start work on is a map that counts",
+        "keeps accepting next actions, state, milestones and waiting-on",
+    ] {
+        assert!(
+            park.contains(phrase),
+            "park_project must say {phrase:?}: {park}"
+        );
+    }
+    let lower = park.to_lowercase();
+    for banned in HAND_OFF_WORDS {
+        assert!(
+            !lower.contains(banned),
+            "park_project must not mention handing off ({banned:?}): {park}"
+        );
+    }
+    assert!(!park.contains('\n'), "one paragraph: {park}");
+    assert!(park.chars().count() <= CLIENT_CUT, "{park}");
+}
+
+/// RFC 0006 T14 (#797): every tool whose domain verb moved to the open
+/// resolver in T10 says so, and none still says "an active project", the
+/// phrase that sent an agent at the cap round the activate-first loop (O7).
+/// `create_project` says the parked map takes its first actions, and
+/// `resume_action` lists the `project_not_active` it can now return
+/// (issue comment on #797, from the #821 review).
+#[test]
+fn no_switched_tool_description_says_an_active_project() {
+    const OPEN: &str = "an open (active or parked) project";
+    for name in [
+        "add_action",
+        "complete_action",
+        "drop_action",
+        "promote_action",
+        "update_project_state",
+        "set_core_question",
+        "add_milestone",
+        "complete_milestone",
+        "drop_milestone",
+        "add_waiting_on",
+        "resolve_waiting_on",
+    ] {
+        let desc = description_of(name);
+        assert!(
+            !desc.contains("an active project"),
+            "tool '{name}' still says \"an active project\": {desc}"
+        );
+        let says_open = if name == "add_action" {
+            desc.contains("an open project, active or parked")
+        } else {
+            desc.contains(OPEN)
+        };
+        assert!(
+            says_open,
+            "tool '{name}' must say it takes a parked map: {desc}"
+        );
+        assert!(
+            desc.chars().count() <= CLIENT_CUT,
+            "tool '{name}' description must fit the {CLIENT_CUT}-char client cut"
+        );
+    }
+
+    let add = description_of("add_action");
+    assert!(
+        add.contains("Only a completed or dropped project is refused, with `project_not_active`"),
+        "{add}"
+    );
+    assert!(add.contains("never activate it first"), "{add}");
+
+    let create = description_of("create_project");
+    assert!(
+        create.contains("A parked map takes its first actions straight away"),
+        "{create}"
+    );
+
+    let resume = description_of("resume_action");
+    assert!(
+        resume.contains(
+            "refused with code `project_not_active` when that project is no longer active"
+        ),
+        "{resume}"
+    );
+    assert!(resume.chars().count() <= CLIENT_CUT, "{resume}");
+}
