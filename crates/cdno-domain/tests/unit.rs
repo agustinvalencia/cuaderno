@@ -9,6 +9,7 @@ mod unit {
     mod daily_tests;
     mod frontmatter_edit_tests;
     mod frontmatter_tests;
+    mod holder_tests;
     mod links_tests;
     mod lint_tests;
     mod migrate_tests;

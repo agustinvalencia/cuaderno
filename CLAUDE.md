@@ -200,6 +200,10 @@ focus at discard time), names the project the thought arose during; it lives bel
 RFC 0006 adds `vault migrated` with indented `was:` / `now:` lines (`was: unstamped (read as 1.0)`
 for a vault that recorded no version), written by the method-migration runner (`vault/migrate.rs`);
 it carries no wikilink and is not a focus marker, so it is not in `FOCUS_MARKER_PREFIXES`.
+RFC 0006 also adds `holder on [[<slug>]]` with indented `was:` / `now:` lines (`(mine)` for no
+holder), written by the hand-off verb (`vault/projects/holder.rs`, `LOG_HOLDER_PREFIX`) when a
+project is handed off or taken back; it is a mutable-field entry like `state on`, not a focus
+marker, so it is not in `FOCUS_MARKER_PREFIXES` either.
 Tracing a project's evolution is a search over the daily log — so never replace a mutable section
 without emitting its log entry, and never hand-write that entry in any other shape.
 
