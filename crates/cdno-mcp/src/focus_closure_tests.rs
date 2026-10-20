@@ -205,35 +205,49 @@ async fn call(server: &CuadernoServer, tool: &str) -> Result<CallToolResult, Err
                 }))
                 .await
         }
+        "hand_off_project" => {
+            server
+                .hand_off_project(Parameters(HandOffProjectInput {
+                    project: "side-quest".to_owned(),
+                    holder: Some("the harbour office".to_owned()),
+                    take_back: false,
+                }))
+                .await
+        }
         other => panic!("not a focused write: {other}"),
     }
 }
 
-/// Each of the seventeen tools enters `with_vault` exactly twice: once for
+/// The eighteen focused writes, the same set as `FOCUSED_WRITES` in
+/// `tests/handlers_operations.rs` (checked below).
+const TOOLS: [&str; 18] = [
+    "start_action",
+    "start_unplanned_action",
+    "switch_action",
+    "switch_unplanned_action",
+    "pause_action",
+    "resume_action",
+    "complete_action",
+    "drop_action",
+    "promote_action",
+    "add_action",
+    "append_to_log",
+    "capture",
+    "note_to_daily",
+    "park_project",
+    "activate_project",
+    "complete_project",
+    "drop_project",
+    "hand_off_project",
+];
+
+/// Each of the eighteen tools enters `with_vault` exactly twice: once for
 /// the domain write, once for the verification **and** the focus. A focus
 /// read in a closure of its own would be a third `spawn_blocking`, reading
 /// a focus another process may have changed in between.
 #[tokio::test]
 async fn focus_is_read_in_the_same_closure() {
-    let tools = [
-        "start_action",
-        "start_unplanned_action",
-        "switch_action",
-        "switch_unplanned_action",
-        "pause_action",
-        "resume_action",
-        "complete_action",
-        "drop_action",
-        "promote_action",
-        "add_action",
-        "append_to_log",
-        "capture",
-        "note_to_daily",
-        "park_project",
-        "activate_project",
-        "complete_project",
-        "drop_project",
-    ];
+    let tools = TOOLS;
     for tool in tools {
         // Only a pause needs something in focus; a start or a resume
         // needs nothing in it.
@@ -249,4 +263,31 @@ async fn focus_is_read_in_the_same_closure() {
             "{tool}: the domain call and one closure for verify + focus"
         );
     }
+}
+
+/// The list above and the integration suite's `FOCUSED_WRITES` table are
+/// one set: a tool dropped from either would leave its focus unchecked in
+/// one of the two tests without failing anything.
+#[test]
+fn tools_match_the_focused_writes_table() {
+    use std::collections::BTreeSet;
+    let suite = include_str!("../tests/handlers_operations.rs");
+    let start = suite
+        .find("const FOCUSED_WRITES:")
+        .expect("FOCUSED_WRITES is declared");
+    let body = &suite[start..];
+    let body = &body[body.find('[').unwrap() + 1..];
+    let body = &body[body.find("= [").expect("array literal") + 3..];
+    let body = &body[..body.find("];").expect("array end")];
+    let table: BTreeSet<&str> = body
+        .split(',')
+        .map(|item| item.trim().trim_matches('"'))
+        .filter(|item| !item.is_empty())
+        .collect();
+    let here: BTreeSet<&str> = TOOLS.into_iter().collect();
+    assert_eq!(
+        here, table,
+        "TOOLS and FOCUSED_WRITES must name the same tools"
+    );
+    assert_eq!(here.len(), TOOLS.len(), "no tool listed twice");
 }

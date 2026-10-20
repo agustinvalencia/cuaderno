@@ -86,7 +86,7 @@ fn advertised_catalogue_matches_expected_surface() {
         "get_commitments",
         "lint",
         "triage_inbox",
-        // Operations (35)
+        // Operations (36)
         "append_to_log",
         "capture",
         "discard_inbox_item",
@@ -107,6 +107,8 @@ fn advertised_catalogue_matches_expected_surface() {
         "drop_action",
         "add_milestone",
         "set_core_question",
+        // Whose move a project is (RFC 0006 §8.2, T20).
+        "hand_off_project",
         "complete_milestone",
         "drop_milestone",
         "add_waiting_on",
@@ -143,7 +145,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 64);
+    assert_eq!(tools.len(), 65);
 }
 
 /// `read_note` is a read, so it rides the context router onto the
@@ -802,6 +804,85 @@ const HAND_OFF_WORDS: [&str; 10] = [
     "holder",
     "held_by",
 ];
+
+/// RFC 0006 T20 (#803), §7.2 and §8.2: handing off is never the answer to
+/// a full cap. Every description that tells an agent how to make room (it
+/// names `project_cap_reached`, freeing a slot or making room) names no way to hand a
+/// project off; `hand_off_project` is the one tool that may speak of it, and
+/// it says it is never the way to make room, only on the person's word.
+#[test]
+fn no_cap_text_offers_handing_off_as_a_remedy() {
+    let mut cap_texts = Vec::new();
+    for tool in empty_server().advertised_tools() {
+        let desc = tool.description.as_deref().unwrap_or_default().to_owned();
+        if tool.name.as_ref() == "hand_off_project" {
+            continue;
+        }
+        let lower = desc.to_lowercase();
+        if lower.contains("project_cap_reached")
+            || lower.contains("frees a slot")
+            || lower.contains("free slot")
+            || lower.contains("free a slot")
+            || lower.contains("freeing a slot")
+            || lower.contains("free up a slot")
+            || lower.contains("make room")
+            || lower.contains("makes room")
+        {
+            for banned in HAND_OFF_WORDS {
+                assert!(
+                    !lower.contains(banned),
+                    "tool '{}' speaks of the cap, so it must not mention handing off \
+                     ({banned:?}): {desc}",
+                    tool.name
+                );
+            }
+            cap_texts.push(tool.name.to_string());
+        }
+    }
+    // The scan saw the cap texts it exists for.
+    for name in [
+        "create_project",
+        "park_project",
+        "activate_project",
+        "add_action",
+    ] {
+        assert!(
+            cap_texts.iter().any(|n| n == name),
+            "{name} not scanned: {cap_texts:?}"
+        );
+    }
+
+    // The two cap descriptions name the only ways to make room.
+    for name in ["create_project", "activate_project"] {
+        let desc = description_of(name);
+        assert!(desc.contains("nothing else makes room"), "{name}: {desc}");
+        assert!(desc.contains("the projects that count"), "{name}: {desc}");
+    }
+
+    let hand = description_of("hand_off_project");
+    for phrase in [
+        "Record whose move a project is.",
+        "someone you could list in Waiting On and ask what came back",
+        "only on the person's word, with the name they give",
+        "never the way to make room at the cap",
+        "`take_back: true`",
+        "exactly one",
+        "`project_in_focus` while an action on the project is in focus",
+        "`project_cap_reached`",
+        "`holder on [[slug]]`",
+    ] {
+        assert!(
+            hand.contains(phrase),
+            "hand_off_project must say {phrase:?}: {hand}"
+        );
+    }
+    assert!(
+        hand.starts_with("Record whose move a project is."),
+        "{hand}"
+    );
+    assert!(!hand.contains('\n'), "one paragraph: {hand}");
+    assert!(hand.chars().count() <= CLIENT_CUT, "{hand}");
+}
 
 /// RFC 0006 T14 (#797), §7.1 and §8.1: a parked map is a complete map, so
 /// `park_project` names the focus verbs as the only ones that need an

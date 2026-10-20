@@ -8,6 +8,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- MCP `hand_off_project` (a holder, or `take_back: true`); `project_cap_reached` lists only the
+  projects that count. The server advertises 65 tools (RFC 0006 §8.2).
 - `cdno project hand-off --slug … --to …` and `cdno project take-back --slug …`;
   `project list` and `show` print the holder, and `cdno orient` suggests from projects that count
   (RFC 0006 §8.2).

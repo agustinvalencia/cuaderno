@@ -183,6 +183,11 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         // Caps and lifecycle: the call asked for something the vault's
         // rules do not allow *right now*.
         // -------------------------------------------------------------
+        // The counted maps only (RFC 0006 §8.2): `current` and
+        // `active_projects` are the maps that hold a slot, as
+        // `Vault::slot_usage` counts them, so every slug listed is one whose
+        // parking, completing or dropping frees a slot. Neither the message
+        // nor the details name any other way to make room.
         DomainError::ProjectCapReached {
             current,
             max,

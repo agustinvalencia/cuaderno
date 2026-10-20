@@ -17,7 +17,7 @@ Two binaries serve the same tool catalogue:
 
 ## The tool surface
 
-The server advertises **64 tools**. This reference groups them by purpose:
+The server advertises **65 tools**. This reference groups them by purpose:
 
 | Group | Page | What's in it |
 |-------|------|--------------|
@@ -31,7 +31,7 @@ client gets the same structures whichever surface it uses.
 ## Focus
 
 Four of the write tools (`pause_action`, `switch_action`, `switch_unplanned_action`, `resume_action`)
-move the one "what I am on" slot that `current_focus` reads, and seventeen write results carry a
+move the one "what I am on" slot that `current_focus` reads, and eighteen write results carry a
 `focus` field so the focus rides along without a second call. The server never refuses a write for
 being outside the focus; it refuses a second `start` (or a `switch` to the focused action, or a `resume_action` over a
 different focus) with a coded `focus_open` rejection, and `pause_action` or `resume_action` with
@@ -88,11 +88,12 @@ Three fields, and each has a job:
 `details` is the part that matters for automation. An ambiguous query hands back its **candidates as
 an array**, so a client picks from a list rather than parsing them out of a sentence.
 
-Four project codes carry details a client is likely to branch on:
+Five project codes carry details a client is likely to branch on:
 
 | Code | `details` | When |
 |---|---|---|
 | `project_not_active` | `slug`, `status` (`parked`, `completed` or `dropped`), and `closed` when the map carries a date | A `parked` status means a focus verb (`start_action`, `resume_action`, `switch_action`, `start_unplanned_action`, `switch_unplanned_action`) or `park_project` was refused: starting or picking up work needs an active map, so activate it first only if the user wants to work on it now. Every other project-body verb (`add_action`, `update_project_state`, `add_milestone`, …) works on a parked map. A closed status means a body verb on a completed or dropped project, or a close repeating the outcome it already has: the project is finished, unless the user wants it back. |
+| `project_cap_reached` | `current`, `max`, `active_projects` | A project would begin to count with the counted projects at the cap (`activate_project`, or taking back an active project with `hand_off_project`). `current` and `active_projects` are the projects that count, active and held by no one else, so each listed slug is one whose parking, completion or dropping frees a slot: offer those, or leave the project as it is. |
 | `ambiguous_project` | `slug`, `candidates: [{path, note_type}]` | The slug names maps in more than one of `projects/`, `projects/_parked/` and `projects/_done/<year>/`. Nothing can pick for you: keep one of the files by hand. |
 | `project_in_focus` | `slug`, `action` | A project was to be handed off while `action`, one of its actions, is in focus: a project is not handed off while you are in the middle of its work. Pause the action first, if the person wants to hand it off now. |
 | `empty_field` (for `held_by`) | `field: "held_by"`, `value`, `remedy: "take_back"` | The holder given names the person or nobody (`me`, `tbd`, `someone`, …, the vault's `[projects] holder_sentinels`). If they cannot name who has the project, it is theirs: take it back rather than hand it off. Any other `empty_field` carries `field` alone. |

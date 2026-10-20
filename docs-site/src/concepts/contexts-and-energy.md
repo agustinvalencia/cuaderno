@@ -85,7 +85,7 @@ paused action stops being offered once something later started, resumed, finishe
 promoted it. Promoting a bullet while it is in focus is fine: the focus follows it to the new note.
 
 **With an assistant.** Over [MCP](../reference/mcp/writes.md#focus-tools) the focus rides along on
-the reads and on the results of seventeen write tools, so an agent knows what you are on without asking. The server
+the reads and on the results of eighteen write tools, so an agent knows what you are on without asking. The server
 never refuses a write for being outside the focus. The agent's job is to notice a change of subject
 and say it in one sentence, offering to capture the thought and stay, to do it now as an aside, or to move over if you say
 so, and to give you a cue to get back (`next:` is what it reads out). It raises a given topic at

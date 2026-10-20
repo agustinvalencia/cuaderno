@@ -263,6 +263,62 @@ impl CuadernoServer {
             .await
     }
 
+    /// Hand an open project to a named holder, or take it back (RFC 0006
+    /// §8.2). Exactly one of `holder` and `take_back`, refused here as
+    /// `set_core_question` refuses a missing or doubled `clear`; the domain
+    /// classifies the rest (`empty_field` with `remedy: take_back` for a
+    /// sentinel, `project_in_focus`, `project_cap_reached`,
+    /// `project_not_active`). The payload carries `focus` like every write
+    /// that changes a project map.
+    #[tool(
+        description = "Record whose move a project is. A project with no holder is the person's own and counts against the cap (`slots.cap` on `get_orientation` and `list_projects`). A handed-off project names who else is moving it (`holder`: the harbour office, a colleague, the contractor who has the hull); it stays open where it is, active or parked, keeps its actions and register dates, and does not count. A holder is someone you could list in Waiting On and ask what came back; say what is expected back with add_waiting_on. Pass `holder` to hand off or `take_back: true` to make it the person's own again, exactly one: omitting both is an error, never a silent take-back. Call it only on the person's word, with the name they give: an empty name, a name that means the person themselves, or a stand-in for no one in particular (the vault's `[projects] holder_sentinels`) is refused with `empty_field` (`remedy: take_back`): if they cannot name who has it, it is theirs. Handing off is never the way to make room at the cap: work the person is moving stays theirs. Taking back an active project makes it count again and is refused with `project_cap_reached` when the counted projects are at the cap; taking back a parked one only clears the name and does not activate it. Refused with `project_in_focus` while an action on the project is in focus: a project is not handed off in the middle of its work, so the person pauses first. A completed or dropped project is refused with `project_not_active`. Logs `holder on [[slug]]` with indented `was:`/`now:` lines (`(mine)` for no holder); naming the holder it already has changes nothing."
+    )]
+    pub async fn hand_off_project(
+        &self,
+        Parameters(input): Parameters<HandOffProjectInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        // Mirrors `set_core_question`'s `clear`: an omitted holder is the
+        // likeliest agent slip, and it must not be the one that quietly
+        // makes a project count again.
+        let change = match (input.holder, input.take_back) {
+            (Some(_), true) => {
+                return Err(invalid_argument(
+                    "take_back",
+                    "pass either `holder` or `take_back: true`, not both",
+                ));
+            }
+            (None, false) => {
+                return Err(invalid_argument(
+                    "holder",
+                    "pass the name the person gives for who is moving the project, or \
+                     `take_back: true` to make it theirs again",
+                ));
+            }
+            (Some(holder), false) => cdno_domain::HolderChange::HandTo(holder),
+            (None, true) => cdno_domain::HolderChange::TakeBack,
+        };
+        let described = match &change {
+            cdno_domain::HolderChange::HandTo(holder) => format!("held by {}", holder.trim()),
+            cdno_domain::HolderChange::TakeBack => "the person's own".to_owned(),
+        };
+        let outcome = self
+            .with_vault(move |vault| vault.hand_off(at, &input.project, change))
+            .await?
+            .map_err(into_mcp_error)?;
+        // Tell an agent when nothing changed, so it does not report a
+        // hand-off that did not happen.
+        let touched = outcome.touched();
+        let path = outcome.primary;
+        let message = if touched {
+            format!("Recorded {path} as {described}")
+        } else {
+            format!("{path} is already {described}; nothing changed")
+        };
+        self.verified_write_focused(path, message, WriteShape::Rewritten, at.date())
+            .await
+    }
+
     #[tool(
         description = "Rewrite an open (active or parked) project's `## Current State` section, auto-logging the previous state to today's daily entry in the same atomic transaction. No-op (returns the path) when `new_state` matches the existing state — silent so logging 'was X, now X' doesn't fire. `new_state` is capped at the vault's `max_state_chars` (default 500), and nothing is ever truncated: under the default `reject` policy new over-length text is refused outright, so write a summary and leave the detail in the daily log — which is where the previous state goes anyway. A vault may set `warn` (over-length accepted, with an advisory) or `off` instead, and trimming a state that is *already* over the cap is always accepted even under `reject`, so an inherited sprawl can be cut down across several edits."
     )]
