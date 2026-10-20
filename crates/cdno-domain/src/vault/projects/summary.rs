@@ -11,7 +11,7 @@
 //! span everything.
 
 use crate::error::DomainError;
-use crate::frontmatter::{Context, EnergyLevel, HolderSentinels, ProjectStatus};
+use crate::frontmatter::{Context, EnergyLevel, ProjectStatus};
 
 use super::super::Vault;
 use super::super::context::LastPause;
@@ -108,7 +108,7 @@ impl Vault {
             .section(WAITING_ON_SECTION)
             .map(waiting_on_says_nothing)
             .unwrap_or(true);
-        let counts = project.counts_toward_cap(&HolderSentinels::from_config(&self.config));
+        let counts = project.counts_toward_cap(&self.holder_sentinels);
 
         Ok(ProjectSummary {
             slug: slug.to_owned(),
