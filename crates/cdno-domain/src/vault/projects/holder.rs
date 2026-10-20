@@ -29,6 +29,8 @@ use chrono::NaiveDateTime;
 use serde_json::Value;
 
 use crate::error::DomainError;
+use cdno_core::markdown::MarkdownDocument;
+
 use crate::frontmatter::{
     HolderReading, HolderSentinels, ProjectFrontmatter, ProjectStatus, classify_holder_text,
 };
@@ -78,9 +80,11 @@ impl Vault {
     /// Under the lock the map is resolved with
     /// [`resolve_open_project`](Vault::resolve_open_project) (a closed or
     /// misfiled map is [`DomainError::ProjectNotActive`]). A change that
-    /// would leave the holder as it reads now (the same name again, or a
-    /// take-back on a map that is already yours) is
-    /// [`WriteOutcome::noop`], with no log entry and no guard consulted.
+    /// would change nothing (the same name again, or a take-back on a map
+    /// with no `held_by` or `held_by: null`) is [`WriteOutcome::noop`],
+    /// with no log entry and no guard consulted. A take-back on a map whose
+    /// `held_by` reads as yours but is still written (a sentinel, an
+    /// unquoted wikilink) strikes the line and logs it, `was:` as written.
     /// Otherwise a hand-off is refused with
     /// [`DomainError::ProjectInFocus`] while an action on this map is in
     /// focus, and a take-back of an active map that counts afterwards and
@@ -101,9 +105,11 @@ impl Vault {
         slug: &str,
         change: HolderChange,
     ) -> Result<WriteOutcome, DomainError> {
-        let sentinels = HolderSentinels::from_config(&self.config);
+        // The deny-list `Vault::new` normalised once, the one every cap site
+        // reads, so the verb refuses exactly what the count ignores.
+        let sentinels = &self.holder_sentinels;
         let new_holder = match &change {
-            HolderChange::HandTo(name) => Some(validate_holder(name, &sentinels)?),
+            HolderChange::HandTo(name) => Some(validate_holder(name, sentinels)?),
             HolderChange::TakeBack => None,
         };
 
@@ -113,11 +119,23 @@ impl Vault {
 
         // What the map says now, as every counting surface reads it: only a
         // plain name of someone else is a holder; anything else is yours.
-        let previous = match frontmatter.holder(&sentinels) {
+        let previous = match frontmatter.holder(sentinels) {
             HolderReading::Named(name) => Some(name),
             HolderReading::Absent | HolderReading::NotAString | HolderReading::Sentinel(_) => None,
         };
-        if previous == new_holder {
+        // The `was:` side of the log. A name renders as read; a value that
+        // reads as yours but is still written (a sentinel, an unquoted
+        // wikilink) renders as written, since a take-back strikes that line.
+        let written = written_holder(&doc)?;
+        let was = previous.clone().or(written.clone());
+        let noop = match &new_holder {
+            // Handing to the holder the map already names changes nothing.
+            Some(_) => previous == new_holder,
+            // Taking back changes nothing only when there is no line to
+            // strike: no key, or `null` already.
+            None => written.is_none() && previous.is_none(),
+        };
+        if noop {
             return Ok(WriteOutcome::noop(path));
         }
 
@@ -140,7 +158,7 @@ impl Vault {
                 // an active map can begin to count; a parked one stays
                 // parked and needs no slot.
                 if frontmatter.status == ProjectStatus::Active {
-                    let counts_before = frontmatter.counts_toward_cap(&sentinels);
+                    let counts_before = frontmatter.counts_toward_cap(sentinels);
                     self.ensure_slot(counts_before, true)?;
                 }
             }
@@ -148,7 +166,7 @@ impl Vault {
 
         let new_content = write_holder(doc.render(), new_holder.as_deref())?;
         let entry_meta = build_index_entry_for(&path, &new_content, NoteType::Project.as_str())?;
-        let log_entry = format_holder_log_entry(slug, previous.as_deref(), new_holder.as_deref());
+        let log_entry = format_holder_log_entry(slug, was.as_deref(), new_holder.as_deref());
 
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
@@ -157,6 +175,55 @@ impl Vault {
 
         Ok(WriteOutcome::written(path, touched))
     }
+}
+
+/// The `held_by` value as written, on one line, or `None` when the key is
+/// absent or `null`. A string is its text; any other value (an unquoted
+/// `[[people/ana]]`, a number, a block sequence) is its source text from
+/// the frontmatter block, continuation lines folded onto one line.
+fn written_holder(doc: &MarkdownDocument) -> Result<Option<String>, DomainError> {
+    let one_line = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    match doc
+        .frontmatter()
+        .optional_field::<serde_yaml::Value>(HELD_BY)?
+    {
+        None | Some(serde_yaml::Value::Null) => Ok(None),
+        Some(serde_yaml::Value::String(text)) => Ok(Some(one_line(&text))),
+        Some(other) => {
+            let source = source_text_of(doc.render(), HELD_BY);
+            Ok(Some(match source {
+                Some(text) if !text.is_empty() => one_line(&text),
+                // Defensive: the key parsed, so its line exists.
+                _ => one_line(&serde_yaml::to_string(&other).unwrap_or_default()),
+            }))
+        }
+    }
+}
+
+/// The source text of a top-level frontmatter key's value: what follows
+/// `key:` on its line plus any continuation lines (indented, or `- ` items).
+fn source_text_of(raw: &str, key: &str) -> Option<String> {
+    let block = raw
+        .strip_prefix("---\n")
+        .or_else(|| raw.strip_prefix("---\r\n"))?;
+    let block = &block[..block.find("\n---")?];
+    let mut lines = block.lines();
+    let first = lines.find_map(|line| {
+        line.strip_prefix(key)
+            .and_then(|rest| rest.trim_start().strip_prefix(':'))
+    })?;
+    let mut text = first.trim().to_owned();
+    for line in lines {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty()
+            || !(line.starts_with(char::is_whitespace) || trimmed.starts_with("- "))
+        {
+            break;
+        }
+        text.push(' ');
+        text.push_str(trimmed);
+    }
+    Some(text.trim().to_owned())
 }
 
 /// Check a holder as given and return it trimmed, or the refusal.

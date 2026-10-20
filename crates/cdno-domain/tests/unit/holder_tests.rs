@@ -493,3 +493,151 @@ fn the_same_holder_again_is_a_noop() {
     assert_eq!(f.store.read_file(&vp("projects/thesis.md")).unwrap(), own);
     assert!(!f.store.exists(&vp(DAILY)).unwrap(), "no log entry");
 }
+
+#[test]
+fn take_back_strikes_a_written_holder_that_reads_as_yours() {
+    // An unquoted wikilink (a nested YAML sequence) and a sentinel both read
+    // as yours, but the line is still there: taking back strikes it and
+    // logs it, `was:` as written.
+    for (written, was) in [("[[people/ana]]", "[[people/ana]]"), ("me", "me")] {
+        let f = fixture(&[(
+            "projects/harbour.md",
+            &map("active", "Harbour", Some(written)),
+        )]);
+
+        let outcome = f
+            .vault
+            .hand_off(at(20, 9, 0), "harbour", HolderChange::TakeBack)
+            .expect("take back");
+        assert!(outcome.touched(), "{written:?}");
+
+        let raw = f.store.read_file(&vp("projects/harbour.md")).unwrap();
+        assert!(raw.contains("\nheld_by: null\n"), "{raw}");
+        assert_eq!(raw.matches("held_by").count(), 1, "{raw}");
+        let daily = f.store.read_file(&vp(DAILY)).unwrap();
+        assert!(
+            daily.contains(&format!(
+                "holder on [[harbour]]\n  was: {was}\n  now: {NO_HOLDER}"
+            )),
+            "{daily}"
+        );
+    }
+}
+
+#[test]
+fn take_back_on_a_null_holder_is_a_noop() {
+    let body = map("active", "Harbour", Some("null"));
+    let f = fixture(&[("projects/harbour.md", &body)]);
+
+    let outcome = f
+        .vault
+        .hand_off(at(20, 9, 0), "harbour", HolderChange::TakeBack)
+        .unwrap();
+    assert!(!outcome.touched());
+    assert_eq!(f.store.read_file(&vp("projects/harbour.md")).unwrap(), body);
+    assert!(!f.store.exists(&vp(DAILY)).unwrap(), "no log entry");
+}
+
+#[test]
+fn a_multi_line_or_unquoted_holder_is_replaced_by_one_quoted_line() {
+    // Each hand-written shape is replaced whole: exactly one `held_by:` line,
+    // quoted, and no orphaned continuation lines.
+    let shapes = [
+        "\n  - people/ana\n  - people/ben",
+        "[[people/ana]]",
+        "the harbour office",
+        "|\n  the harbour\n  office",
+        "{ name: ana }",
+    ];
+    for shape in shapes {
+        let f = fixture(&[(
+            "projects/harbour.md",
+            &map("active", "Harbour", Some(shape)),
+        )]);
+        f.vault
+            .hand_off(at(20, 9, 0), "harbour", hand_to("the night shift"))
+            .unwrap_or_else(|e| panic!("{shape:?}: {e}"));
+
+        let raw = f.store.read_file(&vp("projects/harbour.md")).unwrap();
+        let (frontmatter, _) = raw[4..].split_once("\n---\n").unwrap();
+        let held: Vec<&str> = frontmatter
+            .lines()
+            .filter(|l| l.contains("held_by") || l.starts_with(' ') || l.starts_with('-'))
+            .collect();
+        assert_eq!(
+            held,
+            vec!["held_by: \"the night shift\""],
+            "{shape:?}: {raw}"
+        );
+        assert_eq!(
+            holder_of(&f.store, "projects/harbour.md"),
+            HolderReading::Named("the night shift".to_owned())
+        );
+    }
+}
+
+#[test]
+fn yaml_lookalike_holders_are_names_and_a_date_is_refused() {
+    // Quoted, every YAML lookalike is a string, so it reads back as the name
+    // given (padding trimmed). A date would read as no one, so it is refused.
+    let names = [
+        ("123", "123"),
+        ("true", "true"),
+        ("null", "null"),
+        ("~", "~"),
+        ("   the harbour office  ", "the harbour office"),
+    ];
+    for (given, read) in names {
+        let f = fixture(&[("projects/harbour.md", &map("active", "Harbour", None))]);
+        f.vault
+            .hand_off(at(20, 9, 0), "harbour", hand_to(given))
+            .unwrap_or_else(|e| panic!("{given:?}: {e}"));
+        assert_eq!(
+            holder_of(&f.store, "projects/harbour.md"),
+            HolderReading::Named(read.to_owned()),
+            "{given:?}"
+        );
+    }
+
+    let f = fixture(&[("projects/harbour.md", &map("active", "Harbour", None))]);
+    let err = f
+        .vault
+        .hand_off(at(20, 9, 0), "harbour", hand_to("2026-10-20"))
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::InvalidFieldValue { ref field, .. } if field == "held_by"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn the_logs_no_holder_marker_is_on_the_default_deny_list() {
+    // Someone copying `(mine)` from a `holder on` entry into `held_by:`
+    // must write a value that reads as theirs.
+    assert!(
+        cdno_core::config::DEFAULT_HOLDER_SENTINELS.contains(&NO_HOLDER),
+        "{NO_HOLDER} missing from DEFAULT_HOLDER_SENTINELS"
+    );
+}
+
+#[test]
+fn hand_off_on_a_parked_map_writes_the_holder_and_leaves_it_parked() {
+    let f = fixture(&[(
+        "projects/_parked/harbour.md",
+        &map("parked", "Harbour", None),
+    )]);
+
+    f.vault
+        .hand_off(at(20, 9, 0), "harbour", hand_to("the harbour office"))
+        .expect("a parked map takes a holder");
+
+    let fm = frontmatter_of(&f.store, "projects/_parked/harbour.md");
+    assert_eq!(fm.status, ProjectStatus::Parked);
+    assert_eq!(fm.held_by.as_deref(), Some("the harbour office"));
+    assert!(!f.store.exists(&vp("projects/harbour.md")).unwrap());
+    let daily = f.store.read_file(&vp(DAILY)).unwrap();
+    assert!(
+        daily.contains("holder on [[harbour]]\n  was: (mine)\n  now: the harbour office"),
+        "{daily}"
+    );
+}
