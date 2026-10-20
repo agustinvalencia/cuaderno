@@ -38,6 +38,15 @@ enum variants. Spans with spaces, capitals or punctuation outside these
 shapes (`Standup`, `deep | medium | light`, `[[wikilinks]]`) are prose and
 are skipped.
 
+Known gaps, so the check is not over-trusted:
+
+- path segments are checked against the global set of DTO field names, not
+  against the DTO the path walks through, so `slots.slug` passes because
+  `slug` is a field somewhere;
+- a bare word passes when it matches any string literal in
+  `crates/cdno-mcp/src`, which is broader than the values a response can
+  actually carry.
+
 Run from the repository root:
 
     python3 examples/skills/check-tool-names.py [path/to/SKILL.md ...]

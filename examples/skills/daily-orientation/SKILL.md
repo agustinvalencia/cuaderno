@@ -36,6 +36,7 @@ What the cuaderno MCP can and can't do here, so steps stay bound to real tools:
 | `get_orientation` | cdno-mcp | Commitments due soon, active projects with their top action, lapsed stewardship habits |
 | `get_weekly_context` | cdno-mcp | Recently completed actions (for the wins line + standup) |
 | `read_daily_note` | cdno-mcp | Check for pre-planned intention/agenda before writing |
+| `read_note` | cdno-mcp | Optional: a group's question title, when the slate is shown |
 | `upsert_daily_section` | cdno-mcp | Persist the Standup / Intention / Agenda sections |
 | `resume_action` | cdno-mcp | Pick a carried focus (or, when nothing is open, a project's latest pause) up again, on the person's yes |
 | `start_action` | cdno-mcp | Start the action the person picked, when nothing is open |
@@ -79,7 +80,7 @@ Good morning! It's [Day], [Date].
 
 `[N]` is `slots.counted`: the person's own projects. Handed-off projects are not counted here and not mentioned (see "Something came back" below).
 
-If you show the slate at all (only when asked, or when it fits in three lines), show it by `groups`, one line per group, and only the projects that count. A group with a `parent` is one line: the question, then its projects as its fronts.
+If you show the slate at all (only when asked, or when it fits in three lines), show it by `groups`, one line per group, and only the projects that count. A group with a `parent` is one line: the question, then its projects as its fronts. `parent` carries the question's `path`, not its title: name it by the title in the question note's frontmatter (`read_note(note: <the path>)`) when you have it, or else by the path's last segment read as words (`questions/research/estuary-tides` → "estuary tides").
 
 ```
 → How do tides shape the estuary? — fieldwork season, sensor rebuild

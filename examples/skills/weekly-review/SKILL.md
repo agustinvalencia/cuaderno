@@ -27,7 +27,7 @@ A 5–10 minute reflective pass on the week. Wins first, always. Surface what mo
 
 | Tool | Server | Purpose |
 |------|--------|---------|
-| `get_weekly_context` | cdno-mcp | The week: logs, completed actions (wins), state changes, 2-week commitments |
+| `get_weekly_context` | cdno-mcp | The week: logs, completed actions (wins), state changes, 2-week commitments, and `projects` (each active project with the fields that pick its question) |
 | `get_orientation` | cdno-mcp | Lapsed stewardship habits, active project slate, `slots` |
 | `get_stewardship_tracking` | cdno-mcp | Optional detail on a specific stewardship |
 | `read_weekly_note` | cdno-mcp | Check whether the week already has a note before composing |
@@ -64,7 +64,7 @@ Did [project] move this week? I see its state went from blocked to drafting.
 
 If it sat still, ask compassionately — "still the priority, or should it wait?" — never as a verdict.
 
-**Handed off** (`counts: false`). Never ask whether it moved: someone else is moving it. Ask whichever of these apply, in this order (`[holder]` is the project's `held_by`, said as the name):
+**Handed off** (`counts: false`). Never ask whether it moved: someone else is moving it. At most one question per held project, one project at a time: when several of these apply, ask the first that applies in this order, and only raise the next if the person's answer leaves it open (`[holder]` is the project's `held_by`, said as the name):
 
 - **A name over an empty Waiting On** (`waiting_on_empty: true`):
   ```
@@ -134,7 +134,7 @@ That's your week — [goal] is the anchor. Rest of it can flex.
 There is no monthly-review skill in this repository; a monthly skill built on `get_monthly_context` follows these questions, in the same spirit (ask, never conclude):
 
 - **Parked projects, by name, once a month: is it time?** Read `get_monthly_context.parked_projects` and name each one by its `slug`, read as words, without opening it: "[project] has been parked. Is it time?" A parked project with a `held_by` name is someone else's to move ("someday" reads apart from "someone has it"); show it with its holder and ask nothing of it unless the person raises it. If the person wants one back, `activate_project` checks the cap: quote `slots.counted` and `slots.cap` from the same context, and if `project_cap_reached` comes back, the choice of what to park or finish is theirs. Never offer handing a project off to make room.
-- **A handed-off project in the stuck list: chase, or take back?** `get_monthly_context.stuck_projects` lists active projects whose map has not changed in two weeks; for one with `counts: false`, ask "[project] has been with [holder] for a while with nothing changing. Chase, or take back?" For the person's own stuck projects, the usual "still wanted, or should it wait?" applies.
+- **A handed-off project in the stuck list: chase, or take back?** `get_monthly_context.stuck_projects` is the stuck list: active projects whose map has not changed within the server's window. For one with `counts: false`, ask "[project] has been with [holder] for a while with nothing changing. Chase, or take back?" For the person's own stuck projects, the usual "still wanted, or should it wait?" applies.
 
 ## What NOT to do
 
