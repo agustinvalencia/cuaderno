@@ -276,6 +276,36 @@ fn a_held_active_map_stays_in_the_stuck_scan_carrying_its_holder() {
     assert_eq!(days, vec!["harbour", "quay"]);
 }
 
+#[test]
+fn a_held_active_map_stays_in_the_stuck_project_days_hint() {
+    // The weekly-review hint shares the stuck scan's gate: active maps,
+    // held ones included, never parked ones (held or not). It does not
+    // filter by the cap count.
+    let map = |status: &str, holder: Option<&str>, title: &str| {
+        let held = holder
+            .map(|h| format!("held_by: \"{h}\"\n"))
+            .unwrap_or_default();
+        format!(
+            "---\ntype: project\ncontext: work\nstatus: {status}\ncreated: 2026-01-01\n{held}---\n\n\
+             # {title}\n\n## Current State\nN/A.\n"
+        )
+    };
+    let harbour = map("active", Some("the harbour office"), "Harbour");
+    let quay = map("active", None, "Quay");
+    let buoy = map("parked", Some("the survey team"), "Buoy");
+    let (vault, _store) = vault_with(&[
+        ("projects/harbour.md", harbour.as_str()),
+        ("projects/quay.md", quay.as_str()),
+        ("projects/_parked/buoy.md", buoy.as_str()),
+    ]);
+    // A 0-day window takes every map modified today or earlier.
+    let today = chrono::Local::now().date_naive();
+    let days = vault.stuck_project_days(today, 0).unwrap();
+    let slugs: Vec<&str> = days.iter().map(|(slug, _)| slug.as_str()).collect();
+    assert_eq!(slugs, vec!["harbour", "quay"]);
+    assert!(days.iter().all(|(_, d)| *d >= 0), "{days:?}");
+}
+
 // ---------------------------------------------------------------------
 // get_project_full
 // ---------------------------------------------------------------------

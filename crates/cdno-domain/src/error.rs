@@ -71,7 +71,7 @@ impl DomainError {
 /// domain-specific variants for business rule violations.
 #[derive(Debug, thiserror::Error)]
 pub enum DomainError {
-    #[error("project cap reached ({current}/{max}), active: {active_projects:?}")]
+    #[error("project cap reached ({current}/{max}), counted: {active_projects:?}")]
     ProjectCapReached {
         current: usize,
         max: usize,

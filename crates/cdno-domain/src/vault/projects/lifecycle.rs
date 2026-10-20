@@ -17,9 +17,7 @@ use cdno_core::template::VariableContext;
 use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
-use crate::frontmatter::{
-    Context, HolderReading, HolderSentinels, ProjectFrontmatter, ProjectStatus,
-};
+use crate::frontmatter::{Context, HolderReading, ProjectFrontmatter, ProjectStatus};
 use crate::note_type::NoteType;
 
 use super::super::Vault;
@@ -289,9 +287,8 @@ impl Vault {
         // counts for nothing now, and once active it counts unless it names
         // someone else in `held_by:`. A map that names a holder activates
         // without a slot; a missing slug is `NotFound`, never the cap.
-        let sentinels = HolderSentinels::from_config(&self.config);
         let counts_after = !matches!(
-            location.frontmatter.holder(&sentinels),
+            location.frontmatter.holder(&self.holder_sentinels),
             HolderReading::Named(_)
         );
         self.ensure_slot(false, counts_after)?;

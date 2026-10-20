@@ -5994,3 +5994,43 @@ fn activating_a_missing_slug_at_the_cap_is_not_found() {
         "got {err:?}"
     );
 }
+
+#[test]
+fn project_summary_waiting_on_empty_table() {
+    // `waiting_on_empty` is true when `## Waiting On` says nothing: missing,
+    // empty, only the `(nothing yet)` placeholder, or duplicated (so
+    // unreadable, read like a missing one). One real item makes it false.
+    let head = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-09-01\n---\n\n\
+                # Harbour\n\n## Current State\nN/A.\n\n";
+    let cases = [
+        ("missing", "## Next Actions\n", true),
+        ("empty", "## Waiting On\n\n## Milestones\n", true),
+        (
+            "placeholder",
+            "## Waiting On\n(nothing yet)\n\n## Milestones\n",
+            true,
+        ),
+        (
+            "padded placeholder",
+            "## Waiting On\n\n  (nothing yet)  \n\n",
+            true,
+        ),
+        (
+            "duplicated",
+            "## Waiting On\n- Berth survey\n\n## Waiting On\n- Tide data\n",
+            true,
+        ),
+        ("one item", "## Waiting On\n- Berth survey\n", false),
+        (
+            "item below the placeholder",
+            "## Waiting On\n(nothing yet)\n- Berth survey\n",
+            false,
+        ),
+    ];
+    for (label, body, expected) in cases {
+        let map = format!("{head}{body}");
+        let vault = vault_with_notes(&[("projects/harbour.md", map.as_str())]);
+        let summary = vault.project_summary("harbour").expect("summary");
+        assert_eq!(summary.waiting_on_empty, expected, "{label}");
+    }
+}

@@ -6,7 +6,6 @@
 //! home (RFC 0006 §8.0).
 
 use crate::error::DomainError;
-use crate::frontmatter::HolderSentinels;
 
 use super::super::Vault;
 use super::project_slug_from_path;
@@ -67,10 +66,10 @@ impl Vault {
     /// (a skipped map would let a sixth active project past the cap).
     pub fn slot_usage(&self) -> Result<SlotUsage, DomainError> {
         let active = self.active_projects()?;
-        let sentinels = HolderSentinels::from_config(&self.config);
+        let sentinels = &self.holder_sentinels;
         let counted_slugs: Vec<String> = active
             .iter()
-            .filter(|(_, project)| project.counts_toward_cap(&sentinels))
+            .filter(|(_, project)| project.counts_toward_cap(sentinels))
             .map(|(path, _)| project_slug_from_path(path))
             .collect();
         Ok(SlotUsage {
