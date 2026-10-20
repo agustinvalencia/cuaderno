@@ -301,7 +301,7 @@ file, coming back to the search hits is not what anyone wants. `cdno open`'s
 own picker is the same shape, and both use `prompt::prompt_note` rather than
 `prompt::drill_down`.
 
-**Picker prompts available**: project (active), any project (active + parked, for read verbs), parked project, action bullet, open milestone, energy, life-domain context, date, optional date (yes/no gate, for a genuinely optional field), question (slug, for the lifecycle verbs) and question target (`questions/<domain>/<slug>`, for a wikilink field), hard/soft.
+**Picker prompts available**: project (active, for `action start`, `action switch` and `project park`), open project (active + parked, for every verb that accepts a parked map: reads, closing, and the project-body writes RFC 0006 §8.1 opened to parked maps; `prompt_open_project`), parked project, action bullet, open milestone, energy, life-domain context, date, optional date (yes/no gate, for a genuinely optional field), question (slug, for the lifecycle verbs) and question target (`questions/<domain>/<slug>`, for a wikilink field), hard/soft.
 
 The two question pickers are **not** interchangeable: the lifecycle verbs resolve a bare slug, while a frontmatter wikilink field needs the qualified target. A bare slug still resolves as a link, so getting it the wrong way round fails silently — the MCP question resolver requires the qualified form and reports no core question for anything else.
 **Plain text prompts** (fuzzy pickers deferred): `waiting resolve` query, `commit done` slug — both pending the matching domain queries (open waiting items per project, active commitments listing).

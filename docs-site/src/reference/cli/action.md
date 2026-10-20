@@ -174,7 +174,7 @@ Pause the action in focus and start another, in one commit. It takes the same ta
 
 | Flag | Description |
 |------|-------------|
-| `--project <SLUG>` | Project of the action to switch **to**. |
+| `--project <SLUG>` | Active project slug of the action to switch **to**: switching work needs an active map. |
 | `--query <QUERY>` | Substring of the open bullet to switch to. Conflicts with `--unplanned`. |
 | `--unplanned` | Switch to work on no map yet: adds the bullet, then starts it. |
 | `--title <TEXT>` | Title for the new bullet. Requires `--unplanned`. |
