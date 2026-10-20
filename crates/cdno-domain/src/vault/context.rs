@@ -409,6 +409,12 @@ impl Vault {
     /// least `unchanged_for_days` days. `mtime_ns` from the index is
     /// the source of truth — reconciliation keeps it in sync with
     /// the filesystem.
+    ///
+    /// The scan is over `status: active`, held maps included, and
+    /// deliberately not over the maps that count toward the cap: a map
+    /// handed to someone else and unchanged for the window still surfaces,
+    /// carrying its `held_by` in the summary, so the review can ask
+    /// "chase, or take back?" (RFC 0006 §8.2).
     pub fn stuck_projects(
         &self,
         today: NaiveDate,

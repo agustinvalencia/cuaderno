@@ -901,6 +901,9 @@ fn summary(slug: &str, context: Context, state: &str) -> ProjectSummary {
         core_question: None,
         state_snippet: state.to_owned(),
         top_action: None,
+        held_by: None,
+        counts: true,
+        waiting_on_empty: true,
         last_paused: None,
     }
 }

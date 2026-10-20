@@ -28,6 +28,7 @@ use cdno_core::store::VaultStore;
 use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
+use crate::frontmatter::HolderSentinels;
 use crate::method_version::{Gate, METHOD_VERSION, UNSTAMPED_READS_AS, method_gate};
 
 mod actions;
@@ -164,6 +165,10 @@ pub struct Vault {
     pub(in crate::vault) store: Arc<dyn VaultStore>,
     pub(in crate::vault) index: Arc<dyn VaultIndex>,
     pub(in crate::vault) config: VaultConfig,
+    /// `[projects] holder_sentinels`, normalised once at open: every cap
+    /// count and project summary reads it (RFC 0006 §8.2), and `config`
+    /// does not change for the life of a `Vault`.
+    pub(in crate::vault) holder_sentinels: HolderSentinels,
     /// The newer-minor method-version notice (RFC 0006 §8.4).
     method_notice: method_status::MethodNotice,
 }
@@ -189,11 +194,13 @@ impl Vault {
         let report = reconcile(&store, &index, &ignore)?;
         let method_notice = method_status::MethodNotice::default();
         method_notice.record(config.vault.method_version);
+        let holder_sentinels = HolderSentinels::from_config(&config);
         Ok((
             Self {
                 store,
                 index,
                 config,
+                holder_sentinels,
                 method_notice,
             },
             report,

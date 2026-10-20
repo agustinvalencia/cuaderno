@@ -194,6 +194,78 @@ fn orient_json_does_not_expose_focus_or_last_paused() {
 }
 
 #[test]
+fn orient_json_projects_carry_the_cap_keys() {
+    // RFC 0006 §8.2: each `projects` element gains `held_by`, `counts` and
+    // `waiting_on_empty` beside the keys it already had, and nothing else.
+    use assert_cmd::Command;
+
+    let dir = tempdir().unwrap();
+    seed_alpha_vault(dir.path());
+    fs::write(
+        dir.path().join("projects/harbour.md"),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n\
+         held_by: \"the harbour office\"\n---\n\n# Harbour\n\n## Current State\nWith the office.\n\n\
+         ## Waiting On\n- Berth survey\n",
+    )
+    .unwrap();
+
+    let out = Command::cargo_bin("cdno")
+        .expect("cdno binary built")
+        .args(["--vault"])
+        .arg(dir.path())
+        .args(["orient", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).expect("stdout is valid JSON");
+    let projects = json["projects"].as_array().expect("projects array");
+    let by_slug = |slug: &str| {
+        projects
+            .iter()
+            .find(|p| p["slug"] == slug)
+            .unwrap_or_else(|| panic!("{slug} in {json}"))
+    };
+
+    let mut keys: Vec<&str> = by_slug("alpha")
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        vec![
+            "context",
+            "core_question",
+            "counts",
+            "held_by",
+            "slug",
+            "state_snippet",
+            "status",
+            "top_action",
+            "waiting_on_empty",
+        ]
+    );
+
+    let alpha = by_slug("alpha");
+    assert_eq!(alpha["held_by"], serde_json::Value::Null);
+    assert_eq!(alpha["counts"], true);
+    assert_eq!(
+        alpha["waiting_on_empty"], true,
+        "no `## Waiting On` says nothing"
+    );
+    let harbour = by_slug("harbour");
+    assert_eq!(harbour["held_by"], "the harbour office");
+    assert_eq!(harbour["counts"], false);
+    assert_eq!(harbour["waiting_on_empty"], false);
+    assert_eq!(json["slots"]["active"], 2);
+    assert_eq!(json["slots"]["counted"], 1);
+}
+
+#[test]
 fn orient_renders_a_shared_question_as_one_line_with_its_fronts() {
     // Two maps of one inquiry read as one undertaking (RFC 0006 §7.3):
     // the question once, then one line carrying each front with its next

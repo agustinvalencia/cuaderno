@@ -17,7 +17,7 @@ use super::WAITING_ON_SECTION;
 /// Placeholder body for an empty `## Waiting On` section. Treated as
 /// equivalent to "no items" so `add_waiting_on` replaces rather than
 /// appending below it.
-const WAITING_ON_PLACEHOLDER: &str = "(nothing yet)";
+pub(super) const WAITING_ON_PLACEHOLDER: &str = "(nothing yet)";
 
 impl Vault {
     /// Append a waiting-on item to `## Waiting On`, logging the
