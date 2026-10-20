@@ -18,6 +18,19 @@ The tool has four consumers:
 - **Claude** via the MCP server (stdio for local, HTTP for self-hosted)
 - **Claude skills** as choreographed workflows combining MCP calls with ADHD-friendly interaction patterns
 
+### The method and its version
+
+The method comes first; this tool implements it. The text below is the method's, written to be read without the tool.
+
+**Versioning.** The version tracks the method's text, not any tool. A change is **minor** if every page of an existing logbook can be read under it without being rewritten, moved, or given a line it lacks; a minor version may ask for a one-time read-through of existing pages. A change is **major** if any page must be rewritten or moved, and it comes with instructions for doing so (in a tool, a migration). A logbook records on its first page, dated, the version it follows and the day it moved to a newer one; the published method keeps a changelog of practices.
+
+**Changelog of practices.**
+
+- **1.0** — the seven practices as published: the chronological log, evidence portfolios, important questions, project maps, stewardships, the commitments register, and energy-matched scheduling.
+- **1.1** — parking clarified (§5.3.1), practice 8, handing off (§5.3.2), and the monthly loop. Additive: every 1.0 logbook is a valid 1.1 logbook. On adopting 1.1 a paper user does two things: a dated line on the first page, and one pass over the parked pages' dates.
+
+**The rhythm.** The method runs on a daily loop (orient, log and act, a light close), a weekly loop (the retrospective and one goal for the week ahead) and occasional work (filing evidence, triaging the inbox). Practice 3 says questions are reviewed monthly, and parking leans on that loop, so 1.1 states it: *Monthly — the parked maps ("is it time?") and the questions ("still the right questions?").*
+
 -----
 
 ## 2. Design Principles
@@ -171,7 +184,7 @@ vault/
 
 ### Structural conventions
 
-- **`_parked/`** inside `projects/`: inactive projects, not deleted. Revisited at monthly review.
+- **`_parked/`** inside `projects/`: parked projects, not deleted. A parked map is a complete map: it keeps its next actions, state, milestones and waiting-on, and its hard dates stay in the commitments register. It does not count against the cap, and it is read at the monthly review rather than daily (RLM 1.1, §5.3.1).
 - **`_done/<year>/`** inside `projects/`: closed projects, completed or dropped, partitioned by the year they closed. Year subfolders are created on demand.
 - **`_done/`** inside `commitments/`: fulfilled commitments, kept for record.
 - **`_done/<year>/`** inside `actions/`: completed action notes, partitioned by year so the active set stays scannable. Year subfolders are created on demand at completion time.
@@ -344,11 +357,41 @@ Milestones are extracted into a first-class `milestones(project_id, name, date, 
   now: "Feature set B ablation confirmed with 20-seed CI..."
 ```
 
-**5-project cap**: maximum 5 active projects across all contexts. Parked projects move to `projects/_parked/`. Enforced by the tool — creating a project at the cap creates it parked; the cap is checked on activation.
+**5-project cap**: maximum 5 projects that count, across all contexts; the count is the maps that are neither parked nor handed off (RLM 1.1, §5.3.2). Parked projects move to `projects/_parked/`. Enforced by the tool — creating a project at the cap creates it parked; the cap is checked whenever a map that did not count begins to count: activating a map nobody else holds, or taking back an active one.
 
 **Lifecycle**: `status` is one of `active`, `parked`, `completed` or `dropped`, and each has one folder: `projects/`, `projects/_parked/`, and `projects/_done/<year>/` for both closed states. A closed map also carries `closed: <date>`, the day it closed; the key is `null` on an open project and is written last in the frontmatter. `complete` is the claim that the work was done; `drop` records that it is not going to happen, with an optional reason. Both work from active or parked and never need a slot. While an action or milestone is open, closing is refused with the list: `complete` stays refused until each is completed or dropped, while `drop` can let them go with it on request, logging each as a drop (`reason: project dropped`, or `reason: project dropped (<reason>)` when a reason was given) and archiving attached action notes as dropped. Standalone commitments that name the project are never touched. A closed project is not terminal: `activate` brings it back (clearing `closed:`, under the cap), and it can be closed again the other way as a new, logged decision. Every transition logs one line in a fixed shape — `project [[slug]] parked`, `project [[slug]] activated`, `project completed [[slug]] — <title>`, `project dropped on [[slug]] — <title>` with an indented `reason:` line. A map whose status disagrees with its folder is a lint error.
 
 **Milestones with hard deadlines** are picked up by the commitments aggregation query while the project is open, active or parked: a hard date on a parked map is still a promise (RFC 0006 §7.1). A completed or dropped project's milestones leave the register until it is activated again.
+
+#### 5.3.1 Parking, clarified (RLM 1.1)
+
+A parked project map is a complete map. Parking changes two things only: the project does not count against the five, and it is read at the monthly review rather than daily. Everything else a map does, it keeps. You may write next actions on a parked map, update its state, note a milestone, note who you are waiting on. A hard-dated milestone on a parked map, or a dated action on it, is still a promise and stays in the commitments register.
+
+A map you start work on is a map that counts: being in the middle of something is the strongest sign you are moving it yourself. If you find yourself working on a parked map, or picking up work you had set down on it, it is not parked; activate it, parking another if you must.
+
+On adopting this clarification, read the parked maps once: every stale date on them is dropped, with its entry in the log, or re-dated.
+
+#### 5.3.2 Practice 8: handing off (RLM 1.1)
+
+A project map answers: where was I, what do I believe and what would change my mind, what are my next actions, what is time-sensitive, where is everything. It gains one more question: **whose move is it?**
+
+A project you have handed to someone else carries their name at the top of its map: *held by: the harbour office*, *held by: a colleague*, *held by: the contractor who has the hull*. The holder is whoever you could write in Waiting On. A map with no name on it is yours; a map that names you is yours. The page stays where it is; only the name changes.
+
+Why: if a project someone else is moving holds one of your five, the cap counts their attention as yours, and you will either raise the number or stop writing such work down. Both are worse than a name on a page.
+
+**The count.** Count the maps that are neither parked nor handed off. A handed-off project is still open: it keeps its map, keeps logging, keeps its dates in the register, and is still read at the weekly review, and at the daily orientation when something has come back. It is not a sixth slot; it is a project that is not a unit of your attention this week.
+
+**The review.** Yours: did it move? Handed off: what came back, and what is waiting on your decision? The second is asked in a week when the map changed.
+
+**The log.** Handing off and taking back are dated entries in the chronological log naming the project and the holder; taking back strikes the name. Taking back a parked map only strikes the name; to work on it, activate it as well, as its own entry.
+
+**The cap** is checked whenever a map that did not count begins to count: activating a map nobody else holds, or taking back an active one.
+
+**Three guards.** If you cannot name who has it, it is yours. A handed-off map says what you are waiting for; a name over an empty Waiting On is a parked map wearing a name, and the weekly review parks it or takes it back. And handing off is never the answer to "the cap is full": doing a thing on a handed-off map does not make it yours, doing most of its work does; at the weekly review, a handed-off map you worked on yourself on two or more days is taken back, or its name changed to who really has it. You do not hand off a map while you are in the middle of its work.
+
+**The asymmetry.** Parking is your decision about now, so starting work on a parked map undoes it at once; a holder is a fact about someone else, which one afternoon's work on the map does not change.
+
+The map already has a Waiting On section for single items. Handing off is Waiting On lifted to the whole project, which is why the method already half-had it. Its ancestry is GTD's Waiting For, kept per project rather than as a separate list.
 
 ### 5.4 Portfolio Index
 

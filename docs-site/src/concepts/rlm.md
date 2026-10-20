@@ -2,7 +2,8 @@
 
 The Research Logbook Method (RLM) is the practice Cuaderno implements. It distils habits common to
 prolific researchers — Faraday's notebooks, Darwin's dated entries, Hamming's "important problems,"
-Knuth's and Tao's working logs — into seven concrete practices across two tracks. Each maps onto one or more
+Knuth's and Tao's working logs — into eight concrete practices across two tracks (seven in RLM 1.0;
+see [Method version](#method-version)). Each maps onto one or more
 [note types](note-types.md) the tool manages.
 
 ## Two tracks
@@ -44,6 +45,19 @@ open-ended inquiry dissolving operational commitments.
    project that gives them meaning. **Maximum five active projects, at most three next actions each**
    — fifteen tasks as a ceiling, not a backlog. A project map is not a history (the log is), not a
    long checkbox list (eighteen unchecked boxes reads as failure), and not a timeline.
+
+   **Parking, clarified (1.1).** A parked project map is a complete map. Parking changes two things
+   only: the project does not count against the five, and it is read at the monthly review rather
+   than daily. Everything else a map does, it keeps. You may write next actions on a parked map,
+   update its state, note a milestone, note who you are waiting on. A hard-dated milestone on a
+   parked map, or a dated action on it, is still a promise and stays in the commitments register.
+
+   A map you start work on is a map that counts: being in the middle of something is the strongest
+   sign you are moving it yourself. If you find yourself working on a parked map, or picking up work
+   you had set down on it, it is not parked; activate it, parking another if you must.
+
+   On adopting this clarification, read the parked maps once: every stale date on them is dropped,
+   with its entry in the log, or re-dated.
 5. **Stewardships.** Dashboards for perpetual responsibilities — health, finances, household — that
    never finish. The critical distinction: **projects end, stewardships do not.** If health and
    finances occupy project slots you permanently lose two of five to things that cannot complete.
@@ -59,6 +73,49 @@ open-ended inquiry dissolving operational commitments.
    discipline, it is waste — the alternative to deep work on a low day is usually paralysis, not
    virtue. The exception: if you *never* have deep days, that is environmental, and the fix is
    protecting blocks rather than trying harder.
+8. **Handing off** (1.1). A project map answers: where was I, what do I believe and what would
+   change my mind, what are my next actions, what is time-sensitive, where is everything. It gains
+   one more question: **whose move is it?**
+
+   A project you have handed to someone else carries their name at the top of its map: *held by:
+   the harbour office*, *held by: a colleague*, *held by: the contractor who has the hull*. The
+   holder is whoever you could write in Waiting On. A map with no name on it is yours; a map that
+   names you is yours. The page stays where it is; only the name changes.
+
+   Why: if a project someone else is moving holds one of your five, the cap counts their attention
+   as yours, and you will either raise the number or stop writing such work down. Both are worse
+   than a name on a page.
+
+   **The count.** Count the maps that are neither parked nor handed off. A handed-off project is
+   still open: it keeps its map, keeps logging, keeps its dates in the register, and is still read
+   at the weekly review, and at the daily orientation when something has come back. It is not a
+   sixth slot; it is a project that is not a unit of your attention this week.
+
+   **The review.** Yours: did it move? Handed off: what came back, and what is waiting on your
+   decision? The second is asked in a week when the map changed.
+
+   **The log.** Handing off and taking back are dated entries in the chronological log naming the
+   project and the holder; taking back strikes the name. Taking back a parked map only strikes the
+   name; to work on it, activate it as well, as its own entry.
+
+   **The cap** is checked whenever a map that did not count begins to count: activating a map
+   nobody else holds, or taking back an active one.
+
+   **Three guards.** If you cannot name who has it, it is yours. A handed-off map says what you are
+   waiting for; a name over an empty Waiting On is a parked map wearing a name, and the weekly
+   review parks it or takes it back. And handing off is never the answer to "the cap is full":
+   doing a thing on a handed-off map does not make it yours, doing most of its work does; at the
+   weekly review, a handed-off map you worked on yourself on two or more days is taken back, or its
+   name changed to who really has it. You do not hand off a map while you are in the middle of its
+   work.
+
+   **The asymmetry.** Parking is your decision about now, so starting work on a parked map undoes
+   it at once; a holder is a fact about someone else, which one afternoon's work on the map does
+   not change.
+
+   The map already has a Waiting On section for single items. Handing off is Waiting On lifted to
+   the whole project, which is why the method already half-had it. Its ancestry is GTD's Waiting
+   For, kept per project rather than as a separate list.
 
 ### The bridge
 
@@ -115,7 +172,25 @@ The method runs on a few interlocking loops:
   See [The daily loop](../tutorials/daily-loop.md).
 - **Weekly** — a short retrospective (wins, challenges, one improvement) and a single goal for next
   week. See [Weekly review](../tutorials/weekly-review.md).
+- **Monthly** — the parked maps ("is it time?") and the questions ("still the right questions?").
 - **Occasional** — file evidence as you find it, triage the inbox, prune questions and projects.
+
+## Method version
+
+The version tracks the method's text, not any tool. A change is **minor** if every page of an
+existing logbook can be read under it without being rewritten, moved, or given a line it lacks; a
+minor version may ask for a one-time read-through of existing pages. A change is **major** if any
+page must be rewritten or moved, and it comes with instructions for doing so (in a tool, a
+migration). A logbook records on its first page, dated, the version it follows and the day it moved
+to a newer one; the published method keeps a changelog of practices.
+
+### Changelog of practices
+
+- **1.0** — the seven practices: the chronological log, evidence portfolios, important questions,
+  project maps, stewardships, the commitments register, and energy-matched scheduling.
+- **1.1** — parking clarified (under practice 4), practice 8 (handing off), and the monthly loop
+  in the rhythm. Additive: every 1.0 logbook is a valid 1.1 logbook. On adopting 1.1 a paper user
+  does two things: a dated line on the first page, and one pass over the parked pages' dates.
 
 ## How it maps to the tool
 
@@ -128,5 +203,6 @@ The method runs on a few interlocking loops:
 | Stewardships | `stewardship`, `tracking` | [`stewardship`](../reference/cli/stewardship.md), [`track`](../reference/cli/track.md) |
 | Commitments register | `commitment` (+ computed) | [`commit`](../reference/cli/commit.md), [`commitments`](../reference/cli/commitments.md) |
 | Energy-matched scheduling | (an `energy` on actions) | [`orient --energy`](../reference/cli/orient.md), [`action add --energy`](../reference/cli/action.md) |
+| Handing off | `project` (a `held_by` holder) | [`project hand-off`](../reference/cli/project.md#cdno-project-hand-off), [`project take-back`](../reference/cli/project.md#cdno-project-take-back) |
 
 Read on: [Note types](note-types.md).
