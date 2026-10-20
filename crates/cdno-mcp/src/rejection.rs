@@ -199,10 +199,16 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             status,
             closed,
         } => {
-            // The status says which recovery applies (activate a parked
-            // one, or nothing for one already closed the same way), so an
-            // agent branches on it rather than on the message. `closed`
-            // only when the map carries a date (RFC 0004 §6.4).
+            // The status says which verb was refused, so an agent branches
+            // on it rather than on the message. A parked map takes every
+            // project-body write (RFC 0006 §8.1), so `parked` here means a
+            // focus verb (`start_action`, `resume_action`, `switch_action`
+            // and their unplanned forms) or `park_project` was refused:
+            // starting or picking up work needs an active map, and it is
+            // never advice to activate before an ordinary write. A closed
+            // status means the project is finished, or a close repeated
+            // the outcome it already has. `closed` only when the map
+            // carries a date (RFC 0004 §6.4).
             let mut details = json!({ "slug": slug, "status": status });
             if let Some(date) = closed {
                 details["closed"] = json!(date);

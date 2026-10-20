@@ -90,7 +90,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Add a milestone to an active project's `## Milestones`. `target_date` is ISO `YYYY-MM-DD`; omit it for a milestone gated by a condition rather than a date (\"all Round-1 replies received\") -- the bullet records `target: TBD` and stays out of the commitments aggregation. Never invent an estimate to fill the field: a fabricated date reads later as a commitment somebody made. `hard: true` records a hard deadline that the commitments aggregation surfaces, and requires `target_date`; omit it (or `false`) for a soft target. The section is auto-created if missing."
+        description = "Add a milestone to an open (active or parked) project's `## Milestones`. `target_date` is ISO `YYYY-MM-DD`; omit it for a milestone gated by a condition rather than a date (\"all Round-1 replies received\") -- the bullet records `target: TBD` and stays out of the commitments aggregation. Never invent an estimate to fill the field: a fabricated date reads later as a commitment somebody made. `hard: true` records a hard deadline that the commitments aggregation surfaces, and requires `target_date`; omit it (or `false`) for a soft target. The section is auto-created if missing."
     )]
     pub async fn add_milestone(
         &self,
@@ -115,7 +115,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Complete an open milestone on an active project: ticks the bullet in `## Milestones`. `query` is a case-insensitive substring of the milestone title (the `-- <keyword>: <date>` suffix is ignored); already-completed bullets are skipped. Use this ONLY when the milestone was actually reached. If it was superseded, mis-typed or is not going to happen, use `drop_milestone` instead -- ticking it writes `milestone done on ...` into the daily log, so the vault would assert a milestone nobody met."
+        description = "Complete a milestone on an open (active or parked) project: ticks the bullet in `## Milestones`. `query` is a case-insensitive substring of the milestone title (the `-- <keyword>: <date>` suffix is ignored); already-completed bullets are skipped. Use this ONLY when the milestone was actually reached. If it was superseded, mis-typed or is not going to happen, use `drop_milestone` instead -- ticking it writes `milestone done on ...` into the daily log, so the vault would assert a milestone nobody met."
     )]
     pub async fn complete_milestone(
         &self,
@@ -132,7 +132,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Drop an open milestone from an active project: removes the bullet from `## Milestones`, with the lines indented beneath it (notes and nested milestones go with it), and logs `milestone dropped on [[slug]]` to today's daily note, with an optional `reason` on a continuation line. `query` matches exactly as `complete_milestone`'s does. Use this for a milestone that was superseded, mis-typed or is not going to happen -- it is the only way to be rid of one without either claiming it was met or hand-editing the file, which desyncs the index. Completed bullets are never matched: those are a record of what happened."
+        description = "Drop an open milestone from an open (active or parked) project: removes the bullet from `## Milestones`, with the lines indented beneath it (notes and nested milestones go with it), and logs `milestone dropped on [[slug]]` to today's daily note, with an optional `reason` on a continuation line. `query` matches exactly as `complete_milestone`'s does. Use this for a milestone that was superseded, mis-typed or is not going to happen -- it is the only way to be rid of one without either claiming it was met or hand-editing the file, which desyncs the index. Completed bullets are never matched: those are a record of what happened."
     )]
     pub async fn drop_milestone(
         &self,
@@ -151,7 +151,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Record a blocker in an active project's `## Waiting On`. `description` is informational (no checkbox) -- e.g. `Vendor quote -- awaiting reply`. The section is auto-created and its `(nothing yet)` placeholder replaced."
+        description = "Record a blocker in an open (active or parked) project's `## Waiting On`. `description` is informational (no checkbox) -- e.g. `Vendor quote -- awaiting reply`. The section is auto-created and its `(nothing yet)` placeholder replaced."
     )]
     pub async fn add_waiting_on(
         &self,
@@ -168,7 +168,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Remove a resolved blocker from an active project's `## Waiting On`. `query` is a case-insensitive substring of the waiting-on line; if it was the last one, the `(nothing yet)` placeholder is restored."
+        description = "Remove a resolved blocker from an open (active or parked) project's `## Waiting On`. `query` is a case-insensitive substring of the waiting-on line; if it was the last one, the `(nothing yet)` placeholder is restored."
     )]
     pub async fn resolve_waiting_on(
         &self,
@@ -228,7 +228,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Set or clear an active project's `core_question` after creation. `core_question` is the **bare** wikilink target (e.g. `questions/research/foo`), the same form `create_project` takes -- passing `[[...]]` is rejected, and so is a bare slug like `foo` without its `questions/<domain>/` prefix. To detach the question instead, pass `clear: true`; omitting both is an error rather than a silent detach, because dropping a project's question is a decision and must be asked for. The previous value is auto-logged to today's daily note, so a project's changing question is traceable; setting the value it already holds is a no-op."
+        description = "Set or clear an open (active or parked) project's `core_question` after creation. `core_question` is the **bare** wikilink target (e.g. `questions/research/foo`), the same form `create_project` takes -- passing `[[...]]` is rejected, and so is a bare slug like `foo` without its `questions/<domain>/` prefix. To detach the question instead, pass `clear: true`; omitting both is an error rather than a silent detach, because dropping a project's question is a decision and must be asked for. The previous value is auto-logged to today's daily note, so a project's changing question is traceable; setting the value it already holds is a no-op."
     )]
     pub async fn set_core_question(
         &self,
@@ -264,7 +264,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Rewrite a project's `## Current State` section, auto-logging the previous state to today's daily entry in the same atomic transaction. No-op (returns the path) when `new_state` matches the existing state — silent so logging 'was X, now X' doesn't fire. `new_state` is capped at the vault's `max_state_chars` (default 500), and nothing is ever truncated: under the default `reject` policy new over-length text is refused outright, so write a summary and leave the detail in the daily log — which is where the previous state goes anyway. A vault may set `warn` (over-length accepted, with an advisory) or `off` instead, and trimming a state that is *already* over the cap is always accepted even under `reject`, so an inherited sprawl can be cut down across several edits."
+        description = "Rewrite an open (active or parked) project's `## Current State` section, auto-logging the previous state to today's daily entry in the same atomic transaction. No-op (returns the path) when `new_state` matches the existing state — silent so logging 'was X, now X' doesn't fire. `new_state` is capped at the vault's `max_state_chars` (default 500), and nothing is ever truncated: under the default `reject` policy new over-length text is refused outright, so write a summary and leave the detail in the daily log — which is where the previous state goes anyway. A vault may set `warn` (over-length accepted, with an advisory) or `off` instead, and trimming a state that is *already* over the cap is always accepted even under `reject`, so an inherited sprawl can be cut down across several edits."
     )]
     pub async fn update_project_state(
         &self,
@@ -439,7 +439,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Append a next-action bullet to an active project. This is the default way to capture an action — a bullet on the project map, not a note per task. Three next actions per project is a ceiling rather than a backlog, so prefer replacing a stale bullet to stacking a fourth. With `with_note: true`, also creates an action note (design §5.11) and rewrites the bullet to wikilink it. `energy` is one of `deep`, `medium`, `light`. A parked, completed or dropped project is refused with `project_not_active`; a parked one takes actions once activate_project brings it back, and activation is where the active-project cap is checked (`project_cap_reached` lists the active projects to choose from)."
+        description = "Append a next-action bullet to an open project, active or parked. This is the default way to capture an action — a bullet on the project map, not a note per task. Three next actions per project is a ceiling rather than a backlog, so prefer replacing a stale bullet to stacking a fourth. With `with_note: true`, also creates an action note (design §5.11) and rewrites the bullet to wikilink it. `energy` is one of `deep`, `medium`, `light`. Only a completed or dropped project is refused, with `project_not_active`. A parked map takes actions as it is, so never activate it first to add one: the active-project cap is checked only by activate_project (`project_cap_reached` lists the active projects to choose from), and only starting or picking up work, and parking, need an active map."
     )]
     pub async fn add_action(
         &self,
@@ -479,7 +479,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Promote an existing bullet to an action note. An action is a bullet on the project map by default (add_action); promote it only once it has grown into a multi-day investigation with its own evidence, since a note per task is friction the method is built to avoid. Matches the bullet on the project by substring `query`, creates the note from the template, and rewrites the bullet to wikilink it. Errors with `INTERNAL_ERROR` on ambiguous matches (multiple bullets contain `query`)."
+        description = "Promote an existing bullet to an action note. An action is a bullet on the project map by default (add_action); promote it only once it has grown into a multi-day investigation with its own evidence, since a note per task is friction the method is built to avoid. Matches the bullet on an open (active or parked) project by substring `query`, creates the note from the template, and rewrites the bullet to wikilink it. Errors with `INTERNAL_ERROR` on ambiguous matches (multiple bullets contain `query`)."
     )]
     pub async fn promote_action(
         &self,
@@ -640,7 +640,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Take up work again: re-anchors a focus carried over from an earlier day, or reopens the latest pause, and logs `- **HH:MM**: resumed [[project]] \u{2014} <text>` to today's daily note. The text comes from the log, never from the project map, so it takes no query or title; `project` is optional and only narrows the search to that project. With no `project`: the carried focus if there is one, else the most recent pause within the `[focus] paused_lookback_days` window. With `project`: that project's carried focus if the slot holds one, else its latest pause -- the project's most recent pause, as `last_paused` reports it. When that project also carries a focus, the focus wins over the pause, so READ `resumed_from.kind` (`carried` or `paused`) and `resumed.action` BACK to the person rather than assuming it was a pause. `resumed_from.next` is the re-entry hint the pause left: read it to the person on re-entry. A different action already in focus is refused with code `focus_open` (never an automatic switch: pause it or `switch_action` first, on the person's word); the same action already started today is refused with remedy `already_focused`; nothing carried or paused is refused with code `no_focus`. Call it only on the person's yes."
+        description = "Take up work again: re-anchors a focus carried over from an earlier day, or reopens the latest pause, and logs `- **HH:MM**: resumed [[project]] \u{2014} <text>` to today's daily note. The text comes from the log, never from the project map, so it takes no query or title; `project` is optional and only narrows the search to that project. With no `project`: the carried focus if there is one, else the most recent pause within the `[focus] paused_lookback_days` window. With `project`: that project's carried focus if the slot holds one, else its latest pause -- the project's most recent pause, as `last_paused` reports it. When that project also carries a focus, the focus wins over the pause, so READ `resumed_from.kind` (`carried` or `paused`) and `resumed.action` BACK to the person rather than assuming it was a pause. `resumed_from.next` is the re-entry hint the pause left: read it to the person on re-entry. A different action already in focus is refused with code `focus_open` (never an automatic switch: pause it or `switch_action` first, on the person's word); the same action already started today is refused with remedy `already_focused`; nothing carried or paused is refused with code `no_focus`. It is refused with code `project_not_active` when that project is no longer active (parked or closed since): picking up work needs an active map, and activating it is the person's call. Call it only on the person's yes."
     )]
     pub async fn resume_action(
         &self,
@@ -675,7 +675,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Complete an action: matches the bullet on the project by substring `query`, removes the bullet, logs the completion to today's daily, and (if an action note is attached) archives it to `actions/_done/<year>/`. Use this ONLY when the work was actually performed. If it was superseded, abandoned or reprioritised, use `drop_action` instead -- completing it writes `action done on ...` into the daily log, which every weekly and monthly review reads back from, so the vault would assert work nobody did."
+        description = "Complete an action on an open (active or parked) project: matches the bullet by substring `query`, removes the bullet, logs the completion to today's daily, and (if an action note is attached) archives it to `actions/_done/<year>/`. Use this ONLY when the work was actually performed. If it was superseded, abandoned or reprioritised, use `drop_action` instead -- completing it writes `action done on ...` into the daily log, which every weekly and monthly review reads back from, so the vault would assert work nobody did."
     )]
     pub async fn complete_action(
         &self,
@@ -696,7 +696,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Drop an action: closes it WITHOUT recording it as done. Use this whenever an action is superseded, abandoned or reprioritised -- `complete_action` writes `action done on ...` into the daily log, which is the record every weekly and monthly review reads back from, so completing something that was never performed makes the vault assert work that did not happen. Matches the bullet by substring `query` exactly as `complete_action` does, removes it, logs `action dropped on ...`, and (if an action note is attached) archives it to `actions/_done/<year>/` stamped `status: dropped` with no completion date. Pass `reason` whenever you know it -- \"superseded by X\" and \"no longer wanted\" are different facts, and only one of them tells a later reader to look for a replacement."
+        description = "Drop an action on an open (active or parked) project: closes it WITHOUT recording it as done. Use this whenever an action is superseded, abandoned or reprioritised -- `complete_action` writes `action done on ...` into the daily log, which is the record every weekly and monthly review reads back from, so completing something that was never performed makes the vault assert work that did not happen. Matches the bullet by substring `query` exactly as `complete_action` does, removes it, logs `action dropped on ...`, and (if an action note is attached) archives it to `actions/_done/<year>/` stamped `status: dropped` with no completion date. Pass `reason` whenever you know it -- \"superseded by X\" and \"no longer wanted\" are different facts, and only one of them tells a later reader to look for a replacement."
     )]
     pub async fn drop_action(
         &self,

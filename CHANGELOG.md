@@ -34,6 +34,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- MCP: `add_action` and the milestone, waiting-on, state and core-question tools accept a parked project; `project_not_active` on a parked project now means a focus verb or `park_project` was refused, and the descriptions say so (RFC 0006 §8.1).
 - A parked project map is a complete map: next actions, state, milestones, waiting-on, the core question and promotion all work on a parked project; only starting, switching or resuming work, and parking, need it active. Resuming work on a project that has since been parked, closed or removed is now refused (RFC 0006 §7.1, §8.1).
 - The CLI's project pickers and completions offer parked projects for every verb that now accepts them; `action start`, `action switch` and `project park` still offer active projects only (RFC 0006 §8.1).
 - The commitments register keeps a parked project's hard milestones and action-note due dates; closed projects' dates stay out. Parked deadlines that had dropped out of the register come back, some of them overdue. After a downgrade to an earlier cdno they leave the register again, with no warning (RFC 0006 §7.1, §8.1).

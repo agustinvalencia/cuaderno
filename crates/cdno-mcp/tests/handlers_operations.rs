@@ -3348,6 +3348,127 @@ async fn resume_action_reopens_a_pause_and_reports_where_it_came_from() {
     );
 }
 
+// ---------------------------------------------------------------------
+// RFC 0006 T14 (#797): parked maps over MCP
+// ---------------------------------------------------------------------
+
+/// O7 (RFC 0006 §2): at the cap, the path an agent actually takes is
+/// create, then add the first action. The map lands parked and takes the
+/// action as it is; nothing in the chain calls `activate_project`.
+#[tokio::test]
+async fn o7_chain_create_at_cap_then_add_action_on_the_parked_map_succeeds() {
+    let (server, store) = server_with(|vault, store| {
+        seed_today_daily(&store);
+        let today = moment(2026, 1, 1, 9, 0);
+        for i in 1..=5 {
+            vault
+                .create_project(today, &format!("Project {i}"), Context::Work, None)
+                .expect("seed project");
+        }
+    });
+
+    let created = server
+        .create_project(Parameters(CreateProjectInput {
+            title: "Glacier survey".to_owned(),
+            context: "work".to_owned(),
+            core_question: None,
+            vars: None,
+        }))
+        .await
+        .expect("creating at the cap is never refused");
+    let path = decode_json(&created)["path"].as_str().unwrap().to_owned();
+    assert_eq!(path, "projects/_parked/glacier-survey.md");
+
+    server
+        .add_action(Parameters(AddActionInput {
+            project: "glacier-survey".to_owned(),
+            title: "Book the field hut".to_owned(),
+            energy: "light".to_owned(),
+            with_note: false,
+            vars: None,
+        }))
+        .await
+        .expect("a parked map takes its first action straight away");
+
+    let map = store.read_file(&vp(&path)).unwrap();
+    assert!(map.contains("- [ ] Book the field hut (light)"), "{map}");
+    assert!(map.contains("status: parked"), "still parked:\n{map}");
+    assert!(
+        !store.exists(&vp("projects/glacier-survey.md")).unwrap(),
+        "the map was never activated"
+    );
+}
+
+/// A map you start work on is a map that counts (RFC 0006 §7.1): the
+/// focus verbs keep refusing a parked map, with the status in `details`.
+#[tokio::test]
+async fn start_action_on_a_parked_project_is_project_not_active() {
+    let (server, _store) = server_with(|vault, _s| {
+        let at = moment(2026, 5, 1, 9, 0);
+        vault
+            .create_project(at, "Glacier survey", Context::Work, None)
+            .unwrap();
+        vault
+            .add_action(
+                at,
+                "glacier-survey",
+                "Book the field hut",
+                EnergyLevel::Light,
+            )
+            .unwrap();
+        vault.park_project(at, "glacier-survey").unwrap();
+    });
+
+    let err = server
+        .start_action(Parameters(StartActionInput {
+            project: "glacier-survey".to_owned(),
+            query: "field hut".to_owned(),
+        }))
+        .await
+        .expect_err("work cannot start on a parked map");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "project_not_active");
+    assert_eq!(rejection["details"]["slug"], "glacier-survey");
+    assert_eq!(rejection["details"]["status"], "parked");
+    // O7: the message an agent reads on a parked map must not send it round
+    // the activate-first loop; the focus verb is what was refused.
+    let message = rejection["message"].as_str().expect("message");
+    assert!(!message.contains("activate"), "{message}");
+}
+
+/// A pause on a map parked since is "picking up work you had set down"
+/// (RFC 0006 §7.1): `resume_action` refuses it as `project_not_active`.
+#[tokio::test]
+async fn resume_action_on_a_since_parked_project_is_project_not_active() {
+    let (server, store) = server_with_focus();
+    server
+        .pause_action(Parameters(PauseActionInput {
+            next: None,
+            reason: None,
+        }))
+        .await
+        .expect("pause_action");
+    server
+        .park_project(Parameters(ProjectSlugInput {
+            project: "surrogate-model".to_owned(),
+        }))
+        .await
+        .expect("park_project");
+    let before = todays_daily(&store);
+
+    let err = server
+        .resume_action(Parameters(ResumeActionInput { project: None }))
+        .await
+        .expect_err("the pause sits on a map parked since");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "project_not_active");
+    assert_eq!(rejection["details"]["slug"], "surrogate-model");
+    assert_eq!(rejection["details"]["status"], "parked");
+    let message = rejection["message"].as_str().expect("message");
+    assert!(!message.contains("activate"), "{message}");
+    assert_eq!(todays_daily(&store), before, "nothing is logged");
+}
+
 /// Runtime strings carry what happened, never agent guidance: the FOCUS
 /// pointers belong in tool descriptions (review of #769, where they had
 /// landed in this message and in three error field names).
