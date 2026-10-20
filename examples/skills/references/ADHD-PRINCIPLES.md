@@ -93,6 +93,19 @@ One action can be in focus; it is read from the log, not stored. The vault never
 
 **Wording.** The log says `paused`, `resumed`, `started`, `during`. What the agent says to the person is "move over", "pick up", "capture". Keep the framing about continuity and wins ("pick it up where you left it"), never about fault.
 
+## Handing off
+
+A project someone else is moving can carry their name: it is handed off. It stays open where it is, keeps its map, its log and its dates, and it does not hold one of the person's active slots. The person's attention is what the cap counts; someone else's is not theirs to budget. What the agent does about it:
+
+1. **Branch on whether it counts, never on the name.** The server says whether a project is the person's own (`counts`); a name that means the person, or no one in particular, is not a holder. If they cannot name who has it, it is theirs.
+2. **Handing off is never offered to make room at the cap.** When the person's projects are at the cap, the choices are to park something, finish something, or create the new one parked. Work the person is moving stays theirs, whatever the count says. Hand a project off only on the person's word, with the name they give.
+3. **Read the cap, never remember it.** Quote `slots.counted` and `slots.cap` from the server; never write a number for the cap.
+4. **Each relationship gets its own question, and only at the review.** The person's own project: did it move? A handed-off one, in a week its map changed: what came back, and what is waiting on your decision? Never ask whether a handed-off project moved. A name over an empty Waiting On is a parked map wearing a name: park it, or take it back?
+5. **Evidence, not verdicts.** When the log shows work started on a handed-off project on two or more days in a week, say what the log shows and let the person decide whether to take it back or change the name to who really has it. No log line says who did the work; one afternoon on someone else's project does not make it the person's.
+6. **The morning stays the person's.** Daily orientation suggests only from the person's own projects and mentions a handed-off one only when the person says something has come back.
+
+**Wording.** Say "with the harbour office", "handed to a colleague", "take it back". Keep it a fact about someone else, never a judgement about the person: a project that comes back is news, not a failure.
+
 ## Language Patterns
 
 **Use:**
