@@ -1575,3 +1575,197 @@ fn project_list_json_does_not_expose_last_paused() {
         }
     }
 }
+
+// ---------------------------------------------------------------------
+// hand-off / take-back (RFC 0006 §8.2)
+// ---------------------------------------------------------------------
+
+fn hand_off(root: &Path, at: NaiveDateTime, slug: &str, to: Option<&str>) -> anyhow::Result<()> {
+    project::run(
+        root,
+        at,
+        ProjectCommands::HandOff {
+            slug: Some(slug.to_owned()),
+            to: to.map(str::to_owned),
+        },
+        true,
+        false,
+    )
+}
+
+#[test]
+fn hand_off_by_flags_writes_the_holder_and_logs() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "Hull", Context::Work);
+
+    hand_off(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        "hull",
+        Some("Ana Ruiz"),
+    )
+    .expect("hand-off");
+
+    let body = fs::read_to_string(dir.path().join("projects/hull.md")).unwrap();
+    assert!(body.contains("held_by: \"Ana Ruiz\""), "body:\n{body}");
+    let log = daily(dir.path(), "2026-05-02");
+    assert!(
+        log.contains("holder on [[hull]]\n  was: (mine)\n  now: Ana Ruiz"),
+        "daily:\n{log}"
+    );
+}
+
+#[test]
+fn take_back_by_flags_clears_it() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "Hull", Context::Work);
+    hand_off(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        "hull",
+        Some("Ana Ruiz"),
+    )
+    .expect("hand-off");
+
+    project::run(
+        dir.path(),
+        moment(2026, 5, 2, 11, 0),
+        ProjectCommands::TakeBack {
+            slug: Some("hull".to_owned()),
+        },
+        true,
+        false,
+    )
+    .expect("take-back");
+
+    let body = fs::read_to_string(dir.path().join("projects/hull.md")).unwrap();
+    assert!(body.contains("held_by: null"), "body:\n{body}");
+    let log = daily(dir.path(), "2026-05-02");
+    assert!(
+        log.contains("holder on [[hull]]\n  was: Ana Ruiz\n  now: (mine)"),
+        "daily:\n{log}"
+    );
+}
+
+#[test]
+fn hand_off_without_to_non_interactive_is_missing_flag() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "Hull", Context::Work);
+
+    let err = hand_off(dir.path(), moment(2026, 5, 2, 10, 0), "hull", None)
+        .expect_err("missing --to should error");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("missing required flag: --to"), "{msg}");
+    let body = fs::read_to_string(dir.path().join("projects/hull.md")).unwrap();
+    assert!(!body.contains("held_by: \""), "nothing written:\n{body}");
+}
+
+#[test]
+fn hand_off_to_me_is_refused_with_the_take_back_advice() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "Hull", Context::Work);
+
+    let err = hand_off(dir.path(), moment(2026, 5, 2, 10, 0), "hull", Some("me"))
+        .expect_err("a sentinel is not a holder");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("cdno project take-back --slug hull"),
+        "the refusal names the take-back: {msg}"
+    );
+    assert!(daily(dir.path(), "2026-05-02").find("holder on").is_none());
+}
+
+#[test]
+fn list_and_show_print_the_holder_and_counts() {
+    let mut held = summary("hull", Context::Work, "With the yard.");
+    held.held_by = Some("Ana Ruiz".to_owned());
+    held.counts = false;
+    let mine = summary("sails", Context::Work, "Cutting.");
+
+    let list = render_list(&[held.clone(), mine.clone()]);
+    assert!(
+        list.contains("held by: Ana Ruiz · does not count toward the cap"),
+        "{list}"
+    );
+    assert_eq!(
+        list.matches("held by:").count(),
+        1,
+        "a map that names no one carries no holder line:\n{list}"
+    );
+
+    let show = render_show(&held);
+    assert!(show.contains("  Held by: Ana Ruiz\n"), "{show}");
+    assert!(show.contains("  Counts toward the cap: no\n"), "{show}");
+    let show = render_show(&mine);
+    assert!(!show.contains("Held by:"), "{show}");
+    assert!(show.contains("  Counts toward the cap: yes\n"), "{show}");
+
+    // `--json` rows carry the same two facts.
+    let json = serde_json::to_value(&held).unwrap();
+    assert_eq!(json["held_by"], "Ana Ruiz");
+    assert_eq!(json["counts"], false);
+    let json = serde_json::to_value(&mine).unwrap();
+    assert!(json["held_by"].is_null(), "{json}");
+    assert_eq!(json["counts"], true);
+}
+
+/// `activate` and `take-back` can each make a map begin to count, and both
+/// render the cap refusal the same way: the counted figure and the
+/// counted maps by slug. The cap is read from the vault, never assumed.
+#[test]
+fn activate_and_take_back_at_the_cap_list_the_counted_maps_alike() {
+    let dir = vault();
+    let at = moment(2026, 5, 2, 9, 0);
+    let cap = usize::from(
+        cdno_cli::bootstrap::open_vault(dir.path())
+            .unwrap()
+            .0
+            .slot_usage()
+            .unwrap()
+            .cap,
+    );
+    for i in 0..cap {
+        create_project(dir.path(), at, &format!("Front {i}"), Context::Work);
+    }
+    // At the cap, a new map is captured parked.
+    create_project(dir.path(), at, "Shelved", Context::Work);
+    // Hand one off, then fill its slot: the held map can no longer come back.
+    hand_off(dir.path(), at, "front-0", Some("Ana Ruiz")).expect("hand-off");
+    create_project(dir.path(), at, "Late", Context::Work);
+
+    let activate = project::run(
+        dir.path(),
+        at,
+        ProjectCommands::Activate {
+            slug: Some("shelved".to_owned()),
+        },
+        true,
+        false,
+    )
+    .expect_err("activate at the cap");
+    let take_back = project::run(
+        dir.path(),
+        at,
+        ProjectCommands::TakeBack {
+            slug: Some("front-0".to_owned()),
+        },
+        true,
+        false,
+    )
+    .expect_err("take-back at the cap");
+
+    let (activate, take_back) = (format!("{activate:#}"), format!("{take_back:#}"));
+    let tail = |msg: &str| msg.split_once(" would make it").map(|(_, t)| t.to_owned());
+    assert!(activate.starts_with("Activating shelved"), "{activate}");
+    assert!(take_back.starts_with("Taking front-0 back"), "{take_back}");
+    assert_eq!(tail(&activate), tail(&take_back));
+    assert!(
+        activate.contains(&format!("{cap} of {cap} slots are in use by: ")),
+        "{activate}"
+    );
+    assert!(activate.contains("late"), "{activate}");
+    assert!(
+        !activate.contains("front-0"),
+        "the held map is not counted: {activate}"
+    );
+}

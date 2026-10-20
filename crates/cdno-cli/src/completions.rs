@@ -150,9 +150,9 @@ pub fn complete_reactivatable_project(_current: &OsStr) -> Vec<CompletionCandida
 /// Active + parked project slugs (the union). Used by every verb that
 /// accepts a parked map: `project show`, `complete` and `drop`, `action
 /// resume`, and the project-body verbs RFC 0006 §8.1 opened to parked
-/// maps (state, core question, milestones, waiting-on, `action
-/// add`/`complete`/`drop`/`promote`/`list`). The domain still enforces
-/// eligibility at execute time.
+/// maps (state, core question, hand-off and take-back, milestones,
+/// waiting-on, `action add`/`complete`/`drop`/`promote`/`list`). The
+/// domain still enforces eligibility at execute time.
 pub fn complete_any_project(_current: &OsStr) -> Vec<CompletionCandidate> {
     let Some(vault) = try_open_vault() else {
         return Vec::new();

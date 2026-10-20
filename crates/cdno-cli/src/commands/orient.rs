@@ -206,11 +206,24 @@ fn project_cards(ctx: &OrientationContext) -> Vec<Card> {
 }
 
 fn project_card(p: &ProjectSummary) -> Card {
-    Card::new(&p.slug)
+    let card = Card::new(&p.slug)
         .badge(p.context.as_str())
         .accent(Accent::for_context(p.context))
         .prose(state_line(p))
-        .meta(format!("next: {}", project_next(p)))
+        .meta(format!("next: {}", project_next(p)));
+    match crate::commands::project::holder_line(p) {
+        Some(line) => card.meta(line),
+        None => card,
+    }
+}
+
+/// The map's slug, with its holder when someone else is moving it (an
+/// active map that does not count), so a held front reads as theirs.
+fn slug_label(p: &ProjectSummary) -> String {
+    match (&p.held_by, p.counts) {
+        (Some(holder), false) => format!("{} (held by {holder})", p.slug),
+        _ => p.slug.clone(),
+    }
 }
 
 /// One card for a shared parent: the parent as the title and a single
@@ -221,7 +234,7 @@ fn group_card(parent: &GroupParent, members: &[&ProjectSummary]) -> Card {
     };
     let fronts: Vec<String> = members
         .iter()
-        .map(|p| format!("{}: {}", p.slug, project_next(p)))
+        .map(|p| format!("{}: {}", slug_label(p), project_next(p)))
         .collect();
     Card::new(title).badge(badge).meta(fronts.join(" · "))
 }
@@ -255,17 +268,24 @@ fn action_label(action: &TopAction) -> String {
 /// Pick a starting point: a project whose top action matches the
 /// requested `energy` if given, otherwise the first project with any
 /// open action. Falls back to a capture hint when nothing is queued.
+///
+/// The maps that count toward the cap are the person's own, so they are
+/// drawn from first; a map handed to someone else (RFC 0006 §8.2) is
+/// suggested only when no counted map has an open action, and then with
+/// its holder named.
 fn suggestion(ctx: &OrientationContext, energy: Option<EnergyLevel>) -> String {
-    let pick = energy
-        .and_then(|want| {
-            ctx.projects
-                .iter()
-                .find(|p| p.top_action.as_ref().and_then(|a| a.energy) == Some(want))
-        })
-        .or_else(|| ctx.projects.iter().find(|p| p.top_action.is_some()));
+    let pick_from = |counts: bool| {
+        let tier = || ctx.projects.iter().filter(move |p| p.counts == counts);
+        energy
+            .and_then(|want| {
+                tier().find(|p| p.top_action.as_ref().and_then(|a| a.energy) == Some(want))
+            })
+            .or_else(|| tier().find(|p| p.top_action.is_some()))
+    };
+    let pick = pick_from(true).or_else(|| pick_from(false));
 
     match pick {
-        Some(p) => format!("{}: {}", p.slug, project_next(p)),
+        Some(p) => format!("{}: {}", slug_label(p), project_next(p)),
         None => "nothing queued — capture a next action with `cdno project action`".to_owned(),
     }
 }

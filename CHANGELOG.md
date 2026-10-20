@@ -8,6 +8,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- `cdno project hand-off --slug … --to …` and `cdno project take-back --slug …`;
+  `project list` and `show` print the holder, and `cdno orient` suggests from projects that count
+  (RFC 0006 §8.2).
 - The weekly context lists each active project with `held_by`, `counts`,
   `waiting_on_empty`, `changed_this_week` and, for a handed-off one, the days this week with work
   started on it, as evidence for the review; the monthly context's parked and stuck projects carry
