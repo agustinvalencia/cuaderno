@@ -196,9 +196,11 @@ pub struct MigrationReport {
 
 impl MigrationReport {
     /// Whether the run stamps the vault: whenever it is not stamped with
-    /// exactly the binary's version. An unstamped vault and one stamped 1.0
-    /// are different states, so an unstamped vault is stamped even when the
-    /// binary is at 1.0. `false` is a no-op: no write, no stamp, no line.
+    /// exactly the binary's version. An unstamped vault, or one stamped
+    /// below the binary's version, is stamped even when no file migration
+    /// applies; unstamped and stamped 1.0 are different states, so an
+    /// unstamped vault is stamped even by a binary at 1.0. `false` is a
+    /// no-op: no write, no stamp, no line.
     pub fn stamps(&self) -> bool {
         self.from != Some(self.to)
     }
