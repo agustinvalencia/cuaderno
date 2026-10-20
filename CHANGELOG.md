@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-10-20
+
 ### Added
 
 - Skills: `daily-orientation` suggests from projects that count and reads the cap
@@ -58,7 +60,6 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - A vault records the version of the Research Logbook Method it follows: `cdno init` writes
   `[vault] method_version`; a vault without it is unstamped and read as RLM 1.0. The method
   version is separate from cdno's own version (RFC 0006 §8.4).
-
 
 ### Changed
 
