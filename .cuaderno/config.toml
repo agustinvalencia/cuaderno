@@ -12,7 +12,7 @@ max_active_projects = 5
 # follows; the method's version, not cdno's. Written by `cdno init` and
 # changed only by `cdno migrate`, so leave it as it is. A vault without it
 # is unstamped and read as 1.0.
-method_version = "1.0"
+method_version = "1.1"
 
 # ignore — glob patterns for files to keep out of the index (and so out
 # of reconciliation, search, and lint). Matched against each file's

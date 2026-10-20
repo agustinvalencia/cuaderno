@@ -24,8 +24,8 @@ will change.
 
 ## What it does
 
-- A vault without a recorded version is **unstamped** and read as RLM 1.0. `cdno migrate`
-  stamps it with this cdno's version even when that is 1.0.
+- This cdno implements RLM 1.1. A vault without a recorded version is **unstamped** and read as
+  RLM 1.0; `cdno migrate` stamps it, or a vault stamped `1.0`, with `1.1`.
 - File migrations, when a version needs any, never touch the journal or any append-only note.
   When there are none the report says `none: additive`.
 - The daily log gains one entry:
@@ -33,7 +33,7 @@ will change.
   ```text
   vault migrated
     was: unstamped (read as 1.0)
-    now: 1.0
+    now: 1.1
   ```
 
 - A vault below RLM 1.1 gets a **read-through**, whether or not it is stamped: every hard date on a parked map (a hard
@@ -48,8 +48,8 @@ will change.
       2026-11-01  Final review  (hard milestone on [[beta]])
   ```
 
-- A vault already at this cdno's version prints `vault is at RLM X; nothing to do`, followed by
-  the read-through when the vault is below RLM 1.1 and has parked hard dates.
+- A vault already at this cdno's version prints `vault is at RLM 1.1; nothing to do`: its
+  read-through is done.
 - A vault on a **newer** version than this cdno is refused with a non-zero exit: upgrade cdno
   instead.
 

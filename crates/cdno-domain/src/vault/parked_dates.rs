@@ -101,7 +101,7 @@ impl Vault {
 
 /// The read-through row for one overdue parked date: what it is, that it is
 /// in the register again, the fix for its source, and that the row ends
-/// once the vault records RLM 1.1. It names no command for that last step.
+/// once the vault records RLM 1.1, which `cdno migrate` records.
 fn read_through_message(entry: &CommitmentEntry) -> String {
     let (what, project, fix) = match &entry.source {
         CommitmentSource::ActionNote(project) => (
@@ -124,6 +124,7 @@ fn read_through_message(entry: &CommitmentEntry) -> String {
     format!(
         "{what} on parked project [[{project}]] is overdue and in the commitments register again \
          (a parked map's hard dates are promises under RLM {READ_THROUGH_BELOW}): {fix}; this \
-         read-through row disappears once the vault records RLM {READ_THROUGH_BELOW}"
+         read-through row disappears once the vault records RLM {READ_THROUGH_BELOW}, which \
+         `cdno migrate` records"
     )
 }

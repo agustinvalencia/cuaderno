@@ -124,30 +124,30 @@ fn dry_run_prints_the_plan_and_writes_nothing() {
 }
 
 #[test]
-fn migrate_stamps_an_unstamped_vault_1_0_and_logs_once() {
+fn migrate_stamps_an_unstamped_vault_1_1_and_logs_once() {
     let dir = vault_with_method_line(None);
     assert!(method_lines(dir.path()).is_empty());
 
     let stdout = stdout_of(dir.path(), &["migrate"]);
     assert!(
-        stdout.contains("Migrated the vault to RLM 1.0."),
+        stdout.contains("Migrated the vault to RLM 1.1."),
         "unexpected output:\n{stdout}"
     );
 
-    assert_eq!(method_lines(dir.path()), ["method_version = \"1.0\""]);
+    assert_eq!(method_lines(dir.path()), ["method_version = \"1.1\""]);
 
     let notes = daily_notes_with_migration(dir.path());
     assert_eq!(notes.len(), 1, "one daily note carries the entry");
     let note = &notes[0];
     assert_eq!(note.matches("vault migrated").count(), 1, "{note}");
     assert!(
-        note.contains("vault migrated\n  was: unstamped (read as 1.0)\n  now: 1.0"),
+        note.contains("vault migrated\n  was: unstamped (read as 1.0)\n  now: 1.1"),
         "unexpected entry:\n{note}"
     );
 
     // Run again: already at the binary's version, nothing more is logged.
     let again = stdout_of(dir.path(), &["migrate"]);
-    assert_eq!(again, "vault is at RLM 1.0; nothing to do\n");
+    assert_eq!(again, "vault is at RLM 1.1; nothing to do\n");
     let notes = daily_notes_with_migration(dir.path());
     assert_eq!(notes[0].matches("vault migrated").count(), 1);
 }
@@ -336,34 +336,130 @@ fn dry_run_lists_the_parked_hard_dates_overdue_first() {
     assert_eq!(tree(root), before, "a dry run writes nothing");
 }
 
+/// A parked map carrying one overdue hard milestone, far from the real
+/// clock so the tests hold on any day.
+const PARKED_OVERDUE: &str = "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2020-01-10\nclosed: null\n---\n\n# Beta\n\n## Milestones\n- [ ] Grant report — hard: 2020-03-01\n\n## Next Actions\n";
+
+/// The read-through section a dry run prints for [`PARKED_OVERDUE`].
+const READ_THROUGH_SECTION: [&str; 2] = [
+    "  read-through (hard dates on parked maps, overdue first; drop or re-date each):",
+    "    2020-03-01  Grant report  (hard milestone on [[beta]], overdue)",
+];
+
+/// The text from the read-through heading to the end.
+fn read_through_section(text: &str) -> Vec<&str> {
+    text.lines()
+        .skip_while(|line| !line.starts_with("  read-through"))
+        .collect()
+}
+
+/// `cdno lint`'s read-through rows: the warnings naming the register.
+fn lint_read_through_rows(dir: &Path) -> Vec<String> {
+    let output = cdno()
+        .current_dir(dir)
+        .arg("lint")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .filter(|line| line.contains("in the commitments register again"))
+        .map(str::to_owned)
+        .collect()
+}
+
 #[test]
-fn dry_run_on_a_vault_stamped_1_0_prints_nothing_to_do_and_the_read_through() {
-    // The maintainer's case while this cdno implements RLM 1.0: the vault is
-    // stamped "1.0", so there is nothing to migrate, but it is below 1.1 and
-    // `cdno lint` warns on its overdue parked date, so the dry run lists the
-    // date too. (Once the binary implements 1.1, this vault plans a stamp
-    // instead, and the read-through prints in the full report.)
+fn dry_run_on_a_vault_stamped_1_0_plans_the_stamp_and_the_read_through() {
+    // The maintainer's case: the vault was stamped "1.0" by an earlier cdno.
+    // It is an older minor than this cdno's 1.1, so the dry run plans the
+    // stamp, and it is below 1.1, so the read-through prints in the full
+    // report. (While this cdno implemented 1.0, the same vault printed
+    // "nothing to do" followed by the read-through.)
     let dir = vault_with_method_line(Some("method_version = \"1.0\""));
     let root = dir.path();
     fs::create_dir_all(root.join("projects/_parked")).unwrap();
-    fs::write(
-        root.join("projects/_parked/beta.md"),
-        "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2020-01-10\nclosed: null\n---\n\n# Beta\n\n## Milestones\n- [ ] Grant report — hard: 2020-03-01\n\n## Next Actions\n",
-    )
-    .unwrap();
+    fs::write(root.join("projects/_parked/beta.md"), PARKED_OVERDUE).unwrap();
     let before = tree(root);
 
     let text = stdout_of(root, &["migrate", "--dry-run"]);
-    assert_eq!(
-        text,
-        "vault is at RLM 1.0; nothing to do\n  \
-         read-through (hard dates on parked maps, overdue first; drop or re-date each):\n    \
-         2020-03-01  Grant report  (hard milestone on [[beta]], overdue)\n",
-    );
+    for needle in [
+        "Dry run: nothing written.",
+        "  vault:      RLM 1.0\n",
+        "  this cdno:  RLM 1.1\n",
+        "would write method_version = \"1.1\" under [vault]",
+        "vault migrated\n",
+        "was: 1.0\n",
+        "now: 1.1\n",
+    ] {
+        assert!(text.contains(needle), "missing {needle:?} in:\n{text}");
+    }
+    assert_eq!(read_through_section(&text), READ_THROUGH_SECTION, "{text}");
 
     let json: serde_json::Value =
         serde_json::from_str(&stdout_of(root, &["migrate", "--dry-run", "--json"])).expect("JSON");
-    assert_eq!(json["outcome"], "nothing_to_do");
+    assert_eq!(json["outcome"], "planned");
+    assert_eq!(json["vault"], "1.0");
+    assert_eq!(json["binary"], "1.1");
+    assert_eq!(json["log_entry"], "vault migrated\n  was: 1.0\n  now: 1.1");
     assert_eq!(json["read_through"][0]["title"], "Grant report");
     assert_eq!(tree(root), before, "a dry run writes nothing");
+}
+
+#[test]
+fn migrate_stamps_1_1_lists_the_read_through_and_clears_the_lint_row() {
+    // An unstamped vault (read as 1.0) with an overdue hard date on a parked
+    // map: lint warns on it, the dry run lists it, the real run stamps
+    // "1.1" and logs the move, and the lint row is gone afterwards.
+    let dir = vault_with_method_line(None);
+    let root = dir.path();
+    fs::create_dir_all(root.join("projects/_parked")).unwrap();
+    fs::write(root.join("projects/_parked/beta.md"), PARKED_OVERDUE).unwrap();
+
+    let rows = lint_read_through_rows(root);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert!(
+        rows[0].ends_with(
+            "this read-through row disappears once the vault records RLM 1.1, which \
+             `cdno migrate` records"
+        ),
+        "the row names `cdno migrate`: {}",
+        rows[0]
+    );
+
+    let planned = stdout_of(root, &["migrate", "--dry-run"]);
+    assert!(planned.contains("Dry run: nothing written."), "{planned}");
+    assert_eq!(
+        read_through_section(&planned),
+        READ_THROUGH_SECTION,
+        "{planned}"
+    );
+    assert!(method_lines(root).is_empty(), "a dry run writes nothing");
+
+    let migrated = stdout_of(root, &["migrate"]);
+    assert!(
+        migrated.contains("Migrated the vault to RLM 1.1."),
+        "{migrated}"
+    );
+    assert_eq!(
+        read_through_section(&migrated),
+        READ_THROUGH_SECTION,
+        "{migrated}"
+    );
+    assert_eq!(method_lines(root), ["method_version = \"1.1\""]);
+    let notes = daily_notes_with_migration(root);
+    assert_eq!(notes.len(), 1);
+    assert!(
+        notes[0].contains("vault migrated\n  was: unstamped (read as 1.0)\n  now: 1.1\n"),
+        "{}",
+        notes[0]
+    );
+
+    // Stamped 1.1: the read-through is done, and the date is still overdue.
+    assert_eq!(lint_read_through_rows(root), Vec::<String>::new());
+    assert_eq!(
+        stdout_of(root, &["migrate", "--dry-run"]),
+        "vault is at RLM 1.1; nothing to do\n"
+    );
 }
