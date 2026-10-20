@@ -41,7 +41,8 @@ project. Rejections:
   in particular). If they cannot name who has it, it is theirs.
 - `project_in_focus`: an action on the project is in focus; the person pauses it first.
 - `project_cap_reached`: taking back an active project would make it count with the counted
-  projects already at the cap; its `details` list only the projects that count. Taking back a
+  projects already at the cap; its `details` carry `current`, `max` and `active_projects`, which lists
+  only the projects that count. Taking back a
   parked project only clears the name and never activates it.
 - `project_not_active`: the project is completed or dropped.
 

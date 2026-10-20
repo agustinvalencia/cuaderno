@@ -94,8 +94,10 @@ proceed:
 [warning] .cuaderno/config.toml: this vault follows RLM 1.2, a newer minor version than the RLM 1.1 this cdno implements — writes proceed; upgrade cdno for the practices it adds
 ```
 
-A malformed `method_version` is an error naming the key. A vault on this cdno's version, or on an
-older minor one (an unstamped vault included), gets no row here.
+A vault on this cdno's version, or on an older minor one (an unstamped vault included), gets no
+row here. A malformed `method_version` (`"v1"`, `"1.1.0"`) is not a lint row: it is a
+configuration error, so the vault does not open and every command, `lint` included, fails with an
+error naming the key. Fix the value (see [configuration](../configuration.md#method-version)).
 
 While the vault records a method version below RLM 1.1 (an unstamped vault reads as 1.0), it gives
 one warning per **overdue** hard date on a parked project map, on every run, since the commitments

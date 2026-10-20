@@ -62,7 +62,8 @@ relationship implies:
 - **Handed off, but you worked on it yourself on two or more days this week**: doing a thing on a
   handed-off map does not make it yours, doing most of its work does. Take it back, or change the
   name to whoever really has it.
-- **Handed off, and stuck for weeks**: chase the holder, or take it back.
+- **Handed off, and stuck for weeks** (at the monthly review, from its list of stuck projects):
+  chase the holder, or take it back.
 
 A handed-off project that did not change this week needs no question at all. The questions are
 prompts, never verdicts, and a hand-off is never an answer to a full cap: to make room, park,
@@ -74,6 +75,6 @@ The MCP tools `get_weekly_context`, `read_weekly_note`, and `upsert_weekly_secti
 run the same review conversationally — reading your week back to you and writing the sections as you
 talk. `get_weekly_context` carries, per active project, `counts`, `held_by`, `changed_this_week`,
 `waiting_on_empty` and `focus_days_while_held`, so an assistant can ask each project the question
-above; the [`weekly-review`](../reference/mcp/with-claude-skills.md) example skill shows how. See [Connect to Claude](../getting-started/connect-to-claude.md).
+above (the stuck-project question reads `get_monthly_context`'s `stuck_projects`, not these fields); the [`weekly-review`](../reference/mcp/with-claude-skills.md) example skill shows how. See [Connect to Claude](../getting-started/connect-to-claude.md).
 
 Next: [Inbox and triage](inbox-and-triage.md).
