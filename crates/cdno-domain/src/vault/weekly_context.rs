@@ -79,13 +79,14 @@ pub struct ReviewProject {
     pub waiting_on_empty: bool,
     /// The frontmatter `core_question:` exactly as written.
     pub core_question: Option<String>,
-    /// Whether the map file was modified within the current ISO week:
+    /// Whether the map file was modified since this ISO week began:
     /// its index `mtime_ns` falls after the end of the Sunday before
     /// `week_of`. A tool that touches the file without changing it also
     /// counts, so this over-reports; it prompts a question, never a
     /// conclusion.
     pub changed_this_week: bool,
-    /// For a handed-off map (one naming a holder, so not counted), the
+    /// For a handed-off map (`counts` false: an active map that names
+    /// someone else as its holder), the
     /// number of distinct days from the ISO Monday to today with a
     /// `started` or `resumed` log head naming it; zero for any other map.
     /// Days, not lines: three starts on one day are one day.
@@ -134,8 +135,9 @@ impl Vault {
                 continue;
             }
             let summary = self.project_summary(&path_stem(&entry.path))?;
-            let handed_off = summary.held_by.is_some() && !summary.counts;
-            let focus_days_while_held = if handed_off {
+            // Every map here is active, so not counting means it names
+            // someone else as its holder: it is handed off.
+            let focus_days_while_held = if !summary.counts {
                 focus_days.get(&summary.slug).map_or(0, BTreeSet::len)
             } else {
                 0

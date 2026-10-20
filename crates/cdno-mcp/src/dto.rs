@@ -853,8 +853,9 @@ pub struct ReviewProjectDto {
     pub waiting_on_empty: bool,
     /// The frontmatter `core_question:` wikilink, or null.
     pub core_question: Option<String>,
-    /// Whether the map file was modified this ISO week (an over-report
-    /// when a tool touches it without changing it).
+    /// Whether the map file was modified after the end of the Sunday
+    /// before this ISO week's Monday (an over-report when a tool touches
+    /// it without changing it).
     pub changed_this_week: bool,
     /// For a handed-off map, the number of distinct days this week with a
     /// focus started or resumed on it; 0 for any other map. Evidence for

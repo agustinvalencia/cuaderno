@@ -40,11 +40,11 @@ Each element of `get_weekly_context.projects`:
 | `counts` | `true` when the map holds one of the [`max_active_projects`](../configuration.md#keys) slots: active, and naming no one else as its holder. Branch on this, never on the name. |
 | `waiting_on_empty` | `true` when `## Waiting On` is missing, empty, or only `(nothing yet)`. A holder over an empty Waiting On is a parked map wearing a name. |
 | `core_question` | The map's `core_question:` as written, or `null`. |
-| `changed_this_week` | `true` when the map file was modified in the current ISO week (Monday to Sunday). A tool that touches the file without changing it also sets it, so it prompts a question, never a conclusion. |
-| `focus_days_while_held` | For a handed-off map (`held_by` set, `counts` false), the number of distinct days from Monday to today with a focus started or resumed on it; `0` for any other map. Days, not starts. It is evidence for the person to weigh: no log line records who did the work. |
+| `changed_this_week` | `true` when the map file was modified after the end of the Sunday before this ISO week's Monday. A tool that touches the file without changing it also sets it, so it prompts a question, never a conclusion. |
+| `focus_days_while_held` | For a handed-off map (`counts` false), the number of distinct days from Monday to today with a focus started or resumed on it; `0` for any other map. Days, not starts. It is evidence for the person to weigh: no log line records who did the work. |
 
-The weekly review asks your own projects whether they moved, and a handed-off project that changed
-this week what came back and what awaits your decision. `get_monthly_context`'s parked and stuck
+The weekly review asks the person's own projects whether they moved, and a handed-off project that
+changed this week what came back and what awaits the person's decision. `get_monthly_context`'s parked and stuck
 entries carry `held_by`, `counts` and `waiting_on_empty` with the same meanings, so the monthly
 review tells a project shelved for someday from one someone else has.
 
