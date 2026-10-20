@@ -11,9 +11,15 @@
 //! [`holder_reading_from_json`], over the index's
 //! [`Frontmatter::as_json`](cdno_core::frontmatter::Frontmatter::as_json)
 //! blob) and the hand-off verb, all reading the same configured list,
-//! `[projects] holder_sentinels`. The two adapters agree on every input.
+//! `[projects] holder_sentinels`.
+//!
+//! The two adapters agree on every value `as_json` can render. The one known
+//! disagreement: a YAML mapping keyed by a sequence has no JSON form, so
+//! `as_json` writes `null` for the present key, which the JSON adapter reads
+//! as `Absent` where the YAML adapter reads `NotAString`. The map counts
+//! either way; only lint's error for that value is lost.
 
-use cdno_core::config::{DEFAULT_SELF_HOLDER_SENTINELS, VaultConfig};
+use cdno_core::config::VaultConfig;
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
 
 /// What a map's `held_by:` says, once read.
@@ -30,12 +36,9 @@ pub enum HolderReading {
     /// A value that is not a plain string: an unquoted `[[people/ana]]`
     /// (a nested YAML sequence), a number, a bool, a mapping, or a date.
     NotAString,
-    /// A configured sentinel that names the person (`me`, `myself`, …),
-    /// as written.
-    Yours(String),
-    /// A configured value that names nobody (`tbd`, `someone`, `?`, …),
-    /// or a blank string, as written.
-    Placeholder(String),
+    /// A value that names you or nobody: one on the configured list (`me`,
+    /// `tbd`, `?`, …), or a blank string under any list, as written.
+    Sentinel(String),
 }
 
 /// The configured `[projects] holder_sentinels`, normalised for comparison:
@@ -73,36 +76,21 @@ fn normalise(text: &str) -> String {
 
 /// Classify `held_by` text against the configured list.
 ///
-/// - A value on the list reads as [`Yours`](HolderReading::Yours) when it is
-///   one of the default's self-naming entries (`me`, `I`, `myself`,
-///   `(mine)`), and as [`Placeholder`](HolderReading::Placeholder)
-///   otherwise. The configured list alone decides what is refused; the
-///   default's self-naming entries only choose between the two readings,
-///   which lint words differently.
-/// - A blank value is a placeholder even under `holder_sentinels = []`:
-///   it names nobody.
-/// - A date or timestamp (`2026-10-20`) reads as
+/// - A value on the list, or a blank value under any list (a blank names
+///   nobody), reads as [`Sentinel`](HolderReading::Sentinel): it names you or
+///   nobody.
+/// - A date or timestamp (`2026-10-20`, quoted or not) reads as
 ///   [`NotAString`](HolderReading::NotAString): YAML would write it
-///   unquoted, the parser hands it over as text, and it names no one.
+///   unquoted, the parser hands it over as text either way, and it names no
+///   one.
 /// - Anything else is [`Named`](HolderReading::Named), trimmed.
 pub fn classify_holder_text(text: &str, sentinels: &HolderSentinels) -> HolderReading {
     let trimmed = text.trim();
     if is_yaml_timestamp(trimmed) {
         return HolderReading::NotAString;
     }
-    let normalised = normalise(trimmed);
-    if sentinels.contains(&normalised) {
-        let names_you = DEFAULT_SELF_HOLDER_SENTINELS
-            .iter()
-            .any(|s| normalise(s) == normalised);
-        return if names_you {
-            HolderReading::Yours(text.to_owned())
-        } else {
-            HolderReading::Placeholder(text.to_owned())
-        };
-    }
-    if trimmed.is_empty() {
-        return HolderReading::Placeholder(text.to_owned());
+    if trimmed.is_empty() || sentinels.contains(&normalise(trimmed)) {
+        return HolderReading::Sentinel(text.to_owned());
     }
     HolderReading::Named(trimmed.to_owned())
 }
@@ -123,7 +111,7 @@ pub fn holder_reading_from_yaml(
 /// Read `held_by` from the index's JSON frontmatter (`None` when the key is
 /// absent). Agrees with [`holder_reading_from_yaml`] on every value
 /// [`Frontmatter::as_json`](cdno_core::frontmatter::Frontmatter::as_json)
-/// can produce from it.
+/// can render (see the module docs for the one it cannot).
 pub fn holder_reading_from_json(
     value: Option<&serde_json::Value>,
     sentinels: &HolderSentinels,

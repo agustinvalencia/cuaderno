@@ -11,7 +11,7 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 use super::context::Context;
-use super::holder::{HolderReading, HolderSentinels, holder_reading_from_yaml};
+use super::holder::{HolderReading, HolderSentinels, classify_holder_text};
 
 /// Lifecycle state of a project. Park/activate transitions cap-check
 /// against `max_active_projects`. `Completed` and `Dropped` are the two
@@ -117,9 +117,17 @@ pub struct ProjectFrontmatter {
 
 impl ProjectFrontmatter {
     /// What `held_by` says, classified against the configured list.
+    ///
+    /// The raw value is already reduced to a string here, so a value that
+    /// was not one reads as [`HolderReading::Absent`]. Lint, which must
+    /// report `NotAString`, reads the index's frontmatter through
+    /// [`holder_reading_from_json`](super::holder::holder_reading_from_json)
+    /// instead.
     pub fn holder(&self, sentinels: &HolderSentinels) -> HolderReading {
-        let value = self.held_by.clone().map(serde_yaml::Value::String);
-        holder_reading_from_yaml(value.as_ref(), sentinels)
+        match &self.held_by {
+            None => HolderReading::Absent,
+            Some(text) => classify_holder_text(text, sentinels),
+        }
     }
 
     /// Whether this map takes one of the `max_active_projects` slots: it is
@@ -132,10 +140,7 @@ impl ProjectFrontmatter {
         }
         match self.holder(sentinels) {
             HolderReading::Named(_) => false,
-            HolderReading::Absent
-            | HolderReading::NotAString
-            | HolderReading::Yours(_)
-            | HolderReading::Placeholder(_) => true,
+            HolderReading::Absent | HolderReading::NotAString | HolderReading::Sentinel(_) => true,
         }
     }
 }

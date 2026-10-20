@@ -48,46 +48,36 @@ impl Default for FocusConfig {
     }
 }
 
-/// The default `[projects] holder_sentinels` entries that name the person
-/// themself (RFC 0006 §7.2, "a map that names you is yours"). `(mine)` is
-/// the stand-in a `holder on` log entry prints for an absent holder, which
-/// someone copying from the log will write.
-///
-/// Part of the default value of [`ProjectsConfig::holder_sentinels`], and
-/// nothing else: the configured list decides which values are refused, and
-/// this list only tells a refused value that names the person from one that
-/// names nobody.
-pub const DEFAULT_SELF_HOLDER_SENTINELS: &[&str] = &["me", "I", "myself", "(mine)"];
-
-/// The default `[projects] holder_sentinels` entries that name nobody: the
-/// placeholders someone writes when they cannot say who holds the map,
-/// including the blank string. The rest of the default value of
-/// [`ProjectsConfig::holder_sentinels`].
-pub const DEFAULT_PLACEHOLDER_HOLDER_SENTINELS: &[&str] = &[
-    "someone", "somebody", "nobody", "unknown", "tbd", "n/a", "none", "-", "?", "",
+/// The default `[projects] holder_sentinels`: the values of a project map's
+/// `held_by:` that name the person (`me`, `I`, `myself`, and `(mine)`, the
+/// stand-in a `holder on` log entry prints for an absent holder) or nobody
+/// (placeholders such as `tbd`). A blank value names nobody under any list,
+/// so it is not listed here (RFC 0006 §7.2, §8.2).
+pub const DEFAULT_HOLDER_SENTINELS: &[&str] = &[
+    "me", "I", "myself", "(mine)", "someone", "somebody", "nobody", "unknown", "tbd", "n/a",
+    "none", "-", "?",
 ];
 
 fn default_holder_sentinels() -> Vec<String> {
-    DEFAULT_SELF_HOLDER_SENTINELS
+    DEFAULT_HOLDER_SENTINELS
         .iter()
-        .chain(DEFAULT_PLACEHOLDER_HOLDER_SENTINELS)
         .map(|s| (*s).to_owned())
         .collect()
 }
 
 /// The `[projects]` section: policy for project maps (RFC 0006 §8.2).
 ///
-/// Denies no unknown fields, so a key a later release adds here is ignored
-/// by this one rather than failing the vault's open.
+/// Denies unknown fields, as `[focus]` does: a misspelt key is an error
+/// rather than silently keeping the default. A key that must be read by
+/// older binaries belongs in `[vault]` instead.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ProjectsConfig {
-    /// Values of a project map's `held_by:` that do not name someone else:
-    /// the person's own sentinels and placeholders that name nobody. Such a
-    /// value reads as no holder, so the map counts toward the cap. Trimmed
-    /// and compared case-insensitively. Absent gives the default
-    /// ([`DEFAULT_SELF_HOLDER_SENTINELS`] followed by
-    /// [`DEFAULT_PLACEHOLDER_HOLDER_SENTINELS`]); `[]` accepts any name.
+    /// Values of a project map's `held_by:` that name the person or nobody.
+    /// Such a value reads as no holder, so the map counts toward the cap.
+    /// Trimmed and compared case-insensitively. Absent gives
+    /// [`DEFAULT_HOLDER_SENTINELS`]; `[]` accepts any name. A blank value
+    /// names nobody whatever the list says.
     #[serde(default = "default_holder_sentinels")]
     pub holder_sentinels: Vec<String>,
 }

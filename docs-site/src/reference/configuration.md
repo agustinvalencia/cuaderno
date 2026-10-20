@@ -71,7 +71,7 @@ collaborators = "Who are the collaborators?"
 | `focus.carry_over_days` | integer | `1` | How many days back the focus is read from today. `0` reads today only. See [Focus](#focus). |
 | `focus.paused_lookback_days` | integer | `14` | How far back a pause is still offered for `resume`, `cdno now` and orientation. |
 | `focus.max_window_days` | integer | `366` | Ceiling for the two windows above; a vault that exceeds it fails to open. |
-| `projects.holder_sentinels` | list of strings | `["me", "I", "myself", "(mine)", "someone", "somebody", "nobody", "unknown", "tbd", "n/a", "none", "-", "?", ""]` | Values of a project map's `held_by:` that name you or nobody, so they read as no holder. Trimmed, any case; `[]` accepts any name. See [Projects](#projects). |
+| `projects.holder_sentinels` | list of strings | `["me", "I", "myself", "(mine)", "someone", "somebody", "nobody", "unknown", "tbd", "n/a", "none", "-", "?"]` | Values of a project map's `held_by:` that name you or nobody, so they read as no holder. Trimmed, any case; `[]` accepts any name. See [Projects](#projects). |
 | `note_types.<name>` | table | — | Declares a **config-defined custom note type** (`folder`, `required`/`optional` fields, `template`, …) — a schema-only type for entities the built-ins don't cover. See [Custom note types](custom-note-types.md). |
 | `variables.<name>` | string | — | Static template variable; resolves in any custom template (per-type values win on name clash). |
 | `variables.prompt.<name>` | string | — | Prompted template variable; the value is the prompt text. Gathered at creation from `--var name=value`, an interactive prompt, or a static `[variables]` default; errors if none supplies it. |
@@ -317,26 +317,28 @@ restart it (reconnect the client) for an agent to see the change. See [`cdno now
 ## Projects
 
 The `[projects]` section holds policy for project maps. Its one key, `holder_sentinels`, lists the
-values of a map's `held_by:` (the name of whoever else is moving the map) that do not name someone
-else. Such a value reads as no holder, so the map stays yours and counts, exactly as a map with no
+values of a map's `held_by:` (the name of whoever else is moving the map) that name you or nobody.
+Such a value reads as no holder, so the map stays yours and counts, exactly as a map with no
 `held_by:` line does. The key is optional; leaving it out gives the default below, so a vault that
-never sets it behaves as before.
+never sets it behaves as before. An unknown key in the section is a hard error, as in `[focus]`, so
+a typo cannot silently keep the default.
 
 ```toml
 [projects]
 holder_sentinels = [
   "me", "I", "myself", "(mine)",
-  "someone", "somebody", "nobody", "unknown", "tbd", "n/a", "none", "-", "?", "",
+  "someone", "somebody", "nobody", "unknown", "tbd", "n/a", "none", "-", "?",
 ]
 ```
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `holder_sentinels` | the list above | The first four name you (`(mine)` is how the log writes "no holder"); the rest are placeholders that name nobody, the last one the blank string. Each value is trimmed and compared in any case, so `" TBD "` matches `tbd`. Setting the key replaces the whole list: add your own name to have it read as yours, add a placeholder in your own language, or set `[]` to accept any name. A blank `held_by:` always names nobody, whatever the list says. |
+| `holder_sentinels` | the list above | Values that name you (`me`, `(mine)`, which is how the log writes "no holder") or nobody (`tbd`, `?`). Each value is trimmed and compared in any case, so `" TBD "` matches `tbd`. Setting the key replaces the whole list: add your own name or your own language's words (`holder_sentinels = ["yo", "nadie"]`), or set `[]` to accept any name. |
 
-A `held_by:` that is not a plain string (an unquoted `[[people/ana]]`, a number, a date) also reads
-as no holder; quote it (`held_by: "[[people/ana]]"`) for it to count as a name. An unknown key in
-`[projects]` is ignored rather than an error, so a vault written for a newer cdno still opens.
+A blank `held_by:` names nobody under any list, so it is not in the default and you need not add
+it. A `held_by:` that is not a plain name (an unquoted `[[people/ana]]`, a number, a date, quoted
+or not) also reads as no holder; quote a wikilink (`held_by: "[[people/ana]]"`) for it to count as a
+name.
 
 ## Templates
 

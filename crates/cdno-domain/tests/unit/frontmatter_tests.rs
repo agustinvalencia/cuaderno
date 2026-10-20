@@ -928,25 +928,27 @@ const NOT_A_STRING_ROWS: &[&str] = &[
     "true",
     "2026-10-20",
     "2026-10-20T09:30:00Z",
+    // A quoted date reaches the reader as the same text an unquoted one
+    // does, so it reads the same: not a name.
+    "\"2026-01-01\"",
     "{ name: ana }",
     "[ana, bo]",
 ];
 
-/// Values naming the person or nobody, as YAML writes them, with the
-/// reading each gets.
-const DENIED_ROWS: &[(&str, bool)] = &[
-    // (yaml, names_you)
-    ("\" Me \"", true),
-    ("MYSELF", true),
-    ("i", true),
-    ("\"(mine)\"", true),
-    ("TBD", false),
-    ("\"?\"", false),
-    ("\"\"", false),
-    ("\"   \"", false),
-    ("Someone", false),
-    ("n/a", false),
-    ("\"-\"", false),
+/// Values naming the person or nobody, as YAML writes them: on the default
+/// list in any case and spacing, or blank.
+const DENIED_ROWS: &[&str] = &[
+    "\" Me \"",
+    "MYSELF",
+    "i",
+    "\"(mine)\"",
+    "TBD",
+    "\"?\"",
+    "\"\"",
+    "\"   \"",
+    "Someone",
+    "n/a",
+    "\"-\"",
 ];
 
 /// Values naming someone else, with the name each reads as.
@@ -999,13 +1001,13 @@ fn held_by_that_is_not_a_string_reads_as_absent() {
 
 #[test]
 fn held_by_naming_you_or_nobody_reads_as_absent_in_any_case() {
-    for (yaml, names_you) in DENIED_ROWS {
+    for yaml in DENIED_ROWS {
         let pf = ProjectFrontmatter::try_from(parse_fm(&held_by_yaml(yaml))).unwrap();
         let reading = pf.holder(&default_sentinels());
-        match (&reading, names_you) {
-            (HolderReading::Yours(_), true) | (HolderReading::Placeholder(_), false) => {}
-            other => panic!("held_by: {yaml} read as {other:?}"),
-        }
+        assert!(
+            matches!(reading, HolderReading::Sentinel(_)),
+            "held_by: {yaml} read as {reading:?}"
+        );
         assert!(
             pf.counts_toward_cap(&default_sentinels()),
             "held_by: {yaml}"
@@ -1034,17 +1036,17 @@ fn held_by_reads_the_configured_list_not_a_literal() {
     let nadie = HolderSentinels::new(["Nadie "]);
     assert_eq!(
         classify_holder_text(" NADIE", &nadie),
-        HolderReading::Placeholder(" NADIE".to_owned())
+        HolderReading::Sentinel(" NADIE".to_owned())
     );
     // `me` is on the default list, not on this one: here it is a name.
     assert_eq!(
         classify_holder_text("me", &nadie),
         HolderReading::Named("me".to_owned())
     );
-    // A configured self-naming entry still reads as yours.
+    // A person who lists their own word for themself gets it refused.
     assert_eq!(
-        classify_holder_text("ME", &HolderSentinels::new(["me"])),
-        HolderReading::Yours("ME".to_owned())
+        classify_holder_text("Yo", &HolderSentinels::new(["yo"])),
+        HolderReading::Sentinel("Yo".to_owned())
     );
     // `[]` accepts any name, but a blank names nobody.
     let none = HolderSentinels::new(Vec::<String>::new());
@@ -1054,7 +1056,7 @@ fn held_by_reads_the_configured_list_not_a_literal() {
     );
     assert_eq!(
         classify_holder_text(" ", &none),
-        HolderReading::Placeholder(" ".to_owned())
+        HolderReading::Sentinel(" ".to_owned())
     );
 }
 
@@ -1062,7 +1064,7 @@ fn held_by_reads_the_configured_list_not_a_literal() {
 fn the_yaml_and_json_adapters_agree_on_every_row() {
     let sentinels = default_sentinels();
     let mut rows: Vec<&str> = NOT_A_STRING_ROWS.to_vec();
-    rows.extend(DENIED_ROWS.iter().map(|(y, _)| *y));
+    rows.extend(DENIED_ROWS);
     rows.extend(NAMED_ROWS.iter().map(|(y, _)| *y));
     rows.extend(["null", "~", "!custom tagged", "1.5"]);
     for yaml in rows {

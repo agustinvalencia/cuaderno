@@ -1451,7 +1451,7 @@ fn holder_sentinels_default_to_the_deny_list_when_the_key_is_absent() {
     let config = VaultConfig::load(dir.path()).unwrap();
     let expected = [
         "me", "I", "myself", "(mine)", "someone", "somebody", "nobody", "unknown", "tbd", "n/a",
-        "none", "-", "?", "",
+        "none", "-", "?",
     ];
     assert_eq!(config.projects.holder_sentinels, expected);
     // A config with no file at all, and the in-code default, agree.
@@ -1494,21 +1494,18 @@ fn holder_sentinels_an_empty_list_is_kept_empty() {
 }
 
 #[test]
-fn projects_section_tolerates_an_unknown_key() {
-    // Unlike `[focus]`, `[projects]` denies no unknown fields: a key a later
-    // release adds must not stop this one opening the vault.
+fn projects_section_rejects_an_unknown_key() {
+    // As `[focus]` does: a misspelt key must not silently keep the default.
     let dir = TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "[projects]\nholder_sentinels = [\"tbd\"]\nsome_future_key = 3\n\n[other]\nx = 1\n",
-    );
-    let config = VaultConfig::load(dir.path()).unwrap();
-    assert_eq!(config.projects.holder_sentinels, ["tbd"]);
+    write_config(dir.path(), "[projects]\nholder_sentinel = [\"tbd\"]\n");
+    let err = error_chain(&VaultConfig::load(dir.path()).unwrap_err());
+    assert!(err.contains("holder_sentinel"), "{err}");
 }
 
 #[test]
 fn holder_sentinels_must_be_strings() {
     let dir = TempDir::new().unwrap();
     write_config(dir.path(), "[projects]\nholder_sentinels = [1, 2]\n");
-    assert!(VaultConfig::load(dir.path()).is_err());
+    let err = error_chain(&VaultConfig::load(dir.path()).unwrap_err());
+    assert!(err.contains("holder_sentinels"), "{err}");
 }
