@@ -280,6 +280,46 @@ fn intercept_offers_parked_slugs_for_milestone_add() {
     );
 }
 
+/// `hand-off` and `take-back` act on open maps, so `--slug` offers a
+/// parked one as well as an active one (RFC 0006 §8.2).
+#[test]
+fn intercept_offers_parked_slugs_for_hand_off_and_take_back() {
+    let vault = init_vault();
+    cdno()
+        .current_dir(vault.path())
+        .args([
+            "project",
+            "create",
+            "--title",
+            "Shelved Work",
+            "--context",
+            "work",
+        ])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(vault.path())
+        .args(["project", "park", "--slug", "shelved-work"])
+        .assert()
+        .success();
+
+    for verb in ["hand-off", "take-back"] {
+        // `cdno project <verb> --slug <CURSOR>` → index 4.
+        let output = cdno()
+            .current_dir(vault.path())
+            .env("COMPLETE", "zsh")
+            .env("_CLAP_COMPLETE_INDEX", "4")
+            .args(["--", "cdno", "project", verb, "--slug", ""])
+            .assert()
+            .success();
+        let stdout = std::str::from_utf8(&output.get_output().stdout).unwrap();
+        assert!(
+            stdout.contains("shelved-work"),
+            "parked offered to {verb}:\n{stdout}"
+        );
+    }
+}
+
 #[test]
 fn intercept_returns_portfolio_slugs() {
     let vault = init_vault();

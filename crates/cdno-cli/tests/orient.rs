@@ -334,3 +334,45 @@ fn orient_renders_a_shared_question_as_one_line_with_its_fronts() {
         "a map with no question keeps its card:\n{out}"
     );
 }
+
+/// A held map (one handed to someone else, RFC 0006 §8.2) is not the
+/// person's move, so the suggestion draws from the maps that count first,
+/// even when the held one sorts ahead; the held map still shows, with its
+/// holder named.
+#[test]
+fn the_suggestion_prefers_a_map_that_counts_over_a_held_one() {
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+    fs::write(
+        dir.path().join("projects/alpha.md"),
+        ALPHA.replace(
+            "created: 2026-04-01\n",
+            "created: 2026-04-01\nheld_by: \"Ana Ruiz\"\n",
+        ),
+    )
+    .unwrap();
+    fs::write(dir.path().join("projects/beta.md"), BETA).unwrap();
+
+    let out = orient::build_orientation(dir.path(), today(), None).expect("orient");
+    let suggested = out
+        .split("Suggested start")
+        .nth(1)
+        .expect("a suggestion section");
+    assert!(
+        suggested.contains("beta: Tidy the references (light)"),
+        "the counted map is suggested:\n{out}"
+    );
+    assert!(
+        out.contains("held by: Ana Ruiz · does not count toward the cap"),
+        "the held map names its holder:\n{out}"
+    );
+
+    // With only the held map left to move, it is suggested, holder named.
+    fs::remove_file(dir.path().join("projects/beta.md")).unwrap();
+    let out = orient::build_orientation(dir.path(), today(), None).expect("orient");
+    let suggested = out.split("Suggested start").nth(1).unwrap();
+    assert!(
+        suggested.contains("alpha (held by Ana Ruiz): Draft the methods section (deep)"),
+        "{out}"
+    );
+}

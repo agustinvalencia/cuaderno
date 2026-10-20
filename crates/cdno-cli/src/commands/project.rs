@@ -1,6 +1,6 @@
 //! `cdno project` subcommands: thin clap-to-domain layer for the
-//! project surface (create, state, core-question, action/done,
-//! milestone, waiting, park/activate, list, show).
+//! project surface (create, state, core-question, hand-off/take-back,
+//! milestone, waiting, park/activate, complete/drop, list, show).
 //!
 //! The clap argument types live here so `main.rs` stays a flat
 //! dispatcher; each subcommand maps directly onto a method on
@@ -68,6 +68,28 @@ pub enum ProjectCommands {
         /// Mutually exclusive with --question.
         #[arg(long, conflicts_with = "question")]
         clear: bool,
+    },
+
+    /// Hand an open project to the person now moving it, auto-logging the
+    /// change. A held active project does not count toward the cap.
+    /// Refused while an action on it is in focus: pause it first.
+    HandOff {
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
+        slug: Option<String>,
+        /// Who has it: a name, or a wikilink to their note. A value that
+        /// names you or nobody is refused; take the project back instead.
+        #[arg(long)]
+        to: Option<String>,
+    },
+
+    /// Take a handed-off project back, clearing its holder and
+    /// auto-logging the change. An active project then counts toward the
+    /// cap again; a parked one stays parked.
+    TakeBack {
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
+        slug: Option<String>,
     },
 
     /// Move an active project to projects/_parked/.
@@ -243,6 +265,12 @@ pub fn run(
             question,
             clear,
         } => core_question(&vault, at, slug, question, clear, interactive, json)?,
+        ProjectCommands::HandOff { slug, to } => {
+            hand_off(&vault, at, slug, Some(to), interactive, json)?;
+        }
+        ProjectCommands::TakeBack { slug } => {
+            hand_off(&vault, at, slug, None, interactive, json)?;
+        }
         ProjectCommands::Park { slug } => park(&vault, at, slug, interactive, json)?,
         ProjectCommands::Activate { slug } => activate(&vault, at, slug, interactive, json)?,
         ProjectCommands::Complete { slug } => {
@@ -495,6 +523,90 @@ fn core_question(
         .context("setting core question")?;
     let path = &outcome.primary;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Updated {path}"))?;
+    Ok(())
+}
+
+/// `cdno project hand-off` (`to` is `Some`, the flag's value or its
+/// absence) and `cdno project take-back` (`to` is `None`: there is no
+/// name to gather). Both reach the one domain operation,
+/// [`cdno_domain::Vault::hand_off`] (RFC 0006 §8.2).
+///
+/// The slug picker offers open maps, active and parked, since a parked
+/// map can be handed off and taken back too. The refusals a person can
+/// act on are rendered with the command that resolves them.
+fn hand_off(
+    vault: &cdno_domain::Vault,
+    at: NaiveDateTime,
+    slug: Option<String>,
+    to: Option<Option<String>>,
+    interactive: bool,
+    json: bool,
+) -> Result<()> {
+    use cdno_domain::HolderChange;
+    use cdno_domain::error::DomainError;
+
+    use crate::prompt;
+    let mut prompted = false;
+    let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
+        prompt::prompt_open_project(vault)
+    })?;
+    let change = match to {
+        Some(to) => HolderChange::HandTo(prompt::gather_or_error(
+            to,
+            "to",
+            interactive,
+            &mut prompted,
+            || prompt::prompt_text("Who has it?"),
+        )?),
+        None => HolderChange::TakeBack,
+    };
+
+    if prompted {
+        let preview = match &change {
+            HolderChange::HandTo(who) => format!("About to hand project '{slug}' to {who}"),
+            HolderChange::TakeBack => format!("About to take project '{slug}' back"),
+        };
+        if !prompt::confirm_preview(&preview)? {
+            println!("Aborted.");
+            return Ok(());
+        }
+    }
+
+    let outcome = match vault.hand_off(at, &slug, change.clone()) {
+        Ok(outcome) => outcome,
+        Err(DomainError::ProjectInFocus { slug, action }) => anyhow::bail!(
+            "{slug} has an action in focus ({action}), and a project is not handed off while \
+             you are in the middle of its work. Pause it first with `cdno action pause`, then \
+             hand it off."
+        ),
+        Err(DomainError::HolderNotAName { value }) => anyhow::bail!(
+            "'{value}' names you or nobody. If you cannot name who has {slug}, it is yours: \
+             keep it, or run `cdno project take-back --slug {slug}` if it was handed off."
+        ),
+        Err(DomainError::ProjectCapReached {
+            current,
+            max,
+            active_projects,
+        }) => anyhow::bail!(
+            "Taking {slug} back would make it count toward the cap, and {current} of {max} \
+             slots are in use by: {}. Park, complete or drop one of them first.",
+            active_projects.join(", ")
+        ),
+        Err(e) => {
+            return Err(e).context(match change {
+                HolderChange::HandTo(_) => "handing off project",
+                HolderChange::TakeBack => "taking back project",
+            });
+        }
+    };
+    let path = &outcome.primary;
+    let message = match (&change, outcome.touched()) {
+        (HolderChange::HandTo(who), true) => format!("Handed {slug} to {who} ({path})"),
+        (HolderChange::HandTo(who), false) => format!("{slug} is already held by {who} ({path})"),
+        (HolderChange::TakeBack, true) => format!("Took {slug} back ({path})"),
+        (HolderChange::TakeBack, false) => format!("{slug} is already yours ({path})"),
+    };
+    crate::output::emit_write_result(json, &path.to_string(), &message)?;
     Ok(())
 }
 
@@ -1124,10 +1236,14 @@ pub fn render_list(summaries: &[cdno_domain::ProjectSummary]) -> String {
             } else {
                 card.prose(&summary.state_snippet)
             };
-            card.meta(format!(
+            card = card.meta(format!(
                 "next: {}",
                 crate::commands::orient::project_next(summary)
-            ))
+            ));
+            match holder_line(summary) {
+                Some(line) => card.meta(line),
+                None => card,
+            }
         })
         .collect();
 
@@ -1239,5 +1355,38 @@ pub fn render_show(summary: &cdno_domain::ProjectSummary) -> String {
         "  {} {top}\n",
         palette.paint(Role::Heading, "Top:")
     ));
+    // The holder, and whether the map holds a slot, for an open map only:
+    // a closed map neither holds a slot nor has anyone moving it.
+    if matches!(
+        summary.status,
+        ProjectStatus::Active | ProjectStatus::Parked
+    ) {
+        if let Some(holder) = &summary.held_by {
+            out.push_str(&format!(
+                "  {} {}\n",
+                palette.paint(Role::Heading, "Held by:"),
+                crate::output::sanitise(holder)
+            ));
+        }
+        out.push_str(&format!(
+            "  {} {}\n",
+            palette.paint(Role::Heading, "Counts toward the cap:"),
+            if summary.counts { "yes" } else { "no" }
+        ));
+    }
     out
+}
+
+/// `held by: <name> · …` for a map that names a holder, saying whether it
+/// still counts toward the cap (a name on `[projects] holder_sentinels`,
+/// such as `me`, leaves it counted), or `None` when it names no one.
+/// Shared by `project list` and `cdno orient`.
+pub(crate) fn holder_line(summary: &cdno_domain::ProjectSummary) -> Option<String> {
+    let holder = summary.held_by.as_deref()?;
+    let counts = if summary.counts {
+        "counts toward the cap"
+    } else {
+        "does not count toward the cap"
+    };
+    Some(format!("held by: {holder} · {counts}"))
 }

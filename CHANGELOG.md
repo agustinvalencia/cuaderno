@@ -8,6 +8,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- `cdno project hand-off --slug … --to …` and `cdno project take-back --slug …`;
+  `project list` and `show` print the holder, and `cdno orient` suggests from projects that count
+  (RFC 0006 §8.2).
 - `Vault::hand_off` records whose move a project is, logging `holder on [[slug]]`
   with `was:`/`now:` lines; taking back clears the name, is cap-checked only on an active map and
   never activates a parked one; a hand-off is refused while an action on that project is in focus
