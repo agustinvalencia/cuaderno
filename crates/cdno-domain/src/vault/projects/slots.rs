@@ -6,6 +6,7 @@
 //! home (RFC 0006 §8.0).
 
 use crate::error::DomainError;
+use crate::frontmatter::ProjectFrontmatter;
 
 use super::super::Vault;
 use super::project_slug_from_path;
@@ -78,6 +79,17 @@ impl Vault {
             cap: self.config.vault.max_active_projects,
             counted_slugs,
         })
+    }
+
+    /// Whether a map with this frontmatter holds a slot under this vault's
+    /// configured `[projects] holder_sentinels`: active and naming no one
+    /// else ([`ProjectFrontmatter::counts_toward_cap`]). For the read
+    /// surfaces that list maps from their frontmatter alone, so they
+    /// report the same `counts` as [`slot_usage`](Self::slot_usage) counts.
+    ///
+    /// [`ProjectFrontmatter::counts_toward_cap`]: crate::frontmatter::ProjectFrontmatter::counts_toward_cap
+    pub fn project_counts(&self, project: &ProjectFrontmatter) -> bool {
+        project.counts_toward_cap(&self.holder_sentinels)
     }
 
     /// The cap rule at a write site: [`SlotUsage::ensure_slot`] over the

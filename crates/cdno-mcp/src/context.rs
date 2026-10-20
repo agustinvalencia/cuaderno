@@ -11,15 +11,16 @@ use rmcp::{tool, tool_router};
 use cdno_core::index::NoteCandidate;
 use cdno_core::path::VaultPath;
 use cdno_domain::error::DomainError;
-use cdno_domain::frontmatter::QuestionDomain;
+use cdno_domain::frontmatter::{ProjectFrontmatter, QuestionDomain};
 use cdno_domain::{Miss, RefResolution, SearchFilters, Vault};
 
 use crate::dto::{
     CommitmentEntryDto, CurrentFocusDto, DailyNoteViewDto, InboxItemDto, LintReportDto,
     MonthlyContextDto, MonthlyNoteViewDto, OrientationContextDto, PROJECT_BODY_MAX_CHARS,
     PROJECT_MENTIONS_MAX, PortfolioDetailDto, ProjectContextDto, ProjectListDto,
-    QuestionSummaryDto, ReadNoteResponse, SearchResultDto, StewardshipTrackingDto, TrackingSpecDto,
-    VaultSchemaDto, WeeklyContextDto, WeeklyNoteViewDto, cap_recent_logs, truncate_chars,
+    ProjectListEntryDto, QuestionSummaryDto, ReadNoteResponse, SearchResultDto,
+    StewardshipTrackingDto, TrackingSpecDto, VaultSchemaDto, WeeklyContextDto, WeeklyNoteViewDto,
+    cap_recent_logs, truncate_chars,
 };
 
 use crate::input::*;
@@ -50,7 +51,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Today's orientation: commitments due soon, active projects with their top action and last paused action, the active-project `slots` against the configured cap (the same object `list_projects` returns), and lapsed stewardship habits. The `energy` field is reserved for client-side suggestion biasing; the server returns the raw context unfiltered. The `focus` field carries what is currently in focus (the same as `current_focus`), or null. Each project's `last_paused` field carries its most recent pause still open for resuming, with its `next:` hint, or null. The projects are grouped under their core question where one is set: each `groups` entry holds a `parent` (`{\"kind\": \"question\", \"path\"}`, or null for a project standing alone) and its member slugs in `projects`, so several maps of one inquiry read as one undertaking."
+        description = "Today's orientation: commitments due soon, active projects with their top action and last paused action, the active-project `slots` against the configured cap (the same object `list_projects` returns), and lapsed stewardship habits. The `energy` field is reserved for client-side suggestion biasing; the server returns the raw context unfiltered. The `focus` field carries what is currently in focus (the same as `current_focus`), or null. Each project's `last_paused` field carries its most recent pause still open for resuming, with its `next:` hint, or null. The projects are grouped under their core question where one is set: each `groups` entry holds a `parent` (`{\"kind\": \"question\", \"path\"}`, or null for a project standing alone) and its member slugs in `projects`, so several maps of one inquiry read as one undertaking. Each project carries `held_by`, `counts`, `waiting_on_empty` and `core_question`, and `slots` carries `active`, `counted` and `cap`. Suggest today's work from the projects that count (`counts` true); a project with `counts` false is someone else's move. Parked projects are not listed."
     )]
     pub async fn get_orientation(
         &self,
@@ -102,33 +103,44 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "List the vault's projects: active and parked, each with its slug and typed frontmatter, plus the slot budget (active count vs the configured cap). Closed projects (completed or dropped, under `projects/_done/<year>/`) are listed under `closed` only with `include_closed: true`. The lightweight enumeration tool -- use it to discover project slugs without pulling a full `get_monthly_context` or per-project `get_project_context`."
+        description = "List the vault's projects: active and parked, each with its slug, typed frontmatter (`held_by` among it, as written) and `counts`, plus the slot budget: `slots.active` (every active project), `slots.counted` (the active ones that hold a slot) and `slots.cap`. A project counts when it is active and handed off to no one; branch on `counts`, never on the holder's name. Closed projects (completed or dropped, under `projects/_done/<year>/`) are listed under `closed` only with `include_closed: true`. The lightweight enumeration tool -- use it to discover project slugs without pulling a full `get_monthly_context` or per-project `get_project_context`."
     )]
     pub async fn list_projects(
         &self,
         Parameters(input): Parameters<ListProjectsInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let include_closed = input.include_closed;
-        let (active, parked, closed, slots) = self
+        let dto = self
             .with_vault(move |vault| {
-                let active = vault.active_projects()?;
-                let parked = vault.parked_projects()?;
+                // Each row's `counts` comes from the vault's own rule, so a
+                // client tallying them gets `slots.counted`.
+                let rows = |projects: Vec<(VaultPath, ProjectFrontmatter)>| {
+                    projects
+                        .into_iter()
+                        .map(|(path, fm)| {
+                            let counts = vault.project_counts(&fm);
+                            ProjectListEntryDto::new(&path, fm, counts)
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let active = rows(vault.active_projects()?);
+                let parked = rows(vault.parked_projects()?);
                 let closed = if include_closed {
-                    Some(vault.closed_projects()?)
+                    Some(rows(vault.closed_projects()?))
                 } else {
                     None
                 };
                 let slots = vault.slot_usage()?;
-                Ok::<_, DomainError>((active, parked, closed, slots))
+                Ok::<_, DomainError>(ProjectListDto {
+                    active,
+                    parked,
+                    closed,
+                    slots: slots.into(),
+                })
             })
             .await?
             .map_err(into_mcp_error)?;
-        json_result(ProjectListDto {
-            active: active.into_iter().map(Into::into).collect(),
-            parked: parked.into_iter().map(Into::into).collect(),
-            closed: closed.map(|c| c.into_iter().map(Into::into).collect()),
-            slots: slots.into(),
-        })
+        json_result(dto)
     }
 
     #[tool(
@@ -210,10 +222,11 @@ impl CuadernoServer {
         let since = today - chrono::Duration::days(30);
 
         let project = input.project.clone();
-        let (fm, body, mentions, backlinks, core_question, last_paused) = self
+        let (fm, counts, body, mentions, backlinks, core_question, last_paused) = self
             .with_vault(move |vault| {
                 let project_full = vault.get_project_full(&project, today)?;
                 let fm = project_full.frontmatter;
+                let counts = vault.project_counts(&fm);
                 let body = project_full.body;
                 let last_paused = project_full.last_paused;
                 let mentions = vault.daily_log_mentions(&project, since)?;
@@ -237,7 +250,15 @@ impl CuadernoServer {
                     None
                 };
 
-                Ok::<_, DomainError>((fm, body, mentions, backlinks, core_question, last_paused))
+                Ok::<_, DomainError>((
+                    fm,
+                    counts,
+                    body,
+                    mentions,
+                    backlinks,
+                    core_question,
+                    last_paused,
+                ))
             })
             .await?
             .map_err(into_mcp_error)?;
@@ -253,6 +274,7 @@ impl CuadernoServer {
         json_result(ProjectContextDto {
             slug: input.project,
             frontmatter: fm.into(),
+            counts,
             // Safety-valve cap on the map body (GH #388): generous enough
             // never to bite a normal map, but bounds a pathologically long
             // one. `backlinks` is capped per-group in its `From` impl.

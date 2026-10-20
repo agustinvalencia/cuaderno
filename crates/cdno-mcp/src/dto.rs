@@ -61,6 +61,8 @@ pub struct ProjectSummaryDto {
     /// Whether `## Waiting On` says nothing (missing, empty, or only
     /// `(nothing yet)`).
     pub waiting_on_empty: bool,
+    /// The frontmatter `core_question:` wikilink as written, or null.
+    pub core_question: Option<String>,
 }
 
 impl From<ProjectSummary> for ProjectSummaryDto {
@@ -74,6 +76,7 @@ impl From<ProjectSummary> for ProjectSummaryDto {
             held_by: p.held_by,
             counts: p.counts,
             waiting_on_empty: p.waiting_on_empty,
+            core_question: p.core_question,
         }
     }
 }
@@ -907,14 +910,16 @@ impl From<cdno_domain::WeeklyContext> for WeeklyContextDto {
 // commitments lookahead, and project slot allocation against the cap.
 // ---------------------------------------------------------------------
 
-/// Active-project slot usage against the configured cap (default 5
-/// per design §3.1). Useful for the monthly-review "should I drop /
-/// pick up a project" decision.
+/// Active-project slot usage against the configured cap. Useful for the
+/// monthly-review "should I drop / pick up a project" decision.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ProjectSlotsDto {
-    /// Current count of active projects (status: active under
-    /// `projects/`, not `projects/_parked/`).
+    /// Open projects with `status: active`, handed off or not: every
+    /// active project shown.
     pub active: usize,
+    /// The active projects that hold a slot (naming no one else in
+    /// `held_by:`): the number the cap is checked against (RFC 0006 §7.2).
+    pub counted: usize,
     /// Configured cap (`max_active_projects` in vault config).
     pub cap: u8,
 }
@@ -923,6 +928,7 @@ impl From<SlotUsage> for ProjectSlotsDto {
     fn from(s: SlotUsage) -> Self {
         Self {
             active: s.active,
+            counted: s.counted,
             cap: s.cap,
         }
     }
@@ -976,10 +982,9 @@ pub struct ParkedProjectDto {
 
 impl From<cdno_domain::ParkedProject> for ParkedProjectDto {
     fn from(p: cdno_domain::ParkedProject) -> Self {
-        let ProjectListEntryDto { slug, frontmatter } = (p.path, p.frontmatter).into();
         Self {
-            slug,
-            frontmatter,
+            slug: slug_from_project_path(&p.path),
+            frontmatter: p.frontmatter.into(),
             held_by: p.held_by,
             counts: p.counts,
             waiting_on_empty: p.waiting_on_empty,
@@ -1024,6 +1029,10 @@ pub struct ProjectFrontmatterDto {
     /// The date the project was completed or dropped; `None` while it is
     /// active or parked.
     pub closed: Option<NaiveDate>,
+    /// The frontmatter `held_by:` text as written (who else is moving the
+    /// map); null when absent or not a plain string. What it means is the
+    /// `counts` beside this frontmatter: never read the name.
+    pub held_by: Option<String>,
 }
 
 impl From<cdno_domain::frontmatter::ProjectFrontmatter> for ProjectFrontmatterDto {
@@ -1034,6 +1043,7 @@ impl From<cdno_domain::frontmatter::ProjectFrontmatter> for ProjectFrontmatterDt
             created: fm.created,
             core_question: fm.core_question,
             closed: fm.closed,
+            held_by: fm.held_by,
         }
     }
 }
@@ -1045,24 +1055,36 @@ impl From<cdno_domain::frontmatter::ProjectFrontmatter> for ProjectFrontmatterDt
 pub struct ProjectListEntryDto {
     pub slug: String,
     pub frontmatter: ProjectFrontmatterDto,
+    /// Whether the project holds one of the active-project slots: active
+    /// and handed off to no one. Branch on this, never on `held_by`.
+    pub counts: bool,
 }
 
-impl From<(VaultPath, cdno_domain::frontmatter::ProjectFrontmatter)> for ProjectListEntryDto {
-    /// Build a row from a domain `(path, frontmatter)` pair: the slug is
-    /// the file stem (`projects/<slug>.md` for active,
+impl ProjectListEntryDto {
+    /// Build a row from a domain `(path, frontmatter)` pair and whether
+    /// the map counts ([`cdno_domain::Vault::project_counts`]): the slug
+    /// is the file stem (`projects/<slug>.md` for active,
     /// `projects/_parked/<slug>.md` for parked).
-    fn from((path, fm): (VaultPath, cdno_domain::frontmatter::ProjectFrontmatter)) -> Self {
-        let slug = path
-            .as_path()
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or_default()
-            .to_owned();
+    pub fn new(
+        path: &VaultPath,
+        fm: cdno_domain::frontmatter::ProjectFrontmatter,
+        counts: bool,
+    ) -> Self {
         Self {
-            slug,
+            slug: slug_from_project_path(path),
             frontmatter: fm.into(),
+            counts,
         }
     }
+}
+
+/// A project's slug: its map's file stem.
+fn slug_from_project_path(path: &VaultPath) -> String {
+    path.as_path()
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+        .to_owned()
 }
 
 /// The `list_projects` payload: active and parked projects plus the
@@ -1241,6 +1263,9 @@ impl From<cdno_domain::ProjectBacklinks> for ProjectBacklinksDto {
 pub struct ProjectContextDto {
     pub slug: String,
     pub frontmatter: ProjectFrontmatterDto,
+    /// Whether the project holds one of the active-project slots: active
+    /// and handed off to no one. Branch on this, never on `held_by`.
+    pub counts: bool,
     /// The project map body (everything after the closing `---` of the
     /// frontmatter), capped to the [`PROJECT_BODY_MAX_CHARS`] safety
     /// valve for token-cap safety (GH #388). A normal map is far shorter,

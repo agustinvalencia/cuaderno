@@ -5,16 +5,16 @@ anything. Inputs marked optional may be omitted.
 
 | Tool | Inputs | Returns |
 |------|--------|---------|
-| `get_orientation` | `energy?` (`deep`\|`medium`\|`light`) | Commitments due soon (milestones and action dates of active and parked projects, standalone commitments, stewardship lines), active projects, lapsed stewardship habits, and a suggested starting point. Also `focus` (the [`current_focus`](#focus-fields) shape, or `null`) and, on each project, `last_paused` (its most recent unresolved pause, or `null`) beside `top_action`, plus `held_by`, `counts` and `waiting_on_empty` as in the [review fields](#review-fields), and `slots` (active projects against the cap, as on `list_projects`). The MCP form of [`cdno orient`](../cli/orient.md), which does not render those two. |
-| `get_project_context` | `project` (slug) | A project's state, next actions, milestones, waiting-on items, and links. Resolves active, parked and closed (`_done/<year>/`) projects. Also `last_paused`, as on `get_orientation`, so the re-entry hint is there when the project is opened and not only in the morning. |
+| `get_orientation` | `energy?` (`deep`\|`medium`\|`light`) | Commitments due soon (milestones and action dates of active and parked projects, standalone commitments, stewardship lines), active projects, lapsed stewardship habits, and a suggested starting point. Also `focus` (the [`current_focus`](#focus-fields) shape, or `null`) and, on each project, `last_paused` (its most recent unresolved pause, or `null`) beside `top_action`, plus `held_by`, `counts`, `waiting_on_empty` and `core_question` as in the [review fields](#review-fields), and [`slots`](#slots-and-counts) (as on `list_projects`). Parked projects are not listed; suggest the day's work from the projects that count. The MCP form of [`cdno orient`](../cli/orient.md), which does not render those two. |
+| `get_project_context` | `project` (slug) | A project's state, next actions, milestones, waiting-on items, and links. Resolves active, parked and closed (`_done/<year>/`) projects. Also `last_paused`, as on `get_orientation`, so the re-entry hint is there when the project is opened and not only in the morning. The frontmatter carries `held_by`, and the payload [`counts`](#slots-and-counts). |
 | `get_portfolio_contents` | `portfolio` (slug) | Portfolio metadata plus its evidence inventory. |
 | `get_weekly_context` | `date?` (any day in the week) | The weekly note's sections (Wins, Challenges, One Improvement, This Week's Goal), plus the week's logs, `completed_actions`, the projects completed or dropped that week (`closed_projects`) and project state changes. Also `projects`: every active project, handed-off ones included, with the [review fields](#review-fields). |
-| `get_monthly_context` | `date?` | Monthly context for a strategic scan, including the past 30 days' `completed_actions` as wins patterns, the projects completed or dropped in those 30 days (`closed_projects`), and every parked project (`parked_projects`). Parked entries and the stuck projects (active, unchanged for two weeks, handed-off ones included) carry `held_by`, `counts` and `waiting_on_empty`, as in the [review fields](#review-fields). |
+| `get_monthly_context` | `date?` | Monthly context for a strategic scan, including the past 30 days' `completed_actions` as wins patterns, the projects completed or dropped in those 30 days (`closed_projects`), and every parked project (`parked_projects`). Parked entries and the stuck projects (active, unchanged for two weeks, handed-off ones included) carry `held_by`, `counts` and `waiting_on_empty`, as in the [review fields](#review-fields). Also [`slots`](#slots-and-counts). |
 | `get_stewardship_tracking` | `stewardship`, `activity`, `period?` (e.g. `30d`, `6m`) | Tracking entries for a stewardship/activity over a window, plus the activity's declared contract in `spec` (record key, group field, and each metric's type, unit, aggregate, and `derived` expression when it is computed rather than recorded — write that metric's operands, never a field of its own name) when the vault declares one under [`[tracking.<activity>]`](../configuration.md#tracking). `spec` is null for an undeclared activity. Also returns `series`: this activity's numeric trends, one per `(group, metric)` it declares, each point already reduced by that metric's own aggregate, scoped and windowed by the same `activity` and `period` as the entries. |
 | `get_active_questions` | `domain?` (`research`\|`life`) | Active question notes, optionally filtered by domain. |
 | `get_commitments` | `lookahead_weeks?` (default 2) | The aggregated commitments view; overdue always included. A project's milestones and action due dates appear while it is open, active or parked, and leave once it is completed or dropped; a standalone commitment appears whatever its project's status. |
 | `current_focus` | — | The action most recently started or resumed, unless it has since been completed, dropped or paused (focus is one slot), or `null`. Returns `project`, `action`, `started`, `date`, `carried` and `origin` ([below](#focus-fields)). Replayed from the `## Logs` of today and the `[focus] carry_over_days` days before it (default 1), so a start made from the CLI counts too, as does one written by hand in the log's full shape (`- **HH:MM**: started [[slug]] — text` — stamp and em dash U+2014 both required; see [`cdno now`](../cli/now.md)); a completion, a drop or a pause clears it, and a `promote_action` in between renames it to the new note, keeping the start time. The MCP form of [`cdno now`](../cli/now.md). |
-| `list_projects` | `include_closed?` (default false) | Active and parked projects with their frontmatter, plus the slot budget; with `include_closed: true`, completed and dropped projects too, under `closed`. |
+| `list_projects` | `include_closed?` (default false) | Active and parked projects with their frontmatter (`held_by` among it) and [`counts`](#slots-and-counts), plus the slot budget `slots`; with `include_closed: true`, completed and dropped projects too, under `closed`. |
 | `list_note_types` | — | Every note type — the built-ins plus any config-defined `[note_types.*]` custom type — with its folder, required/optional fields, typed `[schemas.*]` field specs, template, and supplied placeholders. Call before `create_custom_note` to discover a vault's custom types. |
 | `read_daily_note` | `date?` (default today) | The daily log for a date. |
 | `read_weekly_note` | `date?` (default this week) | The weekly note for an ISO week. |
@@ -47,6 +47,26 @@ The weekly review asks the person's own projects whether they moved, and a hande
 changed this week what came back and what awaits the person's decision. `get_monthly_context`'s parked and stuck
 entries carry `held_by`, `counts` and `waiting_on_empty` with the same meanings, so the monthly
 review tells a project shelved for someday from one someone else has.
+
+## Slots and counts
+
+`slots`, on `list_projects`, `get_orientation` and `get_monthly_context`:
+
+```json
+{"active": 3, "counted": 2, "cap": 5}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `active` | The open projects with `status: active`, handed off or not: every active project shown. |
+| `counted` | The active projects that hold a slot, naming no one else in `held_by:`. The cap is checked against this number. |
+| `cap` | The configured [`max_active_projects`](../configuration.md#keys). |
+
+Each `list_projects` row (active, parked and closed) and the `get_project_context` payload carry
+`counts`, with the meaning in the [review fields](#review-fields), and their `frontmatter` carries
+`held_by` as written. Branch on `counts`, never on the holder's name. `list_projects` stays a
+listing that reads no map body, so its rows carry no `waiting_on_empty`; the orientation projects
+carry it.
 
 ## Focus fields
 

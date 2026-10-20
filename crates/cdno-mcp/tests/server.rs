@@ -1021,3 +1021,53 @@ fn no_project_description_advises_activating_first() {
         }
     }
 }
+
+/// RFC 0006 T21 (#804), §8.2: an agent reads one boolean the server
+/// computed and never interprets the name; the morning read suggests work
+/// from the projects that count. Neither text speaks of the cap's remedies.
+#[test]
+fn list_projects_says_to_branch_on_counts() {
+    let list = description_of("list_projects");
+    for phrase in [
+        "branch on `counts`, never on the holder's name",
+        "`slots.counted`",
+        "`slots.active` (every active project)",
+    ] {
+        assert!(
+            list.contains(phrase),
+            "list_projects must say {phrase:?}: {list}"
+        );
+    }
+
+    let orient = description_of("get_orientation");
+    for phrase in [
+        "Suggest today's work from the projects that count",
+        "Parked projects are not listed.",
+        "`held_by`, `counts`, `waiting_on_empty` and `core_question`",
+    ] {
+        assert!(
+            orient.contains(phrase),
+            "get_orientation must say {phrase:?}: {orient}"
+        );
+    }
+
+    for (name, desc) in [("list_projects", &list), ("get_orientation", &orient)] {
+        let lower = desc.to_lowercase();
+        for remedy in [
+            "project_cap_reached",
+            "make room",
+            "frees a slot",
+            "park_project",
+        ] {
+            assert!(
+                !lower.contains(remedy),
+                "{name} must not offer a cap remedy ({remedy:?}): {desc}"
+            );
+        }
+        assert!(!desc.contains('\n'), "{name}: one paragraph");
+        assert!(
+            desc.chars().count() <= CLIENT_CUT,
+            "{name}: within the client cut"
+        );
+    }
+}

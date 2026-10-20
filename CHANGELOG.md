@@ -10,6 +10,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 - MCP `hand_off_project` (a holder, or `take_back: true`); `project_cap_reached` lists only the
   projects that count. The server advertises 65 tools (RFC 0006 §8.2).
+- MCP: open-project summaries carry `held_by`, `counts` and `waiting_on_empty`, and `slots` gains
+  `counted` beside `active`, which keeps its meaning (RFC 0006 §8.2).
 - The weekly context lists each active project with `held_by`, `counts`,
   `waiting_on_empty`, `changed_this_week` and, for a handed-off one, the days this week with work
   started on it, as evidence for the review; the monthly context's parked and stuck projects carry

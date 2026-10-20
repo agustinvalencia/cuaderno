@@ -328,7 +328,10 @@ async fn orientation_carries_slots_matching_list_projects() {
         .expect("list_projects");
     let slots = decode_json(&orientation)["slots"].clone();
 
-    assert_eq!(slots, serde_json::json!({ "active": 1, "cap": 5 }));
+    assert_eq!(
+        slots,
+        serde_json::json!({ "active": 1, "counted": 1, "cap": 5 })
+    );
     assert_eq!(slots, decode_json(&listing)["slots"]);
 }
 
@@ -2775,4 +2778,202 @@ async fn weekly_context_carries_the_review_fields() {
         ]),
         "{value}"
     );
+}
+
+// ---------------------------------------------------------------------
+// The open-project fields and `slots.counted` (RFC 0006 T21, §8.2)
+// ---------------------------------------------------------------------
+
+/// An active map handed off to a field team, with something awaited.
+const HELD_MAP: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\n\
+    held_by: \"the field team\"\ncore_question: \"[[questions/research/soil]]\"\n---\n\n\
+    # Survey\n\n## Current State\nN/A.\n\n## Next Actions\n\n\
+    ## Waiting On\n- Soil samples from the field team\n";
+
+/// The person's own active map, awaiting nothing.
+const OWN_MAP: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\n\
+    ---\n\n# Report\n\n## Current State\nN/A.\n\n## Next Actions\n\n\
+    ## Waiting On\n(nothing yet)\n";
+
+/// A parked map that names a holder: parked, so it counts for no one.
+const PARKED_MAP: &str = "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-01-01\n\
+    held_by: \"the print shop\"\n---\n\n# Poster\n\n## Current State\nN/A.\n";
+
+#[tokio::test]
+async fn slots_carry_active_counted_and_cap() {
+    // Two active maps, one handed off, and one parked: two are active and
+    // shown, one counts, on both surfaces, and `active` keeps its meaning.
+    let server = server_with_notes(&[
+        ("projects/survey.md", HELD_MAP),
+        ("projects/report.md", OWN_MAP),
+        ("projects/_parked/poster.md", PARKED_MAP),
+    ]);
+
+    let listing = decode_json(
+        &server
+            .list_projects(Parameters(ListProjectsInput::default()))
+            .await
+            .expect("list_projects"),
+    );
+    let orientation = decode_json(
+        &server
+            .get_orientation(Parameters(GetOrientationInput { energy: None }))
+            .await
+            .expect("get_orientation"),
+    );
+
+    for (surface, slots) in [
+        ("list_projects", &listing["slots"]),
+        ("get_orientation", &orientation["slots"]),
+    ] {
+        assert_eq!(
+            *slots,
+            serde_json::json!({ "active": 2, "counted": 1, "cap": 5 }),
+            "{surface}"
+        );
+        assert!(
+            slots["counted"].as_u64() < slots["active"].as_u64(),
+            "{surface}: a held map is active but not counted"
+        );
+    }
+}
+
+#[tokio::test]
+async fn orientation_project_carries_held_by_counts_and_waiting_on_empty() {
+    let server = server_with_notes(&[
+        ("projects/survey.md", HELD_MAP),
+        ("projects/report.md", OWN_MAP),
+        ("projects/_parked/poster.md", PARKED_MAP),
+    ]);
+
+    let value = decode_json(
+        &server
+            .get_orientation(Parameters(GetOrientationInput { energy: None }))
+            .await
+            .expect("get_orientation"),
+    );
+    let projects = value["projects"].as_array().unwrap();
+    let find = |slug: &str| {
+        projects
+            .iter()
+            .find(|p| p["slug"] == slug)
+            .unwrap_or_else(|| panic!("{slug} missing: {value}"))
+            .clone()
+    };
+
+    let survey = find("survey");
+    assert_eq!(survey["held_by"], "the field team");
+    assert_eq!(survey["counts"], false);
+    assert_eq!(survey["waiting_on_empty"], false);
+    assert_eq!(survey["core_question"], "[[questions/research/soil]]");
+
+    let report = find("report");
+    assert_eq!(report["held_by"], serde_json::Value::Null);
+    assert_eq!(report["counts"], true);
+    assert_eq!(report["waiting_on_empty"], true);
+    assert_eq!(report["core_question"], serde_json::Value::Null);
+
+    assert_eq!(projects.len(), 2, "parked projects are not listed: {value}");
+}
+
+#[tokio::test]
+async fn list_projects_entries_carry_counts() {
+    let year = today().format("%Y").to_string();
+    let closed = "---\ntype: project\ncontext: work\nstatus: completed\ncreated: 2026-01-01\n\
+                  closed: 2026-02-01\n---\n\n# Booklet\n";
+    let closed_path = format!("projects/_done/{year}/booklet.md");
+    let server = server_with_notes(&[
+        ("projects/survey.md", HELD_MAP),
+        ("projects/report.md", OWN_MAP),
+        ("projects/_parked/poster.md", PARKED_MAP),
+        (&closed_path, closed),
+    ]);
+
+    let v = decode_json(
+        &server
+            .list_projects(Parameters(ListProjectsInput {
+                include_closed: true,
+            }))
+            .await
+            .expect("list_projects"),
+    );
+    let row = |group: &str, slug: &str| {
+        v[group]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["slug"] == slug)
+            .unwrap_or_else(|| panic!("{group}/{slug} missing: {v}"))
+            .clone()
+    };
+
+    let survey = row("active", "survey");
+    assert_eq!(survey["counts"], false);
+    assert_eq!(survey["frontmatter"]["held_by"], "the field team");
+    let report = row("active", "report");
+    assert_eq!(report["counts"], true);
+    assert_eq!(report["frontmatter"]["held_by"], serde_json::Value::Null);
+    let poster = row("parked", "poster");
+    assert_eq!(poster["counts"], false);
+    assert_eq!(poster["frontmatter"]["held_by"], "the print shop");
+    assert_eq!(row("closed", "booklet")["counts"], false);
+
+    // The listing stays body-free: no field that needs the map's body.
+    for group in ["active", "parked", "closed"] {
+        for entry in v[group].as_array().unwrap() {
+            assert!(entry.get("waiting_on_empty").is_none(), "{entry}");
+        }
+    }
+    let counted = v["active"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["counts"] == true)
+        .count() as u64;
+    assert_eq!(Some(counted), v["slots"]["counted"].as_u64());
+}
+
+#[tokio::test]
+async fn a_map_with_an_unreadable_holder_reports_null_and_counts() {
+    // An unquoted wikilink is a nested YAML sequence, not a name: the map
+    // stays the person's, and every surface says so.
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\n\
+               held_by: [[people/a-colleague]]\n---\n\n# Atlas\n\n## Current State\nN/A.\n\n\
+               ## Next Actions\n\n## Waiting On\n- Map tiles from a colleague\n";
+    let server = server_with_notes(&[("projects/atlas.md", map)]);
+
+    let orientation = decode_json(
+        &server
+            .get_orientation(Parameters(GetOrientationInput { energy: None }))
+            .await
+            .expect("get_orientation"),
+    );
+    let project = &orientation["projects"][0];
+    assert_eq!(project["slug"], "atlas");
+    assert_eq!(project["held_by"], serde_json::Value::Null);
+    assert_eq!(project["counts"], true);
+    assert_eq!(project["waiting_on_empty"], false);
+    assert_eq!(orientation["slots"]["counted"], 1);
+
+    let listing = decode_json(
+        &server
+            .list_projects(Parameters(ListProjectsInput::default()))
+            .await
+            .expect("list_projects"),
+    );
+    let row = &listing["active"][0];
+    assert_eq!(row["frontmatter"]["held_by"], serde_json::Value::Null);
+    assert_eq!(row["counts"], true);
+    assert_eq!(listing["slots"]["counted"], 1);
+
+    let context = decode_json(
+        &server
+            .get_project_context(Parameters(cdno_mcp::server::ProjectSlugInput {
+                project: "atlas".to_owned(),
+            }))
+            .await
+            .expect("get_project_context"),
+    );
+    assert_eq!(context["frontmatter"]["held_by"], serde_json::Value::Null);
+    assert_eq!(context["counts"], true);
 }
