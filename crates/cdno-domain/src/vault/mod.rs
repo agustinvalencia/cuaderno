@@ -132,9 +132,10 @@ pub use portfolios::PortfolioSummary;
 #[doc(hidden)]
 pub use projects::actions::format_action_paused_log_entry;
 pub use projects::{
-    ActionListEntry, AttachedAction, ClosedProjectEntry, LinkedCommitment, OpenAction, OpenItems,
-    OpenItemsHash, OpenItemsReport, OpenMilestone, PauseOutcome, ProjectClosureOutcome,
-    ProjectSummary, ResumeOutcome, ResumedFrom, ResumedKind, SlotUsage, SwitchOutcome, TopAction,
+    ActionListEntry, AttachedAction, ClosedProjectEntry, HolderChange, LOG_HOLDER_PREFIX,
+    LinkedCommitment, NO_HOLDER, OpenAction, OpenItems, OpenItemsHash, OpenItemsReport,
+    OpenMilestone, PauseOutcome, ProjectClosureOutcome, ProjectSummary, ResumeOutcome, ResumedFrom,
+    ResumedKind, SlotUsage, SwitchOutcome, TopAction,
 };
 pub use questions::QuestionSummary;
 pub use revise::{ReviseOutcome, Revision};

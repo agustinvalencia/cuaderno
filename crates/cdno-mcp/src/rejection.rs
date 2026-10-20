@@ -130,6 +130,7 @@ pub(crate) enum RejectionCode {
     PeriodicRecurrenceUnreadable,
     ProjectCapReached,
     ProjectHasOpenItems,
+    ProjectInFocus,
     ProjectNotActive,
     ProjectNotParked,
     ReservedSchemaField,
@@ -333,6 +334,14 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             json!({ "stewardship": slug }),
         ),
         DomainError::EmptyField { field } => (RejectionCode::EmptyField, json!({ "field": field })),
+        // A holder that names you or nobody (RFC 0006 §8.2): carried under
+        // `empty_field`, since it is the field's emptiness by another
+        // spelling, so the wire adds no code for it. `remedy` names the
+        // verb that does what the caller meant: the project is theirs.
+        DomainError::HolderNotAName { value } => (
+            RejectionCode::EmptyField,
+            json!({ "field": "held_by", "value": value, "remedy": "take_back" }),
+        ),
         DomainError::MalformedWikilink { value } => {
             (RejectionCode::MalformedWikilink, json!({ "value": value }))
         }
@@ -388,6 +397,12 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             )
         }
         DomainError::NoFocus => (RejectionCode::NoFocus, json!({})),
+        // A hand-off while an action on that project is in focus (RFC 0006
+        // §7.2): pausing first, then handing off, succeeds.
+        DomainError::ProjectInFocus { slug, action } => (
+            RejectionCode::ProjectInFocus,
+            json!({ "slug": slug, "action": action }),
+        ),
         DomainError::MissingFrontmatterField(field) => (
             RejectionCode::MissingFrontmatterField,
             json!({ "field": field }),
@@ -1042,6 +1057,41 @@ mod tests {
 
         assert_eq!(payload["code"], "focus_open");
         assert_eq!(payload["details"]["remedy"], "switch_action");
+    }
+
+    #[test]
+    fn project_in_focus_classifies() {
+        let e = DomainError::ProjectInFocus {
+            slug: "harbour-refit".into(),
+            action: "Draft the survey request (medium)".into(),
+        };
+        let payload = classify(&e).expect("project_in_focus is caller-actionable");
+
+        assert_eq!(payload["code"], "project_in_focus");
+        assert_eq!(
+            payload["details"],
+            json!({ "slug": "harbour-refit", "action": "Draft the survey request (medium)" })
+        );
+        assert_eq!(payload["message"], e.to_string());
+    }
+
+    #[test]
+    fn holder_not_a_name_classifies_as_empty_field() {
+        let e = DomainError::HolderNotAName { value: "me".into() };
+        let payload = classify(&e).expect("a sentinel holder is caller-actionable");
+
+        assert_eq!(payload["code"], "empty_field");
+        assert_eq!(
+            payload["details"],
+            json!({ "field": "held_by", "value": "me", "remedy": "take_back" })
+        );
+        assert!(
+            payload["message"]
+                .as_str()
+                .expect("message")
+                .contains("take it back"),
+            "payload: {payload}"
+        );
     }
 
     #[test]

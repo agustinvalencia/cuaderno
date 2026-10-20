@@ -20,6 +20,8 @@
 //!   round-tripping.
 //! - [`slots`] — `slot_usage`, the active-project cap count every
 //!   cap site reads.
+//! - [`holder`] — `hand_off`, handing a project to a named holder or
+//!   taking it back, logging the change (RFC 0006 §8.2).
 //!
 //! This file holds the things every submodule needs: the section-name
 //! constants, the shared `resolve_open_project` and
@@ -53,6 +55,7 @@ pub(in crate::vault) mod actions;
 mod closed;
 mod closing;
 mod core_question;
+mod holder;
 mod lifecycle;
 mod milestones;
 mod open_items;
@@ -67,6 +70,7 @@ pub use actions::{
 };
 pub use closed::ClosedProjectEntry;
 pub use closing::ProjectClosureOutcome;
+pub use holder::{HolderChange, LOG_HOLDER_PREFIX, NO_HOLDER};
 pub use open_items::{
     LinkedCommitment, OpenAction, OpenItems, OpenItemsHash, OpenItemsReport, OpenMilestone,
 };

@@ -8,6 +8,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- `Vault::hand_off` records whose move a project is, logging `holder on [[slug]]`
+  with `was:`/`now:` lines; taking back clears the name, is cap-checked only on an active map and
+  never activates a parked one; a hand-off is refused while an action on that project is in focus
+  (`project_in_focus`) (RFC 0006 §7.2, §8.2).
 - Project maps may carry `held_by:`, the name of whoever else is moving the map. It
   is read leniently: a value that is not a plain name, or that names you (`me`, `I`, `myself`) or
   nobody (`tbd`, `someone`, …), reads as absent, so the map counts and nothing fails; the key is

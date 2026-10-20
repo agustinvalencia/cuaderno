@@ -141,6 +141,26 @@ pub enum DomainError {
         carried: bool,
     },
 
+    /// A hand-off was attempted while an action on that project is in focus
+    /// (RFC 0006 §7.2, "Three guards"): you do not hand off a map while you
+    /// are in the middle of its work. `action` is the focused action as
+    /// logged. Pausing first, then handing off, succeeds.
+    #[error(
+        "an action on project '{slug}' is in focus ({action}) \u{2014} pause it first: a project \
+         is not handed off while you are in the middle of its work"
+    )]
+    ProjectInFocus { slug: String, action: String },
+
+    /// A hand-off named a holder that names you or nobody: a value on the
+    /// configured `[projects] holder_sentinels` list (RFC 0006 §7.2, §8.2).
+    /// Written, it would read as no holder and the map would still count,
+    /// so the verb refuses instead. `value` is the name as given.
+    #[error(
+        "'{value}' names you or nobody \u{2014} if you cannot name who has the project, it is \
+         yours: take it back instead of handing it off"
+    )]
+    HolderNotAName { value: String },
+
     #[error("no action matching '{query}' on project '{slug}'")]
     ActionNotFound { slug: String, query: String },
 
