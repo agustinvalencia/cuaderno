@@ -139,7 +139,7 @@ Alongside, the vault says out loud something that was already true: **`cdno sear
 | `add_periodic_commitment` | Wired (#166; recurrence + next date) |
 | `search_notes` | Wired (#172; FTS5 content search, optional note-type / date / portfolio filters) |
 
-**All 64 tools are wired through to the domain** — context reads, daily/weekly/monthly note access, the write operations, structural creation, lifecycle transitions, and the generic frontmatter setter. The authoritative catalogue is the sorted-set assertion in `crates/cdno-mcp/tests/server.rs`, not a count maintained by hand here: the breakdown this sentence used to enumerate summed to 42 while the pin asserted 52 — ten tools behind. No stubs remain. All 64 are advertised in `tools/list` with full schemas, so Claude can discover them at startup. The lifecycle group is split into its own `#[tool_router]` (in `lifecycle.rs`), merged in `CuadernoServer::new` — the first slice of the handler-group split.
+**All 65 tools are wired through to the domain** — context reads, daily/weekly/monthly note access, the write operations, structural creation, lifecycle transitions, and the generic frontmatter setter. The authoritative catalogue is the sorted-set assertion in `crates/cdno-mcp/tests/server.rs`, not a count maintained by hand here: the breakdown this sentence used to enumerate summed to 42 while the pin asserted 52 — ten tools behind. No stubs remain. All 65 are advertised in `tools/list` with full schemas, so Claude can discover them at startup. The lifecycle group is split into its own `#[tool_router]` (in `lifecycle.rs`), merged in `CuadernoServer::new` — the first slice of the handler-group split.
 
 ## What works today
 

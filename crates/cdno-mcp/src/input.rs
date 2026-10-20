@@ -594,6 +594,25 @@ pub struct SetCoreQuestionInput {
     pub clear: bool,
 }
 
+/// Input for `hand_off_project` (RFC 0006 §8.2): exactly one of `holder`
+/// and `take_back`, as `set_core_question` takes exactly one of
+/// `core_question` and `clear`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct HandOffProjectInput {
+    /// Open (active or parked) project slug.
+    pub project: String,
+    /// Who else is moving the project, exactly as the person names them
+    /// (a person, an office, a wikilink such as `[[people/ana]]`). Written
+    /// quoted into `held_by:`. Mutually exclusive with `take_back`.
+    #[serde(default)]
+    pub holder: Option<String>,
+    /// Set `true` to make the project the person's own again, writing
+    /// `held_by: null`. Mutually exclusive with `holder`, and required to
+    /// take back: an omitted `holder` is an error, not a silent take-back.
+    #[serde(default)]
+    pub take_back: bool,
+}
+
 /// Input for `complete_milestone` (GH #213). `query` mirrors the
 /// substring-match field of [`ActionQueryInput`].
 #[derive(Debug, Deserialize, JsonSchema)]

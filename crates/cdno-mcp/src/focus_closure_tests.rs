@@ -205,11 +205,20 @@ async fn call(server: &CuadernoServer, tool: &str) -> Result<CallToolResult, Err
                 }))
                 .await
         }
+        "hand_off_project" => {
+            server
+                .hand_off_project(Parameters(HandOffProjectInput {
+                    project: "side-quest".to_owned(),
+                    holder: Some("the harbour office".to_owned()),
+                    take_back: false,
+                }))
+                .await
+        }
         other => panic!("not a focused write: {other}"),
     }
 }
 
-/// Each of the seventeen tools enters `with_vault` exactly twice: once for
+/// Each of the eighteen tools enters `with_vault` exactly twice: once for
 /// the domain write, once for the verification **and** the focus. A focus
 /// read in a closure of its own would be a third `spawn_blocking`, reading
 /// a focus another process may have changed in between.
@@ -233,6 +242,7 @@ async fn focus_is_read_in_the_same_closure() {
         "activate_project",
         "complete_project",
         "drop_project",
+        "hand_off_project",
     ];
     for tool in tools {
         // Only a pause needs something in focus; a start or a resume

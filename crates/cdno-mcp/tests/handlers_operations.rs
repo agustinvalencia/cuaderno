@@ -25,13 +25,13 @@ use cdno_mcp::server::{
     CompleteMilestoneInput, CreateCommitmentInput, CreateCustomNoteInput, CreatePortfolioInput,
     CreateProjectInput, CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput,
     DiscardInboxItemInput, DropActionInput, DropProjectInput, FileToPortfolioInput,
-    LinkPortfolioToProjectInput, LinkPortfolioToQuestionInput, NoteToDailyInput, OpenItemsChoice,
-    PauseActionInput, ProjectSlugInput, PromoteActionInput, ReadDailyNoteInput,
-    ReadMonthlyNoteInput, ReadNoteInput, ReadWeeklyNoteInput, ResolveWaitingOnInput,
-    ResumeActionInput, ReviseNoteInput, SetCoreQuestionInput, SetFrontmatterInput,
-    SetQuestionStatusInput, StartActionInput, StartUnplannedActionInput, SwitchActionInput,
-    SwitchUnplannedActionInput, UpdateProjectStateInput, UpsertDailySectionInput,
-    UpsertMonthlySectionInput, UpsertWeeklySectionInput,
+    HandOffProjectInput, LinkPortfolioToProjectInput, LinkPortfolioToQuestionInput,
+    NoteToDailyInput, OpenItemsChoice, PauseActionInput, ProjectSlugInput, PromoteActionInput,
+    ReadDailyNoteInput, ReadMonthlyNoteInput, ReadNoteInput, ReadWeeklyNoteInput,
+    ResolveWaitingOnInput, ResumeActionInput, ReviseNoteInput, SetCoreQuestionInput,
+    SetFrontmatterInput, SetQuestionStatusInput, StartActionInput, StartUnplannedActionInput,
+    SwitchActionInput, SwitchUnplannedActionInput, UpdateProjectStateInput,
+    UpsertDailySectionInput, UpsertMonthlySectionInput, UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -3642,10 +3642,276 @@ async fn only_a_focus_open_rejection_gets_attempted() {
     );
 }
 
+// --- hand_off_project (RFC 0006 §8.2, T20) ------------------------------
+
+/// The configured cap, read from the default config rather than written
+/// out, so no test here restates a policy value.
+fn default_cap() -> usize {
+    usize::from(VaultConfig::default().vault.max_active_projects)
+}
+
+/// A vault whose counted maps fill the cap: `project-1` … `project-<cap>`,
+/// all active and the person's own.
+fn seed_full_cap(vault: &Vault) {
+    let at = moment(2026, 1, 1, 9, 0);
+    for i in 1..=default_cap() {
+        vault
+            .create_project(at, &format!("Project {i}"), Context::Work, None)
+            .expect("seed project");
+    }
+}
+
+/// Hand `slug` to a holder through the domain, as a seed step.
+fn seed_held(vault: &Vault, slug: &str, holder: &str) {
+    vault
+        .hand_off(
+            moment(2026, 1, 2, 9, 0),
+            slug,
+            cdno_domain::HolderChange::HandTo(holder.to_owned()),
+        )
+        .expect("seed hand-off");
+}
+
+fn hand_off(
+    project: &str,
+    holder: Option<&str>,
+    take_back: bool,
+) -> Parameters<HandOffProjectInput> {
+    Parameters(HandOffProjectInput {
+        project: project.to_owned(),
+        holder: holder.map(str::to_owned),
+        take_back,
+    })
+}
+
+/// A quoted wikilink holder goes on the map as a quoted scalar, comes back
+/// out of the reader as a name (so the map stops counting: the next project
+/// created at what was the cap is active), and logs one `holder on` entry.
+/// The payload carries `focus`, like every write that changes a map.
+#[tokio::test]
+async fn hand_off_project_round_trips_a_quoted_wikilink_and_the_map_stops_counting() {
+    let (server, store) = server_with(|vault, store| {
+        seed_today_daily(&store);
+        seed_full_cap(vault);
+    });
+
+    let result = server
+        .hand_off_project(hand_off("project-1", Some("[[people/ana]]"), false))
+        .await
+        .expect("hand_off_project");
+    let payload = decode_json(&result);
+    assert_eq!(payload["path"], "projects/project-1.md");
+    assert!(
+        payload.get("focus").is_some_and(|f| f.is_null()),
+        "the payload carries `focus`: {payload}"
+    );
+
+    let map = store.read_file(&vp("projects/project-1.md")).unwrap();
+    assert!(map.contains("held_by: \"[[people/ana]]\"\n"), "{map}");
+    assert!(map.contains("status: active"), "still active:\n{map}");
+
+    let today = chrono::Local::now().date_naive();
+    let daily = store
+        .read_file(&vp(&cdno_core::paths::daily_note_relpath(today)))
+        .unwrap();
+    assert_eq!(
+        daily.matches("holder on [[project-1]]").count(),
+        1,
+        "{daily}"
+    );
+    assert!(daily.contains("now: [[people/ana]]"), "{daily}");
+
+    // The map no longer holds a slot, so creating one more is not parked.
+    let created = server
+        .create_project(Parameters(CreateProjectInput {
+            title: "Glacier survey".to_owned(),
+            context: "work".to_owned(),
+            core_question: None,
+            vars: None,
+        }))
+        .await
+        .expect("create_project");
+    assert_eq!(decode_json(&created)["path"], "projects/glacier-survey.md");
+
+    // The same holder again changes nothing and logs nothing.
+    let again = server
+        .hand_off_project(hand_off("project-1", Some("[[people/ana]]"), false))
+        .await
+        .expect("same holder again");
+    let message = decode_json(&again)["message"].as_str().unwrap().to_owned();
+    assert!(message.contains("nothing changed"), "{message}");
+    let daily = store
+        .read_file(&vp(&cdno_core::paths::daily_note_relpath(today)))
+        .unwrap();
+    assert_eq!(
+        daily.matches("holder on [[project-1]]").count(),
+        1,
+        "{daily}"
+    );
+}
+
+/// Exactly one of `holder` and `take_back`, as `set_core_question` takes
+/// exactly one of `core_question` and `clear`: an omitted holder must not
+/// quietly take a project back.
+#[tokio::test]
+async fn hand_off_project_takes_exactly_one_of_holder_and_take_back() {
+    let (server, store) = server_with(|vault, _s| {
+        seed_full_cap(vault);
+        seed_held(vault, "project-1", "the harbour office");
+    });
+    let before = store.read_file(&vp("projects/project-1.md")).unwrap();
+
+    let err = server
+        .hand_off_project(hand_off("project-1", Some("a colleague"), true))
+        .await
+        .expect_err("both given");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        err.message,
+        "invalid 'take_back': pass either `holder` or `take_back: true`, not both"
+    );
+
+    let err = server
+        .hand_off_project(hand_off("project-1", None, false))
+        .await
+        .expect_err("neither given is an error, not a take-back");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    assert!(
+        err.message.starts_with("invalid 'holder':"),
+        "{}",
+        err.message
+    );
+    assert!(err.message.contains("`take_back: true`"), "{}", err.message);
+
+    assert_eq!(
+        store.read_file(&vp("projects/project-1.md")).unwrap(),
+        before,
+        "a refused call writes nothing"
+    );
+}
+
+/// You do not hand off a map while you are in the middle of its work.
+#[tokio::test]
+async fn hand_off_project_in_focus_is_project_in_focus() {
+    let (server, store) = server_with_focus();
+    let before = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    let err = server
+        .hand_off_project(hand_off("surrogate-model", Some("a colleague"), false))
+        .await
+        .expect_err("refused while in focus");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "project_in_focus", "{rejection}");
+    assert_eq!(rejection["details"]["slug"], "surrogate-model");
+    assert!(
+        rejection["details"]["action"]
+            .as_str()
+            .is_some_and(|a| a.starts_with("Draft methods section")),
+        "{rejection}"
+    );
+    assert_eq!(
+        store.read_file(&vp("projects/surrogate-model.md")).unwrap(),
+        before
+    );
+}
+
+/// Taking back an active held map makes it count, so at the cap it is
+/// refused, listing the maps that count.
+#[tokio::test]
+async fn take_back_at_the_cap_is_project_cap_reached() {
+    let (server, store) = server_with(|vault, _s| {
+        seed_full_cap(vault);
+        seed_held(vault, "project-1", "the harbour office");
+        // project-1 no longer counts, so one more is created active.
+        vault
+            .create_project(
+                moment(2026, 1, 3, 9, 0),
+                "Glacier survey",
+                Context::Work,
+                None,
+            )
+            .expect("created active");
+    });
+    let before = store.read_file(&vp("projects/project-1.md")).unwrap();
+
+    let err = server
+        .hand_off_project(hand_off("project-1", None, true))
+        .await
+        .expect_err("taking back at the cap is refused");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "project_cap_reached", "{rejection}");
+    assert_eq!(rejection["details"]["current"], default_cap());
+    assert_eq!(rejection["details"]["max"], default_cap());
+    let listed = rejection["details"]["active_projects"].as_array().unwrap();
+    assert!(
+        !listed.iter().any(|s| s == "project-1"),
+        "the held map is not a counted one: {rejection}"
+    );
+    assert!(listed.iter().any(|s| s == "glacier-survey"), "{rejection}");
+    assert_eq!(
+        store.read_file(&vp("projects/project-1.md")).unwrap(),
+        before,
+        "the holder stays"
+    );
+}
+
+/// `project_cap_reached` lists the counted maps only: a held active map is
+/// in no position to free a slot, so listing it would send an agent to park
+/// something that frees nothing (RFC 0006 §8.2). And nothing an agent reads
+/// at the cap names handing off as a way to make room.
+#[tokio::test]
+async fn cap_rejection_lists_counted_maps_only_and_never_names_handing_off() {
+    let (server, _store) = server_with(|vault, _s| {
+        seed_full_cap(vault);
+        seed_held(vault, "project-1", "the harbour office");
+        let at = moment(2026, 1, 3, 9, 0);
+        vault
+            .create_project(at, "Glacier survey", Context::Work, None)
+            .expect("created active");
+        vault
+            .create_project(at, "Old idea", Context::Work, None)
+            .expect("created parked at the cap");
+    });
+
+    let err = server
+        .activate_project(Parameters(ProjectSlugInput {
+            project: "old-idea".to_owned(),
+        }))
+        .await
+        .expect_err("activating an unheld map at the cap is refused");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "project_cap_reached", "{rejection}");
+
+    let mut listed: Vec<String> = rejection["details"]["active_projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap().to_owned())
+        .collect();
+    listed.sort();
+    let mut counted: Vec<String> = (2..=default_cap())
+        .map(|i| format!("project-{i}"))
+        .chain(["glacier-survey".to_owned()])
+        .collect();
+    counted.sort();
+    assert_eq!(listed, counted, "exactly the counted maps: {rejection}");
+    assert_eq!(rejection["details"]["current"], default_cap());
+
+    let message = err.message.to_lowercase();
+    let details = rejection["details"].to_string().to_lowercase();
+    for text in [&message, &details] {
+        for banned in ["hand", "holder", "held"] {
+            assert!(
+                !text.contains(banned),
+                "the cap rejection must not name handing off ({banned:?}): {text}"
+            );
+        }
+    }
+}
+
 // --- focus on every write payload (RFC 0005 §5.5, #736) -----------------
 
-/// The seventeen tools whose success payload carries `focus`.
-const FOCUSED_WRITES: [&str; 17] = [
+/// The eighteen tools whose success payload carries `focus`.
+const FOCUSED_WRITES: [&str; 18] = [
     "start_action",
     "start_unplanned_action",
     "switch_action",
@@ -3663,6 +3929,7 @@ const FOCUSED_WRITES: [&str; 17] = [
     "activate_project",
     "complete_project",
     "drop_project",
+    "hand_off_project",
 ];
 
 /// A vault for the focus table, before anything is in focus:
@@ -3859,6 +4126,15 @@ async fn call_focused_write(
                 }))
                 .await
         }
+        "hand_off_project" => {
+            server
+                .hand_off_project(Parameters(HandOffProjectInput {
+                    project: "side-quest".to_owned(),
+                    holder: Some("the harbour office".to_owned()),
+                    take_back: false,
+                }))
+                .await
+        }
         other => panic!("not a focused write: {other}"),
     }
 }
@@ -3940,7 +4216,7 @@ async fn every_listed_write_carries_focus() {
     let draft = "Draft methods section (deep)";
 
     // Phase A: `Draft methods section` started through the tool.
-    let after_start: [(&str, FocusAfter); 17] = [
+    let after_start: [(&str, FocusAfter); 18] = [
         // A second start is refused while a focus is open; the phase's own
         // start is checked below.
         ("start_action", Refused("focus_open")),
@@ -3964,9 +4240,11 @@ async fn every_listed_write_carries_focus() {
         ("activate_project", Same),
         ("complete_project", Same),
         ("drop_project", Same),
+        // The focus is on another project, so the hand-off is not refused.
+        ("hand_off_project", Same),
     ];
     // Phase B: that start then completed through the tool.
-    let after_complete: [(&str, FocusAfter); 17] = [
+    let after_complete: [(&str, FocusAfter); 18] = [
         ("start_action", Opened("Write abstract (light)")),
         ("start_unplanned_action", Opened("Fix the CI badge (light)")),
         // With nothing open a switch is a plain start.
@@ -3989,6 +4267,7 @@ async fn every_listed_write_carries_focus() {
         ("activate_project", Null),
         ("complete_project", Null),
         ("drop_project", Null),
+        ("hand_off_project", Null),
     ];
     for table in [&after_start, &after_complete] {
         let tools: Vec<&str> = table.iter().map(|(t, _)| *t).collect();
