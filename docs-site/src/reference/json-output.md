@@ -164,7 +164,10 @@ cdno orient --json
       "context": "work",
       "core_question": "[[questions/research/surrogate-generalises]]",
       "state_snippet": "Mesh scaling works; assembly is the bottleneck",
-      "top_action": { "text": "Profile the assembly step", "energy": "medium" }
+      "top_action": { "text": "Profile the assembly step", "energy": "medium" },
+      "held_by": null,
+      "counts": true,
+      "waiting_on_empty": true
     },
     {
       "slug": "mesh-study",
@@ -172,7 +175,10 @@ cdno orient --json
       "context": "work",
       "core_question": "[[surrogate-generalises]]",
       "state_snippet": "Coarse-mesh run validated end to end",
-      "top_action": { "text": "Write up the convergence plot", "energy": "light" }
+      "top_action": { "text": "Write up the convergence plot", "energy": "light" },
+      "held_by": "the modelling group",
+      "counts": false,
+      "waiting_on_empty": false
     }
   ],
   "groups": [
@@ -181,23 +187,29 @@ cdno orient --json
       "projects": ["surrogate-model", "mesh-study"]
     }
   ],
-  "slots": { "active": 2, "counted": 2, "cap": 5, "counted_slugs": ["surrogate-model", "mesh-study"] },
+  "slots": { "active": 2, "counted": 1, "cap": 5, "counted_slugs": ["surrogate-model"] },
   "lapsed_habits": []
 }
 ```
 
 `projects` holds one project-list element per active project; each carries `core_question`, the
 map's frontmatter value exactly as written, or `null` when it sets none (`project list` and
-`project show` elements carry it too). `groups` arranges the same projects, by slug, under the
+`project show` elements carry it too). Each also carries three keys about the cap (`project list`
+and `project show` elements too): `held_by` is the map's `held_by:` text as written, or `null` when
+it has none or the value is not a plain string; `counts` is `true` when the map holds one of the
+`max_active_projects` slots, that is, it is active and does not name someone else as its holder (a
+`held_by` of `me`, `tbd` or another entry of
+[`holder_sentinels`](configuration.md#keys) leaves it counted, so branch on `counts`, never on the
+name); and `waiting_on_empty` is `true` when the map's `## Waiting On` is missing, empty, or only
+`(nothing yet)`. `groups` arranges the same projects, by slug, under the
 core question they share: a short and a full link to one question group together, since the key is
 the question's vault path (or the link's raw target when it resolves to no note), and only the
 field counts, never a passing mention of the question in a map's body. Every project falls in
 exactly one group, groups follow the order of their first member, and a project with no question
 is a group of its own with `"parent": null`. MCP `get_orientation` carries `groups` in the same
 shape. `slots` is the active projects
-against the cap: `active` counts the maps with `status: active`, `counted` those holding a slot,
-which is the number the cap is checked against (today every active map holds one, so it equals
-`active`), `cap` is the configured [`max_active_projects`](configuration.md#keys), and
+against the cap: `active` counts the maps with `status: active`, `counted` those holding a slot
+(the active maps whose `counts` is `true`), which is the number the cap is checked against, `cap` is the configured [`max_active_projects`](configuration.md#keys), and
 `counted_slugs` names the counted maps. MCP `get_orientation` carries `slots` as
 `{ "active", "cap" }`, the object `list_projects` returns.
 

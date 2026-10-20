@@ -17,7 +17,9 @@ use cdno_core::template::VariableContext;
 use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
-use crate::frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
+use crate::frontmatter::{
+    Context, HolderReading, HolderSentinels, ProjectFrontmatter, ProjectStatus,
+};
 use crate::note_type::NoteType;
 
 use super::super::Vault;
@@ -78,7 +80,8 @@ impl Vault {
     /// Scaffold a new project from the built-in template.
     ///
     /// Below the configurable cap (`config.max_active_projects`,
-    /// default 5) the new project is seeded as `status: active` at
+    /// default 5, compared with the counted maps: active ones naming no
+    /// other holder) the new project is seeded as `status: active` at
     /// `projects/<slug>.md`. At or above the cap it's seeded as
     /// `status: parked` at `projects/_parked/<slug>.md`, so the user
     /// can still capture a future project without having to park an
@@ -121,11 +124,15 @@ impl Vault {
     ) -> Result<VaultPath, DomainError> {
         let today = at.date();
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let slots = self.slot_usage()?;
-        let status = if slots.counted >= usize::from(slots.cap) {
-            ProjectStatus::Parked
-        } else {
-            ProjectStatus::Active
+        // Creation takes no holder, so the new map counts iff it is created
+        // active: it is active exactly when the counted maps leave a slot
+        // (RFC 0006 §7.2). Held maps take none.
+        // A malformed map still fails the count here rather than being
+        // skipped (see `active_projects`).
+        let status = match self.slot_usage()?.ensure_slot(false, true) {
+            Ok(()) => ProjectStatus::Active,
+            Err(DomainError::ProjectCapReached { .. }) => ProjectStatus::Parked,
+            Err(other) => return Err(other),
         };
 
         // Globally-unique stem (#225) so a later park to `_parked/` keeps
@@ -233,14 +240,18 @@ impl Vault {
     /// Move a parked or closed project back to `projects/`, flipping its
     /// frontmatter `status` to `active` and clearing `closed:`, so it can be
     /// closed again with a fresh date (RFC 0004 §5.7). Enforces the
-    /// active-project cap: if activating would exceed
+    /// active-project cap only when the map will count once active (RFC
+    /// 0006 §7.2): a map that names someone else in `held_by:` activates
+    /// without a slot. Otherwise, with the counted maps at
     /// `config.max_active_projects` (default 5), returns
-    /// [`DomainError::ProjectCapReached`] with the slugs of the
-    /// projects already active so the caller can suggest one to park
-    /// first.
+    /// [`DomainError::ProjectCapReached`] with the slugs of the counted
+    /// maps so the caller can suggest one to park first. The map is
+    /// located first, so a missing slug is `Store(NotFound)` at the cap
+    /// too.
     ///
     /// Errors:
-    /// - `ProjectCapReached` — at or above the cap.
+    /// - `ProjectCapReached` — the map would count and the counted maps
+    ///   are at the cap.
     /// - `ProjectNotParked` — the map is neither parked at
     ///   `projects/_parked/<slug>.md` nor closed (`completed` or
     ///   `dropped`) under `projects/_done/<year>/`: it is already active,
@@ -255,18 +266,6 @@ impl Vault {
         slug: &str,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        // Cap check first so a "you can't activate, you're at cap"
-        // error fires before any file resolution work — clearer for
-        // the user when they're at cap and trying to bring something
-        // back from the parked drawer.
-        let slots = self.slot_usage()?;
-        if slots.counted >= usize::from(slots.cap) {
-            return Err(DomainError::ProjectCapReached {
-                current: slots.counted,
-                max: usize::from(slots.cap),
-                active_projects: slots.counted_slugs,
-            });
-        }
 
         // Located from the disk. A map that is not parked in `_parked/` or
         // closed under `_done/<year>/`, folder and status agreeing, is
@@ -285,6 +284,17 @@ impl Vault {
         if !reactivatable {
             return Err(DomainError::ProjectNotParked(slug.to_owned()));
         }
+        // The cap is checked after the map is located, because whether it
+        // will count depends on it (RFC 0006 §7.2): a parked or closed map
+        // counts for nothing now, and once active it counts unless it names
+        // someone else in `held_by:`. A map that names a holder activates
+        // without a slot; a missing slug is `NotFound`, never the cap.
+        let sentinels = HolderSentinels::from_config(&self.config);
+        let counts_after = !matches!(
+            location.frontmatter.holder(&sentinels),
+            HolderReading::Named(_)
+        );
+        self.ensure_slot(false, counts_after)?;
         if self.store.exists(&active_path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
                 active_path.to_string(),

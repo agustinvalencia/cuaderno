@@ -239,6 +239,43 @@ fn stuck_projects_returns_empty_when_threshold_far_in_future() {
     assert!(stuck.is_empty(), "{stuck:?}");
 }
 
+#[test]
+fn a_held_active_map_stays_in_the_stuck_scan_carrying_its_holder() {
+    // The scan is over `status: active`, not over the maps that count: a
+    // map handed to someone else and untouched for the window still
+    // surfaces, with its holder, so the review can ask "chase, or take
+    // back?" (RFC 0006 §8.2).
+    let held = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\n\
+                held_by: \"the harbour office\"\n---\n\n# Harbour\n\n## Current State\nN/A.\n\n\
+                ## Next Actions\n\n## Waiting On\n- Berth survey from the harbour office\n";
+    let own = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\n---\n\n\
+               # Quay\n\n## Current State\nN/A.\n\n## Next Actions\n\n## Waiting On\n(nothing yet)\n";
+    let (vault, _store) = vault_with(&[("projects/harbour.md", held), ("projects/quay.md", own)]);
+    // A 0-day window takes every map modified today or earlier (see
+    // `stuck_projects_excludes_parked_projects`).
+    let today = chrono::Local::now().date_naive();
+    let stuck = vault.stuck_projects(today, 0).unwrap();
+    let slugs: Vec<&str> = stuck.iter().map(|p| p.slug.as_str()).collect();
+    assert_eq!(slugs, vec!["harbour", "quay"]);
+
+    let harbour = &stuck[0];
+    assert_eq!(harbour.held_by.as_deref(), Some("the harbour office"));
+    assert!(!harbour.counts, "a held map holds no slot");
+    assert!(!harbour.waiting_on_empty);
+    let quay = &stuck[1];
+    assert_eq!(quay.held_by, None);
+    assert!(quay.counts);
+    assert!(quay.waiting_on_empty, "the placeholder says nothing");
+
+    let days: Vec<String> = vault
+        .stuck_project_days(today, 0)
+        .unwrap()
+        .into_iter()
+        .map(|(slug, _)| slug)
+        .collect();
+    assert_eq!(days, vec!["harbour", "quay"]);
+}
+
 // ---------------------------------------------------------------------
 // get_project_full
 // ---------------------------------------------------------------------

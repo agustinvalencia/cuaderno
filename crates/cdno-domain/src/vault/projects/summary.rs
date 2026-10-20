@@ -11,11 +11,12 @@
 //! span everything.
 
 use crate::error::DomainError;
-use crate::frontmatter::{Context, EnergyLevel, ProjectStatus};
+use crate::frontmatter::{Context, EnergyLevel, HolderSentinels, ProjectStatus};
 
 use super::super::Vault;
 use super::super::context::LastPause;
-use super::{CURRENT_STATE_SECTION, NEXT_ACTIONS_SECTION};
+use super::waiting::WAITING_ON_PLACEHOLDER;
+use super::{CURRENT_STATE_SECTION, NEXT_ACTIONS_SECTION, WAITING_ON_SECTION};
 
 /// Compact view of a project for orientation displays and reviews.
 ///
@@ -40,6 +41,22 @@ pub struct ProjectSummary {
     pub core_question: Option<String>,
     pub state_snippet: String,
     pub top_action: Option<TopAction>,
+    /// The frontmatter `held_by:` text exactly as the lenient reader keeps
+    /// it (RFC 0006 §8.2): `None` when absent, null or not a string. A
+    /// sentinel such as `me` is carried as written; `counts` says what it
+    /// means.
+    pub held_by: Option<String>,
+    /// Whether the map holds one of the `max_active_projects` slots: it is
+    /// active and names no one else as its holder
+    /// ([`ProjectFrontmatter::counts_toward_cap`]).
+    ///
+    /// [`ProjectFrontmatter::counts_toward_cap`]: crate::frontmatter::ProjectFrontmatter::counts_toward_cap
+    pub counts: bool,
+    /// Whether `## Waiting On` says nothing: the section is missing (or
+    /// duplicated, so unreadable), empty, or holds only the `(nothing
+    /// yet)` placeholder. A held map over an empty Waiting On is §7.2's
+    /// "parked map wearing a name".
+    pub waiting_on_empty: bool,
     /// The most recent paused action for this project, when one exists
     /// within `paused_lookback_days`. Carried here so orientation
     /// consumers get it in the same pass that reads the log. Not exposed
@@ -87,6 +104,12 @@ impl Vault {
             .ok()
             .and_then(find_top_open_action);
 
+        let waiting_on_empty = doc
+            .section(WAITING_ON_SECTION)
+            .map(waiting_on_says_nothing)
+            .unwrap_or(true);
+        let counts = project.counts_toward_cap(&HolderSentinels::from_config(&self.config));
+
         Ok(ProjectSummary {
             slug: slug.to_owned(),
             status: project.status,
@@ -94,6 +117,9 @@ impl Vault {
             core_question: project.core_question,
             state_snippet,
             top_action,
+            held_by: project.held_by,
+            counts,
+            waiting_on_empty,
             last_paused: None,
         })
     }
@@ -110,6 +136,13 @@ fn extract_state_snippet(section: &str) -> String {
         .take(2)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Whether a `## Waiting On` body is empty or only the `(nothing yet)`
+/// placeholder.
+fn waiting_on_says_nothing(section: &str) -> bool {
+    let body = section.trim();
+    body.is_empty() || body == WAITING_ON_PLACEHOLDER
 }
 
 /// Walk the lines of `## Next Actions` and return the first open

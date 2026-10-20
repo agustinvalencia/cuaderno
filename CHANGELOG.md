@@ -41,6 +41,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- The cap counts the maps that are yours: an active project that names who else is moving it does not count. `activate` checks the cap only when the map will count, and `project_cap_reached` lists the counted maps; activating a missing project at the cap now reports it missing. `cdno orient --json` projects carry `held_by`, `counts` and `waiting_on_empty` (RFC 0006 §7.2, §8.2).
 - MCP: `add_action` and the milestone, waiting-on, state and core-question tools accept a parked project; `project_not_active` on a parked project now means a focus verb or `park_project` was refused, and the descriptions say so (RFC 0006 §8.1).
 - A parked project map is a complete map: next actions, state, milestones, waiting-on, the core question and promotion all work on a parked project; only starting, switching or resuming work, and parking, need it active. Resuming work on a project that has since been parked, closed or removed is now refused (RFC 0006 §7.1, §8.1).
 - The CLI's project pickers and completions offer parked projects for every verb that now accepts them; `action start`, `action switch` and `project park` still offer active projects only (RFC 0006 §8.1).

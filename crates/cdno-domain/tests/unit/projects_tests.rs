@@ -5832,3 +5832,165 @@ fn project_status_has_exactly_four_variants() {
     seen.dedup();
     assert_eq!(seen, vec![1, 2, 3, 4]);
 }
+
+// ---------------------------------------------------------------------
+// Counting: the cap counts the maps that are yours (RFC 0006 §7.2, §8.2)
+// ---------------------------------------------------------------------
+
+/// Notes for `n` unheld active maps, `projects/own-<i>.md`.
+fn own_active_maps(n: usize) -> Vec<(String, String)> {
+    (1..=n)
+        .map(|i| {
+            (
+                format!("projects/own-{i}.md"),
+                project_body("work", "active", "2026-09-01", &format!("Own {i}")),
+            )
+        })
+        .collect()
+}
+
+fn as_refs(notes: &[(String, String)]) -> Vec<(&str, &str)> {
+    notes
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_str()))
+        .collect()
+}
+
+/// The configured cap of the default config, so the tests follow the
+/// default rather than restating it.
+fn default_cap() -> usize {
+    usize::from(VaultConfig::default().vault.max_active_projects)
+}
+
+#[test]
+fn create_at_the_cap_counts_only_counted_maps() {
+    // Active maps up to the cap, one of them handed to someone else: the
+    // counted maps leave one slot, so the new map is created active.
+    let mut notes = own_active_maps(default_cap() - 1);
+    notes.push((
+        "projects/harbour.md".to_owned(),
+        held_map("active", "\"the harbour office\"", "Harbour"),
+    ));
+    let (vault, store) = vault_with_seeded_store(&as_refs(&notes), VaultConfig::default());
+    assert_eq!(vault.active_projects().unwrap().len(), default_cap());
+
+    let path = vault
+        .create_project(dt(2026, 10, 1, 9, 0), "Tide tables", Context::Work, None)
+        .expect("create");
+    assert_eq!(path, vp("projects/tide-tables.md"));
+    assert_eq!(
+        read_project_frontmatter(&store, &path).status,
+        ProjectStatus::Active
+    );
+
+    // Now the counted maps are at the cap: the next is parked.
+    let next = vault
+        .create_project(dt(2026, 10, 1, 9, 5), "Buoy survey", Context::Work, None)
+        .expect("create");
+    assert_eq!(next, vp("projects/_parked/buoy-survey.md"));
+}
+
+#[test]
+fn activating_a_held_parked_map_at_the_cap_needs_no_slot() {
+    // The counted maps are at the cap, but the parked map names its
+    // holder: once active it does not count, so it activates.
+    let mut notes = own_active_maps(default_cap());
+    notes.push((
+        "projects/_parked/harbour.md".to_owned(),
+        held_map("parked", "\"the harbour office\"", "Harbour"),
+    ));
+    let (vault, store) = vault_with_seeded_store(&as_refs(&notes), VaultConfig::default());
+
+    let path = vault
+        .activate_project(dt(2026, 10, 1, 9, 0), "harbour")
+        .expect("a held map needs no slot");
+    assert_eq!(path, vp("projects/harbour.md"));
+    let fm = read_project_frontmatter(&store, &path);
+    assert_eq!(fm.status, ProjectStatus::Active);
+    assert_eq!(fm.held_by.as_deref(), Some("the harbour office"));
+    let slots = vault.slot_usage().unwrap();
+    assert_eq!(slots.active, default_cap() + 1);
+    assert_eq!(slots.counted, default_cap());
+}
+
+#[test]
+fn activating_an_unheld_parked_map_at_the_cap_is_refused() {
+    // A sentinel names you, so the map would count: refused, and the
+    // parked file is untouched.
+    let mut notes = own_active_maps(default_cap());
+    notes.push((
+        "projects/_parked/harbour.md".to_owned(),
+        held_map("parked", "me", "Harbour"),
+    ));
+    notes.push((
+        "projects/_parked/quay.md".to_owned(),
+        project_body("work", "parked", "2026-09-01", "Quay"),
+    ));
+    let (vault, store) = vault_with_seeded_store(&as_refs(&notes), VaultConfig::default());
+
+    for slug in ["harbour", "quay"] {
+        let err = vault
+            .activate_project(dt(2026, 10, 1, 9, 0), slug)
+            .expect_err("at the cap");
+        assert!(
+            matches!(err, DomainError::ProjectCapReached { current, max, .. }
+                if current == default_cap() && max == default_cap()),
+            "{slug}: got {err:?}"
+        );
+        assert!(
+            store
+                .exists(&vp(&format!("projects/_parked/{slug}.md")))
+                .unwrap()
+        );
+    }
+}
+
+#[test]
+fn cap_reached_lists_counted_maps_only() {
+    // A held active map is open and shown, but holds no slot, so the
+    // refusal does not offer it as one to park.
+    let mut notes = own_active_maps(default_cap());
+    notes.push((
+        "projects/harbour.md".to_owned(),
+        held_map("active", "\"the harbour office\"", "Harbour"),
+    ));
+    notes.push((
+        "projects/_parked/quay.md".to_owned(),
+        project_body("work", "parked", "2026-09-01", "Quay"),
+    ));
+    let (vault, _store) = vault_with_seeded_store(&as_refs(&notes), VaultConfig::default());
+
+    let err = vault
+        .activate_project(dt(2026, 10, 1, 9, 0), "quay")
+        .expect_err("at the cap");
+    match err {
+        DomainError::ProjectCapReached {
+            current,
+            active_projects,
+            ..
+        } => {
+            assert_eq!(current, default_cap());
+            let mut listed = active_projects;
+            listed.sort();
+            let expected: Vec<String> = (1..=default_cap()).map(|i| format!("own-{i}")).collect();
+            assert_eq!(listed, expected);
+        }
+        other => panic!("expected ProjectCapReached, got {other:?}"),
+    }
+}
+
+#[test]
+fn activating_a_missing_slug_at_the_cap_is_not_found() {
+    // The map is located before the cap is checked: a slug that names no
+    // map is missing, whatever the count.
+    let notes = own_active_maps(default_cap());
+    let (vault, _store) = vault_with_seeded_store(&as_refs(&notes), VaultConfig::default());
+
+    let err = vault
+        .activate_project(dt(2026, 10, 1, 9, 0), "no-such-map")
+        .expect_err("missing");
+    assert!(
+        matches!(err, DomainError::Store(StoreError::NotFound(_))),
+        "got {err:?}"
+    );
+}
