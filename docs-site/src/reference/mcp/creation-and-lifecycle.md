@@ -25,13 +25,36 @@ Tools that create new notes or move existing ones through their lifecycle.
 | `set_question_status` | `question`, `status` (`active`\|`parked`\|`answered`\|`retired`) | Transition a question's status. |
 | `add_periodic_commitment` | `stewardship`, `title`, `recurrence`, `next_date` | Append a periodic commitment to a stewardship dashboard. |
 
+## The holder
+
+| Tool | Inputs | Effect |
+|------|--------|--------|
+| `hand_off_project` | `project`, `holder?`, `take_back?` | Record whose move an open (active or parked) project is. Exactly one of `holder` (the name the person gives, written as `held_by: "<name>"`) or `take_back: true` (writes `held_by: null`); omitting both is an error, never a silent take-back. The map keeps its status and folder. Logs `holder on [[<slug>]]` with indented `was:` / `now:` lines, `(mine)` for no holder; naming the holder it already has changes nothing. ([`cdno project hand-off`](../cli/project.md#cdno-project-hand-off), [`take-back`](../cli/project.md#cdno-project-take-back)) |
+
+An active project that names a holder does not count toward the cap (`counts: false`, and
+`slots.counted` on [`list_projects`](reads.md#slots-and-counts) leaves it out). Handing off is never
+the way to make room at the cap: call it only on the person's word that someone else is moving the
+project. Rejections:
+
+- `empty_field` (`remedy: take_back`): an empty `holder`, or one on the vault's
+  [`[projects] holder_sentinels`](../configuration.md#projects) (a name meaning the person or no one
+  in particular). If they cannot name who has it, it is theirs.
+- `project_in_focus`: an action on the project is in focus; the person pauses it first.
+- `project_cap_reached`: taking back an active project would make it count with the counted
+  projects already at the cap; its `details` carry `current`, `max` and `active_projects`, which lists
+  only the projects that count. Taking back a
+  parked project only clears the name and never activates it.
+- `project_not_active`: the project is completed or dropped.
+
+The tool also appears with the other project writes under [Write tools](writes.md).
+
 ## Notes
 
 - `context` is one of the fixed [life domains](../../concepts/contexts-and-energy.md).
 - `recurrence` follows the [recurrence syntax](../recurrence.md): `daily`, `weekly`, `monthly`,
   `yearly`, or `every N months`.
-- `activate_project` enforces the cap — if activating would exceed five active projects, the call
-  fails and the assistant must park one first.
+- `activate_project` enforces the cap — if activating would make more projects count than the cap
+  (active and naming no holder), the call fails and the assistant must park one first.
 - Closing a project never needs a slot, and works on a parked project directly. While an action or
   milestone is open, both closing tools return a `project_has_open_items` rejection whose
   `details` list the `actions`, the `milestones` (with `date` and `hard`), the

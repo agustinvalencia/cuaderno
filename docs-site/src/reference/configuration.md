@@ -9,6 +9,7 @@ defaults are applied when omitted. For the conceptual tour, see
 ```toml
 [vault]
 name = "My Research Vault"
+method_version = "1.1"             # the RLM version; written by init, changed by `cdno migrate`
 max_active_projects = 5            # the active-project cap
 
 # Glob patterns excluded from the index (search, lint, link checks).
@@ -63,7 +64,8 @@ collaborators = "Who are the collaborators?"
 | Key | Type | Default | Purpose |
 |-----|------|---------|---------|
 | `vault.name` | string | `"My Vault"` | A human label for the vault. |
-| `vault.max_active_projects` | integer | `5` | The active-project cap. |
+| `vault.method_version` | string `"<major>.<minor>"` | absent (read as `1.0`) | The version of the Research Logbook Method the vault follows, not cdno's version. Written by `cdno init`; changed only by [`cdno migrate`](cli/migrate.md). See [Method version](#method-version). |
+| `vault.max_active_projects` | integer | `5` | The active-project cap: how many projects may count, that is, be active and name no one else in `held_by:`. |
 | `ignore` | list of globs | `[]` | Files the index skips. Additive; never deletes. See [Ignore globs](#ignore-globs). |
 | `schemas.<type>.extra_required` | list of strings | `[]` | Extra required frontmatter fields for a built-in note type (not enforced on a custom type), enforced by `cdno lint`. |
 | `schemas.<type>.fields.<name>` | table | — | A **typed** frontmatter field for any note type, built-in or custom (`type`, `default`, `required`, `values`, `settable`, `log_on_change`). Recognised by the Templates editor (built-in types), type-checked by `cdno lint`, and (when `settable`) writable via `cdno frontmatter set`. See [Typed schema fields](#typed-schema-fields). |
@@ -75,6 +77,33 @@ collaborators = "Who are the collaborators?"
 | `note_types.<name>` | table | — | Declares a **config-defined custom note type** (`folder`, `required`/`optional` fields, `template`, …) — a schema-only type for entities the built-ins don't cover. See [Custom note types](custom-note-types.md). |
 | `variables.<name>` | string | — | Static template variable; resolves in any custom template (per-type values win on name clash). |
 | `variables.prompt.<name>` | string | — | Prompted template variable; the value is the prompt text. Gathered at creation from `--var name=value`, an interactive prompt, or a static `[variables]` default; errors if none supplies it. |
+
+## Method version
+
+`[vault] method_version` records the version of the
+[Research Logbook Method](../concepts/rlm.md) the vault follows, as two numbers, `"1.1"`: no patch
+part and no `v`. It is the method's version, not the crate version cdno is released under, and it
+changes only when the method's text does.
+
+```toml
+[vault]
+method_version = "1.1"
+```
+
+- `cdno init` writes the version this cdno implements. A vault with no key (one created before the
+  key existed) is **unstamped** and read as RLM 1.0; nothing breaks.
+- Only [`cdno migrate`](cli/migrate.md) changes it: run `cdno migrate --dry-run` to see what it
+  changes, then `cdno migrate`. Do not edit it by hand, since a migration's file steps and its log
+  entry go with the stamp. It is never changed when a vault opens, and never over MCP.
+- Every write re-reads the key under the write lock. A vault on an **older major** version than
+  this cdno is refused until you migrate it; a vault on a **newer major** is refused until you
+  upgrade cdno. Reads keep working in both cases. A different **minor** version writes normally;
+  cdno prints a one-line notice on stderr and [`cdno lint`](cli/lint.md) mentions a newer one.
+- A malformed value (`"v1"`, `"1.1.0"`) is an error naming the key.
+- The key stays in `[vault]`, which older binaries read without rejecting unknown keys, so a vault
+  stamped by a newer cdno still opens in an older one.
+
+See [Troubleshooting](troubleshooting.md#writes-are-refused-with-a-method-version-error).
 
 ## Ignore globs
 
@@ -334,6 +363,11 @@ holder_sentinels = [
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `holder_sentinels` | the list above | Values that name you (`me`, `(mine)`, which is how the log writes "no holder") or nobody (`tbd`, `?`). Each value is trimmed and compared in any case, so `" TBD "` matches `tbd`. Setting the key replaces the whole list: add your own name or your own language's words (`holder_sentinels = ["yo", "nadie"]`), or set `[]` to accept any name. |
+
+**The limit.** cdno cannot know your own name. `held_by: "<your name>"` reads as someone else, so
+the map stops counting, unless your name is on the list. If you want it refused by
+[`cdno project hand-off`](cli/project.md#cdno-project-hand-off) and read as yours, add it (and keep
+the default entries you still want, since setting the key replaces the list).
 
 A blank `held_by:` names nobody under any list, so it is not in the default and you need not add
 it. A `held_by:` that is not a plain name (an unquoted `[[people/ana]]`, a number, a date, quoted

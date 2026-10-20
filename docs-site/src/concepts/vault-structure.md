@@ -14,7 +14,7 @@ vault/
 │
 ├── projects/
 │   ├── surrogate-model.md        # type: project (mutable)
-│   ├── _parked/                  # inactive projects (don't count toward the cap)
+│   ├── _parked/                  # parked projects: complete maps that don't count
 │   │   └── bayesian-opt.md
 │   └── _done/
 │       └── 2025/                 # closed projects: completed or dropped
@@ -69,6 +69,11 @@ vault/
 - **`_parked/`** (projects) and **`_done/`** (projects, actions, commitments) prefix folders hold
   inactive or finished notes. The underscore keeps them sorted out of the way and signals "not the active set."
   `_done/` is partitioned by year so the active folders stay scannable.
+- **`projects/_parked/`** holds complete maps that are set aside: they take every plan write
+  (actions, state, milestones, waiting-on), keep their hard dates in the commitments register, and
+  do not count toward the cap. You read them at the monthly review. A handed-off project
+  (`held_by:` in its frontmatter) stays in whichever folder it was in; only the name changes. See
+  [Business rules](business-rules.md#parked-projects-are-complete-maps).
 - **`_index.md`** is the identity note of a folder — the `portfolio` note inside a portfolio folder,
   the `stewardship` note inside an expanded stewardship folder.
 - **`tracking/`** inside a stewardship holds time-series entries; **`routines/`** holds prescriptive
@@ -80,8 +85,9 @@ vault/
 
 ## `.cuaderno/`
 
-- **`config.toml`** — vault settings: the project cap, ignore globs, template behaviour, schema
-  extensions, variables. See [Configuration](configuration.md).
+- **`config.toml`** — vault settings: the method version the vault follows
+  (`[vault] method_version`), the project cap, the holder deny-list (`[projects] holder_sentinels`),
+  ignore globs, template behaviour, schema extensions, variables. See [Configuration](configuration.md).
 - **`index.db`** — a SQLite cache of the vault, used for fast search, linting, and link queries. It
   is rebuilt automatically when it's stale (see [Business rules](business-rules.md)); deleting it is
   safe. **The Markdown files are always the source of truth.**

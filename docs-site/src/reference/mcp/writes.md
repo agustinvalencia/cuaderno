@@ -85,6 +85,16 @@ they write with it; see [The `during:` tag](#the-during-tag).
 
 ## Projects, actions, milestones, waiting-on
 
+Every tool in this table takes an **open** project, active or parked: a parked map is a complete map,
+so `add_action`, `update_project_state`, the milestone and waiting-on tools, `set_core_question`,
+`promote_action`, `complete_action`, `drop_action` and `hand_off_project` write to it as it is.
+Never activate a parked project just to write on it; the cap is checked only when a project begins
+to count (`activate_project`, or a take-back of an active project). Only starting or picking up
+work (`start_action`, `start_unplanned_action`, `switch_action`, `switch_unplanned_action`,
+`resume_action`) needs an active map, as does [`park_project`](creation-and-lifecycle.md); on a
+parked one they return `project_not_active` with `status: "parked"` (see the
+[rejection codes](overview.md#when-a-call-is-rejected)). A completed or dropped project takes none of these writes.
+
 | Tool | Inputs | Effect |
 |------|--------|--------|
 | `update_project_state` | `project`, `new_state` | Rewrite the Current State (auto-logs the previous). |

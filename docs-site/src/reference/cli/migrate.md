@@ -73,4 +73,5 @@ cdno migrate
 ## See also
 
 - [`init`](init.md), [`lint`](lint.md).
-- [Configuration](../configuration.md).
+- [Configuration: method version](../configuration.md#method-version).
+- [Troubleshooting: writes are refused with a method version error](../troubleshooting.md#writes-are-refused-with-a-method-version-error).

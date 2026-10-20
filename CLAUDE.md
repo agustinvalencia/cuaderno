@@ -54,7 +54,9 @@ mdbook build docs-site             # warns on broken intra-book links — keep i
 
 CI (`.github/workflows/ci.yml`) runs the jobs check / fmt / clippy / test / coverage
 with `RUSTFLAGS: -Dwarnings` (coverage is tarpaulin with xml output). Release is tag-driven (`vX.Y.Z`) and **fails if the tag does not
-match the workspace `version` in the root `Cargo.toml`** — bump both together.
+match the workspace `version` in the root `Cargo.toml`** — bump both together. The method version is not the crate version: `[vault] method_version` and
+`METHOD_VERSION` (`crates/cdno-domain/src/method_version.rs`) track the Research Logbook Method's text
+(RFC 0006 §7.4), change only when the method does, and are never bumped with a release tag.
 
 ## Architecture
 
@@ -82,6 +84,14 @@ The layering is load-bearing; each crate has a rule that the code enforces:
 `Arc<dyn VaultStore>` + `Arc<dyn VaultIndex>` + `VaultConfig`. **Operations are split one-per-file
 under `src/vault/` and each attaches its own `impl Vault { ... }` block** — add a new operation as a
 new file there rather than growing `mod.rs`.
+
+**Project resolvers.** Every verb that reads or writes a project map's body picks one of two
+resolvers in `vault/projects/mod.rs`: `resolve_open_project` (an active or a parked map, folder and
+status agreeing) or `resolve_active_project` (an active map only). Only starting, switching or
+resuming work, and parking, need an active map; every other body verb (actions, milestones,
+waiting-on, state, core question, hand-off) takes `resolve_open_project`, because a parked map is a
+complete map (RFC 0006 §7.1, §8.1). A new body verb chooses one of the two deliberately, never a
+third lookup.
 
 ### Invariants that shape every write
 

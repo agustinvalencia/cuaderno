@@ -42,6 +42,7 @@ context: work          # work | side-project | university | family | household |
 status: active         # active | parked | completed | dropped
 created: 2026-04-25
 core_question?: "[[questions/research/surrogate-cost]]"
+held_by?: "the harbour office"   # who else is moving it; set by hand-off, cleared by take-back
 closed: null           # set by complete/drop, cleared by activate
 ```
 
@@ -50,6 +51,20 @@ closed: null           # set by complete/drop, cleared by activate
 for `active`, `projects/_parked/` for `parked`, and `projects/_done/<year>/` for `completed` or
 `dropped`. A map written before `closed:` existed needs no edit, since a missing `closed:` reads as
 open.
+
+`held_by` (optional, on an active or parked map) names whoever else is moving the project. An active
+map that names a holder does not count toward the
+[cap](../concepts/business-rules.md#handed-off-projects); the map keeps its status and folder.
+[`cdno project hand-off`](cli/project.md#cdno-project-hand-off) writes it quoted and
+[`take-back`](cli/project.md#cdno-project-take-back) writes `held_by: null`, each logging
+`holder on [[<slug>]]`, so `cdno frontmatter set` refuses it. When you edit it by hand:
+
+- A missing line, `null`, a blank value, or a value on
+  [`[projects] holder_sentinels`](configuration.md#projects) (`me`, `tbd`, `someone`, …) means no
+  holder: the map is yours and counts. `cdno lint` warns on a sentinel or blank value.
+- A value that is not a plain string (an unquoted `[[people/ana]]`, which YAML reads as a list, a
+  number, a date) also means no holder, and `cdno lint` reports it as an error. Quote a wikilink:
+  `held_by: "[[people/ana]]"`.
 
 ## `action`
 

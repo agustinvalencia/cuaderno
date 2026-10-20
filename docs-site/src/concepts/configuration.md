@@ -6,7 +6,16 @@ configurable and why; the [Configuration reference](../reference/configuration.m
 
 ## What you can configure
 
-- **The active-project cap.** Change the default of five via `[vault] max_active_projects`.
+- **The method version.** `[vault] method_version` records which version of the
+  [Research Logbook Method](rlm.md) the vault follows: the method's version, not cdno's. `cdno init`
+  writes it; you change it only with [`cdno migrate`](../reference/cli/migrate.md), never by hand.
+  A vault without it is read as RLM 1.0.
+- **The active-project cap.** Change the default of five via `[vault] max_active_projects`. It
+  counts the projects that are active and name no one else as their holder.
+- **The holder deny-list.** `[projects] holder_sentinels` lists the `held_by:` values that name you
+  or nobody (`me`, `tbd`, `someone`, …), so a map carrying one stays yours and counts. Replace the
+  list to add your own name or words in your language, or set `[]` to accept any name. The tool
+  cannot know your own name: add it if you want it read as yours.
 - **Ignore globs.** Patterns for files the index should skip — `CLAUDE.md`, `README.md`, scratch
   notes — so they don't appear in search, lint, or link checks. Patterns are additive (no negation),
   matched against vault-relative paths, and **never delete anything on disk** — they only scope what
@@ -59,6 +68,7 @@ The [tutorial](../tutorials/templates-and-frontmatter.md#prompted-variables) cov
 ```toml
 [vault]
 name = "My Research Vault"
+method_version = "1.1"             # written by `cdno init`, changed only by `cdno migrate`
 max_active_projects = 5            # the active-project cap
 
 # Skip these from the index entirely (search/lint/links). Never deletes files.
@@ -67,6 +77,10 @@ ignore = ["CLAUDE.md", "README.md"]
 # Require an extra field on every project note — enforced by `cdno lint`:
 [schemas.project]
 extra_required = ["collaborators"]
+
+# Names that mean "me" or "nobody" in a project's `held_by:` (replaces the default list):
+[projects]
+holder_sentinels = ["me", "tbd", "someone", "A. Researcher"]
 
 # Static template variables — resolve in any custom template (e.g. {{author}}):
 [variables]

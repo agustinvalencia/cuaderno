@@ -84,6 +84,24 @@ customised template it cannot read (for instance one that is not UTF-8) as an er
 edits. Lint cannot tell a new key from one you removed on purpose, so a built-in key you deleted from
 your template is reported too.
 
+It reads `[vault] method_version` (see [configuration](../configuration.md#method-version)) and
+reports, on `.cuaderno/config.toml`, a vault this cdno would not write to as an error: one on an
+**older major** version (the message points at `cdno migrate --dry-run`, then `cdno migrate`) or a
+**newer major** (upgrade cdno). A vault on a **newer minor** version is a warning, since writes
+proceed:
+
+```text
+[warning] .cuaderno/config.toml: this vault follows RLM 1.2, a newer minor version than the RLM 1.1 this cdno implements — writes proceed; upgrade cdno for the practices it adds
+```
+
+A vault on this cdno's version, or on an older minor one (an unstamped vault included), gets no
+row here. A malformed `method_version` (`"v1"`, `"1.1.0"`) is not a lint row: it is a
+configuration error, so the vault does not open and every command, `lint` included, fails with an
+error naming the key. The one exception is a long-running server (`cdno-mcp-server`) whose config
+was edited to a malformed value after it opened: it keeps running, and there `lint` (and the MCP
+`lint` tool) reports one error row on `.cuaderno/config.toml` naming the key instead of aborting.
+Fix the value (see [configuration](../configuration.md#method-version)).
+
 While the vault records a method version below RLM 1.1 (an unstamped vault reads as 1.0), it gives
 one warning per **overdue** hard date on a parked project map, on every run, since the commitments
 register keeps those dates as of RLM 1.1: the one-time read-through of parked deadlines. The row sits on the map for a hard
