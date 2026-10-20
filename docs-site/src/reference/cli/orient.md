@@ -47,7 +47,7 @@ structured object.
 cdno orient                 # neutral suggestion
 cdno orient --energy deep   # bias toward a heavy-focus action
 cdno orient --energy light  # bias toward something quick on a low day
-cdno orient --json | jq '.suggested_start'
+cdno orient --json | jq '.slots'   # active, counted and cap
 ```
 
 ## Related MCP tool
