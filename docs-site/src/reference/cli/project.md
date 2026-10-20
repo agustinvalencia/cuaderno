@@ -1,7 +1,7 @@
 # `cdno project`
 
-Manage project maps: create, update state, set the core question, add/complete/drop milestones, manage
-waiting-on items, park/activate, complete/drop the project itself, and list/show. Next actions have their own verb, [`cdno action`](action.md).
+Manage project maps: create, update state, set the core question, hand off and take back,
+add/complete/drop milestones, manage waiting-on items, park/activate, complete/drop the project itself, and list/show. Next actions have their own verb, [`cdno action`](action.md).
 
 ```text
 cdno project [OPTIONS] <COMMAND>
@@ -14,6 +14,8 @@ cdno project [OPTIONS] <COMMAND>
 | [`create`](#cdno-project-create) | Create a new project map |
 | [`state`](#cdno-project-state) | Update the Current State (auto-logs the previous) |
 | [`core-question`](#cdno-project-core-question) | Set or clear the core question (auto-logs the previous) |
+| [`hand-off`](#cdno-project-hand-off) | Name who else is moving a project (auto-logs the change) |
+| [`take-back`](#cdno-project-take-back) | Make a handed-off project yours again (auto-logs the change) |
 | [`park`](#cdno-project-park) | Move a project to `_parked/` |
 | [`complete`](#cdno-project-complete) | Close a project whose work is done (moves it to `_done/<year>/`) |
 | [`drop`](#cdno-project-drop) | Close a project that is not going to happen (moves it to `_done/<year>/`) |
@@ -77,6 +79,57 @@ rejected rather than double-wrapped.
 
 Passing neither flag non-interactively is an error, not a silent detach: dropping a project's
 question is a decision and has to be asked for.
+
+## `cdno project hand-off`
+
+Record that someone else is moving an open (active or parked) project: the map gets
+`held_by: "<name>"`, and today's daily note gets a `holder on [[<slug>]]` entry with indented `was:` /
+`now:` lines, the side with no holder written `(mine)`. A hand-off records a fact about the
+project: someone else is moving it now, and the next move is theirs. Because the
+[active cap](../../concepts/business-rules.md#the-five-project-cap) counts the projects that are
+yours to move, an active project that names a holder is not counted; but handing off is never the
+answer to a full cap. Name a holder only when someone else really has the project; to make room,
+park, complete or drop one. The map stays where it is, and its deadlines stay in
+[`cdno commitments`](commitments.md).
+
+| Flag | Description |
+|------|-------------|
+| `--slug <SLUG>` | Active or parked project slug. |
+| `--to <WHO>` | Who has it: a name, or a wikilink target such as `[[people/ana-ruiz]]`. Prompted as "Who has it?". |
+
+```bash
+cdno project hand-off --slug hull-survey --to "Ana Ruiz"
+# Handed hull-survey to Ana Ruiz (projects/hull-survey.md)
+```
+
+A hand-off is refused when:
+
+- the value names you or nobody (`me`, `tbd`, `someone`, or another entry of
+  [`holder_sentinels`](../configuration.md#projects)): if you cannot name who has the project, it
+  is yours. Keep it, or run `cdno project take-back` if it was handed off;
+- the value is a date, which names no one: give the person's name instead;
+- an action on the project is in [focus](../../concepts/contexts-and-energy.md#focus): pause it
+  first with [`cdno action pause`](action.md), then hand it off;
+- the project is closed: only an active or parked project has a holder, so
+  [`activate`](#cdno-project-activate) it first if the work has come back.
+
+Handing a project to the holder it already names changes nothing and logs nothing.
+
+## `cdno project take-back`
+
+Clear a project's holder: the map gets `held_by: null` and the daily note a `holder on [[<slug>]]`
+entry with `now: (mine)`. An active project then counts toward the cap again, so taking one back at
+the cap is refused with the list of counted projects; park, complete or drop one of them first. A
+parked project stays parked: taking it back clears the name only and needs no slot.
+
+| Flag | Description |
+|------|-------------|
+| `--slug <SLUG>` | Active or parked project slug. |
+
+```bash
+cdno project take-back --slug hull-survey
+# Took hull-survey back (projects/hull-survey.md)
+```
 
 ## `cdno project park`
 
@@ -185,6 +238,11 @@ cdno project activate --slug surrogate-model
 List active projects with a state snippet. Each project renders as a card — a coloured bar keyed to
 its context, the slug as a title, and the state wrapped underneath. Honours `--json`.
 
+A project that names someone else as its holder carries one more line, `held by: <name> · does not
+count toward the cap`. A value on [`holder_sentinels`](../configuration.md#projects) leaves the map
+yours, so it prints no holder line. Under `--json` each row
+carries `held_by` and `counts` (see [JSON output](../json-output.md)).
+
 In a terminal this then offers to open one of the projects it just listed, printing the same thing
 `cdno project show` would and asking again until you press Esc. Piped output, `--no-interactive`, and
 `--json` skip the prompt. See [Colour and interactivity](../colour-and-interactivity.md).
@@ -205,6 +263,9 @@ cdno project list --closed
 Show a compact summary of a single project (any status). The slug is an optional positional: omit it
 in a terminal and `cdno` offers a picker covering active and parked projects. Honours `--json`
 (emits the project summary object).
+
+For an active or parked project it ends with `Held by: <name>` when the map names someone else (a
+sentinel prints none), and `Counts toward the cap: yes` or `no`.
 
 ```bash
 cdno project show surrogate-model

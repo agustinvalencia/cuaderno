@@ -3854,6 +3854,88 @@ async fn take_back_at_the_cap_is_project_cap_reached() {
     );
 }
 
+/// Taking back an active held map below the cap writes `held_by: null`,
+/// logs the change, and says the map is the person's own again.
+#[tokio::test]
+async fn take_back_below_the_cap_clears_the_holder_and_logs_it() {
+    let (server, store) = server_with(|vault, store| {
+        seed_today_daily(&store);
+        vault
+            .create_project(
+                moment(2026, 1, 1, 9, 0),
+                "Glacier survey",
+                Context::Work,
+                None,
+            )
+            .expect("seed project");
+        seed_held(vault, "glacier-survey", "the harbour office");
+    });
+
+    let result = server
+        .hand_off_project(hand_off("glacier-survey", None, true))
+        .await
+        .expect("take back");
+    let payload = decode_json(&result);
+    assert_eq!(
+        payload["message"],
+        "Recorded projects/glacier-survey.md as the person's own"
+    );
+    assert!(payload.get("focus").is_some(), "{payload}");
+
+    let map = store.read_file(&vp("projects/glacier-survey.md")).unwrap();
+    assert!(map.contains("held_by: null\n"), "{map}");
+    assert!(map.contains("status: active"), "{map}");
+
+    let today = chrono::Local::now().date_naive();
+    let daily = store
+        .read_file(&vp(&cdno_core::paths::daily_note_relpath(today)))
+        .unwrap();
+    assert_eq!(
+        daily.matches("holder on [[glacier-survey]]").count(),
+        1,
+        "{daily}"
+    );
+    assert!(daily.contains("was: the harbour office"), "{daily}");
+
+    // Taking back again changes nothing.
+    let again = server
+        .hand_off_project(hand_off("glacier-survey", None, true))
+        .await
+        .expect("take back again");
+    assert_eq!(
+        decode_json(&again)["message"],
+        "projects/glacier-survey.md is already the person's own; nothing changed"
+    );
+}
+
+/// Taking back a parked map only clears the name: it needs no slot, so it
+/// succeeds with the counted maps at the cap, and the map stays parked.
+#[tokio::test]
+async fn take_back_on_a_parked_map_clears_the_name_only() {
+    let (server, store) = server_with(|vault, _s| {
+        seed_full_cap(vault);
+        vault
+            .create_project(moment(2026, 1, 3, 9, 0), "Old idea", Context::Work, None)
+            .expect("created parked at the cap");
+        seed_held(vault, "old-idea", "a colleague");
+    });
+
+    server
+        .hand_off_project(hand_off("old-idea", None, true))
+        .await
+        .expect("a parked take-back needs no slot");
+
+    let map = store
+        .read_file(&vp("projects/_parked/old-idea.md"))
+        .unwrap();
+    assert!(map.contains("held_by: null\n"), "{map}");
+    assert!(map.contains("status: parked"), "still parked:\n{map}");
+    assert!(
+        !store.exists(&vp("projects/old-idea.md")).unwrap(),
+        "the map was not activated"
+    );
+}
+
 /// `project_cap_reached` lists the counted maps only: a held active map is
 /// in no position to free a slot, so listing it would send an agent to park
 /// something that frees nothing (RFC 0006 §8.2). And nothing an agent reads

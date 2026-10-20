@@ -822,6 +822,9 @@ fn no_cap_text_offers_handing_off_as_a_remedy() {
         if lower.contains("project_cap_reached")
             || lower.contains("frees a slot")
             || lower.contains("free slot")
+            || lower.contains("free a slot")
+            || lower.contains("freeing a slot")
+            || lower.contains("free up a slot")
             || lower.contains("make room")
             || lower.contains("makes room")
         {

@@ -1364,7 +1364,7 @@ switch_action(project, query, next?, reason?) / switch_unplanned_action(project,
 
 resume_action(project?)
   → re-anchors a carried focus or reopens the latest pause; returns `resumed_from`
-  → these six and eleven other writes (seventeen in all) return a `focus` field: the current_focus read-back
+  → these six and twelve other writes (eighteen in all) return a `focus` field: the current_focus read-back
 
 complete_action(project, query)
   → removes the bullet, logs completion to daily,
