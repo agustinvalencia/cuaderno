@@ -7,12 +7,12 @@ Three example [Claude Agent Skills](https://agentskills.io/specification) showin
 | Example | Shows |
 |---------|-------|
 | [`quick-capture`](quick-capture/SKILL.md) | The minimal shape — one job done well, zero-friction: `append_to_log` by default, `capture` for the inbox, and a return cue when a focus is open. |
-| [`daily-orientation`](daily-orientation/SKILL.md) | The full pattern — several context reads (`get_orientation`, `get_weekly_context`, `read_daily_note`), writes (`upsert_daily_section`, and the focus tools `start_action`, `resume_action`, `switch_action`, `pause_action`), a second MCP server (calendar) used with graceful degradation, and a multi-step interaction flow. |
-| [`weekly-review`](weekly-review/SKILL.md) | A reflective review over one week — `get_weekly_context` and `get_orientation` read together, writes split across two weekly notes (`upsert_weekly_section` into this week's note and next week's `This Week's Goal`), and a one-line recap with `append_to_log`. |
+| [`daily-orientation`](daily-orientation/SKILL.md) | The full pattern — several context reads (`get_orientation`, `get_weekly_context`, `read_daily_note`), writes (`upsert_daily_section`, and the focus tools `start_action`, `resume_action`, `switch_action`, `pause_action`), a second MCP server (calendar) used with graceful degradation, and a multi-step interaction flow; it suggests only from projects that count and reads the cap from `slots`. |
+| [`weekly-review`](weekly-review/SKILL.md) | A reflective review over one week — `get_weekly_context` and `get_orientation` read together, writes split across two weekly notes (`upsert_weekly_section` into this week's note and next week's `This Week's Goal`), a one-line recap with `append_to_log`, and one question per project chosen by its relationship to the person (`counts`, `changed_this_week`, `waiting_on_empty`, `focus_days_while_held`). |
 
 `references/` holds the shared design notes the skills link to (interaction principles, calendar conventions, linking rules).
 
-`check-tool-names.py` asks the built `cdno-mcp` for its advertised catalogue and checks every backticked tool name in a skill against it (`python3 examples/skills/check-tool-names.py [SKILL.md ...]`, run from the repository root; with no argument it checks `weekly-review`).
+`check-tool-names.py` asks the built `cdno-mcp` for its advertised catalogue and checks every backticked tool name in a skill against it, and every backticked field, shape and call against the response DTOs in `crates/cdno-mcp/src/dto.rs` and the tools' input schemas (`python3 examples/skills/check-tool-names.py [SKILL.md ...]`, run from the repository root; with no argument it checks `daily-orientation`, `weekly-review` and `references/ADHD-PRINCIPLES.md`).
 
 ## Patterns worth copying
 

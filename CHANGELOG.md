@@ -8,6 +8,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- Skills: `daily-orientation` suggests from projects that count and reads the cap
+  from `slots`; `weekly-review` asks each project the question its relationship implies (RFC 0006
+  §8.5).
 - MCP `hand_off_project` (a holder, or `take_back: true`); `project_cap_reached` lists only the
   projects that count. The server advertises 65 tools (RFC 0006 §8.2).
 - MCP: open-project summaries carry `held_by`, `counts` and `waiting_on_empty`, and `slots` gains

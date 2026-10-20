@@ -277,12 +277,13 @@ fn dry_run_lists_the_parked_hard_dates_overdue_first() {
     // map's overdue milestone is not part of the read-through.
     let dir = vault_with_method_line(None);
     let root = dir.path();
-    fs::create_dir_all(root.join("projects/_parked")).unwrap();
-    fs::write(
-        root.join("projects/_parked/beta.md"),
-        "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2020-01-10\nclosed: null\n---\n\n# Beta\n\n## Milestones\n- [ ] Grant report — hard: 2020-03-01\n- [ ] Final review — hard: 2099-06-01\n\n## Next Actions\n",
-    )
-    .unwrap();
+    write_parked_beta(
+        root,
+        &[
+            GRANT_REPORT_OVERDUE,
+            "- [ ] Final review — hard: 2099-06-01",
+        ],
+    );
     fs::write(
         root.join("projects/alpha.md"),
         "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2020-01-10\nclosed: null\n---\n\n# Alpha\n\n## Milestones\n- [ ] Alpha deadline — hard: 2020-02-01\n\n## Next Actions\n",
@@ -297,12 +298,8 @@ fn dry_run_lists_the_parked_hard_dates_overdue_first() {
     let before = tree(root);
 
     let text = stdout_of(root, &["migrate", "--dry-run"]);
-    let section: Vec<&str> = text
-        .lines()
-        .skip_while(|line| !line.starts_with("  read-through"))
-        .collect();
     assert_eq!(
-        section,
+        read_through_section(&text),
         vec![
             "  read-through (hard dates on parked maps, overdue first; drop or re-date each):",
             "    2020-03-01  Grant report  (hard milestone on [[beta]], overdue)",
@@ -336,11 +333,26 @@ fn dry_run_lists_the_parked_hard_dates_overdue_first() {
     assert_eq!(tree(root), before, "a dry run writes nothing");
 }
 
-/// A parked map carrying one overdue hard milestone, far from the real
-/// clock so the tests hold on any day.
-const PARKED_OVERDUE: &str = "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2020-01-10\nclosed: null\n---\n\n# Beta\n\n## Milestones\n- [ ] Grant report — hard: 2020-03-01\n\n## Next Actions\n";
+/// An overdue hard milestone, far from the real clock so the tests hold on
+/// any day.
+const GRANT_REPORT_OVERDUE: &str = "- [ ] Grant report — hard: 2020-03-01";
 
-/// The read-through section a dry run prints for [`PARKED_OVERDUE`].
+/// Write the parked map `beta` with `milestones` (one line each) under its
+/// `## Milestones`.
+fn write_parked_beta(root: &Path, milestones: &[&str]) {
+    fs::create_dir_all(root.join("projects/_parked")).unwrap();
+    fs::write(
+        root.join("projects/_parked/beta.md"),
+        format!(
+            "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2020-01-10\nclosed: null\n---\n\n# Beta\n\n## Milestones\n{}\n\n## Next Actions\n",
+            milestones.join("\n")
+        ),
+    )
+    .unwrap();
+}
+
+/// The read-through section a dry run prints for a parked `beta` carrying
+/// only [`GRANT_REPORT_OVERDUE`].
 const READ_THROUGH_SECTION: [&str; 2] = [
     "  read-through (hard dates on parked maps, overdue first; drop or re-date each):",
     "    2020-03-01  Grant report  (hard milestone on [[beta]], overdue)",
@@ -379,8 +391,7 @@ fn dry_run_on_a_vault_stamped_1_0_plans_the_stamp_and_the_read_through() {
     // "nothing to do" followed by the read-through.)
     let dir = vault_with_method_line(Some("method_version = \"1.0\""));
     let root = dir.path();
-    fs::create_dir_all(root.join("projects/_parked")).unwrap();
-    fs::write(root.join("projects/_parked/beta.md"), PARKED_OVERDUE).unwrap();
+    write_parked_beta(root, &[GRANT_REPORT_OVERDUE]);
     let before = tree(root);
 
     let text = stdout_of(root, &["migrate", "--dry-run"]);
@@ -414,8 +425,7 @@ fn migrate_stamps_1_1_lists_the_read_through_and_clears_the_lint_row() {
     // "1.1" and logs the move, and the lint row is gone afterwards.
     let dir = vault_with_method_line(None);
     let root = dir.path();
-    fs::create_dir_all(root.join("projects/_parked")).unwrap();
-    fs::write(root.join("projects/_parked/beta.md"), PARKED_OVERDUE).unwrap();
+    write_parked_beta(root, &[GRANT_REPORT_OVERDUE]);
 
     let rows = lint_read_through_rows(root);
     assert_eq!(rows.len(), 1, "{rows:?}");
