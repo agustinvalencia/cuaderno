@@ -321,7 +321,7 @@ fn list_renders_plain_and_attached_bullets_with_status() {
 
     let (vault_obj, _r) = cdno_cli::bootstrap::open_vault(dir.path()).expect("open");
     let entries = vault_obj.list_actions("x").expect("list");
-    let out = action::render_list("x", &entries);
+    let out = action::render_list("projects/x.md", &entries);
 
     assert!(out.contains("Actions for projects/x.md"), "header:\n{out}");
     assert!(
@@ -352,7 +352,7 @@ fn list_on_empty_section_shows_placeholder() {
 
     let (vault_obj, _r) = cdno_cli::bootstrap::open_vault(dir.path()).expect("open");
     let entries = vault_obj.list_actions("x").expect("list");
-    let out = action::render_list("x", &entries);
+    let out = action::render_list("projects/x.md", &entries);
     assert!(out.contains("(no open actions)"), "placeholder:\n{out}");
 }
 
@@ -412,7 +412,7 @@ fn action_statuses_are_distinguishable_in_the_rendered_listing() {
     }
     let (vault_obj, _r) = cdno_cli::bootstrap::open_vault(dir.path()).expect("open");
     let entries = vault_obj.list_actions("x").expect("list");
-    let out = action::render_list("x", &entries);
+    let out = action::render_list("projects/x.md", &entries);
 
     // With colour off the status text still distinguishes them; the
     // colour mapping is asserted against the palette that produced it.
@@ -461,7 +461,7 @@ fn an_action_bullet_cannot_drive_the_terminal() {
         energy: None,
         attached: None,
     }];
-    let out = action::render_list("x", &entries);
+    let out = action::render_list("projects/x.md", &entries);
     assert!(!out.contains('\u{1b}'), "escape survived: {out:?}");
     assert!(!out.contains('\t'), "tab survived: {out:?}");
     assert!(out.contains("RED"), "content was dropped: {out}");
@@ -471,7 +471,7 @@ fn an_action_bullet_cannot_drive_the_terminal() {
 fn an_empty_action_listing_hugs_its_title() {
     // Every other empty state hugs; the blank line separates a title
     // from content, and there is none.
-    let out = action::render_list("x", &[]);
+    let out = action::render_list("projects/x.md", &[]);
     assert!(
         out.starts_with("Actions for projects/x.md\n  ("),
         "empty listing should hug its title: {out:?}"
@@ -500,7 +500,7 @@ fn a_rendered_listing_actually_uses_the_status_role() {
         entry("done one", ActionStatus::Completed),
         entry("active one", ActionStatus::Active),
     ];
-    let out = with_colour(true, || action::render_list("x", &entries));
+    let out = with_colour(true, || action::render_list("projects/x.md", &entries));
     let styling_of = |needle: &str| -> String {
         let line = out.lines().find(|l| l.contains(needle)).expect("a bullet");
         sgr_of(line)
@@ -646,6 +646,186 @@ fn start_logs_the_resolved_bullet_not_the_query() {
     assert!(
         daily.contains("started [[x]] \u{2014} Run ablation (deep)"),
         "the resolved bullet, energy and all:\n{daily}"
+    );
+}
+
+fn park(root: &Path, at: NaiveDateTime, slug: &str) {
+    project::run(
+        root,
+        at,
+        ProjectCommands::Park {
+            slug: Some(slug.to_owned()),
+        },
+        true,
+        false,
+    )
+    .expect("park");
+}
+
+#[test]
+fn add_on_a_parked_project_succeeds() {
+    // RFC 0006 §8.1: next actions go on a parked map in place.
+    let dir = vault();
+    create_project(
+        dir.path(),
+        moment(2026, 5, 2, 9, 0),
+        "Shelved",
+        Context::Work,
+    );
+    park(dir.path(), moment(2026, 5, 2, 9, 30), "shelved");
+
+    action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Add {
+            project: Some("shelved".to_owned()),
+            title: Some("Reread the reviews".to_owned()),
+            energy: Some(EnergyLevel::Light),
+            note: false,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("add on a parked map");
+
+    let body = fs::read_to_string(dir.path().join("projects/_parked/shelved.md")).unwrap();
+    assert!(
+        body.contains("- [ ] Reread the reviews (light)"),
+        "bullet on the parked map:\n{body}"
+    );
+    assert!(
+        !dir.path().join("projects/shelved.md").exists(),
+        "stays parked"
+    );
+}
+
+#[test]
+fn add_on_a_parked_project_reports_the_parked_map() {
+    // Both success lines name the map where it is: the plain bullet's
+    // path comes from the domain, and `--note` names the map beside the
+    // new note, so neither may say `projects/<slug>.md` for a parked map.
+    let dir = vault();
+    create_project(
+        dir.path(),
+        moment(2026, 5, 2, 9, 0),
+        "Shelved",
+        Context::Work,
+    );
+    park(dir.path(), moment(2026, 5, 2, 9, 30), "shelved");
+
+    for (title, note) in [("Reread the reviews", false), ("Sketch the rebuttal", true)] {
+        let mut cmd = cdno_in(dir.path());
+        cmd.args([
+            "--no-interactive",
+            "action",
+            "add",
+            "--project",
+            "shelved",
+            "--title",
+            title,
+            "--energy",
+            "light",
+        ]);
+        if note {
+            cmd.arg("--note");
+        }
+        let out = cmd.env("NO_COLOR", "1").assert().success();
+        let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+        assert!(
+            stdout.contains("Action added to projects/_parked/shelved.md"),
+            "names the parked map (note: {note}):\n{stdout}"
+        );
+        assert!(
+            !stdout.contains("projects/shelved.md"),
+            "not the active path (note: {note}):\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn list_on_a_parked_project_names_the_parked_map() {
+    // The header names the map where it is: a parked map lives under
+    // `projects/_parked/`, so `projects/<slug>.md` would point nowhere.
+    let dir = vault();
+    create_project(
+        dir.path(),
+        moment(2026, 5, 2, 9, 0),
+        "Shelved",
+        Context::Work,
+    );
+    park(dir.path(), moment(2026, 5, 2, 9, 30), "shelved");
+
+    let out = cdno_in(dir.path())
+        .args(["--no-interactive", "action", "list", "--project", "shelved"])
+        .env("NO_COLOR", "1")
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("Actions for projects/_parked/shelved.md"),
+        "header names the parked map:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Actions for projects/shelved.md"),
+        "not the active path:\n{stdout}"
+    );
+}
+
+#[test]
+fn start_on_a_parked_project_is_still_refused() {
+    // Starting work needs an active map: the bullet is there, but a
+    // parked map is set down, and picking it up means activating it.
+    let dir = vault();
+    create_project(
+        dir.path(),
+        moment(2026, 5, 2, 9, 0),
+        "Shelved",
+        Context::Work,
+    );
+    action::run(
+        dir.path(),
+        moment(2026, 5, 2, 9, 10),
+        ActionCommands::Add {
+            project: Some("shelved".to_owned()),
+            title: Some("Reread the reviews".to_owned()),
+            energy: Some(EnergyLevel::Light),
+            note: false,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("add");
+    park(dir.path(), moment(2026, 5, 2, 9, 30), "shelved");
+
+    let err = action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Start {
+            project: Some("shelved".to_owned()),
+            query: Some("Reread".to_owned()),
+            unplanned: false,
+            title: None,
+            energy: None,
+        },
+        true,
+        false,
+    )
+    .expect_err("a start on a parked map must be refused");
+    assert!(
+        format!("{err:#}").contains("project is not active"),
+        "the refusal is ProjectNotActive: {err:#}"
+    );
+    assert!(
+        format!("{err:#}").contains("parked"),
+        "the refusal names the parked map: {err:#}"
+    );
+    let daily = dir.path().join("journal/2026/daily/2026-05-02.md");
+    let log = fs::read_to_string(&daily).unwrap_or_default();
+    assert!(
+        !log.contains("started [[shelved]]"),
+        "nothing started:\n{log}"
     );
 }
 

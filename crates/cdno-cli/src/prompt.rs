@@ -320,28 +320,28 @@ pub fn prompt_optional_date(prompt: &str) -> Result<Option<NaiveDate>> {
     Ok(Some(prompt_date(prompt)?))
 }
 
-/// Fuzzy-pick a project that can be closed: active and parked projects,
-/// the parked ones labelled. Used by `cdno project complete` and `drop`,
-/// which accept either (RFC 0004 D8).
-pub fn prompt_closable_project(vault: &Vault) -> Result<String> {
+/// Fuzzy-pick an open project: active and parked projects, the parked
+/// ones labelled. Used by every verb that accepts a parked map: closing
+/// it (`cdno project complete` and `drop`, RFC 0004 D8), reading it
+/// (`project show`), and the project-body verbs RFC 0006 §8.1 opened to
+/// parked maps (state, core question, milestones, waiting-on, and
+/// `action add`/`complete`/`drop`/`promote`/`list`, plus triage's keep
+/// as an action). [`prompt_project`] stays active-only for the verbs
+/// that still need an active map: `action start`, `action switch` and
+/// `project park`.
+///
+/// Completed and dropped projects are deliberately absent: `project
+/// show <slug>` still resolves one by name, but none of these verbs
+/// offers a closed map to pick.
+pub fn prompt_open_project(vault: &Vault) -> Result<String> {
     let mut candidates: Vec<(String, String)> = Vec::new();
     for (path, fm) in vault.active_projects()? {
-        let slug = path
-            .as_path()
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_owned();
+        let slug = slug_of(&path).to_owned();
         let label = format!("{slug} ({})", fm.context.as_str());
         candidates.push((label, slug));
     }
     for (path, fm) in vault.parked_projects()? {
-        let slug = path
-            .as_path()
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_owned();
+        let slug = slug_of(&path).to_owned();
         let label = format!("{slug} ({}, parked)", fm.context.as_str());
         candidates.push((label, slug));
     }
@@ -351,12 +351,8 @@ pub fn prompt_closable_project(vault: &Vault) -> Result<String> {
         ));
     }
     let labels: Vec<String> = candidates.iter().map(|(l, _)| l.clone()).collect();
-    let pick = Select::new("Project", labels.clone()).prompt()?;
-    let idx = labels
-        .iter()
-        .position(|l| l == &pick)
-        .expect("picked label was in the offered list");
-    Ok(candidates.swap_remove(idx).1)
+    let pick = Select::new("Project", labels).raw_prompt()?;
+    Ok(candidates.swap_remove(pick.index).1)
 }
 
 /// Fuzzy-pick a project `cdno project activate` can bring back: parked
@@ -765,34 +761,6 @@ pub fn drive_for_test<T>(
     show: impl Fn(&T) -> Result<()>,
 ) -> Result<()> {
     drive(items, labels, ask, show)
-}
-
-/// Fuzzy-pick an active or parked project.
-///
-/// [`prompt_project`] offers only active projects because the verbs that
-/// use it act on live work. `cdno project show` reads, and reading a
-/// parked project is exactly what someone reaching for it is likely to
-/// want.
-///
-/// Completed projects are deliberately absent: `project show <slug>`
-/// still resolves one by name, but `Vault` exposes no listing for them
-/// (`active_projects` and `parked_projects` filter on status), so there
-/// is nothing to offer without a new domain query. Naming that here so
-/// the gap reads as known rather than overlooked.
-pub fn prompt_any_project(vault: &Vault) -> Result<String> {
-    let mut all = vault.active_projects()?;
-    all.extend(vault.parked_projects()?);
-    if all.is_empty() {
-        return Err(anyhow!(
-            "no projects — create one with `cdno project create`",
-        ));
-    }
-    let labels: Vec<String> = all
-        .iter()
-        .map(|(path, fm)| format!("{} ({})", slug_of(path), fm.context.as_str()))
-        .collect();
-    let pick = Select::new("Project", labels.clone()).raw_prompt()?;
-    Ok(slug_of(&all[pick.index].0).to_owned())
 }
 
 /// The slug a note's path encodes, or `""` when the path has no stem.

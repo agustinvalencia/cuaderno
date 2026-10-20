@@ -46,8 +46,8 @@ pub enum ProjectCommands {
 
     /// Update the Current State section, auto-logging the previous body.
     State {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         slug: Option<String>,
         /// New state text.
         #[arg(long)]
@@ -56,8 +56,8 @@ pub enum ProjectCommands {
 
     /// Set or clear the project's core question, auto-logging the change.
     CoreQuestion {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         slug: Option<String>,
         /// Question note to link, as a bare wikilink target
         /// (e.g. `questions/research/foo`) — same form as
@@ -149,8 +149,8 @@ pub enum ProjectCommands {
 pub enum MilestoneCommands {
     /// Add a milestone, with or without a target date.
     Add {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         slug: Option<String>,
         /// Milestone title.
         #[arg(long)]
@@ -166,8 +166,8 @@ pub enum MilestoneCommands {
     },
     /// Mark a milestone as done by substring match.
     Done {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         slug: Option<String>,
         /// Substring matching the milestone title.
         #[arg(long)]
@@ -177,8 +177,8 @@ pub enum MilestoneCommands {
     /// match, with the lines indented beneath it. Use this rather than
     /// `done` when the work was not performed: `done` records a completion.
     Drop {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         slug: Option<String>,
         /// Substring matching the milestone title.
         #[arg(long)]
@@ -194,8 +194,8 @@ pub enum MilestoneCommands {
 pub enum WaitingCommands {
     /// Add a waiting-on item.
     Add {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         slug: Option<String>,
         /// Description of what's blocking.
         #[arg(long)]
@@ -203,8 +203,8 @@ pub enum WaitingCommands {
     },
     /// Resolve (remove) a waiting-on item by substring match.
     Resolve {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         slug: Option<String>,
         /// Substring matching the waiting-on item.
         #[arg(long)]
@@ -306,7 +306,7 @@ pub fn run(
             // prompted for — nothing is being mutated.
             let slug = match slug {
                 Some(s) => s,
-                None if interactive => crate::prompt::prompt_any_project(&vault)?,
+                None if interactive => crate::prompt::prompt_open_project(&vault)?,
                 None => return Err(crate::prompt::missing_positional("slug")),
             };
             let summary = vault
@@ -405,7 +405,7 @@ fn state(
     use crate::prompt;
     let mut prompted = false;
     let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     let text = prompt::gather_or_error(text, "text", interactive, &mut prompted, || {
         prompt::prompt_text("New state")
@@ -455,7 +455,7 @@ fn core_question(
     use crate::prompt;
     let mut prompted = false;
     let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     let question = if clear {
         None
@@ -555,7 +555,7 @@ fn close(
     };
     let mut prompted = false;
     let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
-        prompt::prompt_closable_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     if prompted && !prompt::confirm_preview(&format!("About to {verb} project '{slug}'"))? {
         println!("Aborted.");
@@ -833,7 +833,7 @@ fn milestone_add(
     use crate::prompt;
     let mut prompted = false;
     let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     let title = prompt::gather_or_error(title, "title", interactive, &mut prompted, || {
         prompt::prompt_text("Milestone title")
@@ -901,7 +901,7 @@ fn milestone_done(
     use crate::prompt;
     let mut prompted = false;
     let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
         prompt::prompt_open_milestone(&slug, vault)
@@ -944,7 +944,7 @@ fn milestone_drop(
     use crate::prompt;
     let mut prompted = false;
     let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
         prompt::prompt_open_milestone(&slug, vault)
@@ -981,7 +981,7 @@ fn waiting_add(
     use crate::prompt;
     let mut prompted = false;
     let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     let description = prompt::gather_or_error(
         description,
@@ -1024,7 +1024,7 @@ fn waiting_resolve(
     use crate::prompt;
     let mut prompted = false;
     let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
         prompt::prompt_text("Waiting-on substring to resolve")

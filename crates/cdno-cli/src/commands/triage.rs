@@ -74,7 +74,7 @@ pub fn run(root: &Path, at: NaiveDateTime, no_interactive: bool) -> Result<()> {
 /// success line to print. `add_action` runs before `discard` so a
 /// failure can't lose the capture.
 fn keep_as_action(vault: &Vault, at: NaiveDateTime, item: &InboxItem) -> Result<String> {
-    let project = prompt::prompt_project(vault)?;
+    let project = prompt::prompt_open_project(vault)?;
     let energy = prompt::prompt_energy()?;
     vault
         .add_action(at, &project, &item.text, energy)

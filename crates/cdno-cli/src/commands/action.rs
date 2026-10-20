@@ -33,8 +33,8 @@ pub enum ActionCommands {
     /// Append a next action to a project. `--note` creates a manifest
     /// note alongside the bullet and wikilinks it.
     Add {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         project: Option<String>,
         /// Action title.
         #[arg(long)]
@@ -56,8 +56,8 @@ pub enum ActionCommands {
     /// Promote an existing plain bullet to a wikilinked manifest note.
     /// Substring-matches the bullet text; energy is inherited.
     Promote {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         project: Option<String>,
         /// Substring matching the bullet to promote.
         #[arg(long)]
@@ -153,8 +153,8 @@ pub enum ActionCommands {
     /// match. A wikilinked bullet also archives its note to
     /// `actions/_done/<year>/`.
     Complete {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         project: Option<String>,
         /// Substring matching the action to complete.
         #[arg(long)]
@@ -166,8 +166,8 @@ pub enum ActionCommands {
     /// abandoned or reprioritised. A wikilinked bullet also archives its
     /// note to `actions/_done/<year>/`, stamped `status: dropped`.
     Drop {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         project: Option<String>,
         /// Substring matching the action to drop.
         #[arg(long)]
@@ -209,8 +209,8 @@ pub enum ActionCommands {
     /// List a project's open action bullets, with the attached-note
     /// status (active / blocked / completed / dropped) inline when present.
     List {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         project: Option<String>,
     },
 }
@@ -341,7 +341,7 @@ fn add(
 ) -> Result<()> {
     let mut prompted = false;
     let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     let title = prompt::gather_or_error(title, "title", interactive, &mut prompted, || {
         prompt::prompt_text("Title")
@@ -387,7 +387,10 @@ fn add(
         crate::output::emit_write_result(
             json,
             &path.to_string(),
-            &format!("Action added to projects/{project}.md with note {path}"),
+            &format!(
+                "Action added to {} with note {path}",
+                map_path(vault, &project)?
+            ),
         )?;
     } else {
         let path = vault
@@ -1080,7 +1083,7 @@ fn promote(
 ) -> Result<()> {
     let mut prompted = false;
     let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
         let entries = vault
@@ -1129,7 +1132,7 @@ fn complete(
 ) -> Result<()> {
     let mut prompted = false;
     let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
         let entries = vault
@@ -1191,7 +1194,7 @@ fn drop_verb(
 ) -> Result<()> {
     let mut prompted = false;
     let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
         let entries = vault
@@ -1464,16 +1467,30 @@ fn list(vault: &Vault, project: Option<String>, interactive: bool, json: bool) -
     // project, since nothing is being mutated.
     let project = match project {
         Some(p) => p,
-        None if interactive => prompt::prompt_project(vault)?,
+        None if interactive => prompt::prompt_open_project(vault)?,
         None => return Err(prompt::missing_flag("project")),
     };
     let entries = vault.list_actions(&project).context("listing actions")?;
     if json {
         println!("{}", serde_json::to_string_pretty(&entries)?);
     } else {
-        print!("{}", render_list(&project, &entries));
+        print!("{}", render_list(&map_path(vault, &project)?, &entries));
     }
     Ok(())
+}
+
+/// The vault-relative path of an open project's map, as the domain lists
+/// it: `projects/<slug>.md` for an active map, `projects/_parked/<slug>.md`
+/// for a parked one. The CLI never builds the folder itself. Falls back to
+/// the bare slug when neither listing has it, which `list_actions` having
+/// succeeded makes unreachable short of a race with another writer.
+fn map_path(vault: &Vault, slug: &str) -> Result<String> {
+    let mut open = vault.active_projects().context("listing active projects")?;
+    open.extend(vault.parked_projects().context("listing parked projects")?);
+    Ok(open
+        .into_iter()
+        .find(|(path, _)| path.as_path().file_stem().and_then(|s| s.to_str()) == Some(slug))
+        .map_or_else(|| slug.to_owned(), |(path, _)| path.to_string()))
 }
 
 // ---------------------------------------------------------------------
@@ -1484,14 +1501,16 @@ fn yesno(b: bool) -> &'static str {
     if b { "yes" } else { "no" }
 }
 
-/// Render `cdno action list` output. Pure so tests can exercise the
-/// formatting without going through stdout.
-pub fn render_list(project: &str, entries: &[ActionListEntry]) -> String {
+/// Render `cdno action list` output under a header naming the map's
+/// vault-relative path (`projects/<slug>.md`, or `projects/_parked/<slug>.md`
+/// for a parked map). Pure so tests can exercise the formatting without
+/// going through stdout.
+pub fn render_list(map_path: &str, entries: &[ActionListEntry]) -> String {
     // Bullets, not cards: an action is one short line, so a gutter and a
     // header per item would cost three lines to say what one already
     // says. Colour carries the status instead.
     let palette = Palette::active();
-    let title = palette.paint(Role::Heading, &format!("Actions for projects/{project}.md"));
+    let title = palette.paint(Role::Heading, &format!("Actions for {map_path}"));
     if entries.is_empty() {
         // Empty states hug their title everywhere; the blank line
         // separates a title from *content*.

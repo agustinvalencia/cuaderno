@@ -195,6 +195,96 @@ fn park_moves_file_to_parked_folder() {
     assert!(dir.path().join("projects/_parked/x.md").is_file());
 }
 
+/// Park the project `slug` through the CLI, as a person would.
+fn park(root: &Path, at: NaiveDateTime, slug: &str) {
+    project::run(
+        root,
+        at,
+        ProjectCommands::Park {
+            slug: Some(slug.to_owned()),
+        },
+        true,
+        false,
+    )
+    .expect("park");
+}
+
+#[test]
+fn state_on_a_parked_project_by_flag_succeeds() {
+    // RFC 0006 §8.1: a parked map is a complete map, so its state is
+    // written in place under `_parked/`, and the old body is logged.
+    let dir = vault();
+    create_project(
+        dir.path(),
+        moment(2026, 5, 2, 9, 0),
+        "Shelved",
+        Context::Work,
+    );
+    park(dir.path(), moment(2026, 5, 2, 9, 30), "shelved");
+
+    project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::State {
+            slug: Some("shelved".to_owned()),
+            text: Some("Waiting for the autumn data drop.".to_owned()),
+        },
+        true,
+        false,
+    )
+    .expect("state on a parked map");
+
+    let body = fs::read_to_string(dir.path().join("projects/_parked/shelved.md")).unwrap();
+    assert!(
+        body.contains("Waiting for the autumn data drop."),
+        "state written on the parked map:\n{body}"
+    );
+    assert!(
+        !dir.path().join("projects/shelved.md").exists(),
+        "stays parked"
+    );
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-02.md")).unwrap();
+    assert!(daily.contains("state on [[shelved]]"), "logged:\n{daily}");
+}
+
+#[test]
+fn milestone_add_on_a_parked_project_by_flag_succeeds() {
+    let dir = vault();
+    create_project(
+        dir.path(),
+        moment(2026, 5, 2, 9, 0),
+        "Shelved",
+        Context::Work,
+    );
+    park(dir.path(), moment(2026, 5, 2, 9, 30), "shelved");
+
+    project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::Milestone {
+            action: MilestoneCommands::Add {
+                slug: Some("shelved".to_owned()),
+                title: Some("Draft the outline".to_owned()),
+                date: Some(NaiveDate::from_ymd_opt(2026, 6, 15).unwrap()),
+                hard: false,
+            },
+        },
+        true,
+        false,
+    )
+    .expect("milestone add on a parked map");
+
+    let body = fs::read_to_string(dir.path().join("projects/_parked/shelved.md")).unwrap();
+    assert!(
+        body.contains("Draft the outline"),
+        "milestone on the parked map:\n{body}"
+    );
+    assert!(
+        !dir.path().join("projects/shelved.md").exists(),
+        "stays parked"
+    );
+}
+
 #[test]
 fn activate_moves_file_back_and_flips_status() {
     let dir = vault();

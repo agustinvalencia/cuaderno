@@ -37,7 +37,7 @@ Append a next action to a project. `--note` also scaffolds a manifest note and w
 
 | Flag | Description |
 |------|-------------|
-| `--project <SLUG>` | Project slug. |
+| `--project <SLUG>` | Active or parked project slug. |
 | `--title <TITLE>` | Action title. |
 | `--energy <ENERGY>` | `deep`, `medium`, or `light`. |
 | `--note` | Also create a manifest note alongside the bullet and wikilink it. |
@@ -55,7 +55,7 @@ energy is inherited.
 
 | Flag | Description |
 |------|-------------|
-| `--project <SLUG>` | Project slug. |
+| `--project <SLUG>` | Active or parked project slug. |
 | `--query <QUERY>` | Case-insensitive substring of the bullet text. |
 | `--var <NAME=VALUE>` | Value for a custom action-note template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. Promotion scaffolds an action note, so it gathers the same prompts as `add --note`. See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
@@ -79,7 +79,7 @@ original start time, and `complete` and `drop` still pair with the start.
 
 | Flag | Description |
 |------|-------------|
-| `--project <SLUG>` | Project slug. |
+| `--project <SLUG>` | Active project slug: starting work needs an active map. |
 | `--query <QUERY>` | Substring of an existing bullet. Conflicts with `--unplanned`. |
 | `--unplanned` | Start work that is on no map yet: adds the bullet, then starts it. |
 | `--title <TEXT>` | Title for the new bullet. Requires `--unplanned`. |
@@ -174,7 +174,7 @@ Pause the action in focus and start another, in one commit. It takes the same ta
 
 | Flag | Description |
 |------|-------------|
-| `--project <SLUG>` | Project of the action to switch **to**. |
+| `--project <SLUG>` | Active project slug of the action to switch **to**: switching work needs an active map. |
 | `--query <QUERY>` | Substring of the open bullet to switch to. Conflicts with `--unplanned`. |
 | `--unplanned` | Switch to work on no map yet: adds the bullet, then starts it. |
 | `--title <TEXT>` | Title for the new bullet. Requires `--unplanned`. |
@@ -243,7 +243,7 @@ its note to `actions/_done/<year>/`.
 
 | Flag | Description |
 |------|-------------|
-| `--project <SLUG>` | Project slug. |
+| `--project <SLUG>` | Active or parked project slug. |
 | `--query <QUERY>` | Substring of the bullet text. |
 
 ```bash
@@ -258,7 +258,7 @@ note to `actions/_done/<year>/`, stamped `status: dropped` with no completion da
 
 | Flag | Description |
 |------|-------------|
-| `--project <SLUG>` | Project slug. |
+| `--project <SLUG>` | Active or parked project slug. |
 | `--query <QUERY>` | Substring of the bullet text. |
 | `--reason <TEXT>` | Optional: why it was dropped. |
 
@@ -286,7 +286,7 @@ when present. Honours `--json`.
 
 | Flag | Description |
 |------|-------------|
-| `--project <SLUG>` | Project slug. |
+| `--project <SLUG>` | Active or parked project slug. |
 
 ```bash
 cdno action list --project surrogate-model

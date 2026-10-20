@@ -200,6 +200,87 @@ fn intercept_returns_parked_slugs_for_project_activate() {
 }
 
 #[test]
+fn intercept_offers_parked_slugs_for_action_add_but_not_action_start() {
+    // RFC 0006 §8.1: `action add` accepts a parked map, `action start`
+    // does not, and each one's `--project` completes accordingly.
+    let vault = init_vault();
+    for title in ["Live Work", "Shelved Work"] {
+        cdno()
+            .current_dir(vault.path())
+            .args(["project", "create", "--title", title, "--context", "work"])
+            .assert()
+            .success();
+    }
+    cdno()
+        .current_dir(vault.path())
+        .args(["project", "park", "--slug", "shelved-work"])
+        .assert()
+        .success();
+
+    let complete = |verb: &str| {
+        let output = cdno()
+            .current_dir(vault.path())
+            .env("COMPLETE", "zsh")
+            .env("_CLAP_COMPLETE_INDEX", "4")
+            .args(["--", "cdno", "action", verb, "--project", ""])
+            .assert()
+            .success();
+        String::from_utf8(output.get_output().stdout.clone()).unwrap()
+    };
+    let add = complete("add");
+    assert!(add.contains("live-work"), "active offered to add:\n{add}");
+    assert!(
+        add.contains("shelved-work"),
+        "parked offered to add:\n{add}"
+    );
+    let start = complete("start");
+    assert!(
+        start.contains("live-work"),
+        "active offered to start:\n{start}"
+    );
+    assert!(
+        !start.contains("shelved-work"),
+        "parked not offered to start:\n{start}"
+    );
+}
+
+#[test]
+fn intercept_offers_parked_slugs_for_milestone_add() {
+    let vault = init_vault();
+    cdno()
+        .current_dir(vault.path())
+        .args([
+            "project",
+            "create",
+            "--title",
+            "Shelved Work",
+            "--context",
+            "work",
+        ])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(vault.path())
+        .args(["project", "park", "--slug", "shelved-work"])
+        .assert()
+        .success();
+
+    // `cdno project milestone add --slug <CURSOR>` → index 5.
+    let output = cdno()
+        .current_dir(vault.path())
+        .env("COMPLETE", "zsh")
+        .env("_CLAP_COMPLETE_INDEX", "5")
+        .args(["--", "cdno", "project", "milestone", "add", "--slug", ""])
+        .assert()
+        .success();
+    let stdout = std::str::from_utf8(&output.get_output().stdout).unwrap();
+    assert!(
+        stdout.contains("shelved-work"),
+        "parked offered to milestone add:\n{stdout}"
+    );
+}
+
+#[test]
 fn intercept_returns_portfolio_slugs() {
     let vault = init_vault();
     cdno()
