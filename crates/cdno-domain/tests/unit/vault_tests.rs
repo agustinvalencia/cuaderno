@@ -303,12 +303,12 @@ fn a_write_to_a_vault_on_an_older_major_is_refused_and_writes_nothing() {
     let map_before = store.read_file(&project_path()).unwrap();
     let daily_before = store.read_file(&daily_path()).unwrap();
 
-    // 0.9 is an older major than the binary's 1.0.
+    // 0.9 is an older major than the binary's 1.1.
     let behind = version(0, 9);
     assert_eq!(
         METHOD_VERSION,
-        version(1, 0),
-        "the probe assumes a 1.0 binary"
+        version(1, 1),
+        "the probe assumes a 1.1 binary"
     );
     store.write_file(&config_path(), &stamped(behind)).unwrap();
 
@@ -321,7 +321,7 @@ fn a_write_to_a_vault_on_an_older_major_is_refused_and_writes_nothing() {
         other => panic!("expected VaultNeedsMigration, got: {other:?}"),
     }
     let message = err.to_string();
-    for needle in ["RLM 0.9", "RLM 1.0", "cdno migrate --dry-run"] {
+    for needle in ["RLM 0.9", "RLM 1.1", "cdno migrate --dry-run"] {
         assert!(message.contains(needle), "{needle:?} not in: {message}");
     }
 
@@ -537,15 +537,15 @@ fn a_newer_minor_writes_and_notices_once() {
     let (vault, store) = stamped_vault();
     assert_eq!(
         METHOD_VERSION,
-        version(1, 0),
-        "the probe assumes a 1.0 binary"
+        version(1, 1),
+        "the probe assumes a 1.1 binary"
     );
     // Opened at the binary's own version: nothing to notice.
     assert_eq!(vault.take_method_notice(), None);
 
     // Another process stamps the vault a newer minor while it is open: the
     // gate allows the write and records the skew from its re-read.
-    let newer_minor = version(1, 1);
+    let newer_minor = version(1, 2);
     store
         .write_file(&config_path(), &stamped(newer_minor))
         .unwrap();

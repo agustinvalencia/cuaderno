@@ -2761,13 +2761,13 @@ const CONFIG_TOML: &str = ".cuaderno/config.toml";
 /// A vault opened at the binary's own version (on disk and as loaded), with
 /// `notes` seeded, whose config file is then rewritten to `config_text`
 /// after `Vault::new`, as another process would. Lint must see the file as
-/// it is now, not the version loaded at open. The binary is 1.0, so 1.1 is
+/// it is now, not the version loaded at open. The binary is 1.1, so 1.2 is
 /// a newer minor, 2.0 a newer major and 0.5 an older major.
 fn lint_after_restamping(notes: &[(&str, &str)], config_text: &str) -> cdno_domain::LintReport {
     assert_eq!(
         cdno_domain::METHOD_VERSION,
-        cdno_core::config::MethodVersion { major: 1, minor: 0 },
-        "the probe assumes a 1.0 binary"
+        cdno_core::config::MethodVersion { major: 1, minor: 1 },
+        "the probe assumes a 1.1 binary"
     );
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     store
@@ -2806,11 +2806,11 @@ fn the_config_row(report: &cdno_domain::LintReport) -> &cdno_domain::LintIssue {
 
 #[test]
 fn a_newer_minor_vault_is_a_warning_on_the_config() {
-    let report = lint_after_restamping(&[], &stamped_config(1, 1));
+    let report = lint_after_restamping(&[], &stamped_config(1, 2));
 
     let issue = the_config_row(&report);
     assert_eq!(issue.severity, cdno_domain::LintSeverity::Warning);
-    for needle in ["RLM 1.1", "RLM 1.0", "newer minor", "writes proceed"] {
+    for needle in ["RLM 1.2", "RLM 1.1", "newer minor", "writes proceed"] {
         assert!(
             issue.message.contains(needle),
             "{needle:?} not in: {issue:?}"
@@ -2818,7 +2818,7 @@ fn a_newer_minor_vault_is_a_warning_on_the_config() {
     }
 
     // The binary's own version is clean.
-    assert!(lint_after_restamping(&[], &stamped_config(1, 0)).is_clean());
+    assert!(lint_after_restamping(&[], &stamped_config(1, 1)).is_clean());
 }
 
 #[test]
@@ -2827,7 +2827,7 @@ fn a_newer_major_vault_is_an_error() {
 
     let issue = the_config_row(&report);
     assert_eq!(issue.severity, cdno_domain::LintSeverity::Error);
-    for needle in ["RLM 2.0", "RLM 1.0", "newer major", "upgrade cdno"] {
+    for needle in ["RLM 2.0", "RLM 1.1", "newer major", "upgrade cdno"] {
         assert!(
             issue.message.contains(needle),
             "{needle:?} not in: {issue:?}"
@@ -2931,7 +2931,7 @@ fn an_overdue_parked_milestone_warns_while_the_vault_is_below_1_1() {
         "hard milestone `Grant report` (2026-04-15) on parked project [[beta]] is overdue and in \
          the commitments register again (a parked map's hard dates are promises under RLM 1.1): \
          drop it with `cdno project milestone drop`, or re-date it on the map; this read-through \
-         row disappears once the vault records RLM 1.1"
+         row disappears once the vault records RLM 1.1, which `cdno migrate` records"
     );
 }
 
@@ -2960,7 +2960,8 @@ fn an_overdue_parked_action_due_names_the_action_fix() {
         "action `Shelved draft` (due 2026-05-01) on parked project [[beta]] is overdue and in the \
          commitments register again (a parked map's hard dates are promises under RLM 1.1): \
          re-date its `due:` in the note, or drop the action with `cdno action drop`; this \
-         read-through row disappears once the vault records RLM 1.1"
+         read-through row disappears once the vault records RLM 1.1, which `cdno migrate` \
+         records"
     );
 }
 

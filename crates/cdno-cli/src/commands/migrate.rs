@@ -70,7 +70,8 @@ fn render(report: &MigrationReport, dry_run: bool, at: NaiveDateTime) -> String 
     let mut out = String::new();
     if !report.stamps() {
         out.push_str(&format!("vault is at RLM {}; nothing to do\n", report.to));
-        // A vault stamped below RLM 1.1 still has its read-through.
+        // A vault at the binary's version but below RLM 1.1 still has its
+        // read-through: reachable only from a cdno implementing RLM 1.0.
         if !report.read_through.is_empty() {
             render_read_through(report, &mut out);
         }

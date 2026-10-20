@@ -90,7 +90,7 @@ register keeps those dates as of RLM 1.1: the one-time read-through of parked de
 milestone and on the action note for a `due:`, and names the fix:
 
 ```text
-[warning] projects/_parked/beta.md: hard milestone `Grant report` (2026-04-15) on parked project [[beta]] is overdue and in the commitments register again (a parked map's hard dates are promises under RLM 1.1): drop it with `cdno project milestone drop`, or re-date it on the map; this read-through row disappears once the vault records RLM 1.1
+[warning] projects/_parked/beta.md: hard milestone `Grant report` (2026-04-15) on parked project [[beta]] is overdue and in the commitments register again (a parked map's hard dates are promises under RLM 1.1): drop it with `cdno project milestone drop`, or re-date it on the map; this read-through row disappears once the vault records RLM 1.1, which `cdno migrate` records
 ```
 
 An action note's row says to re-date its `due:` in the note, or drop the action with
