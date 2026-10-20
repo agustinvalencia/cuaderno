@@ -1406,9 +1406,12 @@ pub fn render_show(summary: &cdno_domain::ProjectSummary) -> String {
     out
 }
 
-/// `held by: <name> · …` for a map that names a holder, saying whether it
-/// still counts toward the cap (a name on `[projects] holder_sentinels`,
-/// such as `me`, leaves it counted), or `None` when it names no one.
+/// `held by: <name> · …` for a map that names someone else, saying whether
+/// it counts toward the cap, or `None` when the summary names no holder
+/// (no `held_by:`, a value on `[projects] holder_sentinels` such as `me`,
+/// or an unreadable one: [`ProjectSummary::held_by`] is the name only).
+///
+/// [`ProjectSummary::held_by`]: cdno_domain::ProjectSummary::held_by
 /// Shared by `project list` and `cdno orient`.
 pub(crate) fn holder_line(summary: &cdno_domain::ProjectSummary) -> Option<String> {
     let holder = summary.held_by.as_deref()?;

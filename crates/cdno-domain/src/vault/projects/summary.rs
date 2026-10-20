@@ -41,10 +41,14 @@ pub struct ProjectSummary {
     pub core_question: Option<String>,
     pub state_snippet: String,
     pub top_action: Option<TopAction>,
-    /// The frontmatter `held_by:` text exactly as the lenient reader keeps
-    /// it (RFC 0006 §8.2): `None` when absent, null or not a string. A
-    /// sentinel such as `me` is carried as written; `counts` says what it
-    /// means.
+    /// Who else is moving the map (RFC 0006 §8.2): the frontmatter
+    /// `held_by:` name, trimmed, only when it names someone else under the
+    /// vault's configured `[projects] holder_sentinels`; `None` when the
+    /// map is the person's own (no holder, or a sentinel such as `me`) or
+    /// the value is unreadable (not a string, or an unquoted date). The raw
+    /// text stays on [`ProjectFrontmatter::held_by`].
+    ///
+    /// [`ProjectFrontmatter::held_by`]: crate::frontmatter::ProjectFrontmatter::held_by
     pub held_by: Option<String>,
     /// Whether the map holds one of the `max_active_projects` slots: it is
     /// active and names no one else as its holder
@@ -109,6 +113,7 @@ impl Vault {
             .map(waiting_on_says_nothing)
             .unwrap_or(true);
         let counts = project.counts_toward_cap(&self.holder_sentinels);
+        let held_by = project.holder_name(&self.holder_sentinels);
 
         Ok(ProjectSummary {
             slug: slug.to_owned(),
@@ -117,7 +122,7 @@ impl Vault {
             core_question: project.core_question,
             state_snippet,
             top_action,
-            held_by: project.held_by,
+            held_by,
             counts,
             waiting_on_empty,
             last_paused: None,

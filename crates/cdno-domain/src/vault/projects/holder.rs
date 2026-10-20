@@ -119,10 +119,7 @@ impl Vault {
 
         // What the map says now, as every counting surface reads it: only a
         // plain name of someone else is a holder; anything else is yours.
-        let previous = match frontmatter.holder(sentinels) {
-            HolderReading::Named(name) => Some(name),
-            HolderReading::Absent | HolderReading::NotAString | HolderReading::Sentinel(_) => None,
-        };
+        let previous = frontmatter.holder_name(sentinels);
         // The `was:` side of the log. A name renders as read; a value that
         // reads as yours but is still written (a sentinel, an unquoted
         // wikilink) renders as written, since a take-back strikes that line.

@@ -238,9 +238,9 @@ cdno project activate --slug surrogate-model
 List active projects with a state snippet. Each project renders as a card — a coloured bar keyed to
 its context, the slug as a title, and the state wrapped underneath. Honours `--json`.
 
-A project that names a holder carries one more line, `held by: <name> · does not count toward the
-cap` (or `· counts toward the cap` when the name is one of the
-[`holder_sentinels`](../configuration.md#projects), which leaves the map yours). Under `--json` each row
+A project that names someone else as its holder carries one more line, `held by: <name> · does not
+count toward the cap`. A value on [`holder_sentinels`](../configuration.md#projects) leaves the map
+yours, so it prints no holder line. Under `--json` each row
 carries `held_by` and `counts` (see [JSON output](../json-output.md)).
 
 In a terminal this then offers to open one of the projects it just listed, printing the same thing
@@ -264,8 +264,8 @@ Show a compact summary of a single project (any status). The slug is an optional
 in a terminal and `cdno` offers a picker covering active and parked projects. Honours `--json`
 (emits the project summary object).
 
-For an active or parked project it ends with `Held by: <name>` when the map names a holder, and
-`Counts toward the cap: yes` or `no`.
+For an active or parked project it ends with `Held by: <name>` when the map names someone else (a
+sentinel prints none), and `Counts toward the cap: yes` or `no`.
 
 ```bash
 cdno project show surrogate-model

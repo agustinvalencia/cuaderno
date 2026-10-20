@@ -195,12 +195,12 @@ cdno orient --json
 `projects` holds one project-list element per active project; each carries `core_question`, the
 map's frontmatter value exactly as written, or `null` when it sets none (`project list` and
 `project show` elements carry it too). Each also carries three keys about the cap (`project list`
-and `project show` elements too): `held_by` is the map's `held_by:` text as written, or `null` when
-it has none or the value is not a plain string; `counts` is `true` when the map holds one of the
-`max_active_projects` slots, that is, it is active and does not name someone else as its holder (a
-`held_by` of `me`, `tbd` or another entry of
-[`holder_sentinels`](configuration.md#keys) leaves it counted, so branch on `counts`, never on the
-name); and `waiting_on_empty` is `true` when the map's `## Waiting On` is missing, empty, or only
+and `project show` elements too): `held_by` is the name of whoever else is moving the map, trimmed,
+only when the map's `held_by:` names someone else, and `null` when the map is yours (no `held_by:`,
+or `me`, `tbd` or another entry of [`holder_sentinels`](configuration.md#keys)) or the value is
+unreadable (not a plain string); `counts` is `true` when the map holds one of the
+`max_active_projects` slots, that is, it is active and does not name someone else as its holder
+(branch on `counts`, never on the name); and `waiting_on_empty` is `true` when the map's `## Waiting On` is missing, empty, or only
 `(nothing yet)`. MCP `get_orientation` projects, `get_weekly_context.projects` and
 `get_monthly_context`'s parked and stuck entries carry the same three keys; the weekly ones add
 `changed_this_week` and `focus_days_while_held` (see the

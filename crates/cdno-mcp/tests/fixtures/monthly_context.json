@@ -72,6 +72,7 @@
         "context": "work",
         "core_question": null,
         "created": "{today-40}",
+        "held_by": null,
         "status": "parked"
       },
       "held_by": null,
@@ -91,7 +92,8 @@
   "since": "{today-30}",
   "slots": {
     "active": 1,
-    "cap": 5
+    "cap": 5,
+    "counted": 1
   },
   "stewardships": [
     {
