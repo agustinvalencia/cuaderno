@@ -23,6 +23,7 @@ cdno note create [OPTIONS] <TYPE> --title <TITLE>
 | Flag | Description |
 |------|-------------|
 | `--title <TITLE>` | Required. The note's title; its slug becomes the filename. |
+| `--slug <SLUG>` | Name the file yourself instead of deriving it from the title. Refused if invalid or taken; see [the slug rule](overview.md#naming-a-note---slug). Not combinable with `--field slug=…`: naming the note twice is refused (`slug_given_twice`), since the two could disagree. |
 | `--field <NAME=VALUE>` | A frontmatter field, repeatable. Each key must be a declared `required`/`optional` field of the type; every `required` field must be supplied. |
 | `--var <NAME=VALUE>` | A value for the type's template [prompted variable](../../tutorials/templates-and-frontmatter.md#prompted-variables), repeatable. |
 | `--body-file <PATH>` | The note's body, read from a file, without the title heading (the engine writes the `# <title>` H1; a leading `# <title>` line in the file is dropped). Written verbatim apart from leading and trailing blank lines and trailing whitespace. It fills the template's `{{body}}` placeholder, or is inserted after the H1 when the template has none. When the template has `{{body}}` and nothing else fills it (`--field body=`, `--var body=` or a `[variables] body` in the config), it is opened in an editor if omitted interactively, and required under `--no-interactive`. |
@@ -86,6 +87,7 @@ section_target}`.
 
 ```bash
 cdno note create person --title "Ada Lovelace" --field name=Ada --field role=advisor
+cdno note create person --title "Ada Lovelace, programmer and mathematician" --field name=Ada --slug ada-lovelace
 cdno note list person
 cdno note revise concept:woodbury-identity --section Proof --content-file proof.md \
   --reason "shorter proof via push-through"

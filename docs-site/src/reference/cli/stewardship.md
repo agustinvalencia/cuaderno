@@ -30,6 +30,7 @@ with room for `tracking/` and `routines/`); without it, the dashboard is a singl
 | Flag | Description |
 |------|-------------|
 | `--name <NAME>` | Human-readable name (the slug derives from it). |
+| `--slug <SLUG>` | Name the dashboard's file (flat) or folder (expanded) yourself instead of deriving it from the name. Refused if invalid or taken; see [the slug rule](overview.md#naming-a-note---slug). |
 | `--context <CONTEXT>` | Life domain (`work`, `household`, `personal`, …). |
 | `--tracking` | Create the expanded variant with a `tracking/` folder. |
 | `--var <NAME=VALUE>` | Value for a custom template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
@@ -37,6 +38,7 @@ with room for `tracking/` and `routines/`); without it, the dashboard is a singl
 ```bash
 cdno stewardship create --name "Finances" --context household           # flat
 cdno stewardship create --name "Health" --context personal --tracking   # expanded
+cdno stewardship create --name "Household finances and taxes" --context household --slug finances
 ```
 
 ## `cdno stewardship list`

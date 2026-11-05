@@ -100,8 +100,8 @@ parked one they return `project_not_active` with `status: "parked"` (see the
 | `update_project_state` | `project`, `new_state` | Rewrite the Current State (auto-logs the previous). |
 | `set_core_question` | `project`, `core_question?`, `clear?` | Set the project's core question (bare `questions/<domain>/<slug>` target, not `[[…]]`); `clear: true` detaches. Auto-logs the previous value. |
 | `hand_off_project` | `project`, `holder?`, `take_back?` | Record whose move an open (active or parked) project is: `holder` writes `held_by: "<name>"` and the project stops counting against the cap; `take_back: true` writes `held_by: null`. Exactly one of the two. Logs `holder on [[slug]]` with `was:`/`now:` lines. Refused with `empty_field` for a name on the vault's `[projects] holder_sentinels`, with `project_in_focus` while an action on the project is in focus, and, for a take-back that would make an active project count at the cap, with `project_cap_reached`. Taking back a parked project only clears the name. |
-| `add_action` | `project`, `title`, `energy`, `with_note?`, `vars?` | Append a next action; `with_note` also scaffolds a manifest note (`vars` applies only then). |
-| `promote_action` | `project`, `query`, `vars?` | Promote a bullet to a manifest note (substring match). |
+| `add_action` | `project`, `title`, `energy`, `with_note?`, `slug?`, `vars?` | Append a next action; `with_note` also scaffolds a manifest note (`slug` and `vars` apply only then; without `with_note`, `slug` is ignored). |
+| `promote_action` | `project`, `query`, `slug?`, `vars?` | Promote a bullet to a manifest note (substring match); `slug` names the new note's file ([the slug rule](../cli/overview.md#naming-a-note---slug)). |
 | `start_action` | `project`, `query` | Log that work on an existing bullet is starting. Logs the **resolved** bullet text, so the later close pairs with it. Errors when `query` matches nothing — it will not create the action. Refused with `focus_open` while another action is in focus ([below](#rejections-focus_open-and-no_focus)). |
 | `start_unplanned_action` | `project`, `title`, `energy` | Add the bullet **and** start it, in one commit, for work that was on no map. Separate from `start_action` on purpose: a fallback would turn a typo into a new action. |
 | `pause_action`, `switch_action`, `switch_unplanned_action`, `resume_action` | see [Focus tools](#focus-tools) | Move the one focus slot: set it aside, move to another action, or pick work up again. |
@@ -216,7 +216,7 @@ rather than failing. The tag is written by the server; an agent does not add it 
 
 | Tool | Inputs | Effect |
 |------|--------|--------|
-| `create_commitment` | `title`, `due`, `context`, `project?`, `stewardship?`, `vars?` | Create a standalone commitment note. |
+| `create_commitment` | `title`, `due`, `context`, `project?`, `stewardship?`, `slug?`, `vars?` | Create a standalone commitment note; `slug` names its file ([the slug rule](../cli/overview.md#naming-a-note---slug)). |
 | `complete_commitment` | `commitment` (slug) | Mark a commitment done and archive it. |
 | `drop_commitment` | `commitment`, `reason?` | End a commitment that was **not** kept; stamps `status: dropped`, clears `completed`, archives it. Never appears as completed work. |
 | `reschedule_commitment` | `commitment`, `due` | Move an active commitment's due date, logging both the old and new dates. Refuses an unchanged date. |

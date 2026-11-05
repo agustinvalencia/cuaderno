@@ -27,6 +27,7 @@ Create an active commitment note. Optionally attribute it to a project or stewar
 | Flag | Description |
 |------|-------------|
 | `--title <TITLE>` | Commitment title (the slug derives from it). |
+| `--slug <SLUG>` | Name the commitment's file yourself instead of deriving it from the title. Refused if invalid or taken; see [the slug rule](overview.md#naming-a-note---slug). |
 | `--due <YYYY-MM-DD>` | Deadline. |
 | `--context <CONTEXT>` | Life domain (`work`, `personal`, …). |
 | `--project <SLUG>` | Optional associated project. |
@@ -36,6 +37,7 @@ Create an active commitment note. Optionally attribute it to a project or stewar
 ```bash
 cdno commit create --title "Pay rent" --due 2026-06-01 --context personal
 cdno commit create --title "Review Erik's draft" --due 2026-05-20 --context work --project projects/icml-paper
+cdno commit create --title "Send the surrogate-model results to the steering group" --due 2026-12-01 --context work --slug send-results
 ```
 
 ## `cdno commit done`

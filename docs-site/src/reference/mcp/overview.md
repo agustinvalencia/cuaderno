@@ -110,6 +110,19 @@ unknown tool, unparseable arguments — are protocol errors too (`-32602`), per 
 The practical upshot for a client: **read `isError` on the result, not just the presence of `error`**.
 A rejection is a normal, expected answer to a call that was itself well-formed.
 
+## Slug rejections
+
+An explicit `slug` on a create tool ([Creation and lifecycle](creation-and-lifecycle.md#naming-a-note)) is
+refused with one of four codes, each leaving the vault untouched. They are the same objects the CLI
+prints under [`--json`](../json-output.md#slug-refusals).
+
+| Code | `details` | When |
+|---|---|---|
+| `invalid_slug` | `slug`, `why` | The slug breaks the shape rule (lowercase `a-z`, `0-9`, single `-`, at most 50 characters, not YAML-typed); `why` names the part. Fix the shape, or ask the person for another name. |
+| `slug_taken` | `slug`, `holder`, `kind` (`stem`\|`folder`) | Another note already holds the name. If `holder` is the note you meant, use it; otherwise ask the person for another name. Do not suffix it yourself. |
+| `portfolio_slug_mismatch` | `question_slug`, `slug` | `create_portfolio` with `question` set to a question's slug and a `slug` that is not that slug. Drop `slug` or pass the question's. |
+| `slug_given_twice` | `field` | `create_custom_note` with `slug` and a `slug` entry in `fields`. Pass one of them. |
+
 ## Building skills on top
 
 Multi-step rituals (a morning orientation, a guided weekly review) are best wrapped as **Claude
