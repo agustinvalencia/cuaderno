@@ -38,6 +38,10 @@ pub enum QuestionCommands {
         /// (`[variables.prompt]`), repeatable: `--var name=value`.
         #[arg(long = "var", value_parser = crate::prompt::parse_key_val)]
         var: Vec<(String, String)>,
+        /// Slug for the note (its file name); derived from the text when
+        /// omitted.
+        #[arg(long)]
+        slug: Option<String>,
     },
 
     /// Park a question: set status to `parked`. Pick from active
@@ -85,9 +89,12 @@ pub fn run(
     // which would corrupt the JSON result. Scripted callers pass full args.
     let interactive = prompt::reports_interactively(no_interactive, json);
     match command {
-        QuestionCommands::Create { domain, text, var } => {
-            create(&vault, at, domain, text, var, interactive, json)
-        }
+        QuestionCommands::Create {
+            domain,
+            text,
+            slug,
+            var,
+        } => create(&vault, at, domain, text, slug, var, interactive, json),
         QuestionCommands::Park { slug } => {
             transition(&vault, at, slug, QuestionStatus::Parked, interactive, json)
         }
@@ -108,11 +115,13 @@ pub fn run(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // thin gather→create passthrough
 fn create(
     vault: &Vault,
     at: NaiveDateTime,
     domain: Option<QuestionDomain>,
     text: Option<String>,
+    slug: Option<String>,
     var: Vec<(String, String)>,
     interactive: bool,
     json: bool,
@@ -136,8 +145,9 @@ fn create(
         return Ok(());
     }
     let path = vault
-        .create_question_with_vars(at, domain, &text, &template_vars, None)
-        .context("creating question")?;
+        .create_question_with_vars(at, domain, &text, &template_vars, slug.as_deref())
+        .context("creating question")
+        .map_err(|e| crate::commands::rejection::slug_refusal(e, json))?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())
 }

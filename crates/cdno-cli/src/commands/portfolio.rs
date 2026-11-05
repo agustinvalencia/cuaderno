@@ -33,10 +33,11 @@ pub enum PortfolioCommands {
     /// derived from the question.
     Create {
         /// The unifying question the portfolio collects evidence
-        /// against. If a question note already exists for the same
-        /// text, the two are linked both ways (the question's `##
-        /// Related Portfolios` and this portfolio's `## Related
-        /// Questions`).
+        /// against, or the slug of an existing question note (the
+        /// portfolio then takes that question's text as its title). If a
+        /// question note already exists for the same text, the two are
+        /// linked both ways (the question's `## Related Portfolios` and
+        /// this portfolio's `## Related Questions`).
         #[arg(long)]
         question: Option<String>,
         /// Bare wikilink target to a parent project (e.g.
@@ -48,6 +49,11 @@ pub enum PortfolioCommands {
         /// (`[variables.prompt]`), repeatable: `--var name=value`.
         #[arg(long = "var", value_parser = crate::prompt::parse_key_val)]
         var: Vec<(String, String)>,
+        /// Slug for the portfolio folder; derived from the question when
+        /// omitted. Must match the question's slug when `--question` names
+        /// one.
+        #[arg(long)]
+        slug: Option<String>,
     },
 
     /// List every portfolio with its evidence count and staleness.
@@ -100,8 +106,9 @@ pub fn run(
         PortfolioCommands::Create {
             question,
             project,
+            slug,
             var,
-        } => create(&vault, at, question, project, var, interactive, json),
+        } => create(&vault, at, question, project, slug, var, interactive, json),
         PortfolioCommands::List => {
             let summaries = vault
                 .list_portfolios(at.date())
@@ -190,11 +197,13 @@ fn link_to_project(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // thin gather→create passthrough
 fn create(
     vault: &Vault,
     at: NaiveDateTime,
     question: Option<String>,
     project: Option<String>,
+    slug: Option<String>,
     var: Vec<(String, String)>,
     interactive: bool,
     json: bool,
@@ -218,8 +227,15 @@ fn create(
         }
     }
     let path = vault
-        .create_portfolio_with_vars(at, &question, project.as_deref(), &template_vars, None)
-        .context("creating portfolio")?;
+        .create_portfolio_with_vars(
+            at,
+            &question,
+            project.as_deref(),
+            &template_vars,
+            slug.as_deref(),
+        )
+        .context("creating portfolio")
+        .map_err(|e| crate::commands::rejection::slug_refusal(e, json))?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())
 }

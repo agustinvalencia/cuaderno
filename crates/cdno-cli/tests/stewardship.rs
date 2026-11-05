@@ -38,6 +38,7 @@ fn create_flat_writes_root_level_file() {
             context: Some(Context::Household),
             tracking: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -61,6 +62,7 @@ fn create_with_tracking_writes_expanded_layout() {
             context: Some(Context::Personal),
             tracking: true,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -82,6 +84,7 @@ fn create_errors_when_missing_required_flags_in_non_interactive() {
             context: Some(Context::Household),
             tracking: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -112,6 +115,7 @@ fn list_render_shows_each_with_variant_and_activity_badge() {
             context: Some(Context::Household),
             tracking: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -125,6 +129,7 @@ fn list_render_shows_each_with_variant_and_activity_badge() {
             context: Some(Context::Personal),
             tracking: true,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -192,6 +197,7 @@ fn add_periodic_appends_line_to_dashboard() {
             context: Some(Context::Household),
             tracking: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -230,6 +236,7 @@ fn add_periodic_errors_when_missing_flags_in_non_interactive() {
             context: Some(Context::Household),
             tracking: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -266,6 +273,7 @@ fn track_writes_gym_note_under_expanded_stewardship() {
             context: Some(Context::Personal),
             tracking: true,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -312,6 +320,7 @@ fn track_defaults_to_only_expanded_stewardship_when_unambiguous() {
             context: Some(Context::Personal),
             tracking: true,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -370,6 +379,7 @@ fn track_errors_on_flat_stewardship_for_explicit_slug() {
             context: Some(Context::Household),
             tracking: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -410,6 +420,7 @@ fn track_at_files_the_entry_on_the_given_day() {
             context: Some(Context::Personal),
             tracking: true,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -457,6 +468,7 @@ fn track_at_rejects_an_implausible_date() {
             context: Some(Context::Personal),
             tracking: true,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -498,6 +510,7 @@ fn track_at_accepts_a_bare_date() {
             context: Some(Context::Personal),
             tracking: true,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -540,6 +553,7 @@ fn complete_periodic_rolls_the_date_forward_through_the_cli() {
             context: Some(Context::Personal),
             tracking: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -593,6 +607,7 @@ fn complete_periodic_honours_at_for_work_done_earlier() {
             context: Some(Context::Personal),
             tracking: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -649,6 +664,7 @@ fn complete_periodic_in_non_interactive_errors_when_missing_title() {
             context: Some(Context::Personal),
             tracking: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -669,4 +685,24 @@ fn complete_periodic_in_non_interactive_errors_when_missing_title() {
     .expect_err("missing --title should error");
     let msg = format!("{err:#}");
     assert!(msg.contains("--title"), "error message: {msg}");
+}
+
+/// The binary against `root`, never inheriting the developer's vault.
+fn cdno_in(root: &std::path::Path) -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::cargo_bin("cdno").expect("cdno binary built");
+    cmd.env_remove("CUADERNO_VAULT_PATH");
+    cmd.arg("--vault").arg(root);
+    cmd
+}
+
+#[test]
+fn create_with_slug_names_the_file() {
+    let dir = vault();
+    cdno_in(dir.path())
+        .args(["stewardship", "create", "--name", "Keeping the books"])
+        .args(["--context", "household", "--slug", "surrogate-model"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("stewardships/surrogate-model.md"));
+    assert!(dir.path().join("stewardships/surrogate-model.md").is_file());
 }

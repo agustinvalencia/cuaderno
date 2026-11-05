@@ -87,6 +87,13 @@ pub enum DomainError {
         kind: crate::vault::slug::TakenBy,
     },
 
+    /// The slug was given twice: as the explicit slug and as a `slug` field of
+    /// a custom note. Either would name the note, and the two could disagree.
+    #[error(
+        "the slug was given both as the explicit slug and as the '{field}' field; pass one of them"
+    )]
+    SlugGivenTwice { field: String },
+
     /// A portfolio created from a question (`question` is the question's
     /// slug) was given a different explicit slug. The pair is correlated by
     /// slug, so the portfolio takes the question's.

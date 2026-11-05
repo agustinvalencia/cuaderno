@@ -33,6 +33,7 @@ fn seed_portfolio(root: &Path) {
             question: Some("Sparse vs dense OOD".to_owned()),
             project: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -54,6 +55,7 @@ fn portfolio_create_writes_index_file() {
             question: Some("Does sparse beat dense on OOD?".to_owned()),
             project: Some("projects/surrogate".to_owned()),
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -79,6 +81,7 @@ fn portfolio_create_errors_when_missing_question_in_non_interactive() {
             question: None,
             project: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -101,6 +104,7 @@ fn portfolio_create_backlinks_existing_question_note() {
             domain: Some(QuestionDomain::Research),
             text: Some("Sparse vs dense OOD".to_owned()),
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -129,6 +133,7 @@ fn a_mixed_case_question_text_creates_a_lowercase_folder() {
             domain: Some(QuestionDomain::Research),
             text: Some("Surrogate calibration".to_owned()),
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -141,6 +146,7 @@ fn a_mixed_case_question_text_creates_a_lowercase_folder() {
             question: Some("Surrogate-Calibration".to_owned()),
             project: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -167,6 +173,7 @@ fn portfolio_link_backlinks_a_retrofit_question() {
             domain: Some(QuestionDomain::Research),
             text: Some("Where does the budget go".to_owned()),
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -590,4 +597,88 @@ fn file_attach_move_removes_the_source() {
             .join("portfolios/sparse-vs-dense-ood/2026-06-13-recording/clip.mp4")
             .is_file()
     );
+}
+
+/// The binary against `root`, never inheriting the developer's vault.
+fn cdno_in(root: &std::path::Path) -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::cargo_bin("cdno").expect("cdno binary built");
+    cmd.env_remove("CUADERNO_VAULT_PATH");
+    cmd.arg("--vault").arg(root);
+    cmd
+}
+
+#[test]
+fn create_with_slug_names_the_file() {
+    let dir = vault();
+    cdno_in(dir.path())
+        .args(["portfolio", "create", "--question"])
+        .arg("Does a surrogate beat the simulator?")
+        .args(["--slug", "surrogate-model"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(
+            "portfolios/surrogate-model/_index.md",
+        ));
+    assert!(
+        dir.path()
+            .join("portfolios/surrogate-model/_index.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn a_question_slug_is_accepted_and_the_portfolio_takes_its_text() {
+    let dir = vault();
+    cdno_in(dir.path())
+        .args(["question", "create", "--domain", "research"])
+        .args(["--text", "Does a surrogate beat the simulator?"])
+        .args(["--slug", "surrogate-model"])
+        .assert()
+        .success();
+
+    // Same slug: the portfolio takes the question's text as its title.
+    cdno_in(dir.path())
+        .args(["portfolio", "create", "--question", "surrogate-model"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(
+            "portfolios/surrogate-model/_index.md",
+        ));
+    let index =
+        fs::read_to_string(dir.path().join("portfolios/surrogate-model/_index.md")).unwrap();
+    assert!(
+        index.contains("Does a surrogate beat the simulator?"),
+        "{index}"
+    );
+}
+
+#[test]
+fn a_mismatched_slug_is_refused_as_json() {
+    let dir = vault();
+    cdno_in(dir.path())
+        .args(["question", "create", "--domain", "research"])
+        .args(["--text", "Does a surrogate beat the simulator?"])
+        .args(["--slug", "surrogate-model"])
+        .assert()
+        .success();
+
+    let out = cdno_in(dir.path())
+        .args(["--json", "portfolio", "create"])
+        .args([
+            "--question",
+            "surrogate-model",
+            "--slug",
+            "surrogate-calibration",
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+    let v: serde_json::Value = serde_json::from_slice(&out).expect("a JSON object");
+    assert_eq!(v["code"], "portfolio_slug_mismatch", "{v}");
+    assert_eq!(v["details"]["question_slug"], "surrogate-model", "{v}");
+    assert_eq!(v["details"]["slug"], "surrogate-calibration", "{v}");
+    assert!(!dir.path().join("portfolios/surrogate-calibration").exists());
 }

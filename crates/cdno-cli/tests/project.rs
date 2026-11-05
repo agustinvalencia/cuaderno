@@ -41,6 +41,7 @@ fn create_project(root: &Path, at: NaiveDateTime, title: &str, context: Context)
             context: Some(context),
             question: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -79,6 +80,7 @@ fn create_without_var_errors_when_a_prompt_variable_is_unsatisfied() {
             context: Some(Context::Work),
             question: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -107,6 +109,7 @@ fn create_with_var_supplies_the_prompted_value() {
             context: Some(Context::Work),
             question: None,
             var: vec![("ticket".to_owned(), "ABC-1".to_owned())],
+            slug: None,
         },
         true,
         false,
@@ -141,6 +144,7 @@ fn create_with_question_wraps_target_in_wikilink() {
             context: Some(Context::Work),
             question: Some("questions/research/surrogate-cost".to_owned()),
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -720,6 +724,7 @@ fn create_in_non_interactive_errors_when_missing_title() {
             context: Some(Context::Work),
             question: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -1767,5 +1772,187 @@ fn activate_and_take_back_at_the_cap_list_the_counted_maps_alike() {
     assert!(
         !activate.contains("front-0"),
         "the held map is not counted: {activate}"
+    );
+}
+
+// RFC 0007 §5.7: `--slug` names the new project, is refused on a collision
+// and is never prompted for.
+
+#[test]
+fn create_with_slug_names_the_file() {
+    let dir = vault();
+
+    cdno_bin()
+        .arg("--vault")
+        .arg(dir.path())
+        .args(["project", "create", "--title", "Calibrating the surrogate"])
+        .args(["--context", "work", "--slug", "surrogate-model"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("projects/surrogate-model.md"));
+
+    assert!(dir.path().join("projects/surrogate-model.md").is_file());
+}
+
+#[test]
+fn a_taken_slug_is_refused_as_json() {
+    let dir = vault();
+    let create = |json: bool| {
+        let mut cmd = cdno_bin();
+        if json {
+            cmd.arg("--json");
+        }
+        cmd.arg("--vault")
+            .arg(dir.path())
+            .args(["project", "create", "--title", "Calibrating the surrogate"])
+            .args(["--context", "work", "--slug", "surrogate-model"])
+            .assert()
+    };
+    create(false).success();
+
+    let out = create(true).failure().code(1).get_output().stdout.clone();
+    let v: serde_json::Value = serde_json::from_slice(&out).expect("a JSON object");
+    assert_eq!(v["code"], "slug_taken", "{v}");
+    assert_eq!(v["details"]["slug"], "surrogate-model", "{v}");
+    assert_eq!(v["details"]["kind"], "stem", "{v}");
+    assert_eq!(v["details"]["holder"], "projects/surrogate-model.md", "{v}");
+    assert!(v["message"].as_str().unwrap().contains("surrogate-model"));
+}
+
+#[test]
+fn an_invalid_slug_is_refused_as_json() {
+    let dir = vault();
+    let out = cdno_bin()
+        .args(["--json", "--vault"])
+        .arg(dir.path())
+        .args(["project", "create", "--title", "Calibrating the surrogate"])
+        .args(["--context", "work", "--slug", "Surrogate_Model"])
+        .assert()
+        .failure()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+    let v: serde_json::Value = serde_json::from_slice(&out).expect("a JSON object");
+    assert_eq!(v["code"], "invalid_slug", "{v}");
+    assert_eq!(v["details"]["slug"], "Surrogate_Model", "{v}");
+    assert!(v["details"]["why"].is_string(), "{v}");
+    assert!(!dir.path().join("projects/Surrogate_Model.md").exists());
+}
+
+/// Run `args` under a real pty (stdin and stdout both terminals), typing
+/// `keys` (each after a pause) and return everything it drew. The suite has
+/// no pty crate, so this goes through `script(1)`. A prompt left unanswered
+/// fails the test after a deadline instead of hanging it.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_in_pty(root: &Path, args: &[&str], keys: &[&str]) -> String {
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    let exe = assert_cmd::cargo::cargo_bin("cdno");
+    let mut inner = vec![
+        exe.to_str().unwrap().to_owned(),
+        "--vault".to_owned(),
+        root.to_str().unwrap().to_owned(),
+    ];
+    inner.extend(args.iter().map(|a| (*a).to_owned()));
+    let mut script = Command::new("script");
+    if cfg!(target_os = "macos") {
+        script.args(["-q", "/dev/null"]).args(&inner);
+    } else {
+        // `-c` takes one shell string: single-quote every word.
+        let quoted: Vec<String> = inner
+            .iter()
+            .map(|w| format!("'{}'", w.replace('\'', "'\\''")))
+            .collect();
+        script.args(["-qec", &quoted.join(" "), "/dev/null"]);
+    }
+    let mut child = script
+        .env_remove("CUADERNO_VAULT_PATH")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("script(1) is available");
+    let mut stdin = child.stdin.take().unwrap();
+    let drawn = Arc::new(Mutex::new(Vec::new()));
+    let mut stdout = child.stdout.take().unwrap();
+    let sink = Arc::clone(&drawn);
+    let reader = std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = stdout.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            sink.lock().unwrap().extend_from_slice(&buf[..n]);
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    for key in keys {
+        std::thread::sleep(Duration::from_millis(700));
+        // A broken pipe means the command already ended; the wait below says how.
+        let _ = stdin.write_all(key.as_bytes()).and_then(|()| stdin.flush());
+    }
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
+            let seen = String::from_utf8_lossy(&drawn.lock().unwrap()).into_owned();
+            panic!("the command did not finish within 20s; it drew:\n{seen}");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    drop(stdin);
+    reader.join().unwrap();
+    let out = drawn.lock().unwrap().clone();
+    // Reduce the terminal control stream to its words.
+    let raw = String::from_utf8_lossy(&out);
+    let mut text = String::new();
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            for n in chars.by_ref() {
+                if n.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else if c != '\r' {
+            text.push(c);
+        }
+    }
+    text
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn slug_is_never_prompted() {
+    let dir = vault();
+
+    // Only the slug is given: the title and the context are asked for, then
+    // the preview; nothing asks for a slug, and the preview does not show one.
+    let seen = run_in_pty(
+        dir.path(),
+        &["project", "create", "--slug", "surrogate-model"],
+        &["Calibrating the surrogate\r", "\r", "y\r"],
+    );
+    assert!(seen.contains("Title"), "asked for the title:\n{seen}");
+    assert!(seen.contains("Context"), "asked for the context:\n{seen}");
+    assert!(seen.contains("About to create project"), "{seen}");
+    assert!(!seen.to_lowercase().contains("slug"), "never asks:\n{seen}");
+    let preview = seen
+        .split("About to create project")
+        .nth(1)
+        .and_then(|rest| rest.split("Proceed").next())
+        .expect("a preview");
+    assert!(!preview.contains("surrogate-model"), "{preview}");
+    assert!(
+        dir.path().join("projects/surrogate-model.md").is_file(),
+        "the given slug names the file:\n{seen}"
     );
 }

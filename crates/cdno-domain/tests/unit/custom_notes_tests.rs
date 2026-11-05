@@ -1694,3 +1694,51 @@ fn an_explicit_slug_that_is_taken_is_refused_not_suffixed() {
     );
     assert_eq!(snapshot(&store), before, "nothing was written");
 }
+
+#[test]
+fn an_explicit_slug_beside_a_slug_field_is_refused() {
+    let (vault, store) = vault_with(config_with_person(), &[]);
+    let before = snapshot(&store);
+
+    let err = vault
+        .create_custom_note_with_vars(
+            at(),
+            "person",
+            "Ada",
+            &fields(&[("name", "Ada"), ("slug", "surrogate-model")]),
+            &HashMap::new(),
+            None,
+            None,
+            Some("surrogate-calibration"),
+        )
+        .expect_err("the pair is refused");
+
+    assert!(
+        matches!(&err, DomainError::SlugGivenTwice { field } if field == "slug"),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
+}
+
+#[test]
+fn an_explicit_slug_beside_an_empty_slug_field_is_not_refused() {
+    let (vault, _store) = vault_with(config_with_person(), &[]);
+
+    // An empty field is absent to the domain, so it does not count as a
+    // second slug. (Whether the type then accepts the key is its own rule.)
+    let result = vault.create_custom_note_with_vars(
+        at(),
+        "person",
+        "Ada",
+        &fields(&[("name", "Ada"), ("slug", "  ")]),
+        &HashMap::new(),
+        None,
+        None,
+        Some("surrogate-calibration"),
+    );
+
+    assert!(
+        !matches!(result, Err(DomainError::SlugGivenTwice { .. })),
+        "got {result:?}"
+    );
+}

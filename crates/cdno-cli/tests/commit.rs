@@ -36,6 +36,7 @@ fn commit_create_writes_active_commitment_file() {
             project: None,
             stewardship: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -67,6 +68,7 @@ fn commit_create_writes_origin_link_slugs_from_flags() {
             project: None,
             stewardship: Some("health".to_owned()),
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -97,6 +99,7 @@ fn commit_done_moves_file_to_year_subfolder_with_completed_stamp() {
             project: None,
             stewardship: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -140,6 +143,7 @@ fn commitments_lists_active_in_window() {
             project: None,
             stewardship: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -155,6 +159,7 @@ fn commitments_lists_active_in_window() {
             project: None,
             stewardship: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -187,6 +192,7 @@ fn commitments_weeks_flag_widens_the_window() {
             project: None,
             stewardship: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -229,6 +235,7 @@ fn commit_create_in_non_interactive_errors_when_missing_due() {
             project: None,
             stewardship: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -269,6 +276,7 @@ fn commit_reschedule_moves_the_date_and_keeps_the_body() {
             project: None,
             stewardship: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -339,6 +347,7 @@ fn commit_drop_archives_without_recording_a_completion() {
             project: None,
             stewardship: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -388,6 +397,7 @@ fn commit_drop_in_non_interactive_accepts_a_missing_reason() {
             project: None,
             stewardship: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -429,4 +439,26 @@ fn commit_drop_in_non_interactive_errors_when_missing_slug() {
     .expect_err("missing --slug should error");
     let msg = format!("{err:#}");
     assert!(msg.contains("--slug"), "error message: {msg}");
+}
+
+/// The binary against `root`, never inheriting the developer's vault.
+fn cdno_in(root: &std::path::Path) -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::cargo_bin("cdno").expect("cdno binary built");
+    cmd.env_remove("CUADERNO_VAULT_PATH");
+    cmd.arg("--vault").arg(root);
+    cmd
+}
+
+#[test]
+fn create_with_slug_names_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    init_vault(dir.path());
+    cdno_in(dir.path())
+        .args(["commit", "create", "--title", "Hand in the report"])
+        .args(["--due", "2026-12-01", "--context", "work"])
+        .args(["--slug", "surrogate-model"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("commitments/surrogate-model.md"));
+    assert!(dir.path().join("commitments/surrogate-model.md").is_file());
 }

@@ -41,6 +41,10 @@ pub enum StewardshipCommands {
         /// Without this flag the dashboard is flat.
         #[arg(long)]
         tracking: bool,
+        /// Slug for the dashboard (its file or folder name); derived from
+        /// the name when omitted.
+        #[arg(long)]
+        slug: Option<String>,
         /// Value for a custom template's prompted variable
         /// (`[variables.prompt]`), repeatable: `--var name=value`.
         #[arg(long = "var", value_parser = crate::prompt::parse_key_val)]
@@ -114,8 +118,19 @@ pub fn run(
             name,
             context,
             tracking,
+            slug,
             var,
-        } => create(&vault, at, name, context, tracking, var, interactive, json),
+        } => create(
+            &vault,
+            at,
+            name,
+            context,
+            tracking,
+            slug,
+            var,
+            interactive,
+            json,
+        ),
         StewardshipCommands::List => {
             let summaries = vault
                 .list_stewardships(at.date())
@@ -165,6 +180,7 @@ fn create(
     name: Option<String>,
     context: Option<Context>,
     tracking: bool,
+    slug: Option<String>,
     var: Vec<(String, String)>,
     interactive: bool,
     json: bool,
@@ -202,11 +218,18 @@ fn create(
     }
 
     let path = if tracking {
-        vault.create_stewardship_expanded_with_vars(at, &name, context, &template_vars, None)
+        vault.create_stewardship_expanded_with_vars(
+            at,
+            &name,
+            context,
+            &template_vars,
+            slug.as_deref(),
+        )
     } else {
-        vault.create_stewardship_flat_with_vars(at, &name, context, &template_vars, None)
+        vault.create_stewardship_flat_with_vars(at, &name, context, &template_vars, slug.as_deref())
     }
-    .context("creating stewardship")?;
+    .context("creating stewardship")
+    .map_err(|e| crate::commands::rejection::slug_refusal(e, json))?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())
 }
