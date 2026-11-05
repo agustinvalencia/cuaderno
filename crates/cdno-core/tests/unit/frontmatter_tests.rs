@@ -1,5 +1,5 @@
 use cdno_core::error::{ParseError, ValidationError};
-use cdno_core::frontmatter::{Frontmatter, split_frontmatter};
+use cdno_core::frontmatter::{Frontmatter, split_frontmatter, yaml_scalar_is_string};
 
 #[test]
 fn parses_minimal_frontmatter_with_body() {
@@ -160,4 +160,14 @@ fn split_frontmatter_returns_the_raw_block_and_the_untouched_body() {
     assert_eq!(split_frontmatter("---\n---\nbody"), Some(("", "body")));
     assert_eq!(split_frontmatter("# T\n"), None);
     assert_eq!(split_frontmatter("---\nunclosed: 1\n"), None);
+}
+
+#[test]
+fn yaml_scalar_is_string_asks_the_parser() {
+    for typed in ["true", "0o17", "1e-3", "null", "~", "2026", "", "[a"] {
+        assert!(!yaml_scalar_is_string(typed), "{typed:?}");
+    }
+    for text in ["y", "n", "surrogate-model", "2026-11", "v2"] {
+        assert!(yaml_scalar_is_string(text), "{text:?}");
+    }
 }

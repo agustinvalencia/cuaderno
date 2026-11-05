@@ -6,6 +6,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- A derived slug now steps past a folder note's name (`surrogate-model-2` beside
+  `portfolios/surrogate-model/`), so a question created after a portfolio of the same name gets
+  `-2`. A slug-shaped title or reference longer than six words is no longer truncated, in a title
+  and in a stewardship reference, a commitment's `project:` / `stewardship:` value and a tracking
+  activity slug (RFC 0007, #849).
+
 ## [0.43.0] - 2026-10-20
 
 ### Added

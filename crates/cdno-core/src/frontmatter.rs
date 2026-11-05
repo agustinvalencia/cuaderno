@@ -137,6 +137,13 @@ pub fn split_frontmatter(raw: &str) -> Option<(&str, &str)> {
     split_at_closing_delim(strip_opening_delim(raw)?)
 }
 
+/// Whether `text`, as a bare YAML scalar, is read back as a string by the
+/// parser frontmatter goes through. `true`, `null`, `~`, `0o17` and `1e-3`
+/// are not; a text that fails to parse, or is empty, counts as not a string.
+pub fn yaml_scalar_is_string(text: &str) -> bool {
+    matches!(serde_yaml::from_str::<Value>(text), Ok(Value::String(_)))
+}
+
 fn deserialise_field<T: DeserializeOwned>(name: &str, value: &Value) -> Result<T, ValidationError> {
     serde_yaml::from_value(value.clone()).map_err(|e| ValidationError::InvalidField {
         field: name.to_owned(),

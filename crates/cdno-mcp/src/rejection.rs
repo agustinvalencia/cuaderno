@@ -574,6 +574,10 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         DomainError::MigrationTouchesProtectedPath { .. }
         | DomainError::ConfigChangedDuringMigration
         | DomainError::MigrationStampInvalid { .. } => return None,
+
+        // Stopgap until T4 (#853) adds the `invalid_slug` / `slug_taken`
+        // codes (RFC 0007); delete this arm then. Nothing produces these yet.
+        DomainError::InvalidSlug { .. } | DomainError::SlugTaken { .. } => return None,
     };
 
     let message = rejection_message(code, e);

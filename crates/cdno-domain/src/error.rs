@@ -71,6 +71,22 @@ impl DomainError {
 /// domain-specific variants for business rule violations.
 #[derive(Debug, thiserror::Error)]
 pub enum DomainError {
+    /// A slug the person typed breaks a naming rule (RFC 0007 §5.7).
+    #[error("invalid slug '{slug}': {why}")]
+    InvalidSlug {
+        slug: String,
+        why: crate::vault::slug::SlugRejection,
+    },
+
+    /// A slug the person typed is already another note's name: `holder` is
+    /// that note, `kind` how it holds the name (RFC 0007 §6.2).
+    #[error("slug '{slug}' is taken by '{holder}' (as its {})", .kind.as_str())]
+    SlugTaken {
+        slug: String,
+        holder: VaultPath,
+        kind: crate::vault::slug::TakenBy,
+    },
+
     #[error("project cap reached ({current}/{max}), counted: {active_projects:?}")]
     ProjectCapReached {
         current: usize,
