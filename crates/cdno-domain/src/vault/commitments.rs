@@ -148,6 +148,7 @@ impl Vault {
             project,
             stewardship,
             &HashMap::new(),
+            None,
         )
     }
 
@@ -163,12 +164,13 @@ impl Vault {
         project: Option<&str>,
         stewardship: Option<&str>,
         prompted: &HashMap<String, String>,
+        slug: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let title = title.trim();
         // Globally-unique stem (#225) so a later move to `_done/` keeps the
         // commitment's backlinks resolvable.
-        let slug = self.unique_slug(&slugify(title))?;
+        let slug = self.explicit_or_derived_slug(slug, title)?;
         let path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::COMMITMENTS))?;
         if self.store.exists(&path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(

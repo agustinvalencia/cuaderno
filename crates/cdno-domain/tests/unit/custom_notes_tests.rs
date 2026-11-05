@@ -1,6 +1,7 @@
 //! Tests for the generic create/list path for config-defined custom note
 //! types (`Vault::create_custom_note*`, `list_custom_notes`).
 
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -8,6 +9,7 @@ use cdno_core::config::{CustomNoteType, VaultConfig};
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_domain::TakenBy;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use chrono::{NaiveDate, NaiveDateTime};
@@ -371,6 +373,7 @@ fn renders_prompted_vars_from_a_custom_template() {
             &prompted,
             None,
             None,
+            None,
         )
         .expect("create with vars");
     assert!(
@@ -645,6 +648,7 @@ fn create_with(
         &HashMap::new(),
         body,
         origin,
+        None,
     )
 }
 
@@ -1294,6 +1298,7 @@ fn create_body_source(
         prompted,
         body,
         None,
+        None,
     )?;
     Ok(store.read_file(&path).unwrap())
 }
@@ -1576,4 +1581,78 @@ fn a_numeric_field_rendered_by_the_template_is_left_as_a_number() {
         content.contains("\npriority: 5\ndone: true\norigin: '[[journal/2026/daily/2026-09-02#Woodbury identity]]'\n"),
         "{content}"
     );
+}
+
+/// Every file in the store and its content.
+fn snapshot(store: &Arc<dyn VaultStore>) -> BTreeMap<String, String> {
+    store
+        .walk_dir(&VaultPath::root())
+        .unwrap()
+        .into_iter()
+        .map(|p| {
+            let content = store.read_file(&p).unwrap();
+            (p.to_string(), content)
+        })
+        .collect()
+}
+
+#[test]
+fn an_explicit_slug_names_the_file_and_fills_the_slug_placeholder() {
+    let template = "---\ntype: person\nname: {{name}}\nslug: {{slug}}\n---\n# {{title}}\n";
+    let (vault, store) = vault_with(
+        config_with_person(),
+        &[(".cuaderno/templates/person.md", template)],
+    );
+    let title = "Ada Lovelace, analyst of the surrogate model";
+
+    let path = vault
+        .create_custom_note_with_vars(
+            at(),
+            "person",
+            title,
+            &fields(&[("name", "Ada")]),
+            &HashMap::new(),
+            None,
+            None,
+            Some("surrogate-calibration"),
+        )
+        .expect("create succeeds");
+
+    assert_eq!(path, vp("people/surrogate-calibration.md"));
+    let raw = store.read_file(&path).unwrap();
+    assert!(raw.contains("slug: surrogate-calibration"), "got {raw}");
+    assert!(raw.contains(&format!("# {title}")), "got {raw}");
+}
+
+#[test]
+fn an_explicit_slug_that_is_taken_is_refused_not_suffixed() {
+    let (vault, store) = vault_with(config_with_person(), &[]);
+    let create = |title: &str| {
+        vault.create_custom_note_with_vars(
+            at(),
+            "person",
+            title,
+            &fields(&[("name", "Ada")]),
+            &HashMap::new(),
+            None,
+            None,
+            Some("surrogate-calibration"),
+        )
+    };
+    create("Ada").expect("first create");
+    let before = snapshot(&store);
+
+    let err = create("Grace").expect_err("second create refused");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken {
+                kind: TakenBy::Stem,
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
 }

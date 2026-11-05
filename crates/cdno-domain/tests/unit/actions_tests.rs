@@ -3,6 +3,7 @@
 //! archival of an attached note (death). `MemoryVaultStore` /
 //! `MemoryIndex` keep the suite fast and deterministic.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cdno_core::config::VaultConfig;
@@ -11,11 +12,13 @@ use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::ResumedKind;
+use cdno_domain::TakenBy;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{ActionFrontmatter, ActionStatus, EnergyLevel, ProjectStatus};
 use cdno_domain::vault::WriteOutcome;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use std::collections::HashMap;
 
 use super::support::{FailingStore, lint_day};
 
@@ -2757,4 +2760,151 @@ fn focus_remedy_is_derived_from_same_action_and_carried() {
     assert_eq!(FocusRemedy::AlreadyFocused.as_str(), "already_focused");
     assert_eq!(FocusRemedy::Resume.as_str(), "resume_action");
     assert_eq!(FocusRemedy::Switch.as_str(), "switch_action");
+}
+
+/// Every file in the store and its content.
+fn snapshot(store: &Arc<dyn VaultStore>) -> BTreeMap<String, String> {
+    store
+        .walk_dir(&VaultPath::root())
+        .unwrap()
+        .into_iter()
+        .map(|p| {
+            let content = store.read_file(&p).unwrap();
+            (p.to_string(), content)
+        })
+        .collect()
+}
+
+#[test]
+fn an_explicit_slug_names_the_action_note() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    let title = "Calibrate the surrogate model against the high-fidelity thermal runs";
+
+    let path = vault
+        .add_action_with_note_and_vars(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            title,
+            EnergyLevel::Deep,
+            &HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+        .expect("add succeeds");
+
+    assert_eq!(path, vp("actions/surrogate-calibration.md"));
+    assert!(store.read_file(&path).unwrap().contains(title));
+    assert!(
+        store
+            .read_file(&vp("projects/foo.md"))
+            .unwrap()
+            .contains("[[actions/surrogate-calibration]]")
+    );
+}
+
+#[test]
+fn an_explicit_slug_that_is_taken_is_refused_not_suffixed() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    let add = |title: &str| {
+        vault.add_action_with_note_and_vars(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            title,
+            EnergyLevel::Deep,
+            &HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+    };
+    add("Calibrate the surrogate model").expect("first add");
+    let before = snapshot(&store);
+
+    let err = add("Another action").expect_err("second add refused");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken {
+                kind: TakenBy::Stem,
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
+}
+
+#[test]
+fn promoting_with_an_explicit_slug_names_the_action_note() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action(
+            dt(2026, 5, 28, 9, 0),
+            "foo",
+            "Calibrate the surrogate model",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let path = vault
+        .promote_action_with_vars(
+            dt(2026, 5, 28, 10, 0),
+            "foo",
+            "calibrate",
+            &HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+        .expect("promote succeeds");
+
+    assert_eq!(path, vp("actions/surrogate-calibration.md"));
+    assert!(
+        store
+            .read_file(&vp("projects/foo.md"))
+            .unwrap()
+            .contains("[[actions/surrogate-calibration]]")
+    );
+}
+
+#[test]
+fn promoting_with_a_taken_explicit_slug_is_refused_not_suffixed() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action_with_note_and_vars(
+            dt(2026, 5, 28, 8, 0),
+            "foo",
+            "Hold the name",
+            EnergyLevel::Deep,
+            &HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+        .unwrap();
+    vault
+        .add_action(
+            dt(2026, 5, 28, 9, 0),
+            "foo",
+            "Calibrate the surrogate model",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+    let before = snapshot(&store);
+
+    let err = vault
+        .promote_action_with_vars(
+            dt(2026, 5, 28, 10, 0),
+            "foo",
+            "calibrate",
+            &HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+        .expect_err("promote refused");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken {
+                kind: TakenBy::Stem,
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
 }

@@ -504,6 +504,7 @@ fn create_with_vars_renders_a_prompted_variable() {
             Context::Work,
             None,
             &prompted(&[("ticket", "ABC-1")]),
+            None,
         )
         .expect("create project");
     let content = store.read_file(&path).unwrap();
@@ -636,6 +637,7 @@ fn create_commitment_with_vars_renders_a_prompted_variable() {
             None,
             None,
             &prompted(&[("ticket", "ABC-9")]),
+            None,
         )
         .expect("commitment");
     assert!(
@@ -775,7 +777,13 @@ fn promote_action_with_vars_renders_a_prompted_variable() {
         .expect("bullet");
 
     let path = vault
-        .promote_action_with_vars(at, "proj", "profile", &prompted(&[("ticket", "PR-1")]))
+        .promote_action_with_vars(
+            at,
+            "proj",
+            "profile",
+            &prompted(&[("ticket", "PR-1")]),
+            None,
+        )
         .expect("promote");
     assert!(
         store.read_file(&path).unwrap().contains("ticket: PR-1"),
@@ -809,6 +817,7 @@ fn add_action_with_note_and_vars_renders_a_prompted_variable() {
             "Profile the assembly",
             EnergyLevel::Deep,
             &prompted(&[("ticket", "AN-1")]),
+            None,
         )
         .expect("add action with note");
     assert!(
@@ -1965,6 +1974,7 @@ fn a_prompted_value_wins_over_a_schema_field_of_the_same_name() {
             QuestionDomain::Research,
             "Does it hold?",
             &prompted(&[("extra", "USER-ANSWER")]),
+            None,
         )
         .expect("create question");
     let content = store.read_file(&path).unwrap();

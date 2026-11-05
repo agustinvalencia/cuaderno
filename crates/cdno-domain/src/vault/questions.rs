@@ -30,7 +30,6 @@ use crate::note_type::NoteType;
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::projects::rewrite_field_in_frontmatter;
-use super::slug::slugify;
 
 /// One row in the `Vault::active_questions` / `Vault::list_questions`
 /// output. Carries enough for a renderer to display the question
@@ -68,7 +67,7 @@ impl Vault {
         domain: QuestionDomain,
         text: &str,
     ) -> Result<VaultPath, DomainError> {
-        self.create_question_with_vars(at, domain, text, &HashMap::new())
+        self.create_question_with_vars(at, domain, text, &HashMap::new(), None)
     }
 
     /// As [`create_question`](Self::create_question), with caller-supplied
@@ -79,6 +78,7 @@ impl Vault {
         domain: QuestionDomain,
         text: &str,
         prompted: &HashMap<String, String>,
+        slug: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let text = text.trim();
@@ -86,7 +86,7 @@ impl Vault {
             return Err(DomainError::EmptyField { field: "question" });
         }
         // Globally-unique stem (#225) so backlinks stay resolvable.
-        let slug = self.unique_slug(&slugify(text))?;
+        let slug = self.explicit_or_derived_slug(slug, text)?;
 
         // Cross-domain collision check: even though we'll write under
         // `<domain>/`, the slug must be globally unique so

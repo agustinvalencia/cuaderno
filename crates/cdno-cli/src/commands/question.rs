@@ -136,7 +136,7 @@ fn create(
         return Ok(());
     }
     let path = vault
-        .create_question_with_vars(at, domain, &text, &template_vars)
+        .create_question_with_vars(at, domain, &text, &template_vars, None)
         .context("creating question")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())

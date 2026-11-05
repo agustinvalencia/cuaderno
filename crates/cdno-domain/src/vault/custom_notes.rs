@@ -17,7 +17,6 @@ use cdno_core::template::VariableContext;
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
-use super::slug::slugify;
 use super::templating::custom_template_filename;
 use crate::error::DomainError;
 
@@ -49,7 +48,16 @@ impl Vault {
         title: &str,
         fields: &HashMap<String, String>,
     ) -> Result<VaultPath, DomainError> {
-        self.create_custom_note_with_vars(at, type_name, title, fields, &HashMap::new(), None, None)
+        self.create_custom_note_with_vars(
+            at,
+            type_name,
+            title,
+            fields,
+            &HashMap::new(),
+            None,
+            None,
+            None,
+        )
     }
 
     /// Whether creating a note of custom type `type_name` with these
@@ -189,7 +197,7 @@ impl Vault {
     /// - [`DomainError::MissingRequiredField`] — a declared `required` field is
     ///   absent or empty.
     /// - [`StoreError::AlreadyExists`] — a note with the same slug exists.
-    #[allow(clippy::too_many_arguments)] // signature fixed by RFC 0002 T6: two trailing options
+    #[allow(clippy::too_many_arguments)] // signature fixed by RFC 0002 T6: trailing options
     pub fn create_custom_note_with_vars(
         &self,
         at: NaiveDateTime,
@@ -199,6 +207,7 @@ impl Vault {
         prompted: &HashMap<String, String>,
         body: Option<&str>,
         origin: Option<&str>,
+        slug: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
 
@@ -251,7 +260,7 @@ impl Vault {
         // resolved against its real value below.
         let date = at.date().format("%Y-%m-%d").to_string();
         // Globally-unique stem (#225) so backlinks stay resolvable.
-        let slug = self.unique_slug(&slugify(title))?;
+        let slug = self.explicit_or_derived_slug(slug, title)?;
 
         // Every `required` field must end up with a non-empty value: the
         // caller's, or, for a name in `ENGINE_SUPPLIED_FIELDS`, the value

@@ -3,6 +3,7 @@
 //! `MemoryIndex` so the suite stays fast and deterministic — no
 //! disk I/O.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cdno_core::config::VaultConfig;
@@ -11,10 +12,12 @@ use cdno_core::frontmatter::Frontmatter;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_domain::TakenBy;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{CommitmentFrontmatter, CommitmentStatus, Context};
 use cdno_domain::{CommitmentSource, Vault};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use std::collections::HashMap;
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
@@ -2061,4 +2064,72 @@ fn a_map_with_an_unreadable_holder_keeps_its_dates_in_the_register() {
             ),
         ],
     );
+}
+
+/// Every file in the store and its content.
+fn snapshot(store: &Arc<dyn VaultStore>) -> BTreeMap<String, String> {
+    store
+        .walk_dir(&VaultPath::root())
+        .unwrap()
+        .into_iter()
+        .map(|p| {
+            let content = store.read_file(&p).unwrap();
+            (p.to_string(), content)
+        })
+        .collect()
+}
+
+#[test]
+fn an_explicit_slug_names_the_file() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let title = "Deliver the surrogate model calibration report to the review board";
+
+    let path = vault
+        .create_commitment_with_vars(
+            dt(2026, 5, 2, 9, 0),
+            title,
+            NaiveDate::from_ymd_opt(2026, 6, 30).unwrap(),
+            Context::Work,
+            None,
+            None,
+            &HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+        .expect("create succeeds");
+
+    assert_eq!(path, vp("commitments/surrogate-calibration.md"));
+    assert!(store.read_file(&path).unwrap().contains(title));
+}
+
+#[test]
+fn an_explicit_slug_that_is_taken_is_refused_not_suffixed() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let create = |title: &str| {
+        vault.create_commitment_with_vars(
+            dt(2026, 5, 2, 9, 0),
+            title,
+            NaiveDate::from_ymd_opt(2026, 6, 30).unwrap(),
+            Context::Work,
+            None,
+            None,
+            &HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+    };
+    create("Deliver the report").expect("first create");
+    let before = snapshot(&store);
+
+    let err = create("Another promise").expect_err("second create refused");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken {
+                kind: TakenBy::Stem,
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
 }

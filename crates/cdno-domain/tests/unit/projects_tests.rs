@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cdno_core::config::{StateOverflow, VaultConfig};
@@ -6,6 +7,7 @@ use cdno_core::frontmatter::Frontmatter;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_domain::TakenBy;
 use cdno_domain::TopAction;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
@@ -13,6 +15,7 @@ use cdno_domain::frontmatter::{
     Context, EnergyLevel, HolderSentinels, ProjectFrontmatter, ProjectStatus,
 };
 use chrono::NaiveDate;
+use std::collections::HashMap;
 
 use super::support::{FailingStore, RacingStore, lint_day};
 
@@ -6063,4 +6066,94 @@ fn project_summary_waiting_on_empty_table() {
         let summary = vault.project_summary("harbour").expect("summary");
         assert_eq!(summary.waiting_on_empty, expected, "{label}");
     }
+}
+
+/// Every file in the store and its content.
+fn snapshot(store: &Arc<dyn VaultStore>) -> BTreeMap<String, String> {
+    store
+        .walk_dir(&VaultPath::root())
+        .unwrap()
+        .into_iter()
+        .map(|p| {
+            let content = store.read_file(&p).unwrap();
+            (p.to_string(), content)
+        })
+        .collect()
+}
+
+#[test]
+fn an_explicit_slug_names_the_file() {
+    let (vault, store) = vault_with_seeded_store(&[], VaultConfig::default());
+    let title = "Calibrate the surrogate model against the high-fidelity thermal runs";
+
+    let path = vault
+        .create_project_with_vars(
+            dt(2026, 4, 28, 9, 0),
+            title,
+            Context::Work,
+            None,
+            &HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+        .expect("create succeeds");
+
+    assert_eq!(path, vp("projects/surrogate-calibration.md"));
+    let raw = store.read_file(&path).unwrap();
+    assert!(
+        raw.contains(&format!("# {title}")),
+        "full title kept: {raw}"
+    );
+}
+
+#[test]
+fn an_explicit_slug_that_is_taken_is_refused_not_suffixed() {
+    let (vault, store) = vault_with_seeded_store(&[], VaultConfig::default());
+    let create = |title: &str| {
+        vault.create_project_with_vars(
+            dt(2026, 4, 28, 9, 0),
+            title,
+            Context::Work,
+            None,
+            &HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+    };
+    create("Calibrate the surrogate model").expect("first create");
+    let before = snapshot(&store);
+
+    let err = create("Another title").expect_err("second create refused");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken { slug, holder, kind: TakenBy::Stem }
+                if slug == "surrogate-calibration"
+                    && *holder == vp("projects/surrogate-calibration.md")
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
+}
+
+#[test]
+fn an_invalid_slug_is_refused_before_anything_is_written() {
+    let (vault, store) = vault_with_seeded_store(&[], VaultConfig::default());
+    let before = snapshot(&store);
+
+    let err = vault
+        .create_project_with_vars(
+            dt(2026, 4, 28, 9, 0),
+            "Surrogate model",
+            Context::Work,
+            None,
+            &HashMap::new(),
+            Some("Surrogate Model"),
+        )
+        .expect_err("invalid slug refused");
+
+    assert!(
+        matches!(&err, DomainError::InvalidSlug { slug, .. } if slug == "Surrogate Model"),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
 }

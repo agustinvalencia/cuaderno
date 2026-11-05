@@ -22,7 +22,6 @@ use crate::note_type::NoteType;
 
 use super::super::Vault;
 use super::super::index_entry::build_index_entry_for;
-use super::super::slug::slugify;
 use super::milestones::stage_milestone_index_rows;
 use super::{
     MILESTONES_SECTION, is_closed_project_path, is_under_projects_done,
@@ -105,7 +104,7 @@ impl Vault {
         context: Context,
         core_question: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
-        self.create_project_with_vars(at, title, context, core_question, &HashMap::new())
+        self.create_project_with_vars(at, title, context, core_question, &HashMap::new(), None)
     }
 
     /// As [`create_project`](Self::create_project), but with caller-supplied
@@ -119,6 +118,7 @@ impl Vault {
         context: Context,
         core_question: Option<&str>,
         prompted: &HashMap<String, String>,
+        slug: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         let today = at.date();
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
@@ -135,7 +135,7 @@ impl Vault {
 
         // Globally-unique stem (#225) so a later park to `_parked/` keeps
         // the project's backlinks resolvable.
-        let slug = self.unique_slug(&slugify(title))?;
+        let slug = self.explicit_or_derived_slug(slug, title)?;
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
         let parked_path =
             VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
