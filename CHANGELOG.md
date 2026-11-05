@@ -54,8 +54,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   the stored source text.
 
 - **An alias is a reserved name** (RFC 0007 stage S3, #862). An explicit slug equal to another
-  note's alias is refused (`slug_taken` with `kind: alias`) and a derived slug steps past it, so an
-  old link can never change referent.
+  note's alias is refused (`slug_taken` with `kind: alias`). A derived slug steps past it, except for portfolios
+  and stewardships, whose derived slug is never suffixed: those are refused the same way. So an old
+  link can never change referent, whatever the type created.
 
 ### Fixed
 
@@ -71,8 +72,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Internal
 
-- `Vault::notes_tagged` expands a `<type>/<slug>` tag query through the note's aliases; no surface
-  uses it yet (#862).
+- `Vault::notes_tagged` expands a `<type>/<slug>` tag query through the names a note answers to
+  by the wikilink rule (an alias counts unless a note's stem shadows it or another note shares it);
+  no surface uses it yet (#862).
 - Index migration 003 adds `links.via_alias` (0 on every existing row), set when a link resolved
   through an alias; `LinkEntry`, `LinkResolutionUpdate` and the new `LinkResolution` row of
   `link_resolutions` carry it, and resolution takes an `AliasMap` beside the path set (#860).

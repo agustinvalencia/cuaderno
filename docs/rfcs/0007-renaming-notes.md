@@ -475,7 +475,7 @@ reason, and the changelog says so.
 - **D2 — `aliases` as the field name**, for Obsidian's benefit. Agreed by the review.
 - **D3 — a rename changes the slug only.** Three seats chose slug only for v1; one would add
   `--title`, logged as a `title:` continuation, and accepts slug only if retitling gets its own
-  issue. **Decided by the maintainer: slug only.** Retitling gets an issue of its own.
+  issue. **Decided by the maintainer: slug only.** Retitling gets an issue of its own (#896).
 - **D4 — freshness.** Refuse only when known to be behind; warn and proceed when unknown; never
   refuse for a dirty tree (§5.8). Agreed by the review.
 - **D5 — an alias is reserved while listed.** Releasing it would let an old link change referent

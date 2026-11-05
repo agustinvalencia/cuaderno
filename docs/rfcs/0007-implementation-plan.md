@@ -667,8 +667,15 @@ query to the slug plus its aliases before calling the index, so the index stays 
 - `cargo test -p cdno-domain --test unit -- unit::projects_tests`:
   `an_alias_is_a_taken_name_for_an_explicit_slug` (`SlugTaken { kind: Alias }`) and
   `a_derived_slug_steps_past_an_alias` (`-2`).
-- `cargo test -p cdno-domain --test unit -- unit::actions_tests`:
-  `a_tag_query_by_old_name_finds_the_note`.
+- `cargo test -p cdno-domain --test unit -- unit::projects_tests`:
+  `an_alias_on_another_note_type_blocks_an_explicit_project_slug`.
+- `cargo test -p cdno-domain --test unit -- unit::stewardships_tests`:
+  `a_derived_stewardship_slug_that_is_an_alias_is_refused`.
+- `cargo test -p cdno-domain --test unit -- unit::portfolios_tests`:
+  `a_derived_portfolio_slug_that_is_an_alias_is_refused`.
+- `cargo test -p cdno-domain --test unit -- unit::links_tests`:
+  `a_tag_query_by_old_name_finds_the_note`, `a_shadowed_alias_is_not_expanded`,
+  `a_shared_alias_is_not_expanded`, `a_stem_beats_an_alias_in_tag_expansion`.
 - Mutation: drop aliases from `taken_names`; the first test fails.
 
 **Correct means.** An old reference can never silently change referent, because its name can

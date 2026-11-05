@@ -1681,3 +1681,27 @@ fn create_portfolio_project_by_former_name_writes_the_current_path() {
         "{portfolio}"
     );
 }
+
+#[test]
+fn a_derived_portfolio_slug_that_is_an_alias_is_refused() {
+    use cdno_domain::TakenBy;
+    let (vault, store) = vault_with_seeded_store(&[(
+        "projects/surrogate-model.md",
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\naliases: [old]\n---\n\n# Surrogate model\n",
+    )]);
+    let before = snapshot(&store);
+
+    let err = vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Old", None)
+        .expect_err("an alias is taken");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken { slug, holder, kind: TakenBy::Alias }
+                if slug == "old" && *holder == vp("projects/surrogate-model.md")
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
+}

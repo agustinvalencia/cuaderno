@@ -224,8 +224,12 @@ impl Vault {
     /// creates that deliberately skip [`unique_slug`](Self::unique_slug)
     /// (portfolios and stewardships): without `explicit` the slug is the raw
     /// [`slugify`] of `text`, unsuffixed, and the caller's own
-    /// `AlreadyExists` guard stays the collision check. With it, the same
-    /// validate-and-check as every other create.
+    /// `AlreadyExists` guard stays the collision check for stems and folders.
+    /// The one name it does refuse is an alias: a derived slug that is some
+    /// note's alias fails with [`DomainError::SlugTaken`] (`kind: Alias`),
+    /// because creating it would move every old link to that alias onto the
+    /// new note (RFC 0007 §5.5). With `explicit`, the same validate-and-check
+    /// as every other create.
     pub(in crate::vault) fn explicit_or_raw_slug(
         &self,
         explicit: Option<&str>,
@@ -233,7 +237,17 @@ impl Vault {
     ) -> Result<String, DomainError> {
         match explicit {
             Some(slug) => self.checked_explicit_slug(slug),
-            None => Ok(slugify(text)),
+            None => {
+                let slug = slugify(text);
+                if let Some((holder, TakenBy::Alias)) = self.taken_names()?.remove(&slug) {
+                    return Err(DomainError::SlugTaken {
+                        slug,
+                        holder,
+                        kind: TakenBy::Alias,
+                    });
+                }
+                Ok(slug)
+            }
         }
     }
 

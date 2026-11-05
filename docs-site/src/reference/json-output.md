@@ -60,7 +60,7 @@ MCP server returns, and `details` depends on the `code`:
 | `code` | `details` | When |
 |---|---|---|
 | `invalid_slug` | `slug`, `why` | The slug breaks the shape rule; `why` says which part. |
-| `slug_taken` | `slug`, `holder`, `kind` | Another note already holds the name. `holder` is that note's path; `kind` is `stem` (its filename) or `folder` (the folder of a folder note). |
+| `slug_taken` | `slug`, `holder`, `kind` | Another note already holds the name. `holder` is that note's path; `kind` is `stem` (its filename), `folder` (the folder of a folder note) or `alias` (a former name another note still lists). |
 | `portfolio_slug_mismatch` | `question_slug`, `slug` | `portfolio create --question <question-slug>` with an explicit `--slug` that is not that question's slug. |
 | `slug_given_twice` | `field` | `note create` given `--slug` beside `--field slug=…`; `field` is `slug`. |
 

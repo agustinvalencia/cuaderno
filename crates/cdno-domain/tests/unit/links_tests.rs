@@ -211,7 +211,7 @@ fn a_tag_without_a_slash_is_passed_through() {
 }
 
 #[test]
-fn tag_results_are_deduplicated_in_index_order() {
+fn tag_results_are_deduplicated_in_path_order() {
     let vault = vault_with(&[
         ("actions/new.md", RENAMED_ACTION),
         (
@@ -226,5 +226,68 @@ fn tag_results_are_deduplicated_in_index_order() {
             vp("journal/2026/daily/2026-04-02.md"),
             vp("journal/2026/daily/2026-04-03.md"),
         ]
+    );
+}
+
+fn action_with_aliases(aliases: &str) -> String {
+    format!(
+        "---\ntype: action\nstatus: open\ncreated: 2026-04-01\naliases: [{aliases}]\n---\n\n# Surrogate model\n"
+    )
+}
+
+const PLAIN_ACTION: &str =
+    "---\ntype: action\nstatus: open\ncreated: 2026-04-01\n---\n\n# Surrogate model\n";
+
+#[test]
+fn a_shadowed_alias_is_not_expanded() {
+    let vault = vault_with(&[
+        ("actions/new.md", &action_with_aliases("y")),
+        ("actions/y.md", PLAIN_ACTION),
+        (
+            "journal/2026/daily/2026-04-02.md",
+            &daily("About #action/y."),
+        ),
+    ]);
+    assert!(
+        vault.notes_tagged("action/new").unwrap().is_empty(),
+        "y resolves to actions/y.md, not to new"
+    );
+    assert_eq!(
+        vault.notes_tagged("action/y").unwrap(),
+        vec![vp("journal/2026/daily/2026-04-02.md")]
+    );
+}
+
+#[test]
+fn a_shared_alias_is_not_expanded() {
+    let vault = vault_with(&[
+        ("actions/a.md", &action_with_aliases("old")),
+        ("actions/b.md", &action_with_aliases("old")),
+        ("journal/2026/daily/2026-04-02.md", &daily("#action/old")),
+        ("journal/2026/daily/2026-04-03.md", &daily("#action/a")),
+        ("journal/2026/daily/2026-04-04.md", &daily("#action/b")),
+    ]);
+    assert_eq!(
+        vault.notes_tagged("action/old").unwrap(),
+        vec![vp("journal/2026/daily/2026-04-02.md")],
+        "only the literal tag"
+    );
+}
+
+#[test]
+fn a_stem_beats_an_alias_in_tag_expansion() {
+    let vault = vault_with(&[
+        ("actions/x.md", &action_with_aliases("xx")),
+        ("actions/other.md", &action_with_aliases("x, other-old")),
+        ("journal/2026/daily/2026-04-02.md", &daily("#action/xx")),
+        (
+            "journal/2026/daily/2026-04-03.md",
+            &daily("#action/other-old"),
+        ),
+    ]);
+    assert_eq!(
+        vault.notes_tagged("action/x").unwrap(),
+        vec![vp("journal/2026/daily/2026-04-02.md")],
+        "x names the stem note only"
     );
 }
