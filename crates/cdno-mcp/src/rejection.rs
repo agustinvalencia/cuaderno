@@ -173,7 +173,7 @@ fn rejection_message(code: RejectionCode, e: &DomainError) -> String {
         // (RFC 0007 §5.7): a collision is refused, not suffixed, so the agent
         // must not retry with a `-2` of its own.
         RejectionCode::InvalidSlug => {
-            format!("{e}; ask the person for another name, do not alter or suffix it yourself")
+            format!("{e}; fix the shape as the message says, or ask the person for another name")
         }
         RejectionCode::SlugTaken => format!(
             "{e}; if that is the note you meant, use it; otherwise ask the person for another name, do not suffix it yourself"
