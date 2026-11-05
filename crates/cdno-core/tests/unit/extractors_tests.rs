@@ -3,8 +3,9 @@ use std::collections::HashSet;
 use std::ops::Range;
 
 use cdno_core::extractors::{
-    AddressEdit, WikilinkRaw, differs_only_by, extract_frontmatter_wikilinks, extract_inline_tags,
-    extract_wikilinks, resolve_wikilinks, rewrite_wikilink_addresses, wikilink_spans,
+    AddressEdit, AliasMap, WikilinkRaw, differs_only_by, extract_frontmatter_wikilinks,
+    extract_inline_tags, extract_wikilinks, resolve_wikilinks, rewrite_wikilink_addresses,
+    wikilink_spans,
 };
 use cdno_core::path::VaultPath;
 use proptest::prelude::*;
@@ -270,6 +271,7 @@ fn resolve_picks_exact_path_match() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("projects/foo.md")));
@@ -285,6 +287,7 @@ fn resolve_strips_heading_anchor() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("projects/foo.md")));
     assert_eq!(got[0].target_raw, "projects/foo#Some Heading");
@@ -300,6 +303,7 @@ fn resolve_strips_empty_anchor() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("projects/foo.md")));
 }
@@ -314,6 +318,7 @@ fn resolve_strips_block_anchor() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("projects/foo.md")));
 }
@@ -328,6 +333,7 @@ fn resolve_anchor_on_folder_target_hits_index_note() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(
         got[0].resolved_path.as_ref(),
@@ -345,6 +351,7 @@ fn resolve_same_note_anchor_is_none() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert!(got[0].resolved_path.is_none(), "got: {:?}", got[0]);
 }
@@ -359,6 +366,7 @@ fn resolve_anchor_does_not_break_last_segment_fallback() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(
         got[0].resolved_path.as_ref(),
@@ -376,6 +384,7 @@ fn resolve_exact_path_with_hash_in_filename_wins_over_anchor_split() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(
         got[0].resolved_path.as_ref(),
@@ -393,6 +402,7 @@ fn resolve_anchor_with_label_keeps_label() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("projects/foo.md")));
     assert_eq!(got[0].label, Some("Label".to_string()));
@@ -408,6 +418,7 @@ fn resolve_trims_space_before_anchor() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("projects/foo.md")));
 }
@@ -422,6 +433,7 @@ fn resolve_picks_unique_basename_when_no_exact_match() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("notes/foo.md")));
 }
@@ -436,6 +448,7 @@ fn resolve_returns_none_when_basename_is_ambiguous() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert!(got[0].resolved_path.is_none(), "got: {:?}", got[0]);
 }
@@ -450,6 +463,7 @@ fn resolve_returns_none_when_no_match_at_all() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert!(got[0].resolved_path.is_none());
     assert_eq!(got[0].target_raw, "missing");
@@ -468,6 +482,7 @@ fn resolve_qualified_target_falls_back_to_a_relocated_note() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(
         got[0].resolved_path.as_ref(),
@@ -487,6 +502,7 @@ fn resolve_qualified_target_is_none_when_last_segment_is_ambiguous() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert!(got[0].resolved_path.is_none(), "got: {:?}", got[0]);
 }
@@ -504,6 +520,7 @@ fn resolve_prefers_exact_path_over_last_segment_fallback() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("actions/foo.md")));
 }
@@ -526,6 +543,7 @@ fn resolve_folder_target_to_its_index_note() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(
         got[0].resolved_path.as_ref(),
@@ -549,6 +567,7 @@ fn resolve_folder_target_generalises_beyond_portfolios() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(
         got[0].resolved_path.as_ref(),
@@ -568,6 +587,7 @@ fn resolve_prefers_flat_note_over_folder_index() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(
         got[0].resolved_path.as_ref(),
@@ -588,6 +608,7 @@ fn resolve_prefers_folder_index_over_last_segment_fallback() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(
         got[0].resolved_path.as_ref(),
@@ -605,9 +626,153 @@ fn resolve_preserves_label_through_resolution() {
             is_embed: false,
         }],
         &vault,
+        &AliasMap::default(),
     );
     assert_eq!(got[0].label.as_deref(), Some("My Foo"));
     assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("notes/foo.md")));
+}
+
+// ── the alias rule (RFC 0007 §5.5) ───────────────────────────────────
+
+fn aliases(rows: &[(&str, &str)]) -> AliasMap {
+    AliasMap::from_rows(rows.iter().map(|(a, p)| ((*a).to_owned(), vp(p))))
+}
+
+/// Resolve one target and return `(resolved_path, via_alias)`.
+fn resolve_target(
+    target: &str,
+    vault: &HashSet<VaultPath>,
+    map: &AliasMap,
+) -> (Option<VaultPath>, bool) {
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: target.to_owned(),
+            label: None,
+            is_embed: false,
+        }],
+        vault,
+        map,
+    );
+    (got[0].resolved_path.clone(), got[0].via_alias)
+}
+
+#[test]
+fn an_alias_resolves_only_when_no_stem_matches() {
+    // Alias `old` on `projects/new.md`: `[[old]]` resolves to it.
+    let mut vault = paths(&["projects/new.md"]);
+    let map = aliases(&[("old", "projects/new.md")]);
+    assert_eq!(
+        resolve_target("old", &vault, &map).0,
+        Some(vp("projects/new.md"))
+    );
+
+    // A note with the stem `old` appears: the stem wins.
+    vault.insert(vp("notes/old.md"));
+    assert_eq!(
+        resolve_target("old", &vault, &map).0,
+        Some(vp("notes/old.md"))
+    );
+
+    // Without the stem, a second note declaring `old` makes the alias
+    // shared, and a shared alias resolves to nothing.
+    vault.remove(&vp("notes/old.md"));
+    vault.insert(vp("projects/other.md"));
+    let shared = aliases(&[("old", "projects/new.md"), ("old", "projects/other.md")]);
+    assert_eq!(resolve_target("old", &vault, &shared), (None, false));
+}
+
+#[test]
+fn an_alias_resolution_is_marked() {
+    let vault = paths(&["projects/new.md", "notes/stem.md"]);
+    let map = aliases(&[("old", "projects/new.md")]);
+    assert_eq!(
+        resolve_target("old", &vault, &map),
+        (Some(vp("projects/new.md")), true)
+    );
+    // Exact path, stem, and unresolved: never marked.
+    assert_eq!(
+        resolve_target("projects/new", &vault, &map),
+        (Some(vp("projects/new.md")), false)
+    );
+    assert_eq!(
+        resolve_target("stem", &vault, &map),
+        (Some(vp("notes/stem.md")), false)
+    );
+    assert_eq!(resolve_target("missing", &vault, &map), (None, false));
+}
+
+#[test]
+fn an_alias_never_beats_an_ambiguous_stem() {
+    // Two notes have the stem `old`; one note declares the alias `old`. The
+    // stem rule found matches, so the alias rule is never reached.
+    let vault = paths(&["notes/one/old.md", "notes/two/old.md", "projects/new.md"]);
+    let map = aliases(&[("old", "projects/new.md")]);
+    assert_eq!(resolve_target("old", &vault, &map), (None, false));
+}
+
+#[test]
+fn an_alias_with_an_anchor_resolves() {
+    let vault = paths(&["projects/new.md"]);
+    let map = aliases(&[("old", "projects/new.md")]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "old#Heading".to_owned(),
+            label: None,
+            is_embed: false,
+        }],
+        &vault,
+        &map,
+    );
+    assert_eq!(got[0].resolved_path, Some(vp("projects/new.md")));
+    assert!(got[0].via_alias);
+    assert_eq!(
+        got[0].target_raw, "old#Heading",
+        "the anchor stays on the entry"
+    );
+}
+
+#[test]
+fn a_folder_segment_before_an_alias_is_ignored_as_the_stem_rule_ignores_it() {
+    // The stem rule matches the target's last segment whatever folders
+    // precede it (`[[actions/foo]]` finds `actions/_done/2026/foo.md`, and
+    // equally `elsewhere/foo.md`). The alias rule reads the same segment, so
+    // `[[projects/old]]` resolves through the alias `old` exactly as
+    // `[[old]]` does — and as `[[anywhere/old]]` does.
+    let vault = paths(&["projects/new.md"]);
+    let map = aliases(&[("old", "projects/new.md")]);
+    for target in ["projects/old", "anywhere/old", "old"] {
+        assert_eq!(
+            resolve_target(target, &vault, &map),
+            (Some(vp("projects/new.md")), true),
+            "{target}"
+        );
+    }
+    // Mirrors the stem rule on the same shapes.
+    let stems = paths(&["notes/old.md"]);
+    assert_eq!(
+        resolve_target("projects/old", &stems, &AliasMap::default()).0,
+        Some(vp("notes/old.md"))
+    );
+}
+
+#[test]
+fn an_alias_whose_holder_is_not_in_the_path_set_does_not_resolve() {
+    // Every rule answers with a path from the set; the alias rule too.
+    let vault = paths(&["notes/other.md"]);
+    let map = aliases(&[("old", "projects/new.md")]);
+    assert_eq!(resolve_target("old", &vault, &map), (None, false));
+}
+
+#[test]
+fn an_alias_one_note_lists_twice_is_still_unique() {
+    let map = aliases(&[("old", "projects/new.md"), ("old", "projects/new.md")]);
+    assert_eq!(map.unique("old"), Some(&vp("projects/new.md")));
+    let shared = aliases(&[
+        ("old", "projects/new.md"),
+        ("old", "projects/other.md"),
+        ("old", "projects/new.md"),
+    ]);
+    assert_eq!(shared.unique("old"), None);
 }
 
 #[test]

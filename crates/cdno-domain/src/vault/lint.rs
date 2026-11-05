@@ -8,7 +8,7 @@ use chrono::{NaiveDate, NaiveTime};
 
 use cdno_core::config::IgnoreSet;
 use cdno_core::error::ConfigError;
-use cdno_core::extractors::{extract_wikilinks, resolve_wikilinks};
+use cdno_core::extractors::{AliasMap, extract_wikilinks, resolve_wikilinks};
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
@@ -322,8 +322,16 @@ impl Vault {
             // for files that are all present on disk (#452). `raws` is kept
             // alongside the resolved entries (same order, 1:1) so the embed
             // flag survives to the message.
+            //
+            // Resolved without the alias map for now, so a link through an
+            // alias is still reported here as dangling: RFC 0007 T14 turns
+            // it into the straggler warning that names the current slug.
             let raws = extract_wikilinks(body);
-            for (raw, link) in raws.iter().zip(resolve_wikilinks(raws.clone(), &path_set)) {
+            let no_aliases = AliasMap::default();
+            for (raw, link) in
+                raws.iter()
+                    .zip(resolve_wikilinks(raws.clone(), &path_set, &no_aliases))
+            {
                 if link.resolved_path.is_some() {
                     continue;
                 }

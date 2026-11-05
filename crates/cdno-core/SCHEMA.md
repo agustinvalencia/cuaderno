@@ -13,11 +13,12 @@ backlinks, …). If the index is lost, corrupted, or behind, startup
 reconciliation rebuilds it from the filesystem — a stale index is
 recoverable, a stale file is data loss.
 
-This document describes **schema version 2**. Migrations:
+This document describes **schema version 3**. Migrations:
 `migrations/001_initial.sql` (the combined initial schema — the
 milestones / archive-snapshots additions that landed during Phase 2 were
-collapsed into it before any release pinned them in place) and
-`migrations/002_fts5_search.sql` (the `notes_fts` full-text index, #172).
+collapsed into it before any release pinned them in place),
+`migrations/002_fts5_search.sql` (the `notes_fts` full-text index, #172) and
+`migrations/003_links_via_alias.sql` (`links.via_alias`, RFC 0007 §5.5, #860).
 
 ## Conventions
 
@@ -107,7 +108,8 @@ CREATE TABLE links (
     source_path   TEXT NOT NULL REFERENCES notes(path) ON DELETE CASCADE,
     target_raw    TEXT NOT NULL,           -- as authored, e.g. 'icml-paper' or '2026-04-19'
     resolved_path TEXT,                    -- resolved at index time, NULL if broken
-    label         TEXT                     -- display text after '|', if present
+    label         TEXT,                    -- display text after '|', if present
+    via_alias     INTEGER NOT NULL DEFAULT 0  -- 1 when resolved through a note's alias (003)
 );
 
 CREATE INDEX idx_links_source   ON links(source_path);
@@ -119,6 +121,11 @@ CREATE INDEX idx_links_resolved ON links(resolved_path);
   both `notes.path` and any `links.resolved_path` pointing at the old
   location. Broken links surface immediately in lint rather than at
   query time.
+- **Aliases** (RFC 0007 §5.5): when no note has the target's stem, a
+  slug-shaped `aliases:` entry exactly one note declares resolves it, and
+  `via_alias` records that it did. The aliases themselves are not a table:
+  they are read from `notes.frontmatter` (`list_aliases`). A change to them
+  re-resolves the affected rows at commit and in reconciliation.
 - Two separate indexes give us O(log n) lookup in either direction:
   `find_outgoing_links(path)` uses `source_path`, `find_backlinks(path)`
   uses `resolved_path`.

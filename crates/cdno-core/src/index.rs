@@ -34,6 +34,11 @@ const MIGRATIONS: &[(u32, &str, &str)] = &[
         "FTS5 full-text search over note title + body",
         include_str!("../migrations/002_fts5_search.sql"),
     ),
+    (
+        3,
+        "links.via_alias: the row resolved through a note alias",
+        include_str!("../migrations/003_links_via_alias.sql"),
+    ),
 ];
 
 /// SQLite-backed implementation of the vault index.
@@ -345,15 +350,32 @@ pub struct LinkEntry {
     pub target_raw: String,
     pub resolved_path: Option<VaultPath>,
     pub label: Option<String>,
+    /// The link resolved through a note's `aliases:` entry rather than a
+    /// path or stem (RFC 0007 §5.5; the alias rule of
+    /// [`crate::extractors::resolve_wikilinks`]). Always `false` when
+    /// `resolved_path` is `None`.
+    pub via_alias: bool,
+}
+
+/// One distinct resolution held by `links` rows, as
+/// [`VaultIndex::link_resolutions`] reports it: the target text, where it
+/// resolves, and whether it got there through an alias.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LinkResolution {
+    pub target_raw: String,
+    pub resolved_path: Option<VaultPath>,
+    pub via_alias: bool,
 }
 
 /// One conditional update for [`VaultIndex::set_link_resolutions`]: the
-/// rows with this `target_raw` currently resolved to `from` move to `to`.
+/// rows with this `target_raw` currently resolved to `from` move to `to`,
+/// with `via_alias` set to whether `to` was reached through an alias.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LinkResolutionUpdate {
     pub target_raw: String,
     pub from: Option<VaultPath>,
     pub to: Option<VaultPath>,
+    pub via_alias: bool,
 }
 
 /// One row of the `milestones` table, scoped to a single project note.
@@ -464,19 +486,20 @@ pub trait VaultIndex: Send + Sync {
     fn replace_links(&self, path: &VaultPath, links: &[LinkEntry]) -> Result<(), IndexError>;
     fn find_backlinks(&self, path: &VaultPath) -> Result<Vec<VaultPath>, IndexError>;
     fn find_outgoing_links(&self, path: &VaultPath) -> Result<Vec<LinkEntry>, IndexError>;
-    /// Every distinct `(target_raw, resolved_path)` pair across all
-    /// `links` rows, in no particular order. Resolution is a function of
-    /// the target text and the vault's path set alone, so this is the
-    /// whole input the stale-link re-resolution pass needs (#640): it
-    /// re-resolves the pairs that are unresolved or point at a path that
-    /// no longer exists, without re-reading any source note.
-    fn link_resolutions(&self) -> Result<Vec<(String, Option<VaultPath>)>, IndexError>;
+    /// Every distinct [`LinkResolution`] (`target_raw`, `resolved_path`,
+    /// `via_alias`) across all `links` rows, in no particular order.
+    /// Resolution is a function of the target text, the vault's path set and
+    /// its alias map alone, so this is the whole input the stale-link
+    /// re-resolution pass needs (#640): it re-resolves the rows that may be
+    /// stale, without re-reading any source note.
+    fn link_resolutions(&self) -> Result<Vec<LinkResolution>, IndexError>;
     /// Apply each [`LinkResolutionUpdate`] in order, atomically: set
-    /// `resolved_path` to `to` on every `links` row whose `target_raw` is
-    /// `target_raw` and whose `resolved_path` currently equals `from`
-    /// (`None` matching an unresolved row). Returns the number of rows
-    /// changed. The `from` guard keeps a row resolved differently since it
-    /// was read from being overwritten with a stale answer.
+    /// `resolved_path` to `to` and `via_alias` to `via_alias` on every
+    /// `links` row whose `target_raw` is `target_raw` and whose
+    /// `resolved_path` currently equals `from` (`None` matching an
+    /// unresolved row). Returns the number of rows changed. The `from` guard
+    /// keeps a row resolved differently since it was read from being
+    /// overwritten with a stale answer.
     fn set_link_resolutions(&self, updates: &[LinkResolutionUpdate]) -> Result<usize, IndexError>;
 
     // tags ------------------------------------------------------------
@@ -884,8 +907,8 @@ impl VaultIndex for SqliteIndex {
         )?;
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO links (source_path, target_raw, resolved_path, label) \
-                 VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO links (source_path, target_raw, resolved_path, label, via_alias) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
             )?;
             for link in links {
                 stmt.execute(params![
@@ -893,6 +916,7 @@ impl VaultIndex for SqliteIndex {
                     link.target_raw,
                     link.resolved_path.as_ref().map(|p| p.to_string()),
                     link.label,
+                    link.via_alias,
                 ])?;
             }
         }
@@ -920,7 +944,8 @@ impl VaultIndex for SqliteIndex {
     fn find_outgoing_links(&self, path: &VaultPath) -> Result<Vec<LinkEntry>, IndexError> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
-            "SELECT target_raw, resolved_path, label FROM links WHERE source_path = ?1 ORDER BY id",
+            "SELECT target_raw, resolved_path, label, via_alias FROM links \
+             WHERE source_path = ?1 ORDER BY id",
         )?;
         let rows = stmt.query_map(params![path.to_string()], |r| {
             let resolved: Option<String> = r.get(1)?;
@@ -928,11 +953,12 @@ impl VaultIndex for SqliteIndex {
                 r.get::<_, String>(0)?,
                 resolved,
                 r.get::<_, Option<String>>(2)?,
+                r.get::<_, bool>(3)?,
             ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (target_raw, resolved_str, label) = row?;
+            let (target_raw, resolved_str, label, via_alias) = row?;
             let resolved_path = match resolved_str {
                 Some(s) => Some(VaultPath::new(s).map_err(|e| {
                     IndexError::Query(format!("invalid stored resolved_path: {e}"))
@@ -943,27 +969,37 @@ impl VaultIndex for SqliteIndex {
                 target_raw,
                 resolved_path,
                 label,
+                via_alias,
             });
         }
         Ok(out)
     }
 
-    fn link_resolutions(&self) -> Result<Vec<(String, Option<VaultPath>)>, IndexError> {
+    fn link_resolutions(&self) -> Result<Vec<LinkResolution>, IndexError> {
         let conn = self.lock_conn();
-        let mut stmt = conn.prepare("SELECT DISTINCT target_raw, resolved_path FROM links")?;
+        let mut stmt =
+            conn.prepare("SELECT DISTINCT target_raw, resolved_path, via_alias FROM links")?;
         let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, bool>(2)?,
+            ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (target_raw, resolved_str) = row?;
+            let (target_raw, resolved_str, via_alias) = row?;
             let resolved_path = match resolved_str {
                 Some(s) => Some(VaultPath::new(s).map_err(|e| {
                     IndexError::Query(format!("invalid stored resolved_path: {e}"))
                 })?),
                 None => None,
             };
-            out.push((target_raw, resolved_path));
+            out.push(LinkResolution {
+                target_raw,
+                resolved_path,
+                via_alias,
+            });
         }
         Ok(out)
     }
@@ -977,13 +1013,15 @@ impl VaultIndex for SqliteIndex {
         {
             // `IS` rather than `=` so a `None` guard matches NULL rows.
             let mut stmt = tx.prepare(
-                "UPDATE links SET resolved_path = ?3 WHERE target_raw = ?1 AND resolved_path IS ?2",
+                "UPDATE links SET resolved_path = ?3, via_alias = ?4 \
+                 WHERE target_raw = ?1 AND resolved_path IS ?2",
             )?;
             for u in updates {
                 changed += stmt.execute(params![
                     u.target_raw,
                     u.from.as_ref().map(|p| p.to_string()),
                     u.to.as_ref().map(|p| p.to_string()),
+                    u.via_alias,
                 ])?;
             }
         }
@@ -1169,6 +1207,19 @@ fn row_to_milestone_entry_from(
 /// starting at column 0.
 fn row_to_milestone_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MilestoneEntry> {
     row_to_milestone_entry_from(row, 0)
+}
+
+/// The slug-shaped aliases a note's frontmatter declares (RFC 0007 §5.5):
+/// the strings under its top-level `aliases` key, read exactly as
+/// [`VaultIndex::list_aliases`] reads them, one entry per occurrence; empty
+/// when the key is absent. Exposed so a caller holding a [`NoteEntry`] (the
+/// transaction comparing a note's aliases before and after a commit) cannot
+/// disagree with the index.
+pub fn frontmatter_aliases(frontmatter: &JsonValue) -> Vec<String> {
+    frontmatter
+        .get("aliases")
+        .map(alias_slugs)
+        .unwrap_or_default()
 }
 
 /// The slug-shaped strings of an `aliases` value: a list of strings or one
@@ -1366,10 +1417,8 @@ impl VaultIndex for MemoryIndex {
         paths.sort_by_cached_key(|p| p.to_string());
         let mut out = Vec::new();
         for path in paths {
-            if let Some(aliases) = state.notes[path].frontmatter.get("aliases") {
-                for alias in alias_slugs(aliases) {
-                    out.push((alias, path.clone()));
-                }
+            for alias in frontmatter_aliases(&state.notes[path].frontmatter) {
+                out.push((alias, path.clone()));
             }
         }
         Ok(out)
@@ -1548,15 +1597,19 @@ impl VaultIndex for MemoryIndex {
         Ok(state.links.get(path).cloned().unwrap_or_default())
     }
 
-    fn link_resolutions(&self) -> Result<Vec<(String, Option<VaultPath>)>, IndexError> {
+    fn link_resolutions(&self) -> Result<Vec<LinkResolution>, IndexError> {
         let state = self.lock_state();
-        let pairs: HashSet<(String, Option<VaultPath>)> = state
+        let rows: HashSet<LinkResolution> = state
             .links
             .values()
             .flatten()
-            .map(|l| (l.target_raw.clone(), l.resolved_path.clone()))
+            .map(|l| LinkResolution {
+                target_raw: l.target_raw.clone(),
+                resolved_path: l.resolved_path.clone(),
+                via_alias: l.via_alias,
+            })
             .collect();
-        Ok(pairs.into_iter().collect())
+        Ok(rows.into_iter().collect())
     }
 
     fn set_link_resolutions(&self, updates: &[LinkResolutionUpdate]) -> Result<usize, IndexError> {
@@ -1567,6 +1620,7 @@ impl VaultIndex for MemoryIndex {
             for link in state.links.values_mut().flatten() {
                 if link.target_raw == u.target_raw && link.resolved_path == u.from {
                     link.resolved_path = u.to.clone();
+                    link.via_alias = u.via_alias;
                     changed += 1;
                 }
             }

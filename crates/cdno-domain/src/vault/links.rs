@@ -7,12 +7,13 @@
 //! clicked one `[[target]]` in a rendered note, and we resolve just
 //! that target so the frontend can navigate to it. Rather than
 //! re-implement the matching rules (and risk drift), this delegates to
-//! the same batch function with a one-element input, so the two paths
-//! always agree — including on ambiguity.
+//! the same batch function with a one-element input and the same alias
+//! map the index resolves against, so the two paths always agree —
+//! including on ambiguity and on aliases (RFC 0007 §5.5).
 
 use std::collections::HashSet;
 
-use cdno_core::extractors::{WikilinkRaw, resolve_wikilinks};
+use cdno_core::extractors::{AliasMap, WikilinkRaw, resolve_wikilinks};
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
@@ -36,6 +37,9 @@ pub struct ResolvedLink {
     /// form) — the same shape every other path field promises.
     pub path: VaultPath,
     pub note_type: Option<String>,
+    /// The target reached the note through one of its `aliases:` entries
+    /// (an old name) rather than its path or stem.
+    pub via_alias: bool,
 }
 
 impl Vault {
@@ -49,12 +53,14 @@ impl Vault {
     /// `<target>.md` path match wins first, then a folder-index match
     /// (`<target>/_index.md`, for a folder-backed note like a portfolio or
     /// expanded stewardship), then a unique file-stem (last path segment)
-    /// match. **Ambiguity resolves to `None`**: when two or more notes
-    /// share the stem the target names, the link is left unresolved rather
-    /// than guessing — resolution stays *sound* (a stem collision never
-    /// navigates to the wrong note). This mirrors the batch resolver's
-    /// behaviour byte-for-byte because it *is* the batch resolver, called
-    /// with a one-element input.
+    /// match, and, only when no note has that stem, a slug-shaped alias
+    /// exactly one note declares (`via_alias` is then set). **Ambiguity
+    /// resolves to `None`**: when two or more notes share the stem the
+    /// target names, or the alias, the link is left unresolved rather than
+    /// guessing — resolution stays *sound* (a collision never navigates to
+    /// the wrong note). This mirrors the batch resolver's behaviour
+    /// byte-for-byte because it *is* the batch resolver, called with a
+    /// one-element input and the index's alias map.
     ///
     /// A blank target short-circuits to `Ok(None)` without touching the
     /// index.
@@ -68,6 +74,7 @@ impl Vault {
         // paths; `list_all_paths` is the cheapest existing query for it
         // (one indexed column scan, no file reads).
         let paths: HashSet<VaultPath> = self.index.list_all_paths()?.into_iter().collect();
+        let aliases = AliasMap::from_rows(self.index.list_aliases()?);
         let raw = WikilinkRaw {
             target: target.to_owned(),
             label: None,
@@ -76,15 +83,21 @@ impl Vault {
             is_embed: false,
         };
         // One-element batch: exactly one LinkEntry comes back.
-        let resolved = resolve_wikilinks(vec![raw], &paths)
+        let Some(entry) = resolve_wikilinks(vec![raw], &paths, &aliases)
             .into_iter()
             .next()
-            .and_then(|entry| entry.resolved_path);
-        let Some(path) = resolved else {
+        else {
+            return Ok(None);
+        };
+        let Some(path) = entry.resolved_path else {
             return Ok(None);
         };
 
         let note_type = self.index.find_by_path(&path)?.map(|entry| entry.note_type);
-        Ok(Some(ResolvedLink { path, note_type }))
+        Ok(Some(ResolvedLink {
+            path,
+            note_type,
+            via_alias: entry.via_alias,
+        }))
     }
 }

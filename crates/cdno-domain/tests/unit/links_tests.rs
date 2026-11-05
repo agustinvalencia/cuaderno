@@ -120,3 +120,42 @@ fn ambiguous_bare_slug_resolves_to_none() {
     assert_eq!(resolved.path, vp("projects/dup.md"));
     assert_eq!(resolved.note_type.as_deref(), Some("project"));
 }
+
+#[test]
+fn resolve_wikilink_follows_an_alias() {
+    // RFC 0007 §5.5: a note's slug-shaped `aliases:` entry resolves when no
+    // note has that stem, through the same core rule the index uses, and
+    // says it did. A stem still wins, and a direct hit is not marked.
+    const RENAMED: &str = "---\ntype: project\ncontext: work\nstatus: active\n\
+         created: 2026-04-01\naliases: [surrogate-model, \"Surrogate model\"]\n---\n\n\
+         # Surrogate calibration\n";
+    let vault = vault_with(&[("projects/surrogate-calibration.md", RENAMED)]);
+
+    let resolved = vault
+        .resolve_wikilink("surrogate-model")
+        .unwrap()
+        .expect("the old name resolves through the alias");
+    assert_eq!(resolved.path, vp("projects/surrogate-calibration.md"));
+    assert_eq!(resolved.note_type.as_deref(), Some("project"));
+    assert!(resolved.via_alias);
+
+    let direct = vault
+        .resolve_wikilink("surrogate-calibration")
+        .unwrap()
+        .expect("the current slug resolves");
+    assert!(!direct.via_alias);
+
+    // A display-name alias is not slug-shaped and resolves nothing.
+    assert!(vault.resolve_wikilink("Surrogate model").unwrap().is_none());
+
+    let shadowed = vault_with(&[
+        ("projects/surrogate-calibration.md", RENAMED),
+        ("inbox/surrogate-model.md", INBOX_DUP),
+    ]);
+    let stem = shadowed
+        .resolve_wikilink("surrogate-model")
+        .unwrap()
+        .expect("the stem resolves");
+    assert_eq!(stem.path, vp("inbox/surrogate-model.md"));
+    assert!(!stem.via_alias);
+}

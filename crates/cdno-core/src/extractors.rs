@@ -22,7 +22,7 @@
 //!   Headings are *not* skipped: a wikilink in a heading is still a
 //!   real reference (e.g. `## See also: [[other-note]]`).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
@@ -47,7 +47,8 @@ pub struct NoteFacets {
     /// [`extract_inline_tags`] of the same body.
     pub tags: Result<Vec<String>, ValidationError>,
     /// Body wikilinks followed by frontmatter wikilinks, deduped by
-    /// `(target, label)` and resolved with [`resolve_wikilinks`].
+    /// `(target, label)` and resolved with [`resolve_wikilinks`] against the
+    /// path set and the [`AliasMap`].
     pub links: Vec<LinkEntry>,
 }
 
@@ -56,7 +57,8 @@ pub struct NoteFacets {
 ///
 /// `frontmatter_json` is `frontmatter.as_json()`, passed in so a caller
 /// that also needs it (reconcile stores it on the `notes` row) serialises
-/// once. `vault_paths` is the set of note paths links resolve against.
+/// once. `vault_paths` is the set of note paths links resolve against, and
+/// `aliases` the vault's alias map (the final rule of [`resolve_wikilinks`]).
 ///
 /// Tags: the frontmatter `tags:` list merged with the body's inline tags,
 /// deduped and sorted; an invalid `tags:` value makes
@@ -64,12 +66,13 @@ pub struct NoteFacets {
 /// merged with frontmatter wikilinks (a project's `core_question:`, an
 /// evidence or concept note's `origin:`, …) so backlinks see frontmatter
 /// references too (#395). Deduped by `(target, label)`, body first so its
-/// position wins, then resolved against `vault_paths`.
+/// position wins, then resolved against `vault_paths` and `aliases`.
 pub fn extract_note_facets(
     frontmatter: &Frontmatter,
     frontmatter_json: &serde_json::Value,
     body: &str,
     vault_paths: &HashSet<VaultPath>,
+    aliases: &AliasMap,
 ) -> NoteFacets {
     let tags = frontmatter
         .optional_field::<Vec<String>>("tags")
@@ -84,7 +87,7 @@ pub fn extract_note_facets(
     raw_links.extend(extract_frontmatter_wikilinks(frontmatter_json));
     let mut seen = HashSet::new();
     raw_links.retain(|l| seen.insert((l.target.clone(), l.label.clone())));
-    let links = resolve_wikilinks(raw_links, vault_paths);
+    let links = resolve_wikilinks(raw_links, vault_paths, aliases);
 
     NoteFacets { tags, links }
 }
@@ -452,25 +455,102 @@ pub fn extract_frontmatter_wikilinks(frontmatter: &serde_json::Value) -> Vec<Wik
 ///    one path has the stem `foo`. This resolves a link to a note that
 ///    relocated within its tree (e.g. an action archived to
 ///    `actions/_done/<year>/`); a unique match is required (#215).
-/// 4. Otherwise `resolved_path` is `None` and the link is recorded as
+/// 4. Alias match (RFC 0007 §5.5), only when rule 3 found **no** note with
+///    the stem: the same last segment (anchor stripped, every folder segment
+///    before it ignored, exactly as rule 3 ignores them — so
+///    `[[projects/old]]` resolves like `[[old]]`) against the slug-shaped
+///    `aliases:` entries in `aliases`, resolving when exactly one note in
+///    `vault_paths` declares it ([`AliasMap::unique`]). A stem match, unique
+///    or ambiguous, always wins over an alias, and an alias two notes share
+///    resolves to nothing. The entry is marked [`LinkEntry::via_alias`].
+/// 5. Otherwise `resolved_path` is `None` and the link is recorded as
 ///    broken — `cdno lint` surfaces it as a warning.
 pub fn resolve_wikilinks(
     raws: Vec<WikilinkRaw>,
     vault_paths: &HashSet<VaultPath>,
+    aliases: &AliasMap,
 ) -> Vec<LinkEntry> {
     raws.into_iter()
         .map(|raw| {
-            let resolved = resolve_one(&raw.target, vault_paths);
+            let resolved = resolve_one(&raw.target, vault_paths, aliases);
+            let via_alias = resolved.as_ref().is_some_and(|r| r.via_alias);
             LinkEntry {
                 target_raw: raw.target,
-                resolved_path: resolved,
+                resolved_path: resolved.map(|r| r.path),
                 label: raw.label,
+                via_alias,
             }
         })
         .collect()
 }
 
-pub(crate) fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Option<VaultPath> {
+/// The slug-shaped aliases notes declare (RFC 0007 §5.5), keyed by alias,
+/// as resolution reads them.
+///
+/// Built from [`VaultIndex::list_aliases`](crate::index::VaultIndex::list_aliases)
+/// rows by [`AliasMap::from_rows`]. An alias exactly one note declares maps
+/// to that note; one that two or more notes declare maps to nothing, so a
+/// shared alias is unresolvable by construction rather than by a check every
+/// reader must remember. A note that lists the same alias twice still counts
+/// as one note.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AliasMap(HashMap<String, Option<VaultPath>>);
+
+impl AliasMap {
+    /// Fold `(alias, path)` rows (one per occurrence, as `list_aliases`
+    /// returns them) into the map: `Some(path)` when every row for the
+    /// alias names the same note, `None` once a second note declares it.
+    pub fn from_rows(rows: impl IntoIterator<Item = (String, VaultPath)>) -> Self {
+        let mut map: HashMap<String, Option<VaultPath>> = HashMap::new();
+        for (alias, path) in rows {
+            match map.get_mut(&alias) {
+                None => {
+                    map.insert(alias, Some(path));
+                }
+                Some(holder) => {
+                    if holder.as_ref() != Some(&path) {
+                        *holder = None;
+                    }
+                }
+            }
+        }
+        Self(map)
+    }
+
+    /// The one note declaring `name` as an alias, or `None` when no note
+    /// does or when two or more share it.
+    pub fn unique(&self, name: &str) -> Option<&VaultPath> {
+        self.0.get(name).and_then(Option::as_ref)
+    }
+
+    /// Whether no note declares any alias.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Where [`resolve_one`] resolved a target, and whether the alias rule
+/// (rule 4 of [`resolve_wikilinks`]) was the one that matched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Resolution {
+    pub(crate) path: VaultPath,
+    pub(crate) via_alias: bool,
+}
+
+impl Resolution {
+    fn direct(path: VaultPath) -> Self {
+        Self {
+            path,
+            via_alias: false,
+        }
+    }
+}
+
+pub(crate) fn resolve_one(
+    target: &str,
+    vault_paths: &HashSet<VaultPath>,
+    aliases: &AliasMap,
+) -> Option<Resolution> {
     // 0a. Exact path match on the unsplit target, before the anchor is
     // stripped. A `#` in a filename is otherwise unsupported — it is only
     // reachable through an exact-path link — because rule 0b below would
@@ -479,7 +559,7 @@ pub(crate) fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Opt
     if let Ok(vp) = VaultPath::new(format!("{target}.md"))
         && vault_paths.contains(&vp)
     {
-        return Some(vp);
+        return Some(Resolution::direct(vp));
     }
 
     // 0b. Strip the anchor. `[[note#Heading]]` (and Obsidian's `#^block`)
@@ -501,7 +581,7 @@ pub(crate) fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Opt
     if let Ok(vp) = VaultPath::new(format!("{target}.md"))
         && vault_paths.contains(&vp)
     {
-        return Some(vp);
+        return Some(Resolution::direct(vp));
     }
 
     // 1b. Folder-index match: a target naming a folder resolves to that
@@ -517,7 +597,7 @@ pub(crate) fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Opt
     if let Ok(vp) = VaultPath::new(format!("{target}/_index.md"))
         && vault_paths.contains(&vp)
     {
-        return Some(vp);
+        return Some(Resolution::direct(vp));
     }
 
     // 2. Last-segment match: resolve by the note's filename stem
@@ -545,12 +625,29 @@ pub(crate) fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Opt
             .and_then(|s| s.to_str())
             .is_some_and(|stem| stem == needle)
     });
-    let first = matches.next()?;
-    if matches.next().is_some() {
-        // Ambiguous — multiple notes share the basename.
-        return None;
+    if let Some(first) = matches.next() {
+        if matches.next().is_some() {
+            // Ambiguous — multiple notes share the basename.
+            return None;
+        }
+        return Some(Resolution::direct(first.clone()));
     }
-    Some(first.clone())
+
+    // 3. Alias match (RFC 0007 §5.5): reached only when no note has the
+    // stem, so a stem — unique or ambiguous — always wins over an alias and
+    // an alias can never move a link that resolves today. The same `needle`
+    // as rule 2, so the folder segments before it are ignored here exactly
+    // as they are there. A shared alias has no unique holder and resolves
+    // to nothing. The holder must be in the path set, like every other
+    // rule's answer, so a map read moments apart from the paths cannot
+    // resolve to a note the set no longer has.
+    aliases
+        .unique(needle)
+        .filter(|holder| vault_paths.contains(*holder))
+        .map(|holder| Resolution {
+            path: holder.clone(),
+            via_alias: true,
+        })
 }
 
 /// The names a note answers to under [`resolve_wikilinks`]'s rules: its
@@ -584,9 +681,11 @@ pub fn note_link_names(path: &VaultPath) -> Vec<&str> {
 /// or without the anchor) and the stem rule all end on the note's stem
 /// (`_index` for an explicit `[[<dir>/_index]]`), the folder-index rule on
 /// its folder's name, and a stem ambiguity is
-/// only cleared by removing a note with the same stem. Both the unsplit
-/// target (rule 0a, for a `#` in a file name) and the anchor-stripped one
-/// are checked.
+/// only cleared by removing a note with the same stem. The alias rule ends
+/// on the same anchor-stripped last segment, so an alias name in `names`
+/// (one whose holder changed) admits every target that rule could resolve
+/// through it. Both the unsplit target (rule 0a, for a `#` in a file name)
+/// and the anchor-stripped one are checked.
 pub fn target_may_name(target: &str, names: &HashSet<&str>) -> bool {
     let last = |t: &str| t.rsplit('/').next().unwrap_or(t).to_owned();
     let unsplit = last(target);

@@ -7,8 +7,8 @@ use cdno_core::error::{IndexError, StoreError};
 use cdno_core::file_meta::FileMeta;
 use cdno_core::hash::content_hash;
 use cdno_core::index::{
-    DeadlineEntry, LinkEntry, LinkResolutionUpdate, MemoryIndex, MilestoneEntry, NoteCandidate,
-    NoteEntry, SqliteIndex, VaultIndex,
+    DeadlineEntry, LinkEntry, LinkResolution, LinkResolutionUpdate, MemoryIndex, MilestoneEntry,
+    NoteCandidate, NoteEntry, SqliteIndex, VaultIndex,
 };
 use cdno_core::path::VaultPath;
 use cdno_core::reconcile::reconcile;
@@ -809,7 +809,7 @@ impl VaultIndex for ProbeIndex {
     fn find_outgoing_links(&self, path: &VaultPath) -> Result<Vec<LinkEntry>, IndexError> {
         self.inner.find_outgoing_links(path)
     }
-    fn link_resolutions(&self) -> Result<Vec<(String, Option<VaultPath>)>, IndexError> {
+    fn link_resolutions(&self) -> Result<Vec<LinkResolution>, IndexError> {
         self.link_scans.fetch_add(1, Ordering::SeqCst);
         if self.fail_link_resolutions {
             return Err(IndexError::Query("forced test failure".to_owned()));
@@ -1701,6 +1701,7 @@ fn reconcile_skips_link_reresolution_when_no_note_was_added_or_removed() {
                 target_raw: "b".to_owned(),
                 resolved_path: None,
                 label: None,
+                via_alias: false,
             }],
         )
         .unwrap();
@@ -1915,4 +1916,130 @@ fn aliases_survive_an_index_rebuild() {
     let index: Arc<dyn VaultIndex> = Arc::new(SqliteIndex::open(&db_path).unwrap());
     reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
     assert_eq!(index.list_aliases().unwrap(), expected);
+}
+
+// ── the alias rule's reconcile trigger (RFC 0007 §5.5, T11) ──────────
+
+const ALIAS_DAILY: &str = "journal/2026/daily/2026-10-12.md";
+const ALIAS_HOLDER: &str = "projects/surrogate-model.md";
+
+fn alias_holder(aliases: Option<&str>) -> String {
+    let line = aliases.map_or(String::new(), |a| format!("aliases: [{a}]\n"));
+    format!("---\ntype: project\n{line}---\n\n# Surrogate model\n")
+}
+
+fn outgoing(index: &Arc<MemoryIndex>, source: &str, target_raw: &str) -> LinkEntry {
+    index
+        .find_outgoing_links(&vp(source))
+        .unwrap()
+        .into_iter()
+        .find(|l| l.target_raw == target_raw)
+        .expect("link row present")
+}
+
+/// A reconciled vault: the project with no aliases, and a daily note whose
+/// `[[old-name]]` resolves to nothing.
+fn reconciled_vault_with_a_dangling_link() -> (Arc<MemoryVaultStore>, Arc<MemoryIndex>) {
+    let (store, index) = fixtures();
+    store
+        .write_file(&vp(ALIAS_HOLDER), &alias_holder(None))
+        .unwrap();
+    store
+        .write_file(
+            &vp(ALIAS_DAILY),
+            "---\ntype: daily\n---\n\n- picked up [[old-name]] and [[old-name#Plan]]\n",
+        )
+        .unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    assert_eq!(
+        outgoing(&index, ALIAS_DAILY, "old-name").resolved_path,
+        None
+    );
+    (store, index)
+}
+
+#[test]
+fn an_alias_added_outside_the_tool_reresolves_on_startup() {
+    let (store, index) = reconciled_vault_with_a_dangling_link();
+
+    // An editor adds the alias; no note is added or removed.
+    store
+        .write_file(&vp(ALIAS_HOLDER), &alias_holder(Some("old-name")))
+        .unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+
+    assert_eq!((report.added, report.removed, report.updated), (0, 0, 1));
+    assert_eq!(report.links_reresolved, 2, "both `[[old-name…]]` rows");
+    assert_eq!(
+        index.find_backlinks(&vp(ALIAS_HOLDER)).unwrap(),
+        vec![vp(ALIAS_DAILY)]
+    );
+    for target in ["old-name", "old-name#Plan"] {
+        let row = outgoing(&index, ALIAS_DAILY, target);
+        assert_eq!(row.resolved_path, Some(vp(ALIAS_HOLDER)), "{target}");
+        assert!(row.via_alias, "{target}");
+    }
+}
+
+#[test]
+fn an_alias_removed_outside_the_tool_unresolves_on_startup() {
+    let (store, index) = reconciled_vault_with_a_dangling_link();
+    store
+        .write_file(&vp(ALIAS_HOLDER), &alias_holder(Some("old-name")))
+        .unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    assert_eq!(
+        index.find_backlinks(&vp(ALIAS_HOLDER)).unwrap(),
+        vec![vp(ALIAS_DAILY)]
+    );
+
+    store
+        .write_file(&vp(ALIAS_HOLDER), &alias_holder(None))
+        .unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+
+    assert_eq!(report.links_reresolved, 2);
+    assert!(index.find_backlinks(&vp(ALIAS_HOLDER)).unwrap().is_empty());
+    let row = outgoing(&index, ALIAS_DAILY, "old-name");
+    assert_eq!(row.resolved_path, None);
+    assert!(!row.via_alias);
+}
+
+#[test]
+fn a_stem_appearing_outside_the_tool_outranks_an_alias_on_startup() {
+    let (store, index) = reconciled_vault_with_a_dangling_link();
+    store
+        .write_file(&vp(ALIAS_HOLDER), &alias_holder(Some("old-name")))
+        .unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    assert!(outgoing(&index, ALIAS_DAILY, "old-name").via_alias);
+
+    seed_note(&store, "notes/old-name.md", "concept", "");
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+
+    let row = outgoing(&index, ALIAS_DAILY, "old-name");
+    assert_eq!(row.resolved_path, Some(vp("notes/old-name.md")));
+    assert!(!row.via_alias);
+}
+
+#[test]
+fn an_unchanged_alias_map_does_not_trigger_reresolution() {
+    // A pass that only edits a note's body, aliases untouched, neither adds
+    // nor removes a note, so Phase 2b stays off.
+    let (store, index) = reconciled_vault_with_a_dangling_link();
+    store
+        .write_file(&vp(ALIAS_HOLDER), &alias_holder(Some("old-name")))
+        .unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+
+    store
+        .write_file(
+            &vp(ALIAS_HOLDER),
+            &format!("{}\nMore prose.\n", alias_holder(Some("old-name"))),
+        )
+        .unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    assert_eq!(report.updated, 1);
+    assert_eq!(report.links_reresolved, 0);
+    assert!(outgoing(&index, ALIAS_DAILY, "old-name").via_alias);
 }

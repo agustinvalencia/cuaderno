@@ -14,9 +14,11 @@
 //!    Reindex if the hash differs or no row exists.
 //! 3. Any index row whose path isn't in the walk is an orphan — remove
 //!    it. Cascading FKs drop its deadlines, links, and tags.
-//! 4. If the pass added or removed a note, re-resolve the `links` rows
-//!    that are unresolved or point at a vanished path, so a note written
-//!    before its link target existed gains the backlink (#640).
+//! 4. If the pass added or removed a note, or changed the vault's alias
+//!    map (RFC 0007 §5.5), re-resolve the `links` rows that are unresolved,
+//!    point at a vanished path, or resolved through an alias, so a note
+//!    written before its link target existed gains the backlink (#640) and
+//!    an `aliases:` entry edited outside the tool takes effect.
 //!
 //! Per-note transactions keep one corrupted note from blocking the
 //! others: a parse error is recorded in the report and reconciliation
@@ -30,9 +32,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config::IgnoreSet;
 use crate::error::IndexError;
+use crate::extractors::AliasMap;
 use crate::frontmatter::Frontmatter;
 use crate::hash::content_hash;
-use crate::index::{DeadlineEntry, LinkResolutionUpdate, MilestoneEntry, NoteEntry, VaultIndex};
+use crate::index::{
+    DeadlineEntry, LinkResolution, LinkResolutionUpdate, MilestoneEntry, NoteEntry, VaultIndex,
+};
 use crate::markdown::{MarkdownDocument, extract_hard_deadlines, extract_milestones_from_body};
 use crate::path::VaultPath;
 use crate::store::VaultStore;
@@ -74,13 +79,15 @@ pub struct ReconciliationReport {
     pub fts_removed: usize,
     /// `links` rows whose resolution changed without their source note
     /// being reindexed (#640): a dangling `[[B]]` that resolves now that
-    /// `B` exists, or a row pointing at a note that moved or vanished.
+    /// `B` exists, a row pointing at a note that moved or vanished, or a
+    /// row an alias change resolves, unresolves or moves (RFC 0007 §5.5).
     /// Only computed on a pass that added or removed an *indexed* note
-    /// (`added` or `removed` non-zero). A markdown file that never parses
-    /// moves neither counter, so one appearing or disappearing does not
-    /// trigger the step on its own; the rows it affects heal on the next
-    /// pass that does, or when the file parses (which counts as added).
-    /// Rows still resolving to a present note are never reconsidered.
+    /// (`added` or `removed` non-zero) or changed the alias map. A markdown
+    /// file that never parses moves neither counter, so one appearing or
+    /// disappearing does not trigger the step on its own; the rows it
+    /// affects heal on the next pass that does, or when the file parses
+    /// (which counts as added). Rows still resolving to a present note
+    /// without an alias are never reconsidered.
     pub links_reresolved: usize,
     /// Per-file failures — typically parse errors on a corrupted note.
     /// Reconciliation continues past these; the offending file stays
@@ -176,13 +183,19 @@ pub fn reconcile(
     report.ignored = ignored_paths.len();
     let fs_set: HashSet<VaultPath> = fs_md_paths.iter().cloned().collect();
 
+    // The alias map as the index held it before this pass (RFC 0007 §5.5).
+    // Phase 1 resolves each reindexed note's links against it — the map
+    // after the pass is only known once every note is read — and Phase 2b
+    // compares it with the map after, re-resolving when they differ.
+    let aliases_before = AliasMap::from_rows(index.list_aliases()?);
+
     // Phase 1: walk the filesystem, ensure every `.md` is correctly
     // reflected in the index. The full path set is threaded into
     // `reconcile_one` so wikilink resolution can do its
     // exact-then-basename lookup without extra index calls.
     for path in &fs_md_paths {
         report.scanned += 1;
-        match reconcile_one(store, index, path, &fs_set) {
+        match reconcile_one(store, index, path, &fs_set, &aliases_before) {
             Ok(Outcome::Added) => report.added += 1,
             Ok(Outcome::Updated) => report.updated += 1,
             Ok(Outcome::Skipped) => {}
@@ -241,11 +254,22 @@ pub fn reconcile(
     // Widening the trigger would scan on every pass in any vault holding an
     // unparseable note, so it is deliberately left narrow.
     //
+    // The alias map is the rule's other input (RFC 0007 §5.5), so a pass
+    // whose map after Phases 1 and 2 differs from the one before also
+    // triggers the step: an `aliases:` entry added or removed outside the
+    // tool reindexes only its own note, and every other note's link through
+    // that name has to follow. Phase 1 resolved against the map before, so
+    // when the step runs it reconsiders every unresolved row, every row
+    // pointing at a vanished path, and every row resolved through an alias
+    // (an added stem outranks it, a changed map may move it), with the map
+    // after. Rows resolved by path or stem do not depend on aliases.
+    //
     // This is a best-effort heal of a cache, so a failure here (the write
     // lock timing out, the link query failing) is recorded as a per-pass
     // issue and the pass continues: the rows stay as they were, the next
     // qualifying pass retries, and the vault still opens.
-    if report.added > 0 || report.removed > 0 {
+    let aliases_after = AliasMap::from_rows(index.list_aliases()?);
+    if report.added > 0 || report.removed > 0 || aliases_after != aliases_before {
         let healed = store
             .acquire_write_lock()
             .map_err(|e| IndexError::Update(format!("acquiring write lock: {e}")))
@@ -253,7 +277,13 @@ pub fn reconcile(
                 // Index-only writes with no transaction to carry them, so
                 // the vault write lock is held explicitly, as every other
                 // reconcile write holds it through its `VaultTransaction`.
-                reresolve_stale_links(&**index, &fs_set, |p| !fs_set.contains(p), |_| true)
+                reresolve_stale_links(
+                    &**index,
+                    &fs_set,
+                    &aliases_after,
+                    |p, row| !fs_set.contains(p) || row.via_alias,
+                    |_| true,
+                )
             });
         match healed {
             Ok(n) => report.links_reresolved = n,
@@ -315,22 +345,25 @@ pub fn reconcile(
 }
 
 /// Re-resolve the `links` rows whose resolution may be stale against
-/// `vault_paths` (#640), with the same policy as
-/// [`crate::extractors::resolve_wikilinks`], so the answer is the one a
+/// `vault_paths` and `aliases` (#640, RFC 0007 §5.5), with the same policy
+/// as [`crate::extractors::resolve_wikilinks`], so the answer is the one a
 /// reindex of the linking note would give. Returns the number of rows
 /// changed; every change is applied in one batch.
 ///
 /// A row is reconsidered when it is unresolved (`NULL`) and
 /// `consider_target` accepts its `target_raw`, or when it is resolved to a
-/// path for which `is_stale` holds. Rows resolved to any other path are
-/// left alone, so this never overrides what the source note's own reindex
-/// decided.
+/// path `p` for which `is_stale(p, row)` holds. Rows resolved to any other
+/// path are left alone, so this never overrides what the source note's own
+/// reindex decided.
 ///
-/// - Reconciliation (Phase 2b) passes `is_stale = |p| !vault_paths.contains(p)`
-///   and accepts every target: a pass sees the whole filesystem.
-/// - `VaultTransaction::commit` passes a predicate true only for the paths
-///   the commit deleted or moved away from, and accepts only targets that
-///   could name a path the commit added or removed
+/// - Reconciliation (Phase 2b) passes `is_stale = |p, row| !vault_paths.contains(p) || row.via_alias`
+///   and accepts every target: a pass sees the whole filesystem, and its
+///   Phase 1 resolved against the alias map from before the pass.
+/// - `VaultTransaction::commit` passes a predicate true for the paths the
+///   commit deleted or moved away from, and for a row resolved through an
+///   alias when its holder's aliases changed or its target could name a
+///   path or alias the commit changed; it accepts only unresolved targets
+///   that could name such a path or alias
 ///   ([`crate::extractors::target_may_name`]). Its path set is the index's,
 ///   which omits notes present on disk but unparseable, so treating every
 ///   absent path as stale there would unresolve rows reconcile resolved to
@@ -338,24 +371,30 @@ pub fn reconcile(
 pub(crate) fn reresolve_stale_links(
     index: &dyn VaultIndex,
     vault_paths: &HashSet<VaultPath>,
-    is_stale: impl Fn(&VaultPath) -> bool,
+    aliases: &AliasMap,
+    is_stale: impl Fn(&VaultPath, &LinkResolution) -> bool,
     consider_target: impl Fn(&str) -> bool,
 ) -> Result<usize, IndexError> {
     let mut updates = Vec::new();
-    for (target_raw, current) in index.link_resolutions()? {
-        let reconsider = match &current {
-            None => consider_target(&target_raw),
-            Some(p) => is_stale(p),
+    for row in index.link_resolutions()? {
+        let reconsider = match &row.resolved_path {
+            None => consider_target(&row.target_raw),
+            Some(p) => is_stale(p, &row),
         };
         if !reconsider {
             continue;
         }
-        let fresh = crate::extractors::resolve_one(&target_raw, vault_paths);
-        if fresh != current {
+        let fresh = crate::extractors::resolve_one(&row.target_raw, vault_paths, aliases);
+        let (to, via_alias) = match fresh {
+            Some(r) => (Some(r.path), r.via_alias),
+            None => (None, false),
+        };
+        if to != row.resolved_path || via_alias != row.via_alias {
             updates.push(LinkResolutionUpdate {
-                target_raw,
-                from: current,
-                to: fresh,
+                target_raw: row.target_raw,
+                from: row.resolved_path,
+                to,
+                via_alias,
             });
         }
     }
@@ -430,6 +469,7 @@ fn reconcile_one(
     index: &Arc<dyn VaultIndex>,
     path: &VaultPath,
     vault_paths: &HashSet<VaultPath>,
+    aliases: &AliasMap,
 ) -> Result<Outcome, String> {
     let existing = index
         .find_by_path(path)
@@ -500,8 +540,13 @@ fn reconcile_one(
     // An invalid `tags:` value fails the whole note here, as it always
     // has: the row stays unstamped, so the note is retried and reported
     // on every pass until fixed.
-    let crate::extractors::NoteFacets { tags, links } =
-        crate::extractors::extract_note_facets(&frontmatter, &frontmatter_json, body, vault_paths);
+    let crate::extractors::NoteFacets { tags, links } = crate::extractors::extract_note_facets(
+        &frontmatter,
+        &frontmatter_json,
+        body,
+        vault_paths,
+        aliases,
+    );
     let tags = tags.map_err(|e| format!("invalid `tags` field: {e}"))?;
 
     // Project-type notes contribute deadlines and milestones via

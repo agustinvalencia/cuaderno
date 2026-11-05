@@ -21,8 +21,9 @@ fn open_creates_fresh_db_with_current_schema() {
             r.get(0)
         })
         .unwrap();
-    // 001 initial schema + 002 FTS5 search — see SCHEMA.md.
-    assert_eq!(version, 2);
+    // 001 initial schema + 002 FTS5 search + 003 links.via_alias — see
+    // SCHEMA.md.
+    assert_eq!(version, 3);
 
     // All tables exist (`notes_fts` is the FTS5 virtual table from 002).
     for table in [
@@ -59,7 +60,7 @@ fn reopen_existing_db_is_idempotent() {
     let row_count: u32 = conn
         .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(row_count, 2);
+    assert_eq!(row_count, 3);
 }
 
 #[test]
@@ -139,7 +140,7 @@ fn open_self_heals_a_corrupt_index_file() {
             r.get(0)
         })
         .unwrap();
-    assert_eq!(version, 2, "fresh schema applied after recovery");
+    assert_eq!(version, 3, "fresh schema applied after recovery");
 }
 
 #[test]
@@ -187,4 +188,54 @@ fn remove_deletes_the_db_and_sidecars() {
     assert!(!path.exists(), "db file removed");
     assert!(!wal.exists(), "wal sidecar removed");
     assert!(!shm.exists(), "shm sidecar removed");
+}
+
+#[test]
+fn migration_003_adds_via_alias() {
+    // A database left at schema version 2 (001 + 002, as every vault opened
+    // before RFC 0007 S3 has it), holding one link row. Opening it applies
+    // 003: the column appears, and the existing row reads 0 — it resolved
+    // without aliases, which is what the default records.
+    let (_dir, path) = new_db_path();
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(include_str!("../../migrations/001_initial.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/002_fts5_search.sql"))
+            .unwrap();
+        conn.execute(
+            "INSERT INTO notes (path, note_type, content_hash, mtime_ns, size, frontmatter, indexed_at_ns) \
+             VALUES ('journal/d.md', 'daily', 'h', 0, 0, '{}', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO links (source_path, target_raw, resolved_path, label) \
+             VALUES ('journal/d.md', 'surrogate-model', NULL, NULL)",
+            [],
+        )
+        .unwrap();
+    }
+
+    let index = SqliteIndex::open(&path).unwrap();
+    let (version, has_column, via_alias): (u32, bool, i64) = index
+        .with_connection(|c| {
+            let version = c.query_row("SELECT MAX(version) FROM schema_migrations", [], |r| {
+                r.get(0)
+            })?;
+            let has_column = c.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('links') WHERE name = 'via_alias'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )? == 1;
+            let via_alias = c.query_row("SELECT via_alias FROM links", [], |r| r.get(0))?;
+            Ok((version, has_column, via_alias))
+        })
+        .unwrap();
+    assert_eq!(version, 3);
+    assert!(has_column, "links.via_alias added by 003");
+    assert_eq!(
+        via_alias, 0,
+        "an existing row did not resolve through an alias"
+    );
 }
