@@ -123,6 +123,8 @@ fn explicit_slug_rejections_name_their_reason() {
         ("no", SlugRejection::YamlTyped),
         ("1e3", SlugRejection::YamlTyped),
         ("2026-11-05", SlugRejection::YamlTyped),
+        ("007", SlugRejection::YamlTyped),
+        ("00", SlugRejection::YamlTyped),
         ("0o17", SlugRejection::YamlTyped),
         ("1e-3", SlugRejection::YamlTyped),
         ("12e-04", SlugRejection::YamlTyped),

@@ -117,8 +117,9 @@ pub fn validate_explicit_slug(slug: &str) -> Result<(), SlugRejection> {
 /// Whether a charset-valid slug would not survive as text in frontmatter:
 /// the repo's YAML parser reads it as a number, bool or null (asked of the
 /// parser itself, [`yaml_scalar_is_string`]), or it is one of the YAML 1.1
-/// bool words or an ISO date, which that parser reads as text but other
-/// tools do not. The extras are deliberate over-rejection.
+/// bool words, an ISO date or an all-digit run (`007`, octal to a YAML 1.1
+/// reader), which that parser reads as text but other tools do not. The
+/// extras are deliberate over-rejection.
 fn is_yaml_typed(slug: &str) -> bool {
     if !yaml_scalar_is_string(slug) {
         return true;
@@ -126,8 +127,11 @@ fn is_yaml_typed(slug: &str) -> bool {
     if matches!(slug, "yes" | "no" | "on" | "off") {
         return true;
     }
-    // `2026-11-05`: a year, a month and a day, all digits.
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if digits(slug) {
+        return true;
+    }
+    // `2026-11-05`: a year, a month and a day, all digits.
     let parts: Vec<&str> = slug.split('-').collect();
     parts.len() == 3 && parts[0].len() == 4 && parts.iter().all(|p| digits(p))
 }
