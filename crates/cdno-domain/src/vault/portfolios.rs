@@ -941,7 +941,7 @@ fn render_attachment_stub(
          type: evidence\n\
          created: {created}\n\
          source: \"{source_yaml}\"\n\
-         portfolio: {portfolio}\n\
+         {PORTFOLIO_KEY}: {portfolio}\n\
          origin: \"[[{origin_yaml}]]\"\n\
          kind: {kind}\n\
          ---\n\

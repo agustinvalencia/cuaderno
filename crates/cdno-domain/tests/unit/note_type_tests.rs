@@ -130,7 +130,8 @@ fn reference_keys_are_the_four_keys_once_each() {
         keys,
         ["captured_during", "portfolio", "project", "stewardship"]
     );
-    // Every key a type's table names is in the union.
+    // Every key a type's table names is in the union. Changing this set
+    // changes what is masked: bump `cdno_core::hash::MASK_VERSION` with it.
     for nt in NoteType::ALL {
         for (key, _) in nt.reference_fields() {
             assert!(NoteType::reference_keys().contains(key));

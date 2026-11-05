@@ -23,7 +23,9 @@ pub enum NoteType {
     Inbox,
 }
 
-/// Frontmatter key of the project a note belongs to (RFC 0007 §3.5).
+/// Frontmatter key of the project a note belongs to (RFC 0007 §3.5). A
+/// portfolio's `project:` uses the same key but holds a quoted wikilink, which
+/// the address rewrite covers; it is not a §3.5 table row.
 pub(crate) const PROJECT_KEY: &str = "project";
 /// Frontmatter key of the stewardship a note belongs to (RFC 0007 §3.5).
 pub(crate) const STEWARDSHIP_KEY: &str = "stewardship";
@@ -169,7 +171,14 @@ impl NoteType {
             NoteType::Tracking => &[(STEWARDSHIP_KEY, NoteType::Stewardship)],
             NoteType::Evidence => &[(PORTFOLIO_KEY, NoteType::Portfolio)],
             NoteType::Inbox => &[(CAPTURED_DURING_KEY, NoteType::Project)],
-            _ => &[],
+            // Listed, not `_`: a new variant must choose its row here.
+            NoteType::Daily
+            | NoteType::Weekly
+            | NoteType::Monthly
+            | NoteType::Project
+            | NoteType::Portfolio
+            | NoteType::Stewardship
+            | NoteType::Question => &[],
         }
     }
 

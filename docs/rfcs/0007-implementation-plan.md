@@ -820,7 +820,8 @@ naming `cdno reindex` (#901, after T20).
 `Tracking: [("stewardship", Stewardship)]`, `Evidence: [("portfolio", Portfolio)]`,
 `Inbox: [("captured_during", Project)]`, empty otherwise. `pub fn reference_keys() -> &'static [&'static str]`
 (the union, for T15's mask). The writers named in the table (`actions.rs:83`,
-`commitments.rs:197–198`, `tracking.rs:544`, `portfolios.rs:810`, `capture.rs:177`) and the
+`commitments.rs:197–198`, `tracking.rs:544`, `portfolios.rs:810`, `portfolios.rs:944`
+(`render_attachment_stub`, the attachment evidence stub), `capture.rs:177`) and the
 readers (`frontmatter/{action,commitment,portfolio,evidence,tracking}.rs`, `vault/search.rs`,
 `vault/context.rs`'s stewardship filter) each reference the table's constant for the key instead of a
 literal, so the table and the code cannot drift. *Amended in the T17 PR:* the plan's reader lines
@@ -837,7 +838,9 @@ typed struct fields), so they are not touched; the readers above are the literal
 - `cargo test -p cdno-domain --test unit -- unit::note_type_tests`:
   `reference_fields_match_the_rfc_table` (the six rows, nothing else).
 - `grep -rn '"project"\|"stewardship"\|"portfolio"\|"captured_during"' crates/cdno-domain/src/vault`
-  hits only the table and `frontmatter_order`; the PR shows the list.
+  hits only the table and its constants, `frontmatter_order`, and uses of the same spelling as a
+  note-type name or in prose (the grep cannot tell those apart from a key; type names spelled like
+  a key are not keys). The PR shows the list.
 
 **Correct means.** Which keys are references is written once.
 

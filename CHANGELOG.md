@@ -95,7 +95,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Internal
 
-- `NoteType::reference_fields` and `NoteType::reference_keys` hold the RFC 0007 §3.5 reference table; the writers and readers of those fields and the snapshot mask read the keys from it; nothing user-visible (RFC 0007 stage S4, #866).
+- `NoteType::reference_fields` and `NoteType::reference_keys` hold the RFC 0007 §3.5 reference table;
+  the writers and readers of those fields and the snapshot mask read the keys from it; nothing
+  user-visible (RFC 0007 stage S5, #866).
 - `Vault::notes_tagged` expands a `<type>/<slug>` tag query through the names a note answers to
   by the wikilink rule (an alias counts unless a note's stem shadows it or another note shares it);
   no surface uses it yet (#862).
