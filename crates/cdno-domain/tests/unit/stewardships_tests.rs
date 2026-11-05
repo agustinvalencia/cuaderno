@@ -740,3 +740,27 @@ fn add_tracking_entry_by_old_name_logs_the_new_slug() {
     let (_fm, _body, variant) = vault.get_stewardship("Old").expect("read by old name");
     assert_eq!(variant, StewardshipVariant::Expanded);
 }
+
+#[test]
+fn a_derived_stewardship_slug_that_is_an_alias_is_refused() {
+    use cdno_domain::TakenBy;
+    let (vault, store) = vault_with_seeded_store(&[(
+        "projects/surrogate-model.md",
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\naliases: [old]\n---\n\n# Surrogate model\n",
+    )]);
+    let before = snapshot(&store);
+
+    let err = vault
+        .create_stewardship_flat(dt(2026, 1, 10, 9, 0), "Old", Context::Household)
+        .expect_err("an alias is taken");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken { slug, holder, kind: TakenBy::Alias }
+                if slug == "old" && *holder == vp("projects/surrogate-model.md")
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
+}

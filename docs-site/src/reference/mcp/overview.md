@@ -119,7 +119,7 @@ prints under [`--json`](../json-output.md#slug-refusals).
 | Code | `details` | When |
 |---|---|---|
 | `invalid_slug` | `slug`, `why` | The slug breaks the shape rule (lowercase `a-z`, `0-9`, single `-`, at most 50 characters, not YAML-typed); `why` names the part. Fix the shape, or ask the person for another name. |
-| `slug_taken` | `slug`, `holder`, `kind` (`stem`\|`folder`) | Another note already holds the name. If `holder` is the note you meant, use it; otherwise ask the person for another name. Do not suffix it yourself. |
+| `slug_taken` | `slug`, `holder`, `kind` (`stem`\|`folder`\|`alias`) | Another note already holds the name. If `holder` is the note you meant, use it; otherwise ask the person for another name. `alias` means the name is a former name another note still lists. Do not suffix it yourself. |
 | `portfolio_slug_mismatch` | `question_slug`, `slug` | `create_portfolio` with `question` set to a question's slug and a `slug` that is not that slug. Drop `slug` or pass the question's. |
 | `slug_given_twice` | `field` | `create_custom_note` with `slug` and a `slug` entry in `fields`. Pass one of them. |
 

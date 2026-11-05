@@ -163,3 +163,68 @@ proptest! {
         prop_assert!(is_slug_shaped(&slug), "title {:?} gave {:?}", title, slug);
     }
 }
+
+// ---------------------------------------------------------------------
+// Who holds an alias's name (RFC 0007 §5.5, T13), seen through the
+// refusal an explicit slug gets.
+// ---------------------------------------------------------------------
+
+fn taken_holder(notes: &[(&str, &str)], slug: &str) -> (VaultPath, &'static str) {
+    use cdno_domain::Context;
+    use cdno_domain::error::DomainError;
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    for (path, body) in notes {
+        store
+            .write_file(&VaultPath::new(path).unwrap(), body)
+            .unwrap();
+    }
+    let (vault, _) = Vault::new(store, index, VaultConfig::default()).unwrap();
+    let at = chrono::NaiveDate::from_ymd_opt(2026, 4, 28)
+        .unwrap()
+        .and_hms_opt(9, 0, 0)
+        .unwrap();
+    match vault
+        .create_project_with_vars(
+            at,
+            "Anything",
+            Context::Work,
+            None,
+            &std::collections::HashMap::new(),
+            Some(slug),
+        )
+        .expect_err("the name is taken")
+    {
+        DomainError::SlugTaken { holder, kind, .. } => (holder, kind.as_str()),
+        other => panic!("got {other:?}"),
+    }
+}
+
+const ALIASED: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\naliases: [x]\n---\n\n# Held\n";
+const PLAIN: &str =
+    "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Plain\n";
+
+#[test]
+fn a_stem_outranks_an_alias_as_the_reported_holder() {
+    // `a-held` sorts before `x`, so path order alone would report the alias.
+    let (holder, kind) = taken_holder(
+        &[("projects/a-held.md", ALIASED), ("projects/x.md", PLAIN)],
+        "x",
+    );
+    assert_eq!(
+        (holder, kind),
+        (VaultPath::new("projects/x.md").unwrap(), "stem")
+    );
+}
+
+#[test]
+fn a_shared_alias_is_still_taken() {
+    let (holder, kind) = taken_holder(
+        &[("projects/b.md", ALIASED), ("projects/a.md", ALIASED)],
+        "x",
+    );
+    assert_eq!(
+        (holder, kind),
+        (VaultPath::new("projects/a.md").unwrap(), "alias")
+    );
+}

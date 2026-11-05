@@ -6495,3 +6495,88 @@ fn current_link_target_keeps_an_anchor_and_a_label_on_a_former_name() {
         );
     }
 }
+
+// ---------------------------------------------------------------------
+// An alias is a reserved name (RFC 0007 §5.5, T13).
+// ---------------------------------------------------------------------
+
+#[test]
+fn an_alias_is_a_taken_name_for_an_explicit_slug() {
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/new.md", &renamed_map("active"))],
+        VaultConfig::default(),
+    );
+    let before = snapshot(&store);
+
+    let err = vault
+        .create_project_with_vars(
+            dt(2026, 4, 28, 9, 0),
+            "Another title",
+            Context::Work,
+            None,
+            &HashMap::new(),
+            Some("old"),
+        )
+        .expect_err("an alias is taken");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken { slug, holder, kind: TakenBy::Alias }
+                if slug == "old" && *holder == vp("projects/new.md")
+        ),
+        "got {err:?}"
+    );
+    assert!(err.to_string().contains("(as its alias)"), "{err}");
+    assert_eq!(snapshot(&store), before, "nothing was written");
+}
+
+#[test]
+fn an_alias_on_another_note_type_blocks_an_explicit_project_slug() {
+    let action = "---\ntype: action\nstatus: open\ncreated: 2026-04-01\naliases: [old]\n---\n\n# Surrogate model\n";
+    let (vault, store) =
+        vault_with_seeded_store(&[("actions/new.md", action)], VaultConfig::default());
+    let before = snapshot(&store);
+
+    let err = vault
+        .create_project_with_vars(
+            dt(2026, 4, 28, 9, 0),
+            "Another title",
+            Context::Work,
+            None,
+            &HashMap::new(),
+            Some("old"),
+        )
+        .expect_err("an action's alias is taken");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken { slug, holder, kind: TakenBy::Alias }
+                if slug == "old" && *holder == vp("actions/new.md")
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
+}
+
+#[test]
+fn a_derived_slug_steps_past_an_alias() {
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/new.md", &renamed_map("active"))],
+        VaultConfig::default(),
+    );
+
+    let path = vault
+        .create_project_with_vars(
+            dt(2026, 4, 28, 9, 0),
+            "Old",
+            Context::Work,
+            None,
+            &HashMap::new(),
+            None,
+        )
+        .expect("create succeeds");
+
+    assert_eq!(path, vp("projects/old-2.md"));
+}

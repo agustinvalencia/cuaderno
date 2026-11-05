@@ -438,6 +438,22 @@ impl super::Vault {
         Ok(holders)
     }
 
+    /// Every alias `path` declares, in the index's order, each once: the
+    /// inverse of [`alias_holders`](Self::alias_holders), read from the same
+    /// `list_aliases` rows.
+    pub(in crate::vault) fn aliases_of(
+        &self,
+        path: &VaultPath,
+    ) -> Result<Vec<String>, DomainError> {
+        let mut aliases: Vec<String> = Vec::new();
+        for (alias, holder) in self.index.list_aliases()? {
+            if &holder == path && !aliases.contains(&alias) {
+                aliases.push(alias);
+            }
+        }
+        Ok(aliases)
+    }
+
     /// The one note declaring `slug` as an alias among those `accepts`
     /// takes, and that note's current slug; `None` when none does, or when
     /// two or more share it.
