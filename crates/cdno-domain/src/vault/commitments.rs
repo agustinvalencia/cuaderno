@@ -126,8 +126,11 @@ impl Vault {
     /// commitment, the dominant case per design.md §5.9. The links are
     /// loose pointers — the target's existence isn't validated here.
     ///
-    /// Errors only on slug collisions: if `commitments/<slug>.md`
-    /// already exists, returns [`StoreError::AlreadyExists`].
+    /// Errors only on slug problems: if `commitments/<slug>.md`
+    /// already exists, returns [`StoreError::AlreadyExists`]; a slug given to
+    /// [`create_commitment_with_vars`](Self::create_commitment_with_vars)
+    /// that breaks a naming rule is [`DomainError::InvalidSlug`], and one
+    /// another note already holds is [`DomainError::SlugTaken`].
     /// Completed commitments at `commitments/_done/<year>/<slug>.md`
     /// don't block — slugs only need to be unique among active
     /// commitments.
@@ -153,7 +156,9 @@ impl Vault {
     }
 
     /// As [`create_commitment`](Self::create_commitment), with caller-supplied
-    /// prompted-variable values (`[variables.prompt]`, #238).
+    /// prompted-variable values (`[variables.prompt]`, #238). `slug` names the
+    /// file exactly when given (RFC 0007), refused rather than suffixed on a
+    /// clash; `None` derives it from `title`.
     #[allow(clippy::too_many_arguments)] // thin gather→create passthrough
     pub fn create_commitment_with_vars(
         &self,

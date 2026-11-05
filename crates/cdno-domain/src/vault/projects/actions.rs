@@ -876,7 +876,9 @@ impl Vault {
     /// As [`promote_action`](Self::promote_action), with caller-supplied
     /// prompted-variable values (`[variables.prompt]`, #238) for the action
     /// note the promotion scaffolds. The CLI gathers these up front; other
-    /// callers use the no-vars wrapper above.
+    /// callers use the no-vars wrapper above. `note_slug` names the action
+    /// note exactly when given (RFC 0007), refused rather than suffixed on a
+    /// clash; `None` derives it from the bullet text.
     pub fn promote_action_with_vars(
         &self,
         at: NaiveDateTime,

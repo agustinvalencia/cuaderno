@@ -58,6 +58,8 @@ impl Vault {
     ///
     /// Errors:
     /// - [`DomainError::EmptyField`] — `text` is whitespace-only.
+    /// - [`DomainError::InvalidSlug`] / [`DomainError::SlugTaken`] — only for a
+    ///   `slug` given to [`create_question_with_vars`](Self::create_question_with_vars).
     /// - [`StoreError::AlreadyExists`] — a question with the same slug
     ///   already exists in *either* domain (slugs are unique across
     ///   the whole `questions/` tree so lookup-by-slug is unambiguous).
@@ -71,7 +73,9 @@ impl Vault {
     }
 
     /// As [`create_question`](Self::create_question), with caller-supplied
-    /// prompted-variable values (`[variables.prompt]`, #238).
+    /// prompted-variable values (`[variables.prompt]`, #238). `slug` names the
+    /// file exactly when given (RFC 0007), refused rather than suffixed on a
+    /// clash; `None` derives it from `text`.
     pub fn create_question_with_vars(
         &self,
         at: NaiveDateTime,

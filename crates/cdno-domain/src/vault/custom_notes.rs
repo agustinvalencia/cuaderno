@@ -118,7 +118,7 @@ impl Vault {
     /// Create a note of a config-defined custom type, with caller-supplied
     /// prompted-variable values (`[variables.prompt]`).
     ///
-    /// The note is written to `<folder>/<slug(title)>.md`, its frontmatter shaped
+    /// The note is written to `<folder>/<slug>.md`, its frontmatter shaped
     /// by the type's declared fields. `fields` maps frontmatter field → value;
     /// every key must be a declared `required`/`optional` field, and every
     /// `required` field satisfies the create-time check — either supplied
@@ -196,8 +196,15 @@ impl Vault {
     /// - [`DomainError::UnknownField`] — a `fields` key isn't declared.
     /// - [`DomainError::MissingRequiredField`] — a declared `required` field is
     ///   absent or empty.
+    /// - [`DomainError::InvalidSlug`] — `slug` is given and breaks a naming rule.
+    /// - [`DomainError::SlugTaken`] — `slug` is given and is already another
+    ///   note's name; it is never suffixed.
     /// - [`StoreError::AlreadyExists`] — a note with the same slug exists.
-    #[allow(clippy::too_many_arguments)] // signature fixed by RFC 0002 T6: trailing options
+    ///
+    /// `slug` names the file exactly (and fills `{{slug}}`); `None` derives it
+    /// from `title`, suffixed past any clash.
+    // Trailing options: RFC 0002 T6 fixed `body` and `origin`, RFC 0007 T1 added `slug`.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_custom_note_with_vars(
         &self,
         at: NaiveDateTime,
@@ -255,16 +262,27 @@ impl Vault {
             }
         }
 
-        // Computed ahead of the required-field check (rather than after, as
-        // in the original ordering) so an engine-supplied name can be
-        // resolved against its real value below.
         let date = at.date().format("%Y-%m-%d").to_string();
-        // Globally-unique stem (#225) so backlinks stay resolvable.
-        let slug = self.explicit_or_derived_slug(slug, title)?;
 
         // Every `required` field must end up with a non-empty value: the
-        // caller's, or, for a name in `ENGINE_SUPPLIED_FIELDS`, the value
-        // computed above.
+        // caller's, or, for a name in `ENGINE_SUPPLIED_FIELDS`, the value the
+        // engine computes below. Checked before the slug, so a missing field
+        // is reported ahead of a taken or invalid slug.
+        for req in &def.required {
+            let caller_supplied = fields.get(req).is_some_and(|v| !v.trim().is_empty());
+            let engine_supplied = ENGINE_SUPPLIED_FIELDS.contains(&req.as_str());
+            if !caller_supplied && !engine_supplied {
+                return Err(DomainError::MissingRequiredField {
+                    note_type: type_name.to_owned(),
+                    field: req.clone(),
+                });
+            }
+        }
+
+        // The person's slug, used exactly or refused; else globally unique
+        // (#225) so backlinks stay resolvable. Still before anything is staged.
+        let slug = self.explicit_or_derived_slug(slug, title)?;
+
         let engine_value = |name: &str| -> Option<&str> {
             match name {
                 "title" => Some(title),
@@ -279,16 +297,6 @@ impl Vault {
                 .all(|name| engine_value(name).is_some()),
             "ENGINE_SUPPLIED_FIELDS and engine_value must stay in lock-step"
         );
-        for req in &def.required {
-            let caller_supplied = fields.get(req).is_some_and(|v| !v.trim().is_empty());
-            let engine_supplied = engine_value(req).is_some();
-            if !caller_supplied && !engine_supplied {
-                return Err(DomainError::MissingRequiredField {
-                    note_type: type_name.to_owned(),
-                    field: req.clone(),
-                });
-            }
-        }
 
         let path = VaultPath::new(format!("{}/{slug}.md", def.folder))?;
         if self.store.exists(&path)? {

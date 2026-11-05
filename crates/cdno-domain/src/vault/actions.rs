@@ -42,9 +42,12 @@ impl Vault {
     /// `milestone` is a raw wikilink string (the milestone owns the
     /// date, the action inherits it); `due` is a self-imposed deadline
     /// used only when the action stands alone. Both are `None` for the
-    /// plain `add --note` path. Errors with
+    /// plain `add --note` path. `slug` names the note exactly when given
+    /// (RFC 0007); otherwise it is derived from `title`. Errors with
     /// [`StoreError::AlreadyExists`] if an active action already holds
-    /// the slug.
+    /// the slug, [`DomainError::InvalidSlug`] if a given `slug` breaks a
+    /// naming rule, and [`DomainError::SlugTaken`] if it is already another
+    /// note's name (never suffixed).
     // The action's defining fields plus the caller's transaction; bundling
     // them into a struct would obscure more than it clarifies.
     #[allow(clippy::too_many_arguments)]
@@ -126,6 +129,8 @@ impl Vault {
 
     /// As [`add_action_with_note`](Self::add_action_with_note), with
     /// caller-supplied prompted-variable values (`[variables.prompt]`, #238).
+    /// `slug` names the action note exactly when given, else it is derived
+    /// from `title`; see [`create_action_note`](Self::create_action_note).
     pub fn add_action_with_note_and_vars(
         &self,
         at: NaiveDateTime,
