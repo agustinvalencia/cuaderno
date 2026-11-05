@@ -675,7 +675,8 @@ query to the slug plus its aliases before calling the index, so the index stays 
   `a_derived_portfolio_slug_that_is_an_alias_is_refused`.
 - `cargo test -p cdno-domain --test unit -- unit::links_tests`:
   `a_tag_query_by_old_name_finds_the_note`, `a_shadowed_alias_is_not_expanded`,
-  `a_shared_alias_is_not_expanded`, `a_stem_beats_an_alias_in_tag_expansion`.
+  `a_shared_alias_is_not_expanded`, `a_stem_beats_an_alias_in_tag_expansion`,
+  `a_shared_stem_is_not_expanded`.
 - Mutation: drop aliases from `taken_names`; the first test fails.
 
 **Correct means.** An old reference can never silently change referent, because its name can
