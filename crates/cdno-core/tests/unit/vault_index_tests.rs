@@ -526,6 +526,8 @@ fn archival_snapshot_round_trips_and_cascades_on_note_delete() {
         frozen_size: 1234,
         frozen_hash: "deadbeefcafef00d".to_owned(),
         archived_at_ns: 1_700_000_000_000_000_000,
+        masked_hash: Some("0123456789abcdef".to_owned()),
+        mask_version: Some(1),
     };
     idx.record_archival_snapshot(&path, &snap).unwrap();
     assert_eq!(

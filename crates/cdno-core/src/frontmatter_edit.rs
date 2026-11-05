@@ -195,6 +195,52 @@ fn continues_on_next_line(all: &[Line<'_>], i: usize) -> bool {
     false
 }
 
+/// One scalar value found under a top-level key.
+struct ScalarSite {
+    /// Byte range of the scalar's content (inside the quotes when quoted),
+    /// relative to the block.
+    range: Range<usize>,
+    quote: Option<char>,
+}
+
+/// Every scalar under top-level `key` that the rewrite can address: the
+/// matcher shared by [`rewrite_frontmatter_scalar`] and
+/// [`frontmatter_scalar_spans`]. An empty value, a flow collection, a
+/// block scalar, an indented key, a key inside a comment, and a bare
+/// scalar that continues onto the next line are not sites.
+fn scalar_sites(frontmatter: &str, key: &str) -> Vec<ScalarSite> {
+    let all = lines(frontmatter);
+    let mut out = Vec::new();
+    for (i, line) in all.iter().enumerate() {
+        let Some(offset) = key_value_offset(line.text, key) else {
+            continue;
+        };
+        let Some(span) = scalar_span(line.text, offset) else {
+            continue;
+        };
+        if span.quote.is_none() && continues_on_next_line(&all, i) {
+            continue;
+        }
+        out.push(ScalarSite {
+            range: line.start + span.content.start..line.start + span.content.end,
+            quote: span.quote,
+        });
+    }
+    out
+}
+
+/// The byte ranges (relative to `frontmatter`, inside any quotes) of every
+/// scalar value under top-level `key`: exactly the values
+/// [`rewrite_frontmatter_scalar`] considers for a rewrite, found by the same
+/// matcher. Lists, flow collections, block scalars and empty values yield
+/// nothing.
+pub fn frontmatter_scalar_spans(frontmatter: &str, key: &str) -> Vec<Range<usize>> {
+    scalar_sites(frontmatter, key)
+        .into_iter()
+        .map(|s| s.range)
+        .collect()
+}
+
 /// Rewrite the value of every top-level `key:` line whose scalar is
 /// `from`, to `to`, in the same quoting.
 ///
@@ -222,25 +268,18 @@ pub fn rewrite_frontmatter_scalar(
     to: &str,
 ) -> (String, Vec<AddressEdit>) {
     let mut edits = Vec::new();
-    let all = lines(frontmatter);
-    for (i, line) in all.iter().enumerate() {
-        let Some(offset) = key_value_offset(line.text, key) else {
-            continue;
-        };
-        let Some(span) = scalar_span(line.text, offset) else {
-            continue;
-        };
-        let raw = &line.text[span.content.clone()];
-        let (matches, replacement) = match span.quote {
+    for site in scalar_sites(frontmatter, key) {
+        let raw = &frontmatter[site.range.clone()];
+        let (matches, replacement) = match site.quote {
             Some('"') => (raw == escape_double(from), escape_double(to)),
             Some(_) => (raw == escape_single(from), escape_single(to)),
-            None if raw != from || continues_on_next_line(&all, i) => continue,
+            None if raw != from => continue,
             None if plain_safe(to) => (true, to.to_owned()),
             None => (true, format!("\"{}\"", escape_double(to))),
         };
         if matches {
             edits.push(AddressEdit {
-                range: line.start + span.content.start..line.start + span.content.end,
+                range: site.range,
                 replacement,
             });
         }

@@ -89,7 +89,7 @@ flowchart LR
         T14["T14 lint: straggler + conflict"]
     end
     subgraph S4["Stage S4 — masked snapshot hash"]
-        T15["T15 masked hash + migration 003"]
+        T15["T15 masked hash + migration 004"]
         T16["T16 backfill + lint verifies masked"]
     end
     subgraph S5["Stage S5 — rename, flat notes, domain"]
@@ -720,7 +720,7 @@ message.
 
 ## Stage S4 — masked snapshot hash
 
-### T15 — The masked hash and migration 003
+### T15 — The masked hash and migration 004
 
 **What.** In `cdno-core`:
 `pub fn masked_content_hash(prefix: &str, reference_keys: &[&str]) -> String` — the frozen prefix
@@ -728,7 +728,7 @@ with every wikilink address (T6's spans) and every scalar under a listed frontma
 machinery) replaced by a fixed token, then `content_hash` (`hash.rs:20`);
 `pub const MASK_VERSION: u32 = 1`. `ArchivalSnapshot` (`index.rs:384`) gains
 `masked_hash: Option<String>` and `mask_version: Option<u32>`; migration
-`004_snapshot_masked_hash.sql` (003 is T11's; both insert their own `schema_migrations` row,
+`004_snapshot_masked_hash.sql` (003 is T11's, shipped; both insert their own `schema_migrations` row,
 `index.rs:268`) adds the two nullable columns; `record_archival_snapshot` /
 `find_archival_snapshot` carry them on both indexes. `stage_action_archival`
 (`actions.rs:204`) stamps both hashes, passing the §3.5 keys from the domain (T17's table once

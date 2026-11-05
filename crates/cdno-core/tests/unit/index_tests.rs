@@ -21,9 +21,9 @@ fn open_creates_fresh_db_with_current_schema() {
             r.get(0)
         })
         .unwrap();
-    // 001 initial schema + 002 FTS5 search + 003 links.via_alias — see
+    // 001 initial schema + 002 FTS5 search + 003 links.via_alias + 004 snapshot masked hash — see
     // SCHEMA.md.
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
 
     // All tables exist (`notes_fts` is the FTS5 virtual table from 002).
     for table in [
@@ -60,7 +60,7 @@ fn reopen_existing_db_is_idempotent() {
     let row_count: u32 = conn
         .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(row_count, 3);
+    assert_eq!(row_count, 4);
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn open_self_heals_a_corrupt_index_file() {
             r.get(0)
         })
         .unwrap();
-    assert_eq!(version, 3, "fresh schema applied after recovery");
+    assert_eq!(version, 4, "fresh schema applied after recovery");
 }
 
 #[test]
@@ -232,10 +232,64 @@ fn migration_003_adds_via_alias() {
             Ok((version, has_column, via_alias))
         })
         .unwrap();
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
     assert!(has_column, "links.via_alias added by 003");
     assert_eq!(
         via_alias, 0,
         "an existing row did not resolve through an alias"
     );
+}
+
+#[test]
+fn migration_004_adds_nullable_columns() {
+    // A database at schema version 3, holding one archived snapshot. Opening
+    // it applies 004: both columns appear and the existing row reads NULL --
+    // it has no masked hash until a backfill stamps one.
+    let (_dir, path) = new_db_path();
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(include_str!("../../migrations/001_initial.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/002_fts5_search.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("../../migrations/003_links_via_alias.sql"))
+            .unwrap();
+        conn.execute(
+            "INSERT INTO notes (path, note_type, content_hash, mtime_ns, size, frontmatter, indexed_at_ns) \
+             VALUES ('actions/_done/2026/surrogate-model.md', 'action', 'h', 0, 0, '{}', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO archived_action_snapshots (note_path, frozen_size, frozen_hash, archived_at_ns) \
+             VALUES ('actions/_done/2026/surrogate-model.md', 10, 'h', 0)",
+            [],
+        )
+        .unwrap();
+    }
+
+    let index = SqliteIndex::open(&path).unwrap();
+    let (version, columns, masked, mask_version): (u32, i64, Option<String>, Option<u32>) = index
+        .with_connection(|c| {
+            let version = c.query_row("SELECT MAX(version) FROM schema_migrations", [], |r| {
+                r.get(0)
+            })?;
+            let columns = c.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('archived_action_snapshots') \
+                 WHERE name IN ('masked_hash', 'mask_version')",
+                [],
+                |r| r.get::<_, i64>(0),
+            )?;
+            let (masked, mask_version) = c.query_row(
+                "SELECT masked_hash, mask_version FROM archived_action_snapshots",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            Ok((version, columns, masked, mask_version))
+        })
+        .unwrap();
+    assert_eq!(version, 4);
+    assert_eq!(columns, 2, "both columns added by 004");
+    assert_eq!(masked, None);
+    assert_eq!(mask_version, None);
 }

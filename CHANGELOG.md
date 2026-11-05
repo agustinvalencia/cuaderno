@@ -25,6 +25,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   accepting a question's slug as well as its text, and four rejection codes with the CLI's `--json`
   shapes: `invalid_slug`, `slug_taken`, `portfolio_slug_mismatch` and `slug_given_twice`. The
   catalogue is unchanged at 65 tools (#884).
+- A second, masked hash on every archived-action snapshot (RFC 0007 stage S4, #864): the frozen prefix
+  with each wikilink address and each reference-field value (`project`, `stewardship`, `portfolio`,
+  `captured_during`) replaced by a fixed token, stamped with a `mask_version`, so a rename can later
+  rewrite a reference without invalidating the snapshot. Index migration 004 adds the two nullable
+  columns; rows archived before it stay `NULL` until the backfill. Nothing reads the masked hash yet.
 
 ### Changed
 

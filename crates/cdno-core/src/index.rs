@@ -39,6 +39,11 @@ const MIGRATIONS: &[(u32, &str, &str)] = &[
         "links.via_alias: the row resolved through a note alias",
         include_str!("../migrations/003_links_via_alias.sql"),
     ),
+    (
+        4,
+        "archived_action_snapshots: masked_hash and mask_version",
+        include_str!("../migrations/004_snapshot_masked_hash.sql"),
+    ),
 ];
 
 /// SQLite-backed implementation of the vault index.
@@ -410,6 +415,12 @@ pub struct ArchivalSnapshot {
     pub frozen_hash: String,
     /// Wall-clock instant of the archival, ns since the UNIX epoch.
     pub archived_at_ns: u64,
+    /// Hash of the same content with references masked
+    /// ([`crate::hash::masked_content_hash`]); `None` until stamped or
+    /// backfilled.
+    pub masked_hash: Option<String>,
+    /// The [`crate::hash::MASK_VERSION`] `masked_hash` was computed under.
+    pub mask_version: Option<u32>,
 }
 
 /// One ranked full-text search result from [`VaultIndex::search`].
@@ -1139,17 +1150,21 @@ impl VaultIndex for SqliteIndex {
     ) -> Result<(), IndexError> {
         let conn = self.lock_conn();
         conn.execute(
-            "INSERT INTO archived_action_snapshots (note_path, frozen_size, frozen_hash, archived_at_ns) \
-             VALUES (?1, ?2, ?3, ?4) \
+            "INSERT INTO archived_action_snapshots (note_path, frozen_size, frozen_hash, archived_at_ns, masked_hash, mask_version) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
              ON CONFLICT(note_path) DO UPDATE SET \
                  frozen_size = excluded.frozen_size, \
                  frozen_hash = excluded.frozen_hash, \
-                 archived_at_ns = excluded.archived_at_ns",
+                 archived_at_ns = excluded.archived_at_ns, \
+                 masked_hash = excluded.masked_hash, \
+                 mask_version = excluded.mask_version",
             params![
                 path.to_string(),
                 snapshot.frozen_size as i64,
                 snapshot.frozen_hash,
                 snapshot.archived_at_ns as i64,
+                snapshot.masked_hash,
+                snapshot.mask_version,
             ],
         )?;
         Ok(())
@@ -1161,7 +1176,7 @@ impl VaultIndex for SqliteIndex {
     ) -> Result<Option<ArchivalSnapshot>, IndexError> {
         let conn = self.lock_conn();
         conn.query_row(
-            "SELECT frozen_size, frozen_hash, archived_at_ns FROM archived_action_snapshots \
+            "SELECT frozen_size, frozen_hash, archived_at_ns, masked_hash, mask_version FROM archived_action_snapshots \
              WHERE note_path = ?1",
             params![path.to_string()],
             |r| {
@@ -1169,6 +1184,8 @@ impl VaultIndex for SqliteIndex {
                     frozen_size: r.get::<_, i64>(0)? as u64,
                     frozen_hash: r.get(1)?,
                     archived_at_ns: r.get::<_, i64>(2)? as u64,
+                    masked_hash: r.get(3)?,
+                    mask_version: r.get(4)?,
                 })
             },
         )

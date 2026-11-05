@@ -306,6 +306,11 @@ impl Vault {
             frozen_size: new_content.len() as u64,
             frozen_hash: cdno_core::hash::content_hash(&new_content),
             archived_at_ns,
+            masked_hash: Some(cdno_core::hash::masked_content_hash(
+                &new_content,
+                SNAPSHOT_REFERENCE_KEYS,
+            )),
+            mask_version: Some(cdno_core::hash::MASK_VERSION),
         };
 
         // Write-new + delete-old is a content-changing move; the index
@@ -324,6 +329,12 @@ impl Vault {
             .map_err(DomainError::from)
     }
 }
+
+/// The frontmatter keys that hold a bare slug (RFC 0007 §3.5) and so are
+/// masked in the snapshot's masked hash. A literal until T17 replaces it
+/// with the reference table.
+const SNAPSHOT_REFERENCE_KEYS: &[&str] =
+    &["project", "stewardship", "portfolio", "captured_during"];
 
 /// The slug is the file stem of the note path. `create_action_note`
 /// always builds the path from a slug, so the stem is present and
