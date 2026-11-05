@@ -40,6 +40,7 @@ fn create_project(root: &Path, at: NaiveDateTime, title: &str, context: Context)
             context: Some(context),
             question: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -65,6 +66,7 @@ fn add_appends_open_bullet_with_energy() {
             energy: Some(EnergyLevel::Deep),
             note: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -97,6 +99,7 @@ fn add_with_note_writes_note_and_wikilink_bullet() {
             energy: Some(EnergyLevel::Deep),
             note: true,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -133,6 +136,7 @@ fn promote_attaches_note_to_existing_bullet() {
             energy: Some(EnergyLevel::Deep),
             note: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -146,6 +150,7 @@ fn promote_attaches_note_to_existing_bullet() {
             project: Some("x".to_owned()),
             query: Some("draft methods".to_owned()),
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -185,6 +190,7 @@ fn complete_removes_matching_plain_bullet() {
             energy: Some(EnergyLevel::Deep),
             note: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -220,6 +226,7 @@ fn complete_on_wikilink_bullet_archives_the_note() {
             energy: Some(EnergyLevel::Deep),
             note: true,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -299,6 +306,7 @@ fn list_renders_plain_and_attached_bullets_with_status() {
             energy: Some(EnergyLevel::Deep),
             note: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -313,6 +321,7 @@ fn list_renders_plain_and_attached_bullets_with_status() {
             energy: Some(EnergyLevel::Medium),
             note: true,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -374,6 +383,7 @@ fn add_without_project_in_non_interactive_errors() {
             energy: Some(EnergyLevel::Deep),
             note: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -404,6 +414,7 @@ fn action_statuses_are_distinguishable_in_the_rendered_listing() {
                 energy: Some(EnergyLevel::Deep),
                 note: promote,
                 var: vec![],
+                slug: None,
             },
             true,
             false,
@@ -525,6 +536,7 @@ fn drop_logs_a_drop_not_a_completion() {
             energy: Some(EnergyLevel::Deep),
             note: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -621,6 +633,7 @@ fn start_logs_the_resolved_bullet_not_the_query() {
             energy: Some(EnergyLevel::Deep),
             note: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -683,6 +696,7 @@ fn add_on_a_parked_project_succeeds() {
             energy: Some(EnergyLevel::Light),
             note: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -792,6 +806,7 @@ fn start_on_a_parked_project_is_still_refused() {
             energy: Some(EnergyLevel::Light),
             note: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -875,6 +890,7 @@ fn an_ambiguous_start_lists_its_candidates_readably() {
                 energy: Some(EnergyLevel::Deep),
                 note: false,
                 var: vec![],
+                slug: None,
             },
             true,
             false,
@@ -963,6 +979,7 @@ fn identical_bullets_still_report_readably_rather_than_a_debug_vec() {
                 energy: Some(EnergyLevel::Deep),
                 note: false,
                 var: vec![],
+                slug: None,
             },
             true,
             false,
@@ -1014,6 +1031,7 @@ fn the_picker_re_entry_reports_readably_when_the_choice_is_still_ambiguous() {
                 energy: Some(EnergyLevel::Deep),
                 note: false,
                 var: vec![],
+                slug: None,
             },
             true,
             false,
@@ -1065,6 +1083,7 @@ fn an_ambiguous_candidate_cannot_drive_the_terminal() {
                 energy: Some(EnergyLevel::Deep),
                 note: false,
                 var: vec![],
+                slug: None,
             },
             true,
             false,
@@ -1117,6 +1136,7 @@ fn vault_with_two_identical_bullets() -> TempDir {
                 energy: Some(EnergyLevel::Deep),
                 note: false,
                 var: vec![],
+                slug: None,
             },
             true,
             false,
@@ -1183,6 +1203,7 @@ fn promote_reports_an_ambiguous_query_readably() {
             project: Some("x".to_owned()),
             query: Some("Sweep".to_owned()),
             var: vec![],
+            slug: None,
         },
         false,
         false,
@@ -1227,6 +1248,7 @@ fn each_verb_keeps_its_own_error_context() {
                 project: Some("x".to_owned()),
                 query: Some("nothing matches this".to_owned()),
                 var: vec![],
+                slug: None,
             },
             "promoting action",
         ),
@@ -1273,6 +1295,7 @@ fn add_bullet(root: &Path, project: &str, title: &str) {
             energy: Some(EnergyLevel::Deep),
             note: false,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -2268,4 +2291,54 @@ fn an_unplanned_switch_names_the_daily_note_it_logged_to() {
     let out = String::from_utf8_lossy(&out);
     assert!(out.contains("logged to journal/"), "{out}");
     assert!(!out.contains("logged to projects/"), "{out}");
+}
+
+#[test]
+fn add_with_slug_names_the_note() {
+    let dir = surrogate_vault();
+    cdno_in(dir.path())
+        .args(["action", "add", "--project", "surrogate-model"])
+        .args(["--title", "Draft the methods", "--energy", "deep"])
+        .args(["--note", "--slug", "surrogate-calibration"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(
+            "actions/surrogate-calibration.md",
+        ));
+    assert!(
+        dir.path()
+            .join("actions/surrogate-calibration.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn add_slug_without_note_is_a_clap_error_naming_note() {
+    let dir = surrogate_vault();
+    cdno_in(dir.path())
+        .args(["action", "add", "--project", "surrogate-model"])
+        .args(["--title", "Draft the methods", "--energy", "deep"])
+        .args(["--slug", "surrogate-calibration"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("--note"));
+}
+
+#[test]
+fn promote_with_slug_names_the_note() {
+    let dir = surrogate_vault();
+    cdno_in(dir.path())
+        .args(["action", "promote", "--project", "surrogate-model"])
+        .args(["--query", "Draft methods"])
+        .args(["--slug", "surrogate-calibration"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(
+            "actions/surrogate-calibration.md",
+        ));
+    assert!(
+        dir.path()
+            .join("actions/surrogate-calibration.md")
+            .is_file()
+    );
 }

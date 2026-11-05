@@ -13,6 +13,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   CLI and MCP surfaces follow in later tasks (RFC 0007, #850, #851). When a portfolio's
   `question` is a question's slug, the portfolio takes the question's text as its title and the two
   are linked both ways; an explicit slug must then be the question's (RFC 0007, #851).
+- `--slug` on the eight CLI create verbs (`project create`, `question create`, `portfolio create`,
+  `action add --note`, `action promote`, `note create`, `stewardship create`, `commit create`): it
+  is never prompted, never shown in a confirmation preview, and is refused when the name is taken;
+  under `--json` a refusal is an `invalid_slug`, `slug_taken` or `portfolio_slug_mismatch` object.
+  `note create` refuses `--slug` beside `--field slug=…`. `portfolio create --question` accepts a
+  question's slug (RFC 0007, #852).
 
 ### Changed
 

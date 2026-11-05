@@ -949,3 +949,37 @@ fn note_revise_help_lists_no_required_flag() {
         assert!(help.contains(flag), "{flag} missing from:\n{help}");
     }
 }
+
+#[test]
+fn create_with_slug_names_the_file() {
+    let dir = tempdir().unwrap();
+    init_person_vault(dir.path());
+    let v = vault_arg(dir.path());
+
+    cdno()
+        .args(["--vault", &v, "note", "create", "person"])
+        .args(["--title", "Ada Lovelace", "--field", "name=Ada"])
+        .args(["--slug", "surrogate-model"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("people/surrogate-model.md"));
+    assert!(dir.path().join("people/surrogate-model.md").is_file());
+}
+
+#[test]
+fn slug_and_field_slug_together_are_refused() {
+    let dir = tempdir().unwrap();
+    init_person_vault(dir.path());
+    let v = vault_arg(dir.path());
+
+    cdno()
+        .args(["--vault", &v, "note", "create", "person"])
+        .args(["--title", "Ada Lovelace", "--field", "name=Ada"])
+        .args(["--field", "slug=surrogate-calibration"])
+        .args(["--slug", "surrogate-model"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--slug").and(predicate::str::contains("--field slug")));
+    let made = fs::read_dir(dir.path().join("people")).map_or(0, |d| d.count());
+    assert_eq!(made, 0, "nothing created");
+}

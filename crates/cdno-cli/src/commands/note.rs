@@ -51,6 +51,10 @@ pub enum NoteCommands {
         /// RFC 0002). The type must declare an `origin` field.
         #[arg(long, value_name = "STRING")]
         origin: Option<String>,
+        /// Slug for the note (its file name); derived from the title when
+        /// omitted. Not combinable with `--field slug=…`.
+        #[arg(long)]
+        slug: Option<String>,
     },
 
     /// List every note of a config-defined custom type, by path.
@@ -109,7 +113,15 @@ pub fn run(
             var,
             body_file,
             origin,
+            slug,
         } => {
+            // A clap `conflicts_with` cannot see a `--field`'s key, so the
+            // pair is refused here, before anything is read or written.
+            if slug.is_some() && field.iter().any(|(k, _)| k == "slug") {
+                anyhow::bail!(
+                    "--slug and --field slug=… both name the note; pass only one of them"
+                );
+            }
             let fields: HashMap<String, String> = field.into_iter().collect();
             let vars: HashMap<String, String> = var.into_iter().collect();
             let body_from_file = body_file
@@ -142,16 +154,19 @@ pub fn run(
                 println!("Aborted.");
                 return Ok(());
             }
-            let path = vault.create_custom_note_with_vars(
-                at,
-                &note_type,
-                &title,
-                &fields,
-                &vars,
-                body.as_deref(),
-                origin.as_deref(),
-                None,
-            )?;
+            let path = vault
+                .create_custom_note_with_vars(
+                    at,
+                    &note_type,
+                    &title,
+                    &fields,
+                    &vars,
+                    body.as_deref(),
+                    origin.as_deref(),
+                    slug.as_deref(),
+                )
+                .map_err(anyhow::Error::from)
+                .map_err(|e| crate::commands::rejection::slug_refusal(e, json))?;
             crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))
         }
         NoteCommands::Revise {

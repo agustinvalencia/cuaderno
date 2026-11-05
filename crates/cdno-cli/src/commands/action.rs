@@ -46,6 +46,10 @@ pub enum ActionCommands {
         /// the bullet to it.
         #[arg(long)]
         note: bool,
+        /// Slug for the action note (its file name); derived from the title
+        /// when omitted. Only with `--note`.
+        #[arg(long, requires = "note")]
+        slug: Option<String>,
         /// Value for a custom action-note template's prompted variable
         /// (`[variables.prompt]`), repeatable: `--var name=value`. Only
         /// applies with `--note` (a plain bullet isn't templated).
@@ -66,6 +70,10 @@ pub enum ActionCommands {
         /// (`[variables.prompt]`), repeatable: `--var name=value`.
         #[arg(long = "var", value_parser = crate::prompt::parse_key_val)]
         var: Vec<(String, String)>,
+        /// Slug for the new action note (its file name); derived from the
+        /// bullet when omitted.
+        #[arg(long)]
+        slug: Option<String>,
     },
 
     /// Start work on a next action: logs `started [[slug]] — <bullet>`
@@ -246,6 +254,7 @@ pub fn run_with_vault_flag(
             title,
             energy,
             note,
+            slug,
             var,
         } => add(
             &vault,
@@ -254,6 +263,7 @@ pub fn run_with_vault_flag(
             title,
             energy,
             note,
+            slug,
             var,
             interactive,
             json,
@@ -261,8 +271,9 @@ pub fn run_with_vault_flag(
         ActionCommands::Promote {
             project,
             query,
+            slug,
             var,
-        } => promote(&vault, at, project, query, var, interactive, json),
+        } => promote(&vault, at, project, query, slug, var, interactive, json),
         ActionCommands::Start {
             project,
             query,
@@ -335,6 +346,7 @@ fn add(
     title: Option<String>,
     energy: Option<EnergyLevel>,
     note_flag: bool,
+    slug: Option<String>,
     var: Vec<(String, String)>,
     interactive: bool,
     json: bool,
@@ -382,8 +394,16 @@ fn add(
         // scaffolds one); the plain branch below reports the project map.
         // Both are "the file written", just different files per branch.
         let path = vault
-            .add_action_with_note_and_vars(at, &project, &title, energy, &template_vars, None)
-            .context("adding action with note")?;
+            .add_action_with_note_and_vars(
+                at,
+                &project,
+                &title,
+                energy,
+                &template_vars,
+                slug.as_deref(),
+            )
+            .context("adding action with note")
+            .map_err(|e| crate::commands::rejection::slug_refusal(e, json))?;
         crate::output::emit_write_result(
             json,
             &path.to_string(),
@@ -1077,6 +1097,7 @@ fn promote(
     at: NaiveDateTime,
     project: Option<String>,
     query: Option<String>,
+    slug: Option<String>,
     var: Vec<(String, String)>,
     interactive: bool,
     json: bool,
@@ -1112,8 +1133,9 @@ fn promote(
     }
 
     let note_path = resolving_ambiguity(&project, &query, interactive, "promoting action", |q| {
-        vault.promote_action_with_vars(at, &project, q, &template_vars, None)
-    })?;
+        vault.promote_action_with_vars(at, &project, q, &template_vars, slug.as_deref())
+    })
+    .map_err(|e| crate::commands::rejection::slug_refusal(e, json))?;
     crate::output::emit_write_result(
         json,
         &note_path.to_string(),
@@ -1448,7 +1470,7 @@ pub fn no_focus_rejection(message: &str) -> serde_json::Value {
 /// Print a rejection object and exit non-zero, as `project complete`
 /// does for its refusal: a script checking the exit code must not read
 /// a refusal as a pass. Returns only if printing failed.
-fn reject_json(value: serde_json::Value) -> Result<()> {
+pub(crate) fn reject_json(value: serde_json::Value) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(&value)?);
     std::process::exit(1);
 }

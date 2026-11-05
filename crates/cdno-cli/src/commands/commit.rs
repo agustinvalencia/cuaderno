@@ -45,6 +45,10 @@ pub enum CommitCommands {
         /// items.
         #[arg(long)]
         stewardship: Option<String>,
+        /// Slug for the commitment (its file name); derived from the title
+        /// when omitted.
+        #[arg(long)]
+        slug: Option<String>,
         /// Value for a custom template's prompted variable
         /// (`[variables.prompt]`), repeatable: `--var name=value`.
         #[arg(long = "var", value_parser = crate::prompt::parse_key_val)]
@@ -103,6 +107,7 @@ pub fn run(
             context,
             project,
             stewardship,
+            slug,
             var,
         } => create(
             &vault,
@@ -112,6 +117,7 @@ pub fn run(
             context,
             project,
             stewardship,
+            slug,
             var,
             interactive,
             json,
@@ -135,6 +141,7 @@ fn create(
     context: Option<CommitmentContext>,
     project: Option<String>,
     stewardship: Option<String>,
+    slug: Option<String>,
     var: Vec<(String, String)>,
     interactive: bool,
     json: bool,
@@ -172,9 +179,10 @@ fn create(
             project.as_deref(),
             stewardship.as_deref(),
             &template_vars,
-            None,
+            slug.as_deref(),
         )
-        .context("creating commitment")?;
+        .context("creating commitment")
+        .map_err(|e| crate::commands::rejection::slug_refusal(e, json))?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())
 }

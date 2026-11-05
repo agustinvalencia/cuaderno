@@ -38,6 +38,11 @@ pub enum ProjectCommands {
         /// (e.g. `questions/research/foo`). Always optional.
         #[arg(long)]
         question: Option<String>,
+        /// Slug for the NEW project (its file name); derived from the title
+        /// when omitted. Not a selector: the other subcommands use `--slug`
+        /// to pick an existing project.
+        #[arg(long)]
+        slug: Option<String>,
         /// Value for a custom template's prompted variable
         /// (`[variables.prompt]`), repeatable: `--var name=value`.
         #[arg(long = "var", value_parser = crate::prompt::parse_key_val)]
@@ -255,8 +260,19 @@ pub fn run(
             title,
             context,
             question,
+            slug,
             var,
-        } => create(&vault, at, title, context, question, var, interactive, json)?,
+        } => create(
+            &vault,
+            at,
+            title,
+            context,
+            question,
+            slug,
+            var,
+            interactive,
+            json,
+        )?,
         ProjectCommands::State { slug, text } => {
             state(&vault, at, slug, text, interactive, json)?;
         }
@@ -385,6 +401,7 @@ fn create(
     title: Option<String>,
     context: Option<ProjectContext>,
     question: Option<String>,
+    slug: Option<String>,
     var: Vec<(String, String)>,
     interactive: bool,
     json: bool,
@@ -418,9 +435,10 @@ fn create(
             context,
             question.as_deref(),
             &template_vars,
-            None,
+            slug.as_deref(),
         )
-        .context("creating project")?;
+        .context("creating project")
+        .map_err(|e| crate::commands::rejection::slug_refusal(e, json))?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())
 }

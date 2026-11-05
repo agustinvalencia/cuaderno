@@ -32,6 +32,7 @@ fn create(root: &Path, at: NaiveDateTime, domain: QuestionDomain, text: &str) {
             domain: Some(domain),
             text: Some(text.to_owned()),
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -73,6 +74,7 @@ fn create_errors_when_missing_domain_in_non_interactive() {
             domain: None,
             text: Some("Anything?".to_owned()),
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -91,6 +93,7 @@ fn create_errors_when_missing_text_in_non_interactive() {
             domain: Some(QuestionDomain::Life),
             text: None,
             var: vec![],
+            slug: None,
         },
         true,
         false,
@@ -368,5 +371,32 @@ fn a_rendered_question_listing_uses_the_domain_accent() {
         gutter_of("research-one"),
         gutter_of("life-one"),
         "research and life must be distinguishable:\n{out}"
+    );
+}
+
+/// The binary against `root`, never inheriting the developer's vault.
+fn cdno_in(root: &std::path::Path) -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::cargo_bin("cdno").expect("cdno binary built");
+    cmd.env_remove("CUADERNO_VAULT_PATH");
+    cmd.arg("--vault").arg(root);
+    cmd
+}
+
+#[test]
+fn create_with_slug_names_the_file() {
+    let dir = vault();
+    cdno_in(dir.path())
+        .args(["question", "create", "--domain", "research"])
+        .args(["--text", "Does a surrogate beat the simulator?"])
+        .args(["--slug", "surrogate-model"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(
+            "questions/research/surrogate-model.md",
+        ));
+    assert!(
+        dir.path()
+            .join("questions/research/surrogate-model.md")
+            .is_file()
     );
 }
