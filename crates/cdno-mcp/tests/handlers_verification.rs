@@ -391,6 +391,7 @@ async fn server_with_a_started_bullet() -> CuadernoServer {
     let server = healthy_server();
     server
         .create_project(Parameters(CreateProjectInput {
+            slug: None,
             title: "Alpha".to_owned(),
             context: "work".to_owned(),
             core_question: None,
@@ -408,6 +409,7 @@ async fn start_action_is_append_shaped_and_shows_the_log_line_that_landed() {
     // bullet in focus, and the start under test is now refused while one is.
     server
         .add_action(Parameters(AddActionInput {
+            slug: None,
             project: "alpha".to_owned(),
             title: "Draft methods".to_owned(),
             energy: "deep".to_owned(),
@@ -502,6 +504,7 @@ async fn the_unplanned_verbs_rewrite_shape_is_pinned_by_a_map_that_has_a_logs_se
     let server = server_over(Arc::clone(&store));
     server
         .create_project(Parameters(CreateProjectInput {
+            slug: None,
             title: "Alpha".to_owned(),
             context: "work".to_owned(),
             core_question: None,

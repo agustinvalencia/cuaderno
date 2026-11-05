@@ -39,7 +39,7 @@ impl CuadernoServer {
                     context,
                     input.core_question.as_deref(),
                     &vars,
-                    None,
+                    input.slug.as_deref(),
                 )
             })
             .await?
@@ -50,7 +50,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Create a portfolio — a dossier that accumulates evidence for one question over months. Reach for this when you are gathering material rather than delivering a result; delivering is a project. Do not organise inside a portfolio, and file evidence as it arises. Creates an evidence folder + `_index.md` for a question or topic. `project` optionally links it to a project — pass the bare wikilink target (e.g. `projects/surrogate-model`); resolve a real one (e.g. via `get_orientation`) rather than inventing it. When that project note exists, its `## Links` is backfilled with the portfolio in the same commit (and the portfolio's `project:` frontmatter is set either way); an unknown target sets the frontmatter only, not rejected. If a research/life question note already exists for the same `question` text, the two are linked both ways in the same commit — the question's `## Related Portfolios` gains the new portfolio and the portfolio's `## Related Questions` gains the question (pass the question's text verbatim so the slugs match). Use `link_portfolio_to_question` / `link_portfolio_to_project` to wire them when the slugs differ or the portfolio already exists."
+        description = "Create a portfolio — a dossier that accumulates evidence for one question over months. Reach for this when you are gathering material rather than delivering a result; delivering is a project. Do not organise inside a portfolio, and file evidence as it arises. Creates an evidence folder + `_index.md` for a question or topic. `project` optionally links it to a project — pass the bare wikilink target (e.g. `projects/surrogate-model`); resolve a real one (e.g. via `get_orientation`) rather than inventing it. When that project note exists, its `## Links` is backfilled with the portfolio in the same commit (and the portfolio's `project:` frontmatter is set either way); an unknown target sets the frontmatter only, not rejected. If a research/life question note already exists, pass its slug as `question`, not its text: the portfolio takes the question's text as its title and the two are linked both ways in the same commit — the question's `## Related Portfolios` gains the new portfolio and the portfolio's `## Related Questions` gains the question. Pass text only for a question that does not exist yet. Use `link_portfolio_to_question` / `link_portfolio_to_project` to wire them when the portfolio already exists."
     )]
     pub async fn create_portfolio(
         &self,
@@ -65,7 +65,7 @@ impl CuadernoServer {
                     &input.question,
                     input.project.as_deref(),
                     &vars,
-                    None,
+                    input.slug.as_deref(),
                 )
             })
             .await?
@@ -130,7 +130,13 @@ impl CuadernoServer {
         let path = self
             .with_vault(move |vault| {
                 let vars = input.vars.unwrap_or_default();
-                vault.create_question_with_vars(at, domain, &input.text, &vars, None)
+                vault.create_question_with_vars(
+                    at,
+                    domain,
+                    &input.text,
+                    &vars,
+                    input.slug.as_deref(),
+                )
             })
             .await?
             .map_err(into_mcp_error)?;
@@ -159,7 +165,7 @@ impl CuadernoServer {
                     &vars,
                     input.body.as_deref(),
                     input.origin.as_deref(),
-                    None,
+                    input.slug.as_deref(),
                 )
             })
             .await?
@@ -188,10 +194,16 @@ impl CuadernoServer {
                         &input.name,
                         context,
                         &vars,
-                        None,
+                        input.slug.as_deref(),
                     )
                 } else {
-                    vault.create_stewardship_flat_with_vars(at, &input.name, context, &vars, None)
+                    vault.create_stewardship_flat_with_vars(
+                        at,
+                        &input.name,
+                        context,
+                        &vars,
+                        input.slug.as_deref(),
+                    )
                 }
             })
             .await?

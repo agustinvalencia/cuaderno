@@ -472,6 +472,7 @@ async fn add_action_bullet_appends_to_next_actions() {
 
     server
         .add_action(Parameters(AddActionInput {
+            slug: None,
             project: "surrogate-model".to_owned(),
             title: "Run sweep B".to_owned(),
             energy: "deep".to_owned(),
@@ -493,6 +494,7 @@ async fn add_action_with_note_creates_action_note_and_wikilinks_bullet() {
 
     let result = server
         .add_action(Parameters(AddActionInput {
+            slug: None,
             project: "surrogate-model".to_owned(),
             title: "Investigate basis stability".to_owned(),
             energy: "deep".to_owned(),
@@ -521,6 +523,7 @@ async fn add_action_rejects_unknown_energy_with_invalid_params() {
     });
     let err = server
         .add_action(Parameters(AddActionInput {
+            slug: None,
             project: "surrogate-model".to_owned(),
             title: "x".to_owned(),
             energy: "intense".to_owned(),
@@ -550,6 +553,7 @@ async fn promote_action_creates_action_note_from_existing_bullet() {
 
     let result = server
         .promote_action(Parameters(PromoteActionInput {
+            slug: None,
             project: "surrogate-model".to_owned(),
             query: "sweep B".to_owned(),
             vars: None,
@@ -605,6 +609,7 @@ async fn create_commitment_writes_commitment_note() {
 
     let result = server
         .create_commitment(Parameters(CreateCommitmentInput {
+            slug: None,
             title: "Renew passport".to_owned(),
             due: NaiveDate::from_ymd_opt(2026, 8, 1).unwrap(),
             context: "personal".to_owned(),
@@ -628,6 +633,7 @@ async fn create_commitment_persists_stewardship_origin_link() {
 
     let result = server
         .create_commitment(Parameters(CreateCommitmentInput {
+            slug: None,
             title: "Email ophthalmologist".to_owned(),
             due: NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
             context: "personal".to_owned(),
@@ -652,6 +658,7 @@ async fn create_commitment_rejects_unknown_context_with_invalid_params() {
     let (server, _store) = server_with(|_v, store| seed_today_daily(&store));
     let err = server
         .create_commitment(Parameters(CreateCommitmentInput {
+            slug: None,
             title: "x".to_owned(),
             due: NaiveDate::from_ymd_opt(2026, 8, 1).unwrap(),
             context: "fortnightly".to_owned(),
@@ -1088,6 +1095,7 @@ async fn create_project_creates_a_project_map() {
 
     let result = server
         .create_project(Parameters(CreateProjectInput {
+            slug: None,
             title: "Widget Redesign".to_owned(),
             context: "work".to_owned(),
             core_question: None,
@@ -1109,6 +1117,7 @@ async fn create_project_rejects_unknown_context_with_invalid_params() {
 
     let err = server
         .create_project(Parameters(CreateProjectInput {
+            slug: None,
             title: "X".to_owned(),
             context: "nonsense".to_owned(),
             core_question: None,
@@ -1136,6 +1145,7 @@ async fn create_project_at_the_cap_is_seeded_parked() {
 
     let result = server
         .create_project(Parameters(CreateProjectInput {
+            slug: None,
             title: "Sixth".to_owned(),
             context: "work".to_owned(),
             core_question: None,
@@ -1172,6 +1182,7 @@ async fn create_project_with_vars_renders_a_prompted_variable() {
 
     let result = server
         .create_project(Parameters(CreateProjectInput {
+            slug: None,
             title: "Widget".to_owned(),
             context: "work".to_owned(),
             core_question: None,
@@ -1202,6 +1213,7 @@ async fn create_project_without_vars_surfaces_unresolved_prompts() {
 
     let err = server
         .create_project(Parameters(CreateProjectInput {
+            slug: None,
             title: "Widget".to_owned(),
             context: "work".to_owned(),
             core_question: None,
@@ -1219,6 +1231,7 @@ async fn create_question_creates_a_note_and_rejects_unknown_domain() {
 
     let result = server
         .create_question(Parameters(CreateQuestionInput {
+            slug: None,
             domain: "research".to_owned(),
             text: "What is the best benchmark?".to_owned(),
             vars: None,
@@ -1236,6 +1249,7 @@ async fn create_question_creates_a_note_and_rejects_unknown_domain() {
 
     let err = server
         .create_question(Parameters(CreateQuestionInput {
+            slug: None,
             domain: "philosophy".to_owned(),
             text: "?".to_owned(),
             vars: None,
@@ -1252,6 +1266,7 @@ async fn create_portfolio_creates_an_index() {
 
     let result = server
         .create_portfolio(Parameters(CreatePortfolioInput {
+            slug: None,
             question: "Reference material".to_owned(),
             project: None,
             vars: None,
@@ -1274,6 +1289,7 @@ async fn create_stewardship_honours_the_expanded_flag() {
 
     let flat = server
         .create_stewardship(Parameters(CreateStewardshipInput {
+            slug: None,
             name: "Finances".to_owned(),
             context: "personal".to_owned(),
             expanded: false,
@@ -1286,6 +1302,7 @@ async fn create_stewardship_honours_the_expanded_flag() {
 
     let expanded = server
         .create_stewardship(Parameters(CreateStewardshipInput {
+            slug: None,
             name: "Health".to_owned(),
             context: "personal".to_owned(),
             expanded: true,
@@ -1523,6 +1540,7 @@ async fn drop_action_closes_the_bullet_without_claiming_it_was_done() {
     let (server, store) = server_with_project();
     server
         .add_action(Parameters(AddActionInput {
+            slug: None,
             project: "surrogate-model".to_owned(),
             title: "Prepare the demo proposal".to_owned(),
             energy: "deep".to_owned(),
@@ -1872,6 +1890,7 @@ async fn create_custom_note_creates_a_custom_type_note() {
     let (server, store) = server_with_config(config_with_person(), |_v, _s| {});
     let result = server
         .create_custom_note(Parameters(CreateCustomNoteInput {
+            slug: None,
             type_name: "person".to_owned(),
             title: "Ada Lovelace".to_owned(),
             fields: std::collections::HashMap::from([
@@ -1903,6 +1922,7 @@ async fn create_custom_note_rejects_an_unknown_type() {
     let (server, _store) = server_with_config(config_with_person(), |_v, _s| {});
     let result = server
         .create_custom_note(Parameters(CreateCustomNoteInput {
+            slug: None,
             type_name: "gadget".to_owned(),
             title: "Widget".to_owned(),
             fields: std::collections::HashMap::new(),
@@ -1928,6 +1948,7 @@ async fn create_custom_note_names_the_install_command_for_a_bundled_type() {
     let (server, _store) = server_with_config(config_with_person(), |_v, _s| {});
     let err = server
         .create_custom_note(Parameters(CreateCustomNoteInput {
+            slug: None,
             type_name: "concept".to_owned(),
             title: "Woodbury identity".to_owned(),
             fields: std::collections::HashMap::new(),
@@ -1956,6 +1977,7 @@ async fn create_custom_note_rejects_a_missing_required_field() {
     let (server, _store) = server_with_config(config_with_person(), |_v, _s| {});
     let result = server
         .create_custom_note(Parameters(CreateCustomNoteInput {
+            slug: None,
             type_name: "person".to_owned(),
             title: "Nameless".to_owned(),
             fields: std::collections::HashMap::new(),
@@ -1994,6 +2016,7 @@ async fn create_custom_note_writes_body_and_origin() {
     let origin = "[[journal/2026/daily/2026-09-02#Woodbury identity]]";
     let result = server
         .create_custom_note(Parameters(CreateCustomNoteInput {
+            slug: None,
             type_name: "concept".to_owned(),
             title: "Woodbury identity".to_owned(),
             fields: std::collections::HashMap::new(),
@@ -2030,6 +2053,7 @@ async fn create_custom_note_rejects_origin_on_a_type_that_does_not_declare_it() 
     let (server, store) = server_with_config(config_with_person_and_concept(), |_v, _s| {});
     let err = server
         .create_custom_note(Parameters(CreateCustomNoteInput {
+            slug: None,
             type_name: "person".to_owned(),
             title: "Ada".to_owned(),
             fields: std::collections::HashMap::from([("name".to_owned(), "Ada".to_owned())]),
@@ -2206,6 +2230,7 @@ async fn start_action_logs_the_resolved_bullet_not_the_query() {
     let (server, store) = server_with_project();
     server
         .add_action(Parameters(AddActionInput {
+            slug: None,
             project: "surrogate-model".to_owned(),
             title: "Prepare the demo proposal".to_owned(),
             energy: "deep".to_owned(),
@@ -2331,6 +2356,7 @@ async fn create_custom_note_reconciles_origin_and_drops_a_repeated_title_heading
     let origin = "[[journal/2026/daily/2026-09-02#Woodbury identity]] [[journal/2026/daily/2026-09-24#Low-rank refit]]";
     server
         .create_custom_note(Parameters(CreateCustomNoteInput {
+            slug: None,
             type_name: "concept".to_owned(),
             title: "Woodbury identity".to_owned(),
             fields: std::collections::HashMap::new(),
@@ -3078,6 +3104,7 @@ async fn drop_project_with_stale_hash_is_re_refused() {
         .to_owned();
     server
         .add_action(Parameters(AddActionInput {
+            slug: None,
             project: "widget".to_owned(),
             title: "Something new".to_owned(),
             energy: "light".to_owned(),
@@ -3369,6 +3396,7 @@ async fn o7_chain_create_at_cap_then_add_action_on_the_parked_map_succeeds() {
 
     let created = server
         .create_project(Parameters(CreateProjectInput {
+            slug: None,
             title: "Glacier survey".to_owned(),
             context: "work".to_owned(),
             core_question: None,
@@ -3381,6 +3409,7 @@ async fn o7_chain_create_at_cap_then_add_action_on_the_parked_map_succeeds() {
 
     server
         .add_action(Parameters(AddActionInput {
+            slug: None,
             project: "glacier-survey".to_owned(),
             title: "Book the field hut".to_owned(),
             energy: "light".to_owned(),
@@ -3584,6 +3613,7 @@ async fn switch_with_nothing_open_says_it_was_a_plain_start() {
     let (server, _store) = server_with_project();
     server
         .add_action(Parameters(AddActionInput {
+            slug: None,
             project: "surrogate-model".to_owned(),
             title: "Run ablation".to_owned(),
             energy: "deep".to_owned(),
@@ -3724,6 +3754,7 @@ async fn hand_off_project_round_trips_a_quoted_wikilink_and_the_map_stops_counti
     // The map no longer holds a slot, so creating one more is not parked.
     let created = server
         .create_project(Parameters(CreateProjectInput {
+            slug: None,
             title: "Glacier survey".to_owned(),
             context: "work".to_owned(),
             core_question: None,
@@ -4137,6 +4168,7 @@ async fn call_focused_write(
         "promote_action" => {
             server
                 .promote_action(Parameters(PromoteActionInput {
+                    slug: None,
                     project: project(),
                     query: "Write abstract".to_owned(),
                     vars: None,
@@ -4146,6 +4178,7 @@ async fn call_focused_write(
         "add_action" => {
             server
                 .add_action(Parameters(AddActionInput {
+                    slug: None,
                     project: project(),
                     title: "Plot the loss curves".to_owned(),
                     energy: "medium".to_owned(),
@@ -4467,4 +4500,331 @@ async fn note_to_daily_back_dated_still_reads_todays_focus() {
     assert!(!focus.is_null(), "{payload}");
     assert_eq!(focus["action"], "Draft methods section (deep)", "{payload}");
     assert_eq!(focus, &current_focus_json(&server).await);
+}
+
+// ---------------------------------------------------------------------
+// RFC 0007 T4 (#853): `slug` on the create tools, and its rejection codes
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn create_project_with_slug_names_the_file() {
+    let (server, store) = server_with(|_v, s| seed_today_daily(&s));
+    let result = server
+        .create_project(Parameters(CreateProjectInput {
+            title: "Calibrating the surrogate model against the reference solver".to_owned(),
+            context: "work".to_owned(),
+            core_question: None,
+            vars: None,
+            slug: Some("surrogate-calibration".to_owned()),
+        }))
+        .await
+        .expect("create_project");
+    assert_eq!(
+        decode_json(&result)["path"],
+        "projects/surrogate-calibration.md"
+    );
+    assert!(
+        store
+            .exists(&vp("projects/surrogate-calibration.md"))
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn a_taken_slug_rejects_with_slug_taken() {
+    let (server, _store) = server_with(|vault, s| {
+        seed_today_daily(&s);
+        vault
+            .create_project(
+                moment(2026, 1, 1, 9, 0),
+                "Surrogate model",
+                Context::Work,
+                None,
+            )
+            .unwrap();
+    });
+    let err = server
+        .create_project(Parameters(CreateProjectInput {
+            title: "Another effort".to_owned(),
+            context: "work".to_owned(),
+            core_question: None,
+            vars: None,
+            slug: Some("surrogate-model".to_owned()),
+        }))
+        .await
+        .expect_err("a taken slug is refused");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "slug_taken", "{rejection}");
+    assert_eq!(rejection["details"]["slug"], "surrogate-model");
+    assert_eq!(rejection["details"]["kind"], "stem", "{rejection}");
+    assert_eq!(
+        rejection["details"]["holder"], "projects/surrogate-model.md",
+        "{rejection}"
+    );
+    assert!(
+        rejection["message"]
+            .as_str()
+            .unwrap()
+            .contains("do not suffix it yourself"),
+        "{rejection}"
+    );
+}
+
+#[tokio::test]
+async fn an_invalid_slug_rejects_with_invalid_slug() {
+    let (server, _store) = server_with(|_v, s| seed_today_daily(&s));
+    let err = server
+        .create_project(Parameters(CreateProjectInput {
+            title: "Surrogate model".to_owned(),
+            context: "work".to_owned(),
+            core_question: None,
+            vars: None,
+            slug: Some("Surrogate Model".to_owned()),
+        }))
+        .await
+        .expect_err("an invalid slug is refused");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "invalid_slug", "{rejection}");
+    assert_eq!(rejection["details"]["slug"], "Surrogate Model");
+    assert!(
+        rejection["details"]["why"]
+            .as_str()
+            .is_some_and(|w| !w.is_empty()),
+        "{rejection}"
+    );
+}
+
+#[tokio::test]
+async fn a_mismatched_portfolio_slug_rejects_with_portfolio_slug_mismatch() {
+    let (server, _store) = server_with(|vault, s| {
+        seed_today_daily(&s);
+        vault
+            .create_question(
+                moment(2026, 1, 1, 9, 0),
+                QuestionDomain::Research,
+                "Surrogate calibration",
+            )
+            .unwrap();
+    });
+    let err = server
+        .create_portfolio(Parameters(CreatePortfolioInput {
+            question: "surrogate-calibration".to_owned(),
+            project: None,
+            vars: None,
+            slug: Some("surrogate-evidence".to_owned()),
+        }))
+        .await
+        .expect_err("a slug that is not the question's is refused");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "portfolio_slug_mismatch", "{rejection}");
+    assert_eq!(
+        rejection["details"],
+        serde_json::json!({
+            "question_slug": "surrogate-calibration",
+            "slug": "surrogate-evidence",
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_slug_beside_a_slug_field_rejects_with_slug_given_twice() {
+    let (server, _store) = server_with_config(config_with_person(), |_v, _s| {});
+    let err = server
+        .create_custom_note(Parameters(CreateCustomNoteInput {
+            type_name: "person".to_owned(),
+            title: "Ada Lovelace".to_owned(),
+            fields: std::collections::HashMap::from([
+                ("name".to_owned(), "Ada".to_owned()),
+                ("slug".to_owned(), "ada".to_owned()),
+            ]),
+            vars: None,
+            body: None,
+            origin: None,
+            slug: Some("ada-l".to_owned()),
+        }))
+        .await
+        .expect_err("two slugs are refused");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "slug_given_twice", "{rejection}");
+    assert_eq!(rejection["details"]["field"], "slug", "{rejection}");
+}
+
+#[tokio::test]
+async fn add_action_without_note_ignores_slug() {
+    let (server, store) = server_with(|vault, s| {
+        seed_today_daily(&s);
+        vault
+            .create_project(
+                moment(2026, 1, 1, 9, 0),
+                "Surrogate model",
+                Context::Work,
+                None,
+            )
+            .unwrap();
+    });
+    server
+        .add_action(Parameters(AddActionInput {
+            project: "surrogate-model".to_owned(),
+            title: "Book the field hut".to_owned(),
+            energy: "light".to_owned(),
+            with_note: false,
+            vars: None,
+            slug: Some("hut".to_owned()),
+        }))
+        .await
+        .expect("an inline bullet ignores the slug");
+    let map = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert!(map.contains("- [ ] Book the field hut (light)"), "{map}");
+    assert!(!store.exists(&vp("actions/hut.md")).unwrap());
+}
+
+/// The name a created path carries: its file stem, or its folder for a
+/// folder note (`<slug>/_index.md`).
+fn created_name(result: &CallToolResult) -> String {
+    let path = decode_json(result)["path"].as_str().unwrap().to_owned();
+    let p = std::path::Path::new(&path);
+    let named = if p.file_stem().and_then(|s| s.to_str()) == Some("_index") {
+        p.parent().and_then(|d| d.file_name())
+    } else {
+        p.file_stem()
+    };
+    named.and_then(|s| s.to_str()).unwrap().to_owned()
+}
+
+/// Every create tool hands the slug to the domain: a `None` put back at any
+/// pass-through would leave the call succeeding under the derived name.
+/// Names are unique across note types, so each row has its own slug.
+#[tokio::test]
+async fn every_create_tool_passes_the_slug_through() {
+    let (server, _store) = server_with_config(config_with_person(), |vault, s| {
+        seed_today_daily(&s);
+        let at = moment(2026, 1, 1, 9, 0);
+        vault
+            .create_project(at, "Surrogate model", Context::Work, None)
+            .unwrap();
+        vault
+            .add_action(
+                at,
+                "surrogate-model",
+                "Fit the calibration curve",
+                EnergyLevel::Medium,
+            )
+            .unwrap();
+    });
+    let s = |name: &str| Some(format!("surrogate-calibration-{name}"));
+    let mut rows: Vec<(String, CallToolResult)> = Vec::new();
+
+    rows.push((
+        "surrogate-calibration-project".into(),
+        server
+            .create_project(Parameters(CreateProjectInput {
+                title: "Calibrating the surrogate against the solver".to_owned(),
+                context: "work".to_owned(),
+                core_question: None,
+                vars: None,
+                slug: s("project"),
+            }))
+            .await
+            .expect("create_project"),
+    ));
+    rows.push((
+        "surrogate-calibration-question".into(),
+        server
+            .create_question(Parameters(CreateQuestionInput {
+                domain: "research".to_owned(),
+                text: "How well does the surrogate extrapolate beyond its training range?"
+                    .to_owned(),
+                vars: None,
+                slug: s("question"),
+            }))
+            .await
+            .expect("create_question"),
+    ));
+    rows.push((
+        "surrogate-calibration-portfolio".into(),
+        server
+            .create_portfolio(Parameters(CreatePortfolioInput {
+                question: "Evidence on how the surrogate extrapolates".to_owned(),
+                project: None,
+                vars: None,
+                slug: s("portfolio"),
+            }))
+            .await
+            .expect("create_portfolio"),
+    ));
+    rows.push((
+        "surrogate-calibration-note".into(),
+        server
+            .create_custom_note(Parameters(CreateCustomNoteInput {
+                type_name: "person".to_owned(),
+                title: "Ada Lovelace".to_owned(),
+                fields: std::collections::HashMap::from([("name".to_owned(), "Ada".to_owned())]),
+                vars: None,
+                body: None,
+                origin: None,
+                slug: s("note"),
+            }))
+            .await
+            .expect("create_custom_note"),
+    ));
+    for (expanded, name) in [(false, "flat"), (true, "expanded")] {
+        rows.push((
+            format!("surrogate-calibration-{name}"),
+            server
+                .create_stewardship(Parameters(CreateStewardshipInput {
+                    name: "Keeping the surrogate honest".to_owned(),
+                    context: "work".to_owned(),
+                    expanded,
+                    vars: None,
+                    slug: s(name),
+                }))
+                .await
+                .expect("create_stewardship"),
+        ));
+    }
+    rows.push((
+        "surrogate-calibration-action".into(),
+        server
+            .add_action(Parameters(AddActionInput {
+                project: "surrogate-model".to_owned(),
+                title: "Plot the residuals".to_owned(),
+                energy: "light".to_owned(),
+                with_note: true,
+                vars: None,
+                slug: s("action"),
+            }))
+            .await
+            .expect("add_action"),
+    ));
+    rows.push((
+        "surrogate-calibration-promoted".into(),
+        server
+            .promote_action(Parameters(PromoteActionInput {
+                project: "surrogate-model".to_owned(),
+                query: "Fit the calibration".to_owned(),
+                vars: None,
+                slug: s("promoted"),
+            }))
+            .await
+            .expect("promote_action"),
+    ));
+    rows.push((
+        "surrogate-calibration-commitment".into(),
+        server
+            .create_commitment(Parameters(CreateCommitmentInput {
+                title: "Send the surrogate report".to_owned(),
+                due: NaiveDate::from_ymd_opt(2026, 12, 1).unwrap(),
+                context: "work".to_owned(),
+                project: None,
+                stewardship: None,
+                vars: None,
+                slug: s("commitment"),
+            }))
+            .await
+            .expect("create_commitment"),
+    ));
+
+    for (want, result) in &rows {
+        assert_eq!(&created_name(result), want, "{result:?}");
+    }
 }

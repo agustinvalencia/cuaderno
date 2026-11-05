@@ -517,7 +517,7 @@ impl CuadernoServer {
                         &input.title,
                         energy,
                         &vars,
-                        None,
+                        input.slug.as_deref(),
                     )
                 } else {
                     vault.add_action(at, &input.project, &input.title, energy)
@@ -546,7 +546,13 @@ impl CuadernoServer {
         let path = self
             .with_vault(move |vault| {
                 let vars = input.vars.unwrap_or_default();
-                vault.promote_action_with_vars(at, &input.project, &input.query, &vars, None)
+                vault.promote_action_with_vars(
+                    at,
+                    &input.project,
+                    &input.query,
+                    &vars,
+                    input.slug.as_deref(),
+                )
             })
             .await?
             .map_err(into_mcp_error)?;
@@ -796,7 +802,7 @@ impl CuadernoServer {
                     input.project.as_deref(),
                     input.stewardship.as_deref(),
                     &vars,
-                    None,
+                    input.slug.as_deref(),
                 )
             })
             .await?

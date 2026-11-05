@@ -152,6 +152,7 @@ async fn call(server: &CuadernoServer, tool: &str) -> Result<CallToolResult, Err
         "promote_action" => {
             server
                 .promote_action(Parameters(PromoteActionInput {
+                    slug: None,
                     project: project(),
                     query: "Write abstract".to_owned(),
                     vars: None,
@@ -161,6 +162,7 @@ async fn call(server: &CuadernoServer, tool: &str) -> Result<CallToolResult, Err
         "add_action" => {
             server
                 .add_action(Parameters(AddActionInput {
+                    slug: None,
                     project: project(),
                     title: "Plot the loss curves".to_owned(),
                     energy: "medium".to_owned(),
