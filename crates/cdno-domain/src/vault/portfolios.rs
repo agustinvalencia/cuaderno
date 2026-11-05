@@ -27,6 +27,7 @@ use crate::note_type::NoteType;
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::note_ref::ResolvedNote;
+use super::projects::is_project_map_path;
 use super::rewrite_field_in_frontmatter;
 use super::slug::{slugify, validate_explicit_slug};
 
@@ -148,8 +149,17 @@ impl Vault {
         // `slug` beside a reference must be that stem, since the pair is
         // correlated by slug; the question holds the name, so no taken check.
         // Anything else is text, slugified raw (or the explicit slug).
+        //
+        // The reference goes through `resolve_question_by_slug`, so a
+        // question's former name (an alias, RFC 0007 §5.5) finds it too, and
+        // the portfolio then takes the question's *current* stem.
+        // `find_question_path` stays the correlation key below.
         let referenced = if validate_explicit_slug(question).is_ok() {
-            self.find_question_path(question)?
+            match self.resolve_question_by_slug(question) {
+                Ok((resolved, _frontmatter)) => Some(resolved.path),
+                Err(DomainError::Store(StoreError::NotFound(_))) => None,
+                Err(other) => return Err(other),
+            }
         } else {
             None
         };
@@ -188,6 +198,12 @@ impl Vault {
             )));
         }
 
+        // A project named by its former slug is recorded, and backlinked,
+        // by its current one (RFC 0007 §5.5).
+        let project = project
+            .map(|p| self.current_link_target(p, is_project_map_path))
+            .transpose()?;
+        let project = project.as_deref();
         let mut content = self.render_portfolio(question, at.date(), project, prompted)?;
 
         // Bidirectional link when a question note shares the slug. The

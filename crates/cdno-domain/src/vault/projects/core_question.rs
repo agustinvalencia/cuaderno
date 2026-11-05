@@ -31,6 +31,7 @@ use super::super::Vault;
 use super::super::WriteOutcome;
 use super::super::index_entry::build_index_entry_for;
 use super::super::note_ref::ResolvedNote;
+use super::super::questions::is_question_path;
 use super::rewrite_field_in_frontmatter;
 
 impl Vault {
@@ -94,6 +95,12 @@ impl Vault {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let (ResolvedNote { path, slug, .. }, doc) = self.resolve_open_project(slug)?;
         let slug = slug.as_str();
+        // A question named by its former slug is recorded by its current
+        // one, in the frontmatter and the log line alike (RFC 0007 §5.5).
+        let target = target
+            .map(|t| self.current_link_target(t, is_question_path))
+            .transpose()?;
+        let target = target.as_deref();
 
         // The existing value as it sits in the frontmatter, wikilink
         // wrapping and all — that is what the `was:` line should show,

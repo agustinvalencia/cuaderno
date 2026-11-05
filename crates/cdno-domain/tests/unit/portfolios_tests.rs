@@ -1597,3 +1597,87 @@ fn an_explicit_portfolio_slug_that_is_a_folder_is_refused() {
     );
     assert_eq!(snapshot(&store), before, "nothing was written");
 }
+
+// ---------------------------------------------------------------------
+// By former name (RFC 0007 §5.5, T12)
+// ---------------------------------------------------------------------
+
+/// A question renamed `old` → `new`, still listing `old` as an alias.
+fn renamed_question() -> String {
+    "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-01-01\n\
+     updated: 2026-01-01\naliases: [old]\n---\n\n# Why does the surrogate model drift?\n\n\
+     ## Related Portfolios\n"
+        .to_owned()
+}
+
+#[test]
+fn a_portfolio_created_from_a_questions_former_name_links_to_it() {
+    use super::support::{assert_logs_the_new_slug, by_old_name_at, seeded_vault};
+
+    let (vault, store) = seeded_vault(&[("questions/research/new.md", renamed_question())]);
+    let path = vault
+        .create_portfolio(by_old_name_at(), "old", None)
+        .expect("create by the question's former name");
+
+    assert_eq!(path, vp("portfolios/new/_index.md"));
+    assert!(!store.exists(&vp("portfolios/old/_index.md")).unwrap());
+    let portfolio = store.read_file(&path).unwrap();
+    assert!(
+        portfolio.contains("# Why does the surrogate model drift?"),
+        "{portfolio}"
+    );
+    assert!(
+        portfolio.contains("[[questions/research/new]]"),
+        "{portfolio}"
+    );
+    let question = store.read_file(&vp("questions/research/new.md")).unwrap();
+    assert!(
+        question.contains("## Related Portfolios\n- [[portfolios/new/_index]]"),
+        "{question}"
+    );
+    assert_logs_the_new_slug(
+        &store,
+        "create_portfolio",
+        "portfolio created [[portfolios/new]]",
+    );
+}
+
+#[test]
+fn create_portfolio_project_by_former_name_writes_the_current_path() {
+    use super::support::{assert_logs_the_new_slug, by_old_name_at, seeded_vault};
+
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n\
+               aliases: [old]\n---\n\n# Surrogate model\n\n## Links\n"
+        .to_owned();
+    let (vault, store) = seeded_vault(&[("projects/new.md", map)]);
+    let path = vault
+        .create_portfolio(by_old_name_at(), "Drift evidence", Some("projects/old"))
+        .expect("create");
+
+    let portfolio = store.read_file(&path).unwrap();
+    assert!(
+        portfolio.contains("project: \"[[projects/new]]\""),
+        "{portfolio}"
+    );
+    // The project map is backlinked, which only happens for a map that exists.
+    let map = store.read_file(&vp("projects/new.md")).unwrap();
+    assert!(
+        map.contains("[[portfolios/drift-evidence/_index]]"),
+        "{map}"
+    );
+    assert_logs_the_new_slug(
+        &store,
+        "create_portfolio",
+        "portfolio created [[portfolios/drift-evidence]]",
+    );
+
+    // A pointer to nothing is written as given.
+    let path = vault
+        .create_portfolio(by_old_name_at(), "Loose", Some("projects/someday"))
+        .expect("create");
+    let portfolio = store.read_file(&path).unwrap();
+    assert!(
+        portfolio.contains("project: \"[[projects/someday]]\""),
+        "{portfolio}"
+    );
+}

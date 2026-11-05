@@ -6378,3 +6378,83 @@ fn a_project_alias_held_by_another_type_is_not_found() {
         "{err:?}"
     );
 }
+
+#[test]
+fn set_core_question_by_former_name_writes_the_current_path() {
+    use super::support::{assert_logs_the_new_slug, by_old_name_at, seeded_vault};
+
+    let question = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-01-01\n\
+                    updated: 2026-01-01\naliases: [old]\n---\n\n# Why?\n"
+        .to_owned();
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n\
+               core_question: null\n---\n\n# Surrogate model\n"
+        .to_owned();
+    let (vault, store) = seeded_vault(&[
+        ("questions/research/new.md", question),
+        ("projects/surrogate-model.md", map),
+    ]);
+
+    vault
+        .set_core_question(
+            by_old_name_at(),
+            "surrogate-model",
+            Some("questions/research/old"),
+        )
+        .expect("set");
+
+    let raw = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert!(
+        raw.contains("core_question: \"[[questions/research/new]]\""),
+        "{raw}"
+    );
+    assert_logs_the_new_slug(
+        &store,
+        "set_core_question",
+        "now: [[questions/research/new]]",
+    );
+}
+
+#[test]
+fn create_project_core_question_by_former_name_writes_the_current_path() {
+    use super::support::{assert_logs_the_new_slug, by_old_name_at, seeded_vault};
+
+    let question = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-01-01\n\
+                    updated: 2026-01-01\naliases: [old]\n---\n\n# Why?\n"
+        .to_owned();
+    let (vault, store) = seeded_vault(&[("questions/research/new.md", question)]);
+
+    let path = vault
+        .create_project(
+            by_old_name_at(),
+            "Surrogate model",
+            Context::Work,
+            Some("questions/research/old"),
+        )
+        .expect("create");
+
+    let raw = store.read_file(&path).unwrap();
+    assert!(
+        raw.contains("core_question: \"[[questions/research/new]]\""),
+        "{raw}"
+    );
+    assert_logs_the_new_slug(
+        &store,
+        "create_project",
+        "project created [[projects/surrogate-model]]",
+    );
+
+    // A pointer to nothing is written as given.
+    let path = vault
+        .create_project(
+            by_old_name_at(),
+            "Another",
+            Context::Work,
+            Some("questions/research/unwritten"),
+        )
+        .expect("create");
+    let raw = store.read_file(&path).unwrap();
+    assert!(
+        raw.contains("core_question: \"[[questions/research/unwritten]]\""),
+        "{raw}"
+    );
+}

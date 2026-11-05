@@ -23,6 +23,7 @@ use crate::note_type::NoteType;
 use super::super::Vault;
 use super::super::index_entry::build_index_entry_for;
 use super::super::note_ref::ResolvedNote;
+use super::super::questions::is_question_path;
 use super::milestones::stage_milestone_index_rows;
 use super::{
     MILESTONES_SECTION, is_closed_project_path, is_under_projects_done,
@@ -168,7 +169,12 @@ impl Vault {
             parked_path
         };
 
-        let core_question_yaml = super::core_question_yaml(core_question);
+        // A question named by its former slug is recorded by its current
+        // one (RFC 0007 §5.5); anything else is written as given.
+        let core_question = core_question
+            .map(|t| self.current_link_target(t, is_question_path))
+            .transpose()?;
+        let core_question_yaml = super::core_question_yaml(core_question.as_deref());
         let mut ctx = VariableContext::new();
         ctx.set_contextual("title", title);
         ctx.set_contextual("context", context.as_str());
