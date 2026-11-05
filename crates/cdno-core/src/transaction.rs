@@ -496,7 +496,10 @@ impl VaultTransaction {
         // Known limitation (#892): when the link inputs fail here — the path
         // or alias query at the facet seam (`link_inputs_failed`), or the
         // `list_aliases` below — the commit reports `IndexStale` and the
-        // affected rows stay stale. The next reconcile does not heal them:
+        // affected rows stay stale. The same holds for the `aliases_before`
+        // `find_by_path` read above (a failure there drops the alias trigger
+        // while the path trigger still runs) and for the
+        // `set_link_resolutions` write inside `reresolve_stale_links`. The next reconcile does not heal them:
         // the upsert already landed with the file's real mtime, so the note
         // takes the fast path, and Phase 2b runs only when that pass itself
         // adds or removes a note or changes the alias map. The path trigger

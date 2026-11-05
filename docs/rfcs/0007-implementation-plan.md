@@ -551,10 +551,10 @@ holder in the path set, as every other rule does.
 `LinkEntry` (`index.rs:344`) gains `via_alias: bool`, carried through `set_link_resolutions`
 (a column added in T15's migration, or a fourth migration here — one migration per stage, so
 here: `003_links_via_alias.sql`). Triggers: at commit (`transaction.rs:426–444`) re-resolution
-also runs when the alias set of any upserted note changed (compare the `aliases` key of the
-stored `frontmatter` with the new entry's), with `consider_target` widened to the changed alias
-names. The comparison covers only notes that also have a file op in the commit, so reconcile's
-own index-only commits never trigger it; phase 2b covers them. A row resolved via alias is
+also runs when the alias set changed on a note that the commit both re-rows and touches with a
+file op (compare the `aliases` key of the stored `frontmatter` with the new entry's), with
+`consider_target` widened to the changed alias names; reconcile's own index-only commits have no
+file op and never trigger it, and phase 2b covers them. A row resolved via alias is
 reconsidered when a stem with that name is added, at commit and at reconcile, since a stem always
 wins. At reconcile (`reconcile.rs:252–266`) also when `list_aliases()` before phase 1 differs
 from after. The domain's own `resolve_wikilink` (`links.rs:61`) stops re-implementing the rule
