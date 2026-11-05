@@ -262,35 +262,28 @@ fn lint_reports_a_shadowed_alias_with_the_path_and_both_names() {
         ));
 }
 
-/// The second clone (RFC 0007 T16). A rename on one clone rewrites
-/// references inside an archived action's frozen prefix; only the markdown
-/// syncs, so the other clone's index still holds the snapshot taken before
-/// the rename. Here clone B archives through the binary, then receives the
-/// bytes a rename of `old` to `surrogate-model` writes (a longer slug, so
-/// the raw prefix end moves; the same-length case would hide the bug), and
-/// its lint must stay clean of errors.
-#[test]
-fn a_rename_synced_from_another_clone_leaves_lint_clean() {
-    use assert_cmd::Command;
-    use predicates::prelude::*;
+/// `cdno` against `root`, never inheriting the developer's vault.
+fn cdno_at(root: &std::path::Path) -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::cargo_bin("cdno").expect("cdno binary built");
+    cmd.env_remove("CUADERNO_VAULT_PATH")
+        .env("NO_COLOR", "1")
+        .arg("--vault")
+        .arg(root)
+        .arg("--no-interactive");
+    cmd
+}
 
-    let cdno = |root: &std::path::Path| {
-        let mut cmd = Command::cargo_bin("cdno").expect("cdno binary built");
-        cmd.env_remove("CUADERNO_VAULT_PATH")
-            .env("NO_COLOR", "1")
-            .arg("--vault")
-            .arg(root)
-            .arg("--no-interactive");
-        cmd
-    };
-
+/// A fresh vault holding project `old` and one action on it, archived
+/// through the binary after its note gained a `[[old]]` line. Returns the
+/// vault and the archived note's vault-relative path.
+fn vault_with_an_archived_action() -> (tempfile::TempDir, String) {
     let b = tempdir().unwrap();
     init::run(b.path()).expect("init");
-    cdno(b.path())
+    cdno_at(b.path())
         .args(["project", "create", "--title", "Old", "--context", "work"])
         .assert()
         .success();
-    cdno(b.path())
+    cdno_at(b.path())
         .args([
             "action",
             "add",
@@ -305,7 +298,7 @@ fn a_rename_synced_from_another_clone_leaves_lint_clean() {
     let active = b.path().join("actions/characterise.md");
     let raw = fs::read_to_string(&active).unwrap();
     fs::write(&active, format!("{raw}\nCalibrated against [[old]].\n")).unwrap();
-    cdno(b.path())
+    cdno_at(b.path())
         .args([
             "action",
             "complete",
@@ -316,12 +309,59 @@ fn a_rename_synced_from_another_clone_leaves_lint_clean() {
         ])
         .assert()
         .success();
-
-    let done = fs::read_dir(b.path().join("actions/_done"))
+    let year = fs::read_dir(b.path().join("actions/_done"))
         .unwrap()
-        .map(|year| year.unwrap().path().join("characterise.md"))
-        .find(|p| p.exists())
+        .map(|y| y.unwrap().file_name().into_string().unwrap())
+        .find(|y| {
+            b.path()
+                .join(format!("actions/_done/{y}/characterise.md"))
+                .exists()
+        })
         .expect("archived note");
+    (b, format!("actions/_done/{year}/characterise.md"))
+}
+
+/// Clear the three masked columns of `rel`'s snapshot row in the vault's
+/// own SQLite index, which is what a row archived before migration 004
+/// holds.
+fn make_pre_004(root: &std::path::Path, rel: &str) {
+    use cdno_core::index::{ArchivalSnapshot, SqliteIndex, VaultIndex};
+    let index = SqliteIndex::open(root.join(".cuaderno/index.db")).expect("open index");
+    let path = cdno_core::path::VaultPath::new(rel).unwrap();
+    let snap = index
+        .find_archival_snapshot(&path)
+        .unwrap()
+        .expect("archival recorded a snapshot");
+    assert!(
+        snap.masked_hash.is_some(),
+        "archival stamps the masked hash"
+    );
+    index
+        .record_archival_snapshot(
+            &path,
+            &ArchivalSnapshot {
+                masked_hash: None,
+                mask_version: None,
+                masked_size: None,
+                ..snap
+            },
+        )
+        .unwrap();
+}
+
+/// The second clone (RFC 0007 T16). A rename on one clone rewrites
+/// references inside an archived action's frozen prefix; only the markdown
+/// syncs, so the other clone's index still holds the snapshot taken before
+/// the rename. Here clone B archives through the binary, then receives the
+/// bytes a rename of `old` to `surrogate-model` writes (a longer slug, so
+/// the raw prefix end moves; the same-length case would hide the bug), and
+/// its lint must stay clean of errors.
+#[test]
+fn a_rename_synced_from_another_clone_leaves_lint_clean() {
+    use predicates::prelude::*;
+
+    let (b, rel) = vault_with_an_archived_action();
+    let done = b.path().join(&rel);
     let archived = fs::read_to_string(&done).unwrap();
     let renamed = rename_shaped(&archived);
     assert_ne!(
@@ -331,11 +371,116 @@ fn a_rename_synced_from_another_clone_leaves_lint_clean() {
     );
     fs::write(&done, renamed).unwrap();
 
-    cdno(b.path())
+    cdno_at(b.path())
         .arg("lint")
         .assert()
         .success()
         .stdout(predicate::str::contains("[error]").not());
+}
+
+/// The ordering limit (#901): clone B's row predates the masked hash, and
+/// the renamed markdown reaches B before B first opens on a build that
+/// could backfill it. The plain hash can never vouch for the prefix again,
+/// so the row stays unstamped and lint reports it, naming the way out.
+#[test]
+fn a_rename_synced_before_the_first_open_on_this_build_is_reported_with_the_way_out() {
+    use predicates::prelude::*;
+
+    let (b, rel) = vault_with_an_archived_action();
+    make_pre_004(b.path(), &rel);
+    let done = b.path().join(&rel);
+    fs::write(&done, rename_shaped(&fs::read_to_string(&done).unwrap())).unwrap();
+
+    cdno_at(b.path())
+        .arg("lint")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(format!("[error] {rel}: ")))
+        .stdout(predicate::str::contains("predates the masked hash"))
+        .stdout(predicate::str::contains("`cdno reindex`"));
+}
+
+/// The backfill is best-effort and never takes the lock for nothing. A
+/// tampered pre-004 row can never be filled, so with another process
+/// holding `.cuaderno/.lock` the vault still opens at once and lint
+/// reports the tampered note.
+#[test]
+fn a_tampered_pre_004_row_does_not_need_the_lock_another_process_holds() {
+    use cdno_core::store::{FsVaultStore, VaultStore};
+    use predicates::prelude::*;
+
+    let (b, rel) = vault_with_an_archived_action();
+    make_pre_004(b.path(), &rel);
+    let done = b.path().join(&rel);
+    let raw = fs::read_to_string(&done).unwrap();
+    fs::write(
+        &done,
+        raw.replace("Calibrated against", "Calibrates against"),
+    )
+    .unwrap();
+    // One open with the lock free lets reconciliation take in the edit.
+    cdno_at(b.path()).arg("lint").assert().failure();
+
+    let _held = FsVaultStore::new(b.path())
+        .acquire_write_lock()
+        .expect("take the vault lock");
+    let started = std::time::Instant::now();
+    cdno_at(b.path())
+        .arg("lint")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(format!(
+            "[error] {rel}: archived action note modified an existing line"
+        )))
+        .stderr(predicate::str::contains("timed out").not());
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(4),
+        "the open waited for the lock"
+    );
+}
+
+/// A row the backfill could fill, while another process holds the lock:
+/// the pass times out, logs, and the vault still opens; lint is clean
+/// through the plain hash.
+#[test]
+fn a_backfill_that_cannot_take_the_lock_does_not_fail_the_open() {
+    use cdno_core::store::{FsVaultStore, VaultStore};
+    use predicates::prelude::*;
+
+    let (b, rel) = vault_with_an_archived_action();
+    make_pre_004(b.path(), &rel);
+
+    let held = FsVaultStore::new(b.path())
+        .acquire_write_lock()
+        .expect("take the vault lock");
+    cdno_at(b.path())
+        .arg("lint")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[error]").not());
+    assert!(
+        masked_hash_of(b.path(), &rel).is_none(),
+        "the held lock kept the pass from writing"
+    );
+    drop(held);
+
+    // With the lock free, the next open stamps the row.
+    cdno_at(b.path()).arg("lint").assert().success();
+    assert!(
+        masked_hash_of(b.path(), &rel).is_some(),
+        "the next open retries and fills it"
+    );
+}
+
+/// The masked hash on `rel`'s snapshot row, read from the vault's index.
+fn masked_hash_of(root: &std::path::Path, rel: &str) -> Option<String> {
+    use cdno_core::index::{SqliteIndex, VaultIndex};
+    let index = SqliteIndex::open(root.join(".cuaderno/index.db")).expect("open index");
+    index
+        .find_archival_snapshot(&cdno_core::path::VaultPath::new(rel).unwrap())
+        .unwrap()
+        .expect("snapshot row")
+        .masked_hash
 }
 
 /// The bytes a rename of `old` to `surrogate-model` writes into a note:

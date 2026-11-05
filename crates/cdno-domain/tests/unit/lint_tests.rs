@@ -638,10 +638,18 @@ fn append_only_lint_flags_same_length_prefix_edit() {
 /// A vault holding project `old`, plus its store and index so a test can
 /// rewrite the archived file and read the snapshot row.
 fn old_project_vault() -> (Vault, Arc<dyn VaultStore>, Arc<dyn VaultIndex>) {
+    project_vault("old")
+}
+
+/// [`old_project_vault`] for a project named `slug`.
+fn project_vault(slug: &str) -> (Vault, Arc<dyn VaultStore>, Arc<dyn VaultIndex>) {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     store
-        .write_file(&vp("projects/old.md"), ACTIVE_PROJECT_FOR_ARCHIVE)
+        .write_file(
+            &vp(&format!("projects/{slug}.md")),
+            ACTIVE_PROJECT_FOR_ARCHIVE,
+        )
         .unwrap();
     let (vault, _report) = Vault::new(
         Arc::clone(&store),
@@ -655,10 +663,15 @@ fn old_project_vault() -> (Vault, Arc<dyn VaultStore>, Arc<dyn VaultIndex>) {
 /// Add an attached action on `old`, append `line` to its note, and
 /// complete it through the verb; returns the archived path.
 fn archive_with_line(vault: &Vault, store: &Arc<dyn VaultStore>, line: &str) -> VaultPath {
+    archive_on(vault, store, "old", line)
+}
+
+/// [`archive_with_line`] for an action on project `project`.
+fn archive_on(vault: &Vault, store: &Arc<dyn VaultStore>, project: &str, line: &str) -> VaultPath {
     let active = vault
         .add_action_with_note(
             dt(2026, 5, 1, 9, 0),
-            "old",
+            project,
             "Characterise",
             EnergyLevel::Deep,
         )
@@ -668,7 +681,7 @@ fn archive_with_line(vault: &Vault, store: &Arc<dyn VaultStore>, line: &str) -> 
         .write_file(&active, &format!("{raw}\n{line}\n"))
         .unwrap();
     vault
-        .complete_action(dt(2026, 5, 2, 9, 0), "old", "characterise")
+        .complete_action(dt(2026, 5, 2, 9, 0), project, "characterise")
         .expect("complete action");
     vp("actions/_done/2026/characterise.md")
 }
@@ -677,21 +690,22 @@ fn archive_with_line(vault: &Vault, store: &Arc<dyn VaultStore>, line: &str) -> 
 /// address and the `project:` scalar, through the same core rewriters the
 /// rename uses.
 fn rename_shaped(text: &str) -> String {
+    renamed(text, "old", "surrogate-model")
+}
+
+/// [`rename_shaped`] for a rename of `from` to `to`.
+fn renamed(text: &str, from: &str, to: &str) -> String {
     let (linked, edits) = cdno_core::extractors::rewrite_wikilink_addresses(
         text,
-        |target| target == "old",
-        |_| "surrogate-model".to_owned(),
+        |target| target == from,
+        |_| to.to_owned(),
     );
     assert!(!edits.is_empty(), "the fixture must hold a link to rewrite");
     let (block, _) = cdno_core::frontmatter::split_frontmatter(&linked).expect("frontmatter");
     let start = block.as_ptr() as usize - linked.as_ptr() as usize;
     let end = start + block.len();
-    let (rewritten, edits) = cdno_core::frontmatter_edit::rewrite_frontmatter_scalar(
-        block,
-        "project",
-        "old",
-        "surrogate-model",
-    );
+    let (rewritten, edits) =
+        cdno_core::frontmatter_edit::rewrite_frontmatter_scalar(block, "project", from, to);
     assert_eq!(edits.len(), 1, "the `project:` scalar is rewritten");
     format!("{}{rewritten}{}", &linked[..start], &linked[end..])
 }
@@ -754,6 +768,43 @@ fn a_prose_edit_inside_a_frozen_prefix_is_still_an_error() {
     assert_eq!(errors.len(), 1, "report: {:?}", report.issues);
     assert!(
         errors[0].message.contains("modified an existing line"),
+        "message: {}",
+        errors[0].message
+    );
+}
+
+#[test]
+fn a_shortening_rename_plus_a_prose_edit_is_reported_as_modified() {
+    let (vault, store, index) = project_vault("surrogate-model");
+    let done = archive_on(
+        &vault,
+        &store,
+        "surrogate-model",
+        "Calibrated against [[surrogate-model]].",
+    );
+    let snap = index
+        .find_archival_snapshot(&done)
+        .unwrap()
+        .expect("snapshot");
+
+    // A rename to a shorter slug, plus one byte of prose. The raw file is
+    // now shorter than `frozen_size`, so the plain path alone would call it
+    // truncated; the masked path sees the edit for what it is.
+    let renamed = renamed(&store.read_file(&done).unwrap(), "surrogate-model", "old");
+    let edited = renamed.replace("Calibrated against", "Calibrates against");
+    assert_ne!(renamed, edited);
+    assert!(
+        (edited.len() as u64) < snap.frozen_size,
+        "the plain path reads it as truncated"
+    );
+    store.write_file(&done, &edited).unwrap();
+
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+    let errors = errors_on(&report, &done);
+    assert_eq!(errors.len(), 1, "report: {:?}", report.issues);
+    assert!(
+        errors[0].message.contains("modified an existing line")
+            && !errors[0].message.contains("truncated"),
         "message: {}",
         errors[0].message
     );

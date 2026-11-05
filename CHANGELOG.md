@@ -33,11 +33,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - `cdno lint` accepts an archived action note whose frozen prefix changed only by a rename's
   reference rewrite (RFC 0007 stage S4, #865): a snapshot passes when either the plain hash of its
   first `frozen_size` bytes or the masked hash of the first `masked_size` bytes of the masked file
-  verifies, so a rename synced from another clone leaves this clone's lint clean. The cost: a hand
+  verifies, so a rename synced from another clone leaves this clone's lint clean, provided this clone
+  opened the vault once on this version before the renamed file arrived (otherwise the Error names
+  `cdno reindex`, which drops every snapshot; #901). The cost: a hand
   edit that only re-targets a reference inside a frozen prefix is no longer detected. A snapshot at an
   unknown `mask_version` is a warning naming the version. Opening a vault backfills the masked hash on
   every row archived before migration 004 whose plain hash still verifies; a row that fails is left
-  `NULL`. `VaultIndex::list_archival_snapshots` lists the rows.
+  `NULL`. The backfill takes the write lock only when a row would be filled, and a failure of it (a
+  lock timeout, an index error) is logged rather than failing the open. `VaultIndex::list_archival_snapshots` lists the rows.
 
 ### Changed
 

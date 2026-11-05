@@ -1276,8 +1276,14 @@ fn orphan_folder_for(
 /// The masked path fails safe. A hand append with no blank line under the
 /// prefix can close an inline code span the prefix left open and change
 /// what is masked; the masked hash then fails while the plain one passes.
-/// The row is an Error only when both paths fail, and the message says
-/// truncated when either path saw the file end before its frozen extent.
+/// Once the note has been renamed the plain path is gone, so such an append
+/// is reported; a late addition should start after a blank line.
+///
+/// The row is an Error only when both paths fail. The masked verdict picks
+/// "truncated" or "modified" whenever the row has a masked hash at a known
+/// version; the plain verdict picks only otherwise. A row with no masked
+/// hash at all (archived before migration 004, never backfilled) adds that
+/// the snapshot predates it and what `cdno reindex` would cost.
 fn check_append_only(
     store: &std::sync::Arc<dyn cdno_core::store::VaultStore>,
     path: &cdno_core::path::VaultPath,
@@ -1320,21 +1326,36 @@ fn check_append_only(
         return Ok(issues);
     }
 
-    let message = if plain == Extent::Truncated {
+    // The wording follows the masked verdict whenever there is one: a
+    // rename moves the raw sizes, so after a rename to a shorter slug the
+    // plain path says truncated whatever else happened. The plain verdict
+    // decides only for a row with no usable masked hash.
+    const MODIFIED: &str =
+        "archived action note modified an existing line (append-only after completion)";
+    let truncated_at = |was: u64, now: usize, what: &str| {
         format!(
             "archived action note was truncated below its frozen prefix \
-             (was {} bytes at archival, now {})",
-            snap.frozen_size,
-            content.len(),
+             ({what}was {was} bytes at archival, now {now})"
         )
-    } else if let Some((Extent::Truncated, size, now)) = masked {
-        format!(
-            "archived action note was truncated below its frozen prefix \
-             (masked, was {size} bytes at archival, now {now})"
-        )
-    } else {
-        "archived action note modified an existing line (append-only after completion)".to_owned()
     };
+    let mut message = match masked {
+        Some((Extent::Truncated, size, now)) => truncated_at(size, now, "masked, "),
+        Some(_) => MODIFIED.to_owned(),
+        None if plain == Extent::Truncated => truncated_at(snap.frozen_size, content.len(), ""),
+        None => MODIFIED.to_owned(),
+    };
+    if snap.masked_hash.is_none() {
+        // A row archived before index migration 004 that the backfill could
+        // not stamp. If the note was renamed on another clone before this
+        // one first opened on a 004 build, the plain hash can never vouch
+        // for it again (#901); say so, and name the way out with its cost.
+        message.push_str(
+            "; this snapshot predates the masked hash, so a rename made on another clone also \
+             reads as an edit here: if that is the cause, `cdno reindex` clears it, but the \
+             rebuilt index holds no archival snapshots, so every archived action note loses \
+             its frozen-prefix check",
+        );
+    }
     issues.push(LintIssue::error(path.clone(), message));
     Ok(issues)
 }

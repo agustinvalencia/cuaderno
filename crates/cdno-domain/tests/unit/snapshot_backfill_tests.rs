@@ -3,11 +3,14 @@
 //! `Vault::new` stamps one on each whose plain hash still verifies.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cdno_core::config::VaultConfig;
+use cdno_core::error::StoreError;
+use cdno_core::file_meta::FileMeta;
 use cdno_core::index::{ArchivalSnapshot, MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
-use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_core::store::{MemoryVaultStore, VaultStore, VaultWriteLock};
 use cdno_domain::Vault;
 use cdno_domain::frontmatter::EnergyLevel;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
@@ -140,4 +143,96 @@ fn backfill_is_idempotent() {
     let _vault = open(&store, &index);
     assert_eq!(row(&index, &second), foreign);
     assert_eq!(row(&index, &first), first_snap);
+}
+
+/// A `MemoryVaultStore` that counts write-lock acquisitions.
+#[derive(Default)]
+struct LockCountingStore {
+    inner: MemoryVaultStore,
+    locks: AtomicUsize,
+}
+
+impl VaultStore for LockCountingStore {
+    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        self.inner.read_file(path)
+    }
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.inner.read_bytes(path)
+    }
+    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.write_file(path, content)
+    }
+    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.append_to_file(path, content)
+    }
+    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.move_file(src, dest)
+    }
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        self.inner.delete_file(path)
+    }
+    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
+        self.inner.exists(path)
+    }
+    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.list_dir(path)
+    }
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.walk_dir(path)
+    }
+    fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
+        self.inner.metadata(path)
+    }
+    fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.import_external(src, dest)
+    }
+    fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
+        self.locks.fetch_add(1, Ordering::SeqCst);
+        self.inner.acquire_write_lock()
+    }
+}
+
+#[test]
+fn backfill_takes_no_lock_when_nothing_would_be_filled() {
+    let counting = Arc::new(LockCountingStore::default());
+    let store: Arc<dyn VaultStore> = counting.clone();
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    store
+        .write_file(&vp("projects/surrogate-model.md"), PROJECT)
+        .unwrap();
+    let vault = open(&store, &index);
+    vault
+        .add_action_with_note(dt(1, 9), "surrogate-model", "Calibrate", EnergyLevel::Deep)
+        .expect("add action with note");
+    vault
+        .complete_action(dt(2, 9), "surrogate-model", "calibrate")
+        .expect("complete action");
+    let done = vp("actions/_done/2026/calibrate.md");
+    let stamped = row(&index, &done);
+
+    // A pre-004 row whose prefix was hand-edited: the backfill can never
+    // fill it. One open lets reconciliation take in the edit.
+    unmask(&index, &done, &stamped);
+    let raw = store.read_file(&done).unwrap();
+    store
+        .write_file(&done, &raw.replace("# Calibrate", "# Calibrats"))
+        .unwrap();
+    let _vault = open(&store, &index);
+
+    // From then on an open has nothing to reconcile and nothing it could
+    // fill, so it takes no lock at all.
+    counting.locks.store(0, Ordering::SeqCst);
+    let _vault = open(&store, &index);
+    assert_eq!(counting.locks.load(Ordering::SeqCst), 0);
+    assert_eq!(row(&index, &done).masked_hash, None);
+
+    // The same open with a row it can fill does take the lock, so the
+    // count above is not vacuous.
+    store.write_file(&done, &raw).unwrap();
+    let _vault = open(&store, &index);
+    counting.locks.store(0, Ordering::SeqCst);
+    unmask(&index, &done, &stamped);
+    let _vault = open(&store, &index);
+    assert_eq!(counting.locks.load(Ordering::SeqCst), 1);
+    assert_eq!(row(&index, &done), stamped);
 }

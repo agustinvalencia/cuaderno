@@ -34,36 +34,60 @@ impl Vault {
     /// the pass idempotent and keeps an older binary from overwriting a row
     /// a newer one stamped.
     ///
-    /// The lock is taken only when a row needs filling, and the rows are
-    /// re-read under it, so a vault with nothing to backfill opens without
-    /// contending for the lock. Like reconciliation the pass is not gated on
-    /// the method version: the snapshot is index cache, not a vault write.
-    pub(in crate::vault) fn backfill_masked_snapshots(&self) -> Result<(), DomainError> {
-        if !self
-            .index
-            .list_archival_snapshots()?
-            .iter()
-            .any(|(_, snap)| snap.masked_hash.is_none())
-        {
+    /// The rows that would be filled are found before the lock is taken,
+    /// and the lock is taken only when there is at least one; under it they
+    /// are re-listed and re-verified. So a vault whose `NULL` rows can never
+    /// be filled (a hand-edited prefix, or a rename that reached this clone
+    /// before its first open on this build) opens without the lock, as one
+    /// with nothing to backfill does.
+    ///
+    /// Best-effort, like reconciliation's link repair: the pass heals a
+    /// cache and writes no file, so a lock timeout or a store or index error
+    /// (an `IndexStale` from the commit included) is logged and the vault
+    /// still opens. The rows stay as they were, every one already stamped
+    /// verifies, lint still has the plain path, and the next open retries.
+    /// Like reconciliation the pass is not gated on the method version.
+    pub(in crate::vault) fn backfill_masked_snapshots(&self) {
+        if let Err(error) = self.try_backfill_masked_snapshots() {
+            tracing::warn!(
+                %error,
+                "could not backfill the masked hash on archival snapshots; \
+                 the rows stay unstamped and the next open retries"
+            );
+        }
+    }
+
+    fn try_backfill_masked_snapshots(&self) -> Result<(), DomainError> {
+        if self.fillable_snapshots()?.is_empty() {
             return Ok(());
         }
-
         let mut tx = VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))?;
-        let mut filled = 0usize;
-        for (path, snap) in self.index.list_archival_snapshots()? {
-            if snap.masked_hash.is_some() {
-                continue;
-            }
-            if let Some(stamped) = self.stamp_masked(&path, &snap) {
-                tx.record_archival_snapshot(path, stamped);
-                filled += 1;
-            }
+        let fillable = self.fillable_snapshots()?;
+        if fillable.is_empty() {
+            return Ok(());
         }
-        if filled > 0 {
-            tx.commit()?;
-            tracing::debug!(filled, "backfilled masked archival snapshot hashes");
+        let filled = fillable.len();
+        for (path, stamped) in fillable {
+            tx.record_archival_snapshot(path, stamped);
         }
+        tx.commit()?;
+        tracing::debug!(filled, "backfilled masked archival snapshot hashes");
         Ok(())
+    }
+
+    /// Every `NULL` row whose plain hash verifies, with its masked fields
+    /// filled.
+    fn fillable_snapshots(&self) -> Result<Vec<(VaultPath, ArchivalSnapshot)>, DomainError> {
+        Ok(self
+            .index
+            .list_archival_snapshots()?
+            .into_iter()
+            .filter(|(_, snap)| snap.masked_hash.is_none())
+            .filter_map(|(path, snap)| {
+                let stamped = self.stamp_masked(&path, &snap)?;
+                Some((path, stamped))
+            })
+            .collect())
     }
 
     /// `snap` with its masked fields filled, or `None` when the file cannot

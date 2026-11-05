@@ -207,8 +207,9 @@ impl Vault {
         };
         // After reconciliation, so the index lists exactly the snapshots of
         // the notes on disk: stamp the masked hash on the rows archived
-        // before index migration 004 (RFC 0007 T16).
-        vault.backfill_masked_snapshots()?;
+        // before index migration 004 (RFC 0007 T16). Best-effort: a
+        // failure is logged and the vault still opens.
+        vault.backfill_masked_snapshots();
         Ok((vault, report))
     }
 
