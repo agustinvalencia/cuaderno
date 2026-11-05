@@ -780,6 +780,9 @@ impl VaultIndex for ProbeIndex {
     fn list_all_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
         self.inner.list_all_paths()
     }
+    fn list_aliases(&self) -> Result<Vec<(String, VaultPath)>, IndexError> {
+        self.inner.list_aliases()
+    }
     fn list_candidates(&self) -> Result<Vec<NoteCandidate>, IndexError> {
         self.inner.list_candidates()
     }
@@ -1875,4 +1878,41 @@ fn a_link_reresolution_failure_is_reported_and_the_pass_continues() {
         report.errors[0].reason
     );
     assert_eq!(report.fts_built, 1, "Phase 3 still ran");
+}
+
+#[test]
+fn aliases_survive_an_index_rebuild() {
+    let vault = TempDir::new().unwrap();
+    let db = TempDir::new().unwrap();
+    let db_path = db.path().join("index.sqlite");
+    let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(vault.path()));
+    for (rel, aliases) in [
+        (
+            "concepts/surrogate-model.md",
+            "aliases: [old-slug, \"A name\"]",
+        ),
+        ("concepts/other.md", "aliases: another-slug"),
+    ] {
+        let path = vault.path().join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            format!("---\ntype: concept\n{aliases}\n---\n\n# Body\n"),
+        )
+        .unwrap();
+    }
+    let expected = vec![
+        ("another-slug".to_owned(), vp("concepts/other.md")),
+        ("old-slug".to_owned(), vp("concepts/surrogate-model.md")),
+    ];
+
+    let index: Arc<dyn VaultIndex> = Arc::new(SqliteIndex::open(&db_path).unwrap());
+    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!(index.list_aliases().unwrap(), expected);
+    drop(index);
+
+    std::fs::remove_file(&db_path).unwrap();
+    let index: Arc<dyn VaultIndex> = Arc::new(SqliteIndex::open(&db_path).unwrap());
+    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!(index.list_aliases().unwrap(), expected);
 }

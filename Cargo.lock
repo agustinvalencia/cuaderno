@@ -333,6 +333,7 @@ version = "0.43.0"
 dependencies = [
  "cdno-core",
  "chrono",
+ "proptest",
  "serde",
  "serde_json",
  "serde_yaml",

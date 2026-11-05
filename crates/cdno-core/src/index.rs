@@ -426,6 +426,20 @@ pub trait VaultIndex: Send + Sync {
     /// Return every path currently in the index. Used by reconciliation
     /// to find orphans (index rows with no corresponding file on disk).
     fn list_all_paths(&self) -> Result<Vec<VaultPath>, IndexError>;
+    /// Every slug-shaped alias any indexed note declares, paired with the
+    /// note's path (RFC 0007 §5.5).
+    ///
+    /// Reads the top-level frontmatter key `aliases`, in either of the two
+    /// shapes Obsidian accepts: a list of strings, or a single scalar string.
+    /// An item that is not a string, or is not slug-shaped
+    /// ([`is_slug_shaped`](crate::slug::is_slug_shaped)), is skipped, so a
+    /// display name such as `"Surrogate model"` contributes nothing. Ordered by
+    /// path (compared as text), then by position in the note's list.
+    ///
+    /// Rows are not deduplicated: an alias is returned once per occurrence,
+    /// so one two notes declare yields two rows (and a note listing it twice,
+    /// two), and resolution treats it as ambiguous (§5.5).
+    fn list_aliases(&self) -> Result<Vec<(String, VaultPath)>, IndexError>;
     /// Every indexed note as a [`NoteCandidate`], most-recently-modified
     /// first. The listing behind `cdno open`'s picker and `--list`.
     ///
@@ -620,6 +634,34 @@ impl VaultIndex for SqliteIndex {
             out.push(VaultPath::new(path_str).map_err(|e| {
                 IndexError::Query(format!("invalid stored path in list_all_paths: {e}"))
             })?);
+        }
+        Ok(out)
+    }
+
+    fn list_aliases(&self) -> Result<Vec<(String, VaultPath)>, IndexError> {
+        let conn = self.lock_conn();
+        // One query. `json_quote(json_extract(..))` yields valid JSON text
+        // for both shapes (an array comes back as itself, a string as a
+        // quoted string), so Rust parses one form and `alias_slugs` does the
+        // shape filtering; `json_type` keeps rows without `aliases`, or with
+        // a number or map there, out of the result set.
+        let mut stmt = conn.prepare(
+            "SELECT path, json_quote(json_extract(frontmatter, '$.aliases')) FROM notes \
+             WHERE json_type(frontmatter, '$.aliases') IN ('array', 'text') \
+             ORDER BY path",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (path_str, aliases_json) = row?;
+            let path = VaultPath::new(path_str).map_err(|e| {
+                IndexError::Query(format!("invalid stored path in list_aliases: {e}"))
+            })?;
+            let aliases: JsonValue = serde_json::from_str(&aliases_json)
+                .map_err(|e| IndexError::Query(format!("invalid aliases JSON: {e}")))?;
+            for alias in alias_slugs(&aliases) {
+                out.push((alias, path.clone()));
+            }
         }
         Ok(out)
     }
@@ -1129,6 +1171,23 @@ fn row_to_milestone_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Milestone
     row_to_milestone_entry_from(row, 0)
 }
 
+/// The slug-shaped strings of an `aliases` value: a list of strings or one
+/// scalar string; anything else is skipped. Shared by both indexes so they
+/// cannot disagree.
+fn alias_slugs(aliases: &JsonValue) -> Vec<String> {
+    let items: &[JsonValue] = match aliases {
+        JsonValue::Array(items) => items,
+        single @ JsonValue::String(_) => std::slice::from_ref(single),
+        _ => &[],
+    };
+    items
+        .iter()
+        .filter_map(JsonValue::as_str)
+        .filter(|s| crate::slug::is_slug_shaped(s))
+        .map(str::to_owned)
+        .collect()
+}
+
 /// Shared row extractor for the full `notes` column set. Used by
 /// `find_by_path` and `list_by_type`.
 fn row_to_note_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<NoteEntry, IndexError>> {
@@ -1296,6 +1355,23 @@ impl VaultIndex for MemoryIndex {
         let state = self.lock_state();
         let mut out: Vec<VaultPath> = state.notes.keys().cloned().collect();
         out.sort_by(|a, b| a.as_path().cmp(b.as_path()));
+        Ok(out)
+    }
+
+    fn list_aliases(&self) -> Result<Vec<(String, VaultPath)>, IndexError> {
+        let state = self.lock_state();
+        // Ordered by the path's text, as SQLite orders `path`: `Path` compares
+        // by component, which would put `x/foo/_index.md` before `x/foo.md`.
+        let mut paths: Vec<&VaultPath> = state.notes.keys().collect();
+        paths.sort_by_cached_key(|p| p.to_string());
+        let mut out = Vec::new();
+        for path in paths {
+            if let Some(aliases) = state.notes[path].frontmatter.get("aliases") {
+                for alias in alias_slugs(aliases) {
+                    out.push((alias, path.clone()));
+                }
+            }
+        }
         Ok(out)
     }
 
