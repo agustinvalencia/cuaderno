@@ -10,6 +10,12 @@ the linking note, then to the vault root) before a link is called broken. Only a
 nothing at all is reported, and a missing `![[embed]]` reads as a missing file rather than a link
 that "resolves to no note".
 
+A link that resolves only through a note's `aliases:` entry — a former name — is a straggler: it still
+works, but lint warns and names the note's current slug (`[[old]]` names a renamed note — now `new`),
+so you can fix the link by hand. Lint also warns when an alias equals another note's file stem or
+folder name, since the stem always wins and the alias can never be followed (alias `x` on `<path>` is
+shadowed by `<other>`).
+
 It also reports lines that were plainly meant to be structured but will never be read as such,
 because the parsers that consume them skip what they cannot parse rather than complaining. That
 covers malformed `## Active Habits` and `## Periodic Commitments` bullets on a stewardship

@@ -27,6 +27,7 @@ use super::context::{
     parse_promotion_marker, record_time, records_of, str_field,
 };
 use super::method_status::MethodStatus;
+use super::note_ref::candidate_slug;
 use super::orient::{ACTIVE_HABITS_SECTION, parse_habit_line};
 use super::projects::actions::{
     LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_ACTION_PAUSED_PREFIX,
@@ -104,6 +105,12 @@ impl Vault {
         // Built once and shared across every note's link check.
         let paths = self.index.list_all_paths()?;
         let path_set: HashSet<VaultPath> = paths.iter().cloned().collect();
+
+        // The alias rows, read once: the map resolves links with them, and
+        // the conflict pass below reads the rows themselves because the map
+        // drops an alias two notes share by design.
+        let alias_rows = self.index.list_aliases()?;
+        let alias_map = AliasMap::from_rows(alias_rows.iter().cloned());
 
         // Memoise canonical frontmatter order per (type, variant) for this
         // pass so the effective template is resolved once per key, not once
@@ -323,16 +330,22 @@ impl Vault {
             // alongside the resolved entries (same order, 1:1) so the embed
             // flag survives to the message.
             //
-            // Resolved without the alias map for now, so a link through an
-            // alias is still reported here as dangling: RFC 0007 T14 turns
-            // it into the straggler warning that names the current slug.
+            // Resolved with the alias map, so a link that only an alias
+            // carries is a straggler (RFC 0007 §5.5): a Warning naming the
+            // note's current slug, so a person can fix the link by hand.
             let raws = extract_wikilinks(body);
-            let no_aliases = AliasMap::default();
             for (raw, link) in
                 raws.iter()
-                    .zip(resolve_wikilinks(raws.clone(), &path_set, &no_aliases))
+                    .zip(resolve_wikilinks(raws.clone(), &path_set, &alias_map))
             {
-                if link.resolved_path.is_some() {
+                if let Some(resolved) = &link.resolved_path {
+                    if link.via_alias {
+                        let now = candidate_slug(resolved).unwrap_or_else(|| resolved.to_string());
+                        issues.push(LintIssue::warning(
+                            path.clone(),
+                            format!("`[[{}]]` names a renamed note — now `{now}`", raw.target),
+                        ));
+                    }
                     continue;
                 }
                 // A target that names an existing file under the vault is
@@ -352,6 +365,8 @@ impl Vault {
                 issues.push(LintIssue::warning(path.clone(), message));
             }
         }
+
+        issues.extend(alias_conflict_issues(&path_set, &alias_rows));
 
         // `path_set` is the indexed notes; the ignore matcher is compiled
         // from the same config reconciliation used, so lint and the index
@@ -624,6 +639,46 @@ impl Vault {
 /// wrong-marker near-miss still vanishes without a diagnostic. Closing
 /// that would mean widening this gate beyond what the canonical grammar
 /// accepts — out of scope for #312.
+/// A Warning for each alias that another note's slug shadows (RFC 0007 §7).
+///
+/// Resolution tries the stem first, so a note whose slug (its file stem, or
+/// its folder's name for a folder note's `_index.md`, as `candidate_slug`
+/// reads it) equals the alias always wins and the alias is dead. Read from
+/// the `list_aliases` rows, not `AliasMap`, which drops a shared alias. A
+/// note's own slug never shadows its own alias, and a note listing an alias
+/// twice is reported once.
+fn alias_conflict_issues(
+    path_set: &HashSet<VaultPath>,
+    alias_rows: &[(String, VaultPath)],
+) -> Vec<LintIssue> {
+    let mut by_slug: HashMap<String, Vec<&VaultPath>> = HashMap::new();
+    for path in path_set {
+        if let Some(slug) = candidate_slug(path) {
+            by_slug.entry(slug).or_default().push(path);
+        }
+    }
+    let mut issues = Vec::new();
+    let mut seen: HashSet<(&str, &VaultPath)> = HashSet::new();
+    for (alias, holder) in alias_rows {
+        if !seen.insert((alias.as_str(), holder)) {
+            continue;
+        }
+        let Some(shadow) = by_slug.get(alias).and_then(|paths| {
+            paths
+                .iter()
+                .filter(|p| **p != holder)
+                .min_by_key(|p| p.to_string())
+        }) else {
+            continue;
+        };
+        issues.push(LintIssue::warning(
+            holder.clone(),
+            format!("alias `{alias}` on `{holder}` is shadowed by `{shadow}`"),
+        ));
+    }
+    issues
+}
+
 fn is_dashboard_bullet(line: &str) -> bool {
     line.trim_start().starts_with("- ")
 }

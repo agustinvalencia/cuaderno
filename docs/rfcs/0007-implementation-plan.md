@@ -684,7 +684,7 @@ never be given to anything else.
 
 ### T14 — Lint: the straggler and the conflict
 
-**What.** In `crates/cdno-domain/src/vault/lint.rs`, the dangling-wikilink pass (`:316–345`)
+**What.** In `crates/cdno-domain/src/vault/lint.rs`, the dangling-wikilink pass (the broken-wikilink check in `lint_all_notes`)
 resolves with the alias map; a link that resolved **only through an alias** is a Warning:
 "`[[old]]` names a renamed note — now `new`" (§5.5). A second Warning when an alias equals
 another note's stem or folder name: "alias `x` on `<path>` is shadowed by `<other>`" (§7: the stem

@@ -3241,3 +3241,174 @@ fn counted_maps_over_the_cap_warn() {
     let report = vault.lint_all_notes(lint_day()).unwrap();
     assert!(over_cap_rows(&report).is_empty(), "{:?}", report.issues);
 }
+
+// ---- RFC 0007 T14: the straggler and the conflict ----
+
+fn project_with_aliases(aliases: &str) -> String {
+    format!(
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n\
+         aliases: {aliases}\n---\n# Surrogate model\n"
+    )
+}
+
+fn straggler_issues(report: &cdno_domain::LintReport) -> Vec<&cdno_domain::LintIssue> {
+    report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("names a renamed note"))
+        .collect()
+}
+
+fn conflict_issues(report: &cdno_domain::LintReport) -> Vec<&cdno_domain::LintIssue> {
+    report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("is shadowed by"))
+        .collect()
+}
+
+#[test]
+fn a_link_through_an_alias_is_a_straggler_warning() {
+    let daily = DAILY_LINKING.replace("{{link}}", "[[old-model]]");
+    let vault = vault_with_notes(
+        &[
+            ("journal/2026/daily/2026-05-01.md", &daily),
+            (
+                "projects/surrogate-model.md",
+                &project_with_aliases("[old-model]"),
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).unwrap();
+    let stragglers = straggler_issues(&report);
+    assert_eq!(stragglers.len(), 1, "issues: {:?}", report.issues);
+    assert_eq!(stragglers[0].severity, LintSeverity::Warning);
+    assert_eq!(
+        stragglers[0].path.to_string(),
+        "journal/2026/daily/2026-05-01.md"
+    );
+    assert_eq!(
+        stragglers[0].message,
+        "`[[old-model]]` names a renamed note — now `surrogate-model`"
+    );
+    assert!(
+        broken_link_issues(&report).is_empty(),
+        "an alias link is not also dangling: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn a_link_to_a_stem_is_not_a_straggler() {
+    let daily = DAILY_LINKING.replace("{{link}}", "[[surrogate-model]]");
+    let vault = vault_with_notes(
+        &[
+            ("journal/2026/daily/2026-05-01.md", &daily),
+            (
+                "projects/surrogate-model.md",
+                &project_with_aliases("[old-model]"),
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).unwrap();
+    assert!(straggler_issues(&report).is_empty(), "{:?}", report.issues);
+    assert!(
+        broken_link_issues(&report).is_empty(),
+        "{:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn an_alias_equal_to_a_stem_is_a_conflict() {
+    let vault = vault_with_notes(
+        &[
+            (
+                "projects/surrogate-model.md",
+                &project_with_aliases("[ablation-study]"),
+            ),
+            ("projects/ablation-study.md", PROJECT_FOO),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).unwrap();
+    let conflicts = conflict_issues(&report);
+    assert_eq!(conflicts.len(), 1, "issues: {:?}", report.issues);
+    assert_eq!(conflicts[0].severity, LintSeverity::Warning);
+    assert_eq!(conflicts[0].path.to_string(), "projects/surrogate-model.md");
+    assert_eq!(
+        conflicts[0].message,
+        "alias `ablation-study` on `projects/surrogate-model.md` is shadowed by \
+         `projects/ablation-study.md`"
+    );
+}
+
+#[test]
+fn an_alias_equal_to_a_folder_name_is_a_conflict() {
+    // A folder note's slug is its folder's name, not `_index`.
+    let portfolio =
+        "---\ntype: portfolio\nquestion: \"Q\"\ncreated: 2026-04-01\nproject: null\n---\n# Q\n";
+    let vault = vault_with_notes(
+        &[
+            (
+                "projects/surrogate-model.md",
+                &project_with_aliases("[ablation-study]"),
+            ),
+            ("portfolios/ablation-study/_index.md", portfolio),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).unwrap();
+    let conflicts = conflict_issues(&report);
+    assert_eq!(conflicts.len(), 1, "issues: {:?}", report.issues);
+    assert_eq!(
+        conflicts[0].message,
+        "alias `ablation-study` on `projects/surrogate-model.md` is shadowed by \
+         `portfolios/ablation-study/_index.md`"
+    );
+}
+
+#[test]
+fn a_folder_notes_own_alias_can_be_shadowed() {
+    let portfolio = "---\ntype: portfolio\nquestion: \"Q\"\ncreated: 2026-04-01\n\
+                     project: null\naliases: [surrogate-model]\n---\n# Q\n";
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/ablation-study/_index.md", portfolio),
+            ("projects/surrogate-model.md", &project_with_aliases("[]")),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).unwrap();
+    let conflicts = conflict_issues(&report);
+    assert_eq!(conflicts.len(), 1, "issues: {:?}", report.issues);
+    assert_eq!(
+        conflicts[0].path.to_string(),
+        "portfolios/ablation-study/_index.md"
+    );
+    assert_eq!(
+        conflicts[0].message,
+        "alias `surrogate-model` on `portfolios/ablation-study/_index.md` is shadowed by \
+         `projects/surrogate-model.md`"
+    );
+}
+
+#[test]
+fn an_alias_nothing_shadows_is_not_a_conflict() {
+    let vault = vault_with_notes(
+        &[(
+            "projects/surrogate-model.md",
+            &project_with_aliases("[old-model]"),
+        )],
+        VaultConfig::default(),
+    );
+    let report = vault.lint_all_notes(lint_day()).unwrap();
+    assert!(conflict_issues(&report).is_empty(), "{:?}", report.issues);
+}
