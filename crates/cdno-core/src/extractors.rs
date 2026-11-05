@@ -221,15 +221,35 @@ pub struct WikilinkRaw {
     pub is_embed: bool,
 }
 
-/// Extract every `[[target]]` and `[[target|label]]` wikilink from a
-/// markdown body, in source order. Skips code blocks, code spans, and
-/// HTML. Wikilinks that span newlines are dropped — they're almost
-/// certainly the user accidentally splitting one across lines, and
-/// scanning past line breaks is more likely to glue unrelated tokens
-/// together than to recover the user's intent.
-pub fn extract_wikilinks(body: &str) -> Vec<WikilinkRaw> {
+/// Where one wikilink sits in a body, as byte offsets. The offsets the
+/// scanner computes anyway, kept so a caller can edit part of a link
+/// in place (RFC 0007 §5.4) instead of re-deriving them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WikilinkSpan {
+    /// Offset of the opening `[[`.
+    pub open: usize,
+    /// Bytes between `[[` and the first `#` or `|` inside the link,
+    /// trimmed of surrounding whitespace — the range excludes that
+    /// whitespace. Empty for `[[#Heading]]`.
+    pub address: Range<usize>,
+    /// Bytes between `[[` and the first `|`, trimmed, anchor included
+    /// (`old#Current State` for `[[old#Current State]]`) — the string the
+    /// resolver sees. After trimming, `address` is a prefix of it, or empty
+    /// (`[[ #h]]` has an empty address at the start of the inner text).
+    pub target: Range<usize>,
+    /// Offset of the closing `]]`.
+    pub inner_end: usize,
+    /// Whether a `!` immediately precedes the opening `[[`.
+    pub is_embed: bool,
+}
+
+/// Locate every wikilink in a markdown body, in source order, under the
+/// same rules as [`extract_wikilinks`]: code blocks, code spans and HTML
+/// are skipped, a link spanning a newline or with an empty target is
+/// dropped, and an unclosed `[[` ends the scan.
+pub fn wikilink_spans(body: &str) -> Vec<WikilinkSpan> {
     let protected = protected_ranges(body, /* include_headings */ false);
-    let mut links: Vec<WikilinkRaw> = Vec::new();
+    let mut spans: Vec<WikilinkSpan> = Vec::new();
     let mut cursor = 0;
 
     while let Some(rel) = body[cursor..].find("[[") {
@@ -249,21 +269,31 @@ pub fn extract_wikilinks(body: &str) -> Vec<WikilinkRaw> {
 
         // Reject newline-spanning links and empty `[[]]`.
         if !inner.is_empty() && !inner.contains('\n') {
-            let (target, label) = match inner.find('|') {
-                Some(pipe) => (
-                    inner[..pipe].trim().to_string(),
-                    Some(inner[pipe + 1..].trim().to_string()),
-                ),
-                None => (inner.trim().to_string(), None),
-            };
-            if !target.is_empty() {
+            let target_part = inner.find('|').map_or(inner, |pipe| &inner[..pipe]);
+            if !target_part.trim().is_empty() {
+                let address_part = target_part
+                    .find('#')
+                    .map_or(target_part, |hash| &target_part[..hash]);
+                let target_trimmed = target_part.trim();
+                let target_lead = target_part.len() - target_part.trim_start().len();
+                let target =
+                    after_open + target_lead..after_open + target_lead + target_trimmed.len();
+                let trimmed = address_part.trim();
+                let address = if trimmed.is_empty() {
+                    after_open..after_open
+                } else {
+                    let lead = address_part.len() - address_part.trim_start().len();
+                    after_open + lead..after_open + lead + trimmed.len()
+                };
                 // An `![[...]]` embed carries a `!` immediately before the
                 // opening `[[`. The scan above only advanced through ASCII
                 // `[`/`]`, so `start - 1` lands on a UTF-8 boundary.
                 let is_embed = start > 0 && body.as_bytes()[start - 1] == b'!';
-                links.push(WikilinkRaw {
+                spans.push(WikilinkSpan {
+                    open: start,
+                    address,
                     target,
-                    label: label.filter(|s| !s.is_empty()),
+                    inner_end,
                     is_embed,
                 });
             }
@@ -271,7 +301,103 @@ pub fn extract_wikilinks(body: &str) -> Vec<WikilinkRaw> {
         cursor = inner_end + 2;
     }
 
-    links
+    spans
+}
+
+/// Extract every `[[target]]` and `[[target|label]]` wikilink from a
+/// markdown body, in source order. Skips code blocks, code spans, and
+/// HTML. Wikilinks that span newlines are dropped — they're almost
+/// certainly the user accidentally splitting one across lines, and
+/// scanning past line breaks is more likely to glue unrelated tokens
+/// together than to recover the user's intent.
+pub fn extract_wikilinks(body: &str) -> Vec<WikilinkRaw> {
+    wikilink_spans(body)
+        .into_iter()
+        .map(|span| {
+            let inner = &body[span.open + 2..span.inner_end];
+            let (target, label) = match inner.find('|') {
+                Some(pipe) => (
+                    inner[..pipe].trim().to_string(),
+                    Some(inner[pipe + 1..].trim().to_string()),
+                ),
+                None => (inner.trim().to_string(), None),
+            };
+            WikilinkRaw {
+                target,
+                label: label.filter(|s| !s.is_empty()),
+                is_embed: span.is_embed,
+            }
+        })
+        .collect()
+}
+
+/// One replacement made by [`rewrite_wikilink_addresses`]: the byte
+/// range of the address in the original text and what now stands there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddressEdit {
+    pub range: Range<usize>,
+    pub replacement: String,
+}
+
+/// Rewrite the address of every wikilink in `text` whose full target
+/// `names_target` accepts, returning the new text and the edits made
+/// (ranges are into `text`, ascending, non-overlapping).
+///
+/// `names_target` receives the target as the resolver sees it: the text
+/// before the first `|`, trimmed, anchor included (`old#Current State`).
+/// `rewrite` receives the address only, and only the address bytes are
+/// replaced; the anchor, label, the `!` of an embed, whitespace inside
+/// the brackets, code spans, code blocks and HTML stay as they were. A
+/// link with an empty address (`[[#Heading]]`, a same-note reference) is
+/// never rewritten. `rewrite` must return a bare address: non-empty, with
+/// no `#`, `|`, brackets or line breaks, or the link's structure changes.
+pub fn rewrite_wikilink_addresses(
+    text: &str,
+    names_target: impl Fn(&str) -> bool,
+    rewrite: impl Fn(&str) -> String,
+) -> (String, Vec<AddressEdit>) {
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    let mut edits = Vec::new();
+    for span in wikilink_spans(text) {
+        let address = &text[span.address.clone()];
+        if address.is_empty() || !names_target(&text[span.target.clone()]) {
+            continue;
+        }
+        let replacement = rewrite(address);
+        out.push_str(&text[copied..span.address.start]);
+        out.push_str(&replacement);
+        copied = span.address.end;
+        edits.push(AddressEdit {
+            range: span.address,
+            replacement,
+        });
+    }
+    out.push_str(&text[copied..]);
+    (out, edits)
+}
+
+/// True exactly when `after` equals `before` with `edits` applied in
+/// order. The ranges must be ascending and non-overlapping, in bounds and
+/// on char boundaries; otherwise the answer is false.
+pub fn differs_only_by(before: &str, after: &str, edits: &[AddressEdit]) -> bool {
+    let mut expected = String::with_capacity(after.len());
+    let mut at = 0;
+    for edit in edits {
+        if edit.range.start < at
+            || edit.range.end < edit.range.start
+            || edit.range.end > before.len()
+            || !before.is_char_boundary(edit.range.start)
+            || !before.is_char_boundary(edit.range.end)
+        {
+            return false;
+        }
+        expected.push_str(&before[at..edit.range.start]);
+        expected.push_str(&edit.replacement);
+        at = edit.range.end;
+    }
+    expected.push_str(&before[at..]);
+    expected == after
 }
 
 /// Extract every `[[wikilink]]` from the string values of a note's parsed

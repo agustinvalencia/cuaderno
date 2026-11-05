@@ -29,3 +29,4 @@ notify-debouncer-mini.workspace = true
 
 [dev-dependencies]
 rusqlite.workspace = true
+proptest.workspace = true
