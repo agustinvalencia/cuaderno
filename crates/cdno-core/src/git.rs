@@ -23,14 +23,17 @@ use thiserror::Error;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// What git says about a vault directory.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum GitState {
     /// `root` is not inside a git work tree (or git is unavailable).
     NotARepository,
     /// `root` is in a repository.
     Repository {
-        /// An operation left paused mid-way, if any.
-        paused: Option<PausedGitOp>,
+        /// An operation left paused mid-way, if any. An `Err` means the
+        /// probe failed, so whether one is paused is *unknown*; callers
+        /// must not read it as "not paused" (RFC 0007 §5.8: cannot be
+        /// determined → warn and proceed).
+        paused: Result<Option<PausedGitOp>, GitError>,
         /// Divergence from the upstream as of the last fetch; `None` when
         /// there is no upstream or the probe failed.
         upstream: Option<Upstream>,
@@ -73,7 +76,9 @@ pub enum GitError {
 }
 
 /// Read the repository facts for `root`. Never touches the network and
-/// never errors: a failed probe degrades to the less informative answer.
+/// never errors. A failed upstream probe is `None` (unknown or none, the
+/// caller warns either way); a failed paused probe stays visible as an
+/// `Err` in `paused`.
 ///
 /// The repository probe is `git rev-parse --is-inside-work-tree`, not a
 /// `root/.git` existence check: in a linked worktree (or a submodule)
@@ -85,7 +90,7 @@ pub fn git_state(root: &Path) -> GitState {
         Ok(out) if out.trim() == "true" => {}
         _ => return GitState::NotARepository,
     }
-    let paused = git_operation_in_progress(root).ok().flatten();
+    let paused = git_operation_in_progress(root);
     let upstream = run_git_with_timeout(
         root,
         &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],

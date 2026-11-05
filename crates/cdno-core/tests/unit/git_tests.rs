@@ -96,7 +96,7 @@ fn upstream(dir: &Path) -> Option<Upstream> {
 fn a_plain_dir_is_not_a_repository() {
     require_git!();
     let dir = TempDir::new().unwrap();
-    assert_eq!(git_state(dir.path()), GitState::NotARepository);
+    assert!(matches!(git_state(dir.path()), GitState::NotARepository));
 }
 
 #[test]
@@ -104,13 +104,13 @@ fn a_repo_with_no_upstream_reports_none() {
     require_git!();
     let dir = TempDir::new().unwrap();
     init_repo(dir.path());
-    assert_eq!(
-        git_state(dir.path()),
+    match git_state(dir.path()) {
         GitState::Repository {
-            paused: None,
-            upstream: None
-        }
-    );
+            paused: Ok(None),
+            upstream: None,
+        } => {}
+        other => panic!("expected a clean repository, got {other:?}"),
+    }
 }
 
 #[test]
@@ -170,7 +170,8 @@ fn a_paused_merge_is_reported() {
     conflicted_merge(dir.path());
     match git_state(dir.path()) {
         GitState::Repository {
-            paused: Some(op), ..
+            paused: Ok(Some(op)),
+            ..
         } => assert_eq!(op.marker, Some("MERGE_HEAD")),
         other => panic!("expected a paused merge, got {other:?}"),
     }
@@ -184,7 +185,8 @@ fn unmerged_paths_without_a_marker_are_reported() {
     std::fs::remove_file(dir.path().join(".git/MERGE_HEAD")).unwrap();
     match git_state(dir.path()) {
         GitState::Repository {
-            paused: Some(op), ..
+            paused: Ok(Some(op)),
+            ..
         } => {
             assert_eq!(op.marker, None);
             assert!(op.reason.contains("unmerged"), "{}", op.reason);
@@ -237,4 +239,22 @@ fn fetch_times_out() {
     assert!(matches!(err, GitError::TimedOut { .. }), "{err:?}");
     assert!(start.elapsed() < Duration::from_secs(3));
     drop(held); // detached: the listener thread ends with the process
+}
+
+#[test]
+fn a_failed_paused_probe_is_an_error_not_none() {
+    require_git!();
+    let dir = TempDir::new().unwrap();
+    init_repo(dir.path());
+    // A corrupt index makes `git diff` fail while `rev-parse` still works.
+    std::fs::write(dir.path().join(".git/index"), b"not an index").unwrap();
+    match git_state(dir.path()) {
+        GitState::Repository { paused, .. } => {
+            assert!(
+                paused.is_err(),
+                "unknown must not read as not-paused: {paused:?}"
+            )
+        }
+        other => panic!("expected a repository, got {other:?}"),
+    }
 }
