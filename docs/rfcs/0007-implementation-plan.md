@@ -1,7 +1,8 @@
 # RFC 0007 — Implementation plan
 
-Companion to [RFC 0007 — Renaming a note](0007-renaming-notes.md) (merged as #846). Each task
-below is meant to be one issue and one pull request: small enough to review in one sitting,
+Companion to [RFC 0007 — Renaming a note](0007-renaming-notes.md) (merged as #846); tracked by
+#848, with T0–T30 filed as #849–#879 in order. Each task below is meant to be one issue and one
+pull request: small enough to review in one sitting,
 independent where the dependency graph allows, and **done only when its probe passes**. Two rules
 carried over from the RFC 0002, 0004 and 0005 plans: a green suite is not a probe (a probe asserts
 the specific new behaviour, and where it guards a regression the breaking mutation is shown to
