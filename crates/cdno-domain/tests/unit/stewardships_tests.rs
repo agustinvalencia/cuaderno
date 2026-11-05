@@ -608,3 +608,100 @@ fn an_ambiguous_slug_errors_without_a_hint() {
         "expected AmbiguousSlug, got {err:?}"
     );
 }
+
+/// Every file in the store and its content.
+fn snapshot(store: &Arc<dyn VaultStore>) -> std::collections::BTreeMap<String, String> {
+    store
+        .walk_dir(&VaultPath::root())
+        .unwrap()
+        .into_iter()
+        .map(|p| {
+            let content = store.read_file(&p).unwrap();
+            (p.to_string(), content)
+        })
+        .collect()
+}
+
+#[test]
+fn an_explicit_stewardship_slug_is_found_by_its_slug() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    let slug = "a-b-c-d-e-f-g";
+    let path = vault
+        .create_stewardship_flat_with_vars(
+            dt(2026, 3, 1, 9, 0),
+            "Surrogate model upkeep",
+            Context::Work,
+            &std::collections::HashMap::new(),
+            Some(slug),
+        )
+        .expect("create");
+    assert_eq!(path, vp("stewardships/a-b-c-d-e-f-g.md"));
+
+    // `get_stewardship` is the public face of `resolve_stewardship_with_variant`.
+    let (_fm, _body, variant) = vault.get_stewardship(slug).expect("found by its slug");
+    assert_eq!(variant, StewardshipVariant::Flat);
+}
+
+#[test]
+fn an_explicit_flat_slug_that_is_taken_is_refused_not_suffixed() {
+    use cdno_domain::TakenBy;
+    let (vault, store) = vault_with_seeded_store(&[]);
+    vault
+        .create_stewardship_flat(dt(2026, 3, 1, 9, 0), "Surrogate model", Context::Work)
+        .expect("holder");
+    let before = snapshot(&store);
+
+    let err = vault
+        .create_stewardship_flat_with_vars(
+            dt(2026, 3, 1, 9, 0),
+            "Something else",
+            Context::Work,
+            &std::collections::HashMap::new(),
+            Some("surrogate-model"),
+        )
+        .expect_err("refused");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken {
+                kind: TakenBy::Stem,
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
+}
+
+#[test]
+fn an_explicit_expanded_slug_that_is_taken_is_refused_not_suffixed() {
+    use cdno_domain::TakenBy;
+    let (vault, store) = vault_with_seeded_store(&[]);
+    vault
+        .create_stewardship_expanded(dt(2026, 3, 1, 9, 0), "Surrogate model", Context::Work)
+        .expect("holder");
+    let before = snapshot(&store);
+
+    let err = vault
+        .create_stewardship_expanded_with_vars(
+            dt(2026, 3, 1, 9, 0),
+            "Something else",
+            Context::Work,
+            &std::collections::HashMap::new(),
+            Some("surrogate-model"),
+        )
+        .expect_err("refused");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken {
+                kind: TakenBy::Folder,
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
+}

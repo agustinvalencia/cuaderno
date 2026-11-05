@@ -13,6 +13,7 @@ use std::path::Path;
 use chrono::{NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
+use cdno_core::extractors::first_h1;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
@@ -26,7 +27,7 @@ use crate::note_type::NoteType;
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::rewrite_field_in_frontmatter;
-use super::slug::slugify;
+use super::slug::{slugify, validate_explicit_slug};
 
 /// One row in the `Vault::list_portfolios` output. Aggregates per-
 /// portfolio metadata that's expensive to recompute by hand: the
@@ -111,7 +112,7 @@ impl Vault {
         question: &str,
         project: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
-        self.create_portfolio_with_vars(at, question, project, &HashMap::new())
+        self.create_portfolio_with_vars(at, question, project, &HashMap::new(), None)
     }
 
     /// As [`create_portfolio`](Self::create_portfolio), with caller-supplied
@@ -122,6 +123,7 @@ impl Vault {
         question: &str,
         project: Option<&str>,
         prompted: &HashMap<String, String>,
+        slug: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let question = question.trim();
@@ -136,7 +138,48 @@ impl Vault {
         // created from the same text computes `foo` and won't correlate to
         // `foo-2`. Rare, and a net improvement over the pre-#225 state where
         // that same pair was an actual resolver ambiguity.
-        let slug = slugify(question);
+        //
+        // `question` is first tried as a question *reference* (RFC 0007 P2),
+        // but only when it is slug-shaped: that is "exactly a slug", and it
+        // keeps a case-folding disk from matching `Foo` to `foo.md`. A hit
+        // makes the portfolio the question's: its slug is the question's stem
+        // and its title and `question:` are the question's text. An explicit
+        // `slug` beside a reference must be that stem, since the pair is
+        // correlated by slug; the question holds the name, so no taken check.
+        // Anything else is text, slugified raw (or the explicit slug).
+        let referenced = if validate_explicit_slug(question).is_ok() {
+            self.find_question_path(question)?
+        } else {
+            None
+        };
+        let (slug, title) = match &referenced {
+            Some(q) => {
+                let stem = q
+                    .as_path()
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(question)
+                    .to_owned();
+                if let Some(given) = slug
+                    && given != stem
+                {
+                    return Err(DomainError::PortfolioSlugMismatch {
+                        question_slug: stem,
+                        slug: given.to_owned(),
+                    });
+                }
+                let raw = self.store.read_file(q)?;
+                // Body only: a `# comment` in the frontmatter is not a title.
+                let (_fm, body) = Frontmatter::parse(&raw)?;
+                let text = first_h1(body).unwrap_or_else(|| stem.clone());
+                (stem, text)
+            }
+            None => (
+                self.explicit_or_raw_slug(slug, question)?,
+                question.to_owned(),
+            ),
+        };
+        let question = title.as_str();
         let path = VaultPath::new(format!("{}/{slug}/_index.md", cdno_core::paths::PORTFOLIOS))?;
         if self.store.exists(&path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
@@ -151,7 +194,11 @@ impl Vault {
         // than a read-modify-write of a file we're creating); the
         // question side is staged onto the same tx so both ends land
         // atomically — or neither does.
-        if let Some(question_path) = self.find_question_path(&slug)? {
+        let linked_question = match referenced {
+            Some(q) => Some(q),
+            None => self.find_question_path(&slug)?,
+        };
+        if let Some(question_path) = linked_question {
             let mut doc = MarkdownDocument::parse(content)?;
             append_wikilink_to_section(
                 &mut doc,

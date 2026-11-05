@@ -110,7 +110,7 @@ impl Vault {
         name: &str,
         context: Context,
     ) -> Result<VaultPath, DomainError> {
-        self.create_stewardship_flat_with_vars(at, name, context, &HashMap::new())
+        self.create_stewardship_flat_with_vars(at, name, context, &HashMap::new(), None)
     }
 
     /// As [`create_stewardship_flat`](Self::create_stewardship_flat), with
@@ -121,6 +121,7 @@ impl Vault {
         name: &str,
         context: Context,
         prompted: &HashMap<String, String>,
+        slug: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         // Stewardships are deliberately excluded from the #225 global-slug
         // suffixing: they don't relocate (so their own backlinks never
@@ -131,7 +132,7 @@ impl Vault {
         // expanded stewardship's file stem is `_index`, which is also how
         // the resolver keys it — so it never occupies the slug's stem-space
         // in the first place.
-        let (slug, flat_path, expanded_path) = resolve_paths(name)?;
+        let (slug, flat_path, expanded_path) = self.stewardship_paths(name, slug)?;
         if self.store.exists(&flat_path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
                 flat_path.to_string(),
@@ -158,7 +159,7 @@ impl Vault {
         name: &str,
         context: Context,
     ) -> Result<VaultPath, DomainError> {
-        self.create_stewardship_expanded_with_vars(at, name, context, &HashMap::new())
+        self.create_stewardship_expanded_with_vars(at, name, context, &HashMap::new(), None)
     }
 
     /// As [`create_stewardship_expanded`](Self::create_stewardship_expanded),
@@ -169,9 +170,10 @@ impl Vault {
         name: &str,
         context: Context,
         prompted: &HashMap<String, String>,
+        slug: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         // Excluded from #225 global-slug suffixing — see the flat variant.
-        let (slug, flat_path, expanded_path) = resolve_paths(name)?;
+        let (slug, flat_path, expanded_path) = self.stewardship_paths(name, slug)?;
         if self.store.exists(&expanded_path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
                 expanded_path.to_string(),
@@ -185,6 +187,20 @@ impl Vault {
 
         let content = self.render_stewardship(name, context, prompted)?;
         write_stewardship(self, at, &slug, &expanded_path, &content, name)
+    }
+
+    /// The slug and both candidate paths for a create. An explicit `slug` is
+    /// validated and checked against every name in the vault, which covers
+    /// both candidates: a flat note holds the name as its stem, an expanded
+    /// one as its folder. Without one, the raw `slugify(name)`.
+    fn stewardship_paths(
+        &self,
+        name: &str,
+        slug: Option<&str>,
+    ) -> Result<(String, VaultPath, VaultPath), DomainError> {
+        require_name(name)?;
+        let slug = self.explicit_or_raw_slug(slug, name.trim())?;
+        resolve_paths_for(&slug)
     }
 
     /// Render the stewardship template (custom or built-in): `{{name}}`
@@ -452,21 +468,31 @@ fn extract_h1(body: &str) -> String {
     String::new()
 }
 
-/// Compute the canonical slug and both on-disk paths for a stewardship
-/// `name`. Done once so the two create ops share the slug-derivation
-/// and the empty-name check.
+/// The slug and both on-disk paths a stewardship `name` is looked up by:
+/// the raw `slugify` of the name, plus the empty-name check. The creates
+/// do not use it (they go through `Vault::stewardship_paths`, which also
+/// honours an explicit slug); `slugify` being a fixed point on a valid slug
+/// is what lets an explicit slug round-trip through this lookup.
 fn resolve_paths(name: &str) -> Result<(String, VaultPath, VaultPath), DomainError> {
-    let name = name.trim();
-    if name.is_empty() {
+    require_name(name)?;
+    resolve_paths_for(&slugify(name.trim()))
+}
+
+fn require_name(name: &str) -> Result<(), DomainError> {
+    if name.trim().is_empty() {
         return Err(DomainError::EmptyField { field: "name" });
     }
-    let slug = slugify(name);
+    Ok(())
+}
+
+/// Both on-disk paths for an already-chosen `slug`.
+fn resolve_paths_for(slug: &str) -> Result<(String, VaultPath, VaultPath), DomainError> {
     let flat = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::STEWARDSHIPS))?;
     let expanded = VaultPath::new(format!(
         "{}/{slug}/_index.md",
         cdno_core::paths::STEWARDSHIPS
     ))?;
-    Ok((slug, flat, expanded))
+    Ok((slug.to_owned(), flat, expanded))
 }
 
 /// Stage the file write + index upsert for a stewardship, plus the

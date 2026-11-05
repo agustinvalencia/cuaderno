@@ -8,9 +8,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
-- The domain create operations (project, question, action note, custom note, commitment) accept an
-  explicit slug, validated and refused on collision rather than suffixed; the CLI and MCP surfaces
-  follow in later tasks (RFC 0007, #850).
+- The domain create operations (project, question, action note, custom note, commitment, portfolio,
+  stewardship) accept an explicit slug, validated and refused on collision rather than suffixed; the
+  CLI and MCP surfaces follow in later tasks (RFC 0007, #850, #851). When a portfolio's
+  `question` is a question's slug, the portfolio takes the question's text as its title and the two
+  are linked both ways; an explicit slug must then be the question's (RFC 0007, #851).
 
 ### Changed
 

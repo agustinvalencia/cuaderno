@@ -1389,3 +1389,199 @@ fn project_link_resolves_through_the_wikilink_resolver() {
         "must resolve to the portfolio _index, not dangle: {portfolio_link:?}"
     );
 }
+
+/// Every file in the store and its content.
+fn snapshot(store: &Arc<dyn VaultStore>) -> std::collections::BTreeMap<String, String> {
+    store
+        .walk_dir(&VaultPath::root())
+        .unwrap()
+        .into_iter()
+        .map(|p| {
+            let content = store.read_file(&p).unwrap();
+            (p.to_string(), content)
+        })
+        .collect()
+}
+
+const CALIBRATION_TEXT: &str =
+    "Can the surrogate model be calibrated against the high-fidelity thermal runs?";
+
+fn seed_calibration_question(vault: &Vault, at: NaiveDateTime) -> VaultPath {
+    vault
+        .create_question_with_vars(
+            at,
+            QuestionDomain::Research,
+            CALIBRATION_TEXT,
+            &std::collections::HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+        .expect("create question")
+}
+
+#[test]
+fn a_question_reference_gives_the_portfolio_its_slug() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+    let question_path = seed_calibration_question(&vault, at);
+
+    let portfolio_path = vault
+        .create_portfolio(at, "surrogate-calibration", None)
+        .expect("create portfolio");
+
+    assert_eq!(
+        portfolio_path,
+        vp("portfolios/surrogate-calibration/_index.md")
+    );
+    let question_raw = store.read_file(&question_path).unwrap();
+    assert!(
+        question_raw
+            .contains("## Related Portfolios\n- [[portfolios/surrogate-calibration/_index]]"),
+        "question should backlink the portfolio:\n{question_raw}"
+    );
+}
+
+#[test]
+fn a_reference_hit_takes_the_questions_text_as_title() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+    let question_path = seed_calibration_question(&vault, at);
+
+    let portfolio_path = vault
+        .create_portfolio(at, "surrogate-calibration", None)
+        .expect("create portfolio");
+
+    assert_eq!(
+        portfolio_path,
+        vp("portfolios/surrogate-calibration/_index.md")
+    );
+    assert_eq!(
+        read_portfolio_frontmatter(&store, &portfolio_path).question,
+        CALIBRATION_TEXT
+    );
+    let portfolio_raw = store.read_file(&portfolio_path).unwrap();
+    assert!(
+        portfolio_raw.contains(&format!("\n# {CALIBRATION_TEXT}\n")),
+        "title should be the question's text:\n{portfolio_raw}"
+    );
+    assert!(
+        portfolio_raw
+            .contains("## Related Questions\n- [[questions/research/surrogate-calibration]]"),
+        "portfolio should link the question:\n{portfolio_raw}"
+    );
+    assert!(
+        store
+            .read_file(&question_path)
+            .unwrap()
+            .contains("## Related Portfolios\n- [[portfolios/surrogate-calibration/_index]]")
+    );
+}
+
+#[test]
+fn a_frontmatter_comment_is_not_taken_as_the_questions_title() {
+    let q = "---\ntype: question\ndomain: research\n# a comment, not a title\nstatus: active\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n\n# Surrogate calibration\n\n## Related Portfolios\n";
+    let (vault, store) =
+        vault_with_seeded_store(&[("questions/research/surrogate-calibration.md", q)]);
+
+    let path = vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "surrogate-calibration", None)
+        .expect("create portfolio");
+
+    assert_eq!(
+        read_portfolio_frontmatter(&store, &path).question,
+        "Surrogate calibration"
+    );
+}
+
+#[test]
+fn an_explicit_slug_equal_to_the_referenced_question_is_accepted() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+    seed_calibration_question(&vault, at);
+
+    let path = vault
+        .create_portfolio_with_vars(
+            at,
+            "surrogate-calibration",
+            None,
+            &std::collections::HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+        .expect("the question's own slug is accepted");
+
+    assert_eq!(path, vp("portfolios/surrogate-calibration/_index.md"));
+    assert_eq!(
+        read_portfolio_frontmatter(&store, &path).question,
+        CALIBRATION_TEXT
+    );
+}
+
+#[test]
+fn an_explicit_slug_differing_from_the_referenced_question_is_refused() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+    seed_calibration_question(&vault, at);
+    let before = snapshot(&store);
+
+    let err = vault
+        .create_portfolio_with_vars(
+            at,
+            "surrogate-calibration",
+            None,
+            &std::collections::HashMap::new(),
+            Some("calibration-evidence"),
+        )
+        .expect_err("refused");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::PortfolioSlugMismatch { question_slug, slug }
+                if question_slug == "surrogate-calibration" && slug == "calibration-evidence"
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
+}
+
+#[test]
+fn question_text_still_slugifies_when_no_question_resolves() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let path = vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Surrogate model fidelity", None)
+        .expect("create portfolio");
+    assert_eq!(path, vp("portfolios/surrogate-model-fidelity/_index.md"));
+    assert!(store.exists(&path).unwrap());
+}
+
+#[test]
+fn an_explicit_portfolio_slug_that_is_a_folder_is_refused() {
+    use cdno_domain::TakenBy;
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+    vault
+        .create_portfolio(at, "Surrogate model", None)
+        .expect("first portfolio");
+    let before = snapshot(&store);
+
+    let err = vault
+        .create_portfolio_with_vars(
+            at,
+            "Another question",
+            None,
+            &std::collections::HashMap::new(),
+            Some("surrogate-model"),
+        )
+        .expect_err("refused");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken {
+                kind: TakenBy::Folder,
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
+}

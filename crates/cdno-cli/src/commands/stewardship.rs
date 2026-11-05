@@ -202,9 +202,9 @@ fn create(
     }
 
     let path = if tracking {
-        vault.create_stewardship_expanded_with_vars(at, &name, context, &template_vars)
+        vault.create_stewardship_expanded_with_vars(at, &name, context, &template_vars, None)
     } else {
-        vault.create_stewardship_flat_with_vars(at, &name, context, &template_vars)
+        vault.create_stewardship_flat_with_vars(at, &name, context, &template_vars, None)
     }
     .context("creating stewardship")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
