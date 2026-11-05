@@ -117,6 +117,44 @@ fn portfolio_create_backlinks_existing_question_note() {
 }
 
 #[test]
+fn a_mixed_case_question_text_creates_a_lowercase_folder() {
+    // A case-insensitive disk (macOS) would match `Surrogate-Calibration`
+    // to `surrogate-calibration.md` if it were tried as a question
+    // reference; only slug-shaped text is, so the folder is slugified.
+    let dir = vault();
+    question::run(
+        dir.path(),
+        moment(2026, 2, 1, 9, 0),
+        QuestionCommands::Create {
+            domain: Some(QuestionDomain::Research),
+            text: Some("Surrogate calibration".to_owned()),
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("create question");
+    portfolio::run(
+        dir.path(),
+        moment(2026, 2, 1, 9, 5),
+        PortfolioCommands::Create {
+            question: Some("Surrogate-Calibration".to_owned()),
+            project: None,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("create portfolio");
+
+    let names: Vec<String> = fs::read_dir(dir.path().join("portfolios"))
+        .expect("portfolios dir")
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, vec!["surrogate-calibration".to_owned()]);
+}
+
+#[test]
 fn portfolio_link_backlinks_a_retrofit_question() {
     // A standalone portfolio created first, then a question with a
     // different slug, linked after the fact via `portfolio link`.

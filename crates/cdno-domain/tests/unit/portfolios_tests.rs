@@ -1403,19 +1403,26 @@ fn snapshot(store: &Arc<dyn VaultStore>) -> std::collections::BTreeMap<String, S
         .collect()
 }
 
+const CALIBRATION_TEXT: &str =
+    "Can the surrogate model be calibrated against the high-fidelity thermal runs?";
+
+fn seed_calibration_question(vault: &Vault, at: NaiveDateTime) -> VaultPath {
+    vault
+        .create_question_with_vars(
+            at,
+            QuestionDomain::Research,
+            CALIBRATION_TEXT,
+            &std::collections::HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+        .expect("create question")
+}
+
 #[test]
 fn a_question_reference_gives_the_portfolio_its_slug() {
     let (vault, store) = vault_with_seeded_store(&[]);
     let at = dt(2026, 2, 1, 9, 0);
-    let question_path = vault
-        .create_question_with_vars(
-            at,
-            QuestionDomain::Research,
-            "Can the surrogate model be calibrated against the high-fidelity thermal runs?",
-            &std::collections::HashMap::new(),
-            Some("surrogate-calibration"),
-        )
-        .expect("create question");
+    let question_path = seed_calibration_question(&vault, at);
 
     let portfolio_path = vault
         .create_portfolio(at, "surrogate-calibration", None)
@@ -1431,12 +1438,93 @@ fn a_question_reference_gives_the_portfolio_its_slug() {
             .contains("## Related Portfolios\n- [[portfolios/surrogate-calibration/_index]]"),
         "question should backlink the portfolio:\n{question_raw}"
     );
+}
+
+#[test]
+fn a_reference_hit_takes_the_questions_text_as_title() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+    let question_path = seed_calibration_question(&vault, at);
+
+    let portfolio_path = vault
+        .create_portfolio(at, "surrogate-calibration", None)
+        .expect("create portfolio");
+
+    assert_eq!(
+        portfolio_path,
+        vp("portfolios/surrogate-calibration/_index.md")
+    );
+    assert_eq!(
+        read_portfolio_frontmatter(&store, &portfolio_path).question,
+        CALIBRATION_TEXT
+    );
     let portfolio_raw = store.read_file(&portfolio_path).unwrap();
+    assert!(
+        portfolio_raw.contains(&format!("\n# {CALIBRATION_TEXT}\n")),
+        "title should be the question's text:\n{portfolio_raw}"
+    );
     assert!(
         portfolio_raw
             .contains("## Related Questions\n- [[questions/research/surrogate-calibration]]"),
         "portfolio should link the question:\n{portfolio_raw}"
     );
+    assert!(
+        store
+            .read_file(&question_path)
+            .unwrap()
+            .contains("## Related Portfolios\n- [[portfolios/surrogate-calibration/_index]]")
+    );
+}
+
+#[test]
+fn an_explicit_slug_equal_to_the_referenced_question_is_accepted() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+    seed_calibration_question(&vault, at);
+
+    let path = vault
+        .create_portfolio_with_vars(
+            at,
+            "surrogate-calibration",
+            None,
+            &std::collections::HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+        .expect("the question's own slug is accepted");
+
+    assert_eq!(path, vp("portfolios/surrogate-calibration/_index.md"));
+    assert_eq!(
+        read_portfolio_frontmatter(&store, &path).question,
+        CALIBRATION_TEXT
+    );
+}
+
+#[test]
+fn an_explicit_slug_differing_from_the_referenced_question_is_refused() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+    seed_calibration_question(&vault, at);
+    let before = snapshot(&store);
+
+    let err = vault
+        .create_portfolio_with_vars(
+            at,
+            "surrogate-calibration",
+            None,
+            &std::collections::HashMap::new(),
+            Some("calibration-evidence"),
+        )
+        .expect_err("refused");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::PortfolioSlugMismatch { question_slug, slug }
+                if question_slug == "surrogate-calibration" && slug == "calibration-evidence"
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
 }
 
 #[test]

@@ -13,6 +13,7 @@ use std::path::Path;
 use chrono::{NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
+use cdno_core::extractors::first_h1;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
@@ -26,7 +27,7 @@ use crate::note_type::NoteType;
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::rewrite_field_in_frontmatter;
-use super::slug::slugify;
+use super::slug::{slugify, validate_explicit_slug};
 
 /// One row in the `Vault::list_portfolios` output. Aggregates per-
 /// portfolio metadata that's expensive to recompute by hand: the
@@ -138,25 +139,45 @@ impl Vault {
         // `foo-2`. Rare, and a net improvement over the pre-#225 state where
         // that same pair was an actual resolver ambiguity.
         //
-        // `question` is first tried as a question *reference* (RFC 0007 P2):
-        // when a question note has that slug, the portfolio takes it, so a
-        // question created with a chosen slug keeps its correlation. Anything
-        // else is text, and the slug is its raw `slugify`. An explicit `slug`
-        // wins over both, validated and never suffixed.
-        let referenced = if question.contains(['/', '\\']) {
-            None
-        } else {
+        // `question` is first tried as a question *reference* (RFC 0007 P2),
+        // but only when it is slug-shaped: that is "exactly a slug", and it
+        // keeps a case-folding disk from matching `Foo` to `foo.md`. A hit
+        // makes the portfolio the question's: its slug is the question's stem
+        // and its title and `question:` are the question's text. An explicit
+        // `slug` beside a reference must be that stem, since the pair is
+        // correlated by slug; the question holds the name, so no taken check.
+        // Anything else is text, slugified raw (or the explicit slug).
+        let referenced = if validate_explicit_slug(question).is_ok() {
             self.find_question_path(question)?
+        } else {
+            None
         };
-        let slug = match (slug, &referenced) {
-            (None, Some(q)) => q
-                .as_path()
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or(question)
-                .to_owned(),
-            _ => self.explicit_or_raw_slug(slug, question)?,
+        let (slug, title) = match &referenced {
+            Some(q) => {
+                let stem = q
+                    .as_path()
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(question)
+                    .to_owned();
+                if let Some(given) = slug
+                    && given != stem
+                {
+                    return Err(DomainError::PortfolioSlugMismatch {
+                        question_slug: stem,
+                        slug: given.to_owned(),
+                    });
+                }
+                let raw = self.store.read_file(q)?;
+                let text = first_h1(&raw).unwrap_or_else(|| stem.clone());
+                (stem, text)
+            }
+            None => (
+                self.explicit_or_raw_slug(slug, question)?,
+                question.to_owned(),
+            ),
         };
+        let question = title.as_str();
         let path = VaultPath::new(format!("{}/{slug}/_index.md", cdno_core::paths::PORTFOLIOS))?;
         if self.store.exists(&path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(

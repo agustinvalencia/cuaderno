@@ -468,9 +468,11 @@ fn extract_h1(body: &str) -> String {
     String::new()
 }
 
-/// Compute the canonical slug and both on-disk paths for a stewardship
-/// `name`. Done once so the two create ops share the slug-derivation
-/// and the empty-name check.
+/// The slug and both on-disk paths a stewardship `name` is looked up by:
+/// the raw `slugify` of the name, plus the empty-name check. The creates
+/// do not use it (they go through `Vault::stewardship_paths`, which also
+/// honours an explicit slug); `slugify` being a fixed point on a valid slug
+/// is what lets an explicit slug round-trip through this lookup.
 fn resolve_paths(name: &str) -> Result<(String, VaultPath, VaultPath), DomainError> {
     require_name(name)?;
     resolve_paths_for(&slugify(name.trim()))

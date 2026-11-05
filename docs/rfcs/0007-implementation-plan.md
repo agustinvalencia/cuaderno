@@ -251,7 +251,9 @@ anything is staged.
 **P2**, its `question` argument is first tried as a question reference through
 `resolve_question_by_slug` (`questions.rs:228`), and on a hit the portfolio's slug defaults to the
 question's slug and the two are linked as today (`portfolios.rs:154`); otherwise `question` is
-text. `create_stewardship_flat_with_vars` and `create_stewardship_expanded_with_vars`
+text. The reference is tried only for slug-shaped text; a hit takes the question's text as the
+portfolio's title; an explicit slug beside a reference must equal the question's stem or is
+refused with `PortfolioSlugMismatch`. `create_stewardship_flat_with_vars` and `create_stewardship_expanded_with_vars`
 (`stewardships.rs:118`, `:166`) take `slug: Option<&str>`; `resolve_paths` (`:458`) takes the
 slug when one is given. Both keep their deliberate raw-`slugify` behaviour when no slug is given
 (`portfolios.rs:131`, `stewardships.rs:124`), and both check both candidate paths for `SlugTaken`
@@ -320,7 +322,9 @@ description says so), `PromoteActionInput` (`:277`) and `CreateCommitmentInput` 
 field's doc comment carries the §5.7 hint: *the slug is the name every later reference types;
 propose a short one for a long title.* `RejectionCode::{InvalidSlug, SlugTaken}` in
 `rejection.rs:95` with `classify` arms: `invalid_slug { slug, why }` and
-`slug_taken { slug, holder, kind }`. The create tools' handlers (`creation.rs:26–172`,
+`slug_taken { slug, holder, kind }`, and `PortfolioSlugMismatch` → `portfolio_slug_mismatch
+{ question_slug, slug }`. `CreatePortfolioInput.question`'s description says a question's slug is
+accepted. The create tools' handlers (`creation.rs:26–172`,
 `operations.rs:500`, `:540`, `:780`) pass the field through.
 
 **Deliverable.** Eight fields, two codes, tests.

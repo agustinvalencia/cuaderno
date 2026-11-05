@@ -87,6 +87,14 @@ pub enum DomainError {
         kind: crate::vault::slug::TakenBy,
     },
 
+    /// A portfolio created from a question (`question` is the question's
+    /// slug) was given a different explicit slug. The pair is correlated by
+    /// slug, so the portfolio takes the question's.
+    #[error(
+        "a portfolio created from a question takes the question's slug '{question_slug}', not '{slug}'; drop the slug or pass '{question_slug}'"
+    )]
+    PortfolioSlugMismatch { question_slug: String, slug: String },
+
     #[error("project cap reached ({current}/{max}), counted: {active_projects:?}")]
     ProjectCapReached {
         current: usize,
