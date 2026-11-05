@@ -769,7 +769,11 @@ fail the plain hash are left `NULL` and keep failing lint as today. `check_appen
 hashing its first `masked_size` bytes (a masked file shorter than `masked_size` is the truncation
 Error; `frozen_size` is raw bytes a rename moves, so it is not used for this path) (at the stored `mask_version`; a row at an
 older version is re-masked at read if the version is known, else reported as a Warning naming
-the version), the plain hash otherwise; truncation below `frozen_size` stays an Error on the plain path. The
+the version). A row is accepted when **either** the plain hash over `content.get(..frozen_size)`
+(no panic on a mid-character boundary) **or** the masked hash verifies, so a note never renamed
+behaves exactly as today; truncation is an Error only when both paths say so. A hand append with
+no blank line under an open backtick fails the masked path only, and passes the plain one
+(probe `a_hand_append_without_a_blank_line_after_an_open_backtick_is_not_an_error`). The
 stated cost (§5.4) goes into the lint row's docs: a hand edit that only re-targets a reference
 inside a frozen prefix is no longer detected.
 
@@ -873,7 +877,7 @@ silently.
   `[[old|label]]` and a `[[old#Current State]]`, a portfolio index linking `[[projects/old]]`,
   a note whose frontmatter holds a nested `project: old` under another key, a code span `` `[[old]]` ``, a `#action/old` tag and an archived action with `[[old]]` in its
   frozen prefix:
-  `a_second_rename_of_a_frozen_note_does_not_warn`, `the_plan_lists_every_reference_kind_once` (the exact set of paths and `Change`s; the code
+  `a_second_rename_of_a_frozen_note_does_not_warn` (rename a slug referenced inside an archived action's frozen prefix, then rename again; the second plan carries no `FrozenPrefixAlreadyDiverged`), `the_plan_lists_every_reference_kind_once` (the exact set of paths and `Change`s; the code
   span and the tag are not changes), `every_edit_differs_only_by_its_reference_edits`
   (`differs_only_by` on each `before`/`after` with the edits the planner built, and each edit's
   range is an accepted address span of `wikilink_spans(before)`, as T6's property test checks),

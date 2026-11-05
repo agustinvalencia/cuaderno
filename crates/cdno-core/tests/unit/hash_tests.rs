@@ -134,6 +134,16 @@ fn masking_is_prefix_local() {
         let whole = mask_references(&format!("{prefix}{appendix}"), KEYS);
         assert!(whole.starts_with(&masked), "{appendix:?}");
     }
+
+    // Pinned counterexample: without a blank line, an unclosed backtick in
+    // the prefix is closed by the appendix and protects the link before it.
+    let open = "---\nproject: x\n---\n\nsee `[[old]] tick\n";
+    let masked_open = mask_references(open, KEYS);
+    let joined = mask_references(&format!("{open}more` text\n"), KEYS);
+    assert!(!joined.starts_with(&masked_open));
+    // After a blank line the same appendix is local.
+    let joined = mask_references(&format!("{open}\nmore` text\n"), KEYS);
+    assert!(joined.starts_with(&masked_open));
 }
 
 #[test]

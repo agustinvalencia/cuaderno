@@ -61,11 +61,15 @@ pub fn masked_content_hash(prefix: &str, reference_keys: &[&str]) -> String {
 ///
 /// Its length does not change when a reference is rewritten to a name of a
 /// different length, which is what makes `masked_size` a stable extent.
-/// Masking is prefix-local: for a prefix that ends at a line boundary and an
-/// appendix that begins on a new line, `mask_references(prefix + appendix)`
-/// starts with `mask_references(prefix)`. The one exception is a `[[` left
-/// unclosed at the end of the prefix and closed by the appendix; the masked
-/// prefix then differs, verification fails, and lint reports it (fail-safe).
+/// Masking is prefix-local under one condition: when the frontmatter block
+/// is closed inside the prefix and the appendix begins after a blank line,
+/// `mask_references(prefix + appendix)` starts with `mask_references(prefix)`,
+/// because no inline code span, inline HTML or wikilink can continue from the
+/// prefix into the appendix. Without the blank line an unmatched backtick (or
+/// open inline HTML) at the end of the prefix can be closed by the appendix
+/// and change what is protected; the masked prefix then differs and the
+/// masked hash does not verify. That fails safe, and lint accepts a row when
+/// either the plain or the masked hash verifies.
 ///
 /// The mask relies on reference values being safe to write bare, which the
 /// slug validator guarantees: a rewrite that had to add quotes to a bare
