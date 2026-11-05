@@ -3479,7 +3479,32 @@ fn a_bare_link_to_a_folder_name_held_as_an_alias_is_a_straggler() {
         "{:?}",
         report.issues
     );
-    assert_eq!(conflict_or_folder(&report).len(), 1, "{:?}", report.issues);
+    let conflicts = conflict_or_folder(&report);
+    assert_eq!(conflicts.len(), 1, "{:?}", report.issues);
+    assert_eq!(
+        conflicts[0],
+        "alias `ablation-study` on `projects/surrogate-model.md` takes bare \
+         `[[ablation-study]]` from folder note `portfolios/ablation-study/_index.md`"
+    );
+}
+
+#[test]
+fn a_stem_shadow_silences_the_folder_warning() {
+    let vault = vault_with_notes(
+        &[
+            (
+                "projects/surrogate-model.md",
+                &project_with_aliases("[ablation-study]"),
+            ),
+            ("projects/ablation-study.md", PROJECT_FOO),
+            ("portfolios/ablation-study/_index.md", PORTFOLIO_Q),
+        ],
+        VaultConfig::default(),
+    );
+    let report = vault.lint_all_notes(lint_day()).unwrap();
+    let conflicts = conflict_or_folder(&report);
+    assert_eq!(conflicts.len(), 1, "{:?}", report.issues);
+    assert!(conflicts[0].contains("is shadowed by"), "{}", conflicts[0]);
 }
 
 #[test]

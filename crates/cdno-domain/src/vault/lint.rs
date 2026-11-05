@@ -650,6 +650,9 @@ impl Vault {
 ///   folder note. "alias `x` on `<holder>` takes bare `[[x]]` from folder
 ///   note `<other>`".
 ///
+/// The folder case is reported only when no file stem shadows the alias: a
+/// stem match kills the alias outright, so it takes nothing from anyone.
+///
 /// A note's own stem or folder never collides with its own alias, and a note
 /// listing an alias twice is reported once per case. When several notes
 /// collide, the first by path is named.
@@ -691,6 +694,9 @@ fn alias_conflict_issues(
                 holder.clone(),
                 format!("alias `{alias}` on `{holder}` is shadowed by `{other}`"),
             ));
+            // The stem wins every link, so the alias is dead and takes
+            // nothing from a folder note: the second warning would be false.
+            continue;
         }
         if let Some(other) = first_other(&by_folder, alias, holder) {
             issues.push(LintIssue::warning(

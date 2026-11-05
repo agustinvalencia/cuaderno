@@ -692,10 +692,11 @@ them first): "alias `x` on `<path>` is shadowed by `<other>`" (§7: the stem win
 when an alias equals the **folder name** of a folder note (`<dir>/x/_index.md`, whose stem is
 `_index`): "alias `x` on `<path>` takes bare `[[x]]` from folder note `<other>`" — the alias wins
 bare links, and only the folder form `[[<dir>/x]]` reaches the folder note. The straggler's hint
-for a folder note is the folder form (`portfolios/new`), since a bare `[[new]]` would dangle. Both
-messages name the current slug so a person can fix the link by hand until T30.
+for a folder note is the folder form (`portfolios/new`), since a bare `[[new]]` would dangle. A stem
+shadow silences the folder warning (the alias is dead, so it takes nothing). The messages name the
+current slug so a person can fix the link by hand until T30.
 
-**Deliverable.** Two warnings, tests.
+**Deliverable.** Three warnings (straggler, stem shadow, folder contest), tests.
 
 **Depends on.** T11, T12.
 
@@ -709,7 +710,7 @@ messages name the current slug so a person can fix the link by hand until T30.
   `a_vault_can_carry_both_conflict_warnings`,
   `a_bare_link_to_a_folder_name_held_as_an_alias_is_a_straggler`,
   `a_straggler_to_a_folder_note_names_the_folder_form`, `a_notes_own_stem_does_not_shadow_its_alias`,
-  `an_alias_listed_twice_is_reported_once`.
+  `an_alias_listed_twice_is_reported_once`, `a_stem_shadow_silences_the_folder_warning`.
 - `cargo test -p cdno-cli --test lint`: the warning renders with the path and both names.
 
 **Correct means.** Every reference an editor cannot follow is listed, with the fix in the
