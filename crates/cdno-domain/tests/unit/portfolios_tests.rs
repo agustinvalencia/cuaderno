@@ -1477,6 +1477,22 @@ fn a_reference_hit_takes_the_questions_text_as_title() {
 }
 
 #[test]
+fn a_frontmatter_comment_is_not_taken_as_the_questions_title() {
+    let q = "---\ntype: question\ndomain: research\n# a comment, not a title\nstatus: active\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n\n# Surrogate calibration\n\n## Related Portfolios\n";
+    let (vault, store) =
+        vault_with_seeded_store(&[("questions/research/surrogate-calibration.md", q)]);
+
+    let path = vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "surrogate-calibration", None)
+        .expect("create portfolio");
+
+    assert_eq!(
+        read_portfolio_frontmatter(&store, &path).question,
+        "Surrogate calibration"
+    );
+}
+
+#[test]
 fn an_explicit_slug_equal_to_the_referenced_question_is_accepted() {
     let (vault, store) = vault_with_seeded_store(&[]);
     let at = dt(2026, 2, 1, 9, 0);

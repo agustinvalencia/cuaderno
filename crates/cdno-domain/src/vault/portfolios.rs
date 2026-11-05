@@ -169,7 +169,9 @@ impl Vault {
                     });
                 }
                 let raw = self.store.read_file(q)?;
-                let text = first_h1(&raw).unwrap_or_else(|| stem.clone());
+                // Body only: a `# comment` in the frontmatter is not a title.
+                let (_fm, body) = Frontmatter::parse(&raw)?;
+                let text = first_h1(body).unwrap_or_else(|| stem.clone());
                 (stem, text)
             }
             None => (

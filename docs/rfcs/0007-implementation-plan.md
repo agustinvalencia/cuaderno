@@ -327,7 +327,7 @@ propose a short one for a long title.* `RejectionCode::{InvalidSlug, SlugTaken}`
 accepted. The create tools' handlers (`creation.rs:26–172`,
 `operations.rs:500`, `:540`, `:780`) pass the field through.
 
-**Deliverable.** Eight fields, two codes, tests.
+**Deliverable.** Eight fields, three codes, tests.
 
 **Depends on.** T1, T2.
 
