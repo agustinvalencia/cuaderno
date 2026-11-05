@@ -549,3 +549,18 @@ fn a_symlink_to_a_dir_is_not_followed() {
     );
     assert!(dir.path().join("target").is_dir());
 }
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_pointing_outside_the_vault_is_an_error() {
+    let (dir, store) = store();
+    let outside = TempDir::new().unwrap();
+    fs::create_dir_all(outside.path().join("empty")).unwrap();
+    std::os::unix::fs::symlink(outside.path().join("empty"), dir.path().join("link")).unwrap();
+    let result = store.remove_dir_if_empty(&vp("link"));
+    assert!(
+        matches!(result, Err(StoreError::OutsideVault(_))),
+        "a link escaping the vault must be refused: {result:?}"
+    );
+    assert!(outside.path().join("empty").is_dir());
+}

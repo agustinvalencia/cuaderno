@@ -118,8 +118,11 @@ pub trait VaultStore: Send + Sync {
     /// `Ok(false)` — and touches nothing — when `dir` is absent, is not
     /// a directory (a symlink to one counts as not a directory), or
     /// holds anything at all, a hidden file included. An error is
-    /// returned only for an I/O failure outside those cases. Callers
-    /// use it to prune emptied folders and so can never lose content.
+    /// returned only for an I/O failure outside those cases. A path
+    /// that does not resolve inside the vault (a symlink pointing
+    /// outside it, or a dangling one) is an error, as for every other
+    /// method. Callers use it to prune emptied folders and so can never
+    /// lose content.
     ///
     /// The default returns `Ok(false)`, which suits stores with no
     /// directories of their own.
