@@ -171,7 +171,7 @@ Reachable from the terminal via `cdno`:
 - `note create / revise / list <type>` and `frontmatter set` — config-defined custom note types (`[note_types.<type>]`), creation with `--body-file` and `--origin`, hash-guarded whole-body or single-section revision that logs `revised [[…]] — reason` (RFC 0002, #648, #653), and typed frontmatter writes routed through the index, so no hand-edit desyncs it
 - `migrate [--dry-run]` — record the method version this cdno implements (RLM 1.1) in the vault, after listing the parked deadlines that come back into the register
 - `reindex` / `normalise` — rebuild the SQLite index from the markdown source of truth; reorder note frontmatter into each template's canonical key order (`--check` reports without writing)
-- `completions <shell>` — emit a shell-completion shim (bash, zsh, fish, elvish, powershell) with **dynamic vault-aware tab completion** for slug-valued flags (`--project`, `--portfolio`, `--stewardship`, `--slug` on project/question verbs: on `create` it names a new note, on the other subcommands it selects an existing one)
+- `completions <shell>` — emit a shell-completion shim (bash, zsh, fish, elvish, powershell) with **dynamic vault-aware tab completion** for slug-valued flags (`--project`, `--portfolio`, `--stewardship`, `--slug` as the selector on the project/question subcommands other than `create`, where it names a new note and has no completer)
 
 Reachable from Claude via MCP (`cdno-mcp` binary):
 

@@ -52,7 +52,7 @@ The tool also appears with the other project writes under [Write tools](writes.m
 
 The eight create tools (`create_project`, `create_question`, `create_portfolio`, `create_stewardship`,
 `create_custom_note`, `add_action`, `promote_action`, `create_commitment`) take an optional `slug`
-naming the new note's file; omitted, it is derived from the title as before. Propose one when the title
+naming the new note's file; omitted, it is derived from the title. Propose one when the title
 is long. It follows [the slug rule](../cli/overview.md#naming-a-note---slug): lowercase `a-z`, `0-9` and single `-`, at most 50 characters, not
 something YAML reads as a number, boolean, null or date. An explicit slug is used exactly or refused,
 never suffixed with `-2`. Refusals are coded rejections with nothing written: `invalid_slug`,
