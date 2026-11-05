@@ -792,7 +792,7 @@ snapshot has the same `candidate_slug`), and a no-op when `new_slug` equals the 
 (so `[[old]]`, `[[projects/old]]`, `[[projects/_parked/old]]` and `[[old#…]]` all count, and an
 ambiguous `[[old]]` is excluded because `stem_shared` already refused), then §3.5 fields through
 `rewrite_frontmatter_scalar` for the keys whose target type is the target's, then
-`frontmatter_changed_only_at` as the guard. The drift guard compares the frontmatter after the address rewrite (T6's edits, wikilinks inside frontmatter included) with the frontmatter after the field rewrite, so only the §3.5 fields may differ; a `DomainError::ReferenceDrift { path, key }` wraps `FrontmatterDrift`; the alias append is merged as an insertion edit. The target's own edit adds `Alias`
+`frontmatter_changed_only_at` as the guard. The drift guard compares the frontmatter after the address rewrite (T6's edits, wikilinks inside frontmatter included) with the frontmatter after the field rewrite, so only the §3.5 fields may differ; a `DomainError::ReferenceDrift { path, drift: FrontmatterDrift }` wraps `FrontmatterDrift`; the alias append is merged as an insertion edit. The target's own edit adds `Alias`
 (`append_frontmatter_list_value`); today's daily note's edit adds `LogLine` (T19's line appended
 through the same pure function `stage_daily_logs` uses to place a line, extracted as
 `append_log_line(content, line) -> String`). All edits of a `PlannedEdit` are expressed in `before`'s byte positions and merged in ascending order before applying (T7's frontmatter edits are relative to the frontmatter block and must be offset). **Exactly one `PlannedEdit` per path**: the daily
@@ -815,20 +815,20 @@ silently.
   (`project: old`), an inbox item (`captured_during: old`), a mutable project map linking
   `[[old]]`, three daily notes with `state on [[old]]`, `started [[old]]`, `during: [[old]]`, a
   `[[old|label]]` and a `[[old#Current State]]`, a portfolio index linking `[[projects/old]]`,
-  a code span `` `[[old]]` ``, a `#action/old` tag and an archived action with `[[old]]` in its
+  a note whose frontmatter holds a nested `project: old` under another key, a code span `` `[[old]]` ``, a `#action/old` tag and an archived action with `[[old]]` in its
   frozen prefix:
   `the_plan_lists_every_reference_kind_once` (the exact set of paths and `Change`s; the code
   span and the tag are not changes), `every_edit_differs_only_by_its_reference_edits`
   (`differs_only_by` on each `before`/`after` with the edits the planner built, and each edit's
   range is an accepted address span of `wikilink_spans(before)`, as T6's property test checks),
-  `the_daily_note_has_one_after_with_the_log_line_last`, `a_rename_to_itself_is_an_empty_plan`,
+  `a_nested_reference_key_is_not_rewritten`, `the_daily_note_has_one_after_with_the_log_line_last`, `a_rename_to_itself_is_an_empty_plan`,
   one test per refusal in the stated order (`a_taken_slug_is_refused_before_stem_shared`, …),
   `an_archived_action_is_not_renamable`, `a_shared_stem_is_refused`,
   `a_diverged_frozen_prefix_is_a_warning_not_a_refusal`, and
   `the_hash_ignores_the_stamp_and_the_date_but_not_a_referrer`.
 - Mutation: plan from `find_backlinks` instead of the snapshot; the `project: old` field rows
   disappear and the first test fails. Mutation: make the field rewrite also match a nested `project: old`;
-  `references_resolve_after_the_rename`'s byte comparison and the drift guard test both fail.
+  `a_nested_reference_key_is_not_rewritten` and `every_edit_differs_only_by_its_reference_edits` fail.
 
 **Correct means.** The plan names every reference and nothing else, refuses for one stated
 reason, and can be shown to the person before anything is written.
