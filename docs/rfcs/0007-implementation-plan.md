@@ -479,7 +479,8 @@ one hazard (a hang), both stated.
   message when `git` is not on `PATH`) passes with `a_plain_dir_is_not_a_repository`,
   `a_repo_with_no_upstream_reports_none`, `behind_is_counted_after_a_fetch` (a bare remote, two
   clones, one pushes, the other fetches: `behind == 1`), and
-  `a_paused_merge_is_reported` (a conflicting merge left in place: `paused.is_some()`).
+  `a_paused_merge_is_reported` (a conflicting merge left in place: `paused` is `Ok(Some(_))` with
+  `marker == Some("MERGE_HEAD")`).
 - `cargo test -p cdno-mcp --test e2e_git_checkpoint` unchanged (the move is behaviour-neutral).
 - `grep -n "fn git_operation_in_progress" crates/cdno-mcp/src/checkpoint.rs` returns nothing.
 
@@ -1057,9 +1058,10 @@ shared domain-free helper in `cdno-cli` and `cdno-mcp` each (policy belongs to t
 the facts are T8's). CLI: unless `--dry-run`, `fetch_quietly(root, 5 s)` **before** the lock; a
 failed or timed-out fetch prints a one-line warning and proceeds. Then `git_state`:
 `NotARepository` → skip; `Unknown` → warn and proceed; `paused`: `Ok(Some(_))` → refuse with
-`git_operation_in_progress`, not overridable, `Ok(None)` → proceed, `Err(_)` → warn and proceed; `behind > 0` → refuse with `behind_upstream` (the message names
-`--skip-sync-check` and the sync command) unless `--skip-sync-check`; `upstream == None` or a
-failed probe → warn and proceed; a dirty tree is never consulted. The paused check runs again
+`git_operation_in_progress`, not overridable, `Ok(None)` → proceed, `Err(_)` (the paused check
+failed) → warn and proceed; `behind > 0` → refuse with `behind_upstream` (the message names
+`--skip-sync-check` and the sync command) unless `--skip-sync-check`; `upstream == None` (no
+upstream, or the upstream probe failed) → warn and proceed; a dirty tree is never consulted. The paused check runs again
 after `rename_note` takes the lock, which means `rename_note` takes
 `guard: impl FnOnce() -> Result<(), DomainError>` called under the lock before planning — add
 that parameter here, defaulting to a no-op in T20's callers. The servers never fetch and use
