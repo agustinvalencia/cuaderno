@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::ops::Range;
 
 use cdno_core::extractors::{
-    WikilinkRaw, differs_only_inside, extract_frontmatter_wikilinks, extract_inline_tags,
+    AddressEdit, WikilinkRaw, differs_only_by, extract_frontmatter_wikilinks, extract_inline_tags,
     extract_wikilinks, resolve_wikilinks, rewrite_wikilink_addresses, wikilink_spans,
 };
 use cdno_core::path::VaultPath;
@@ -637,7 +637,10 @@ fn extract_wikilinks_a_bang_not_touching_the_brackets_is_not_an_embed() {
 
 // ── rewrite_wikilink_addresses (RFC 0007 §5.4) ───────────────────────
 
-fn names_old(a: &str) -> bool {
+/// Names the note `old` by its full target, anchor included, as the
+/// resolver would see it.
+fn names_old(target: &str) -> bool {
+    let a = target.split('#').next().unwrap_or(target).trim();
     a == "old" || a.ends_with("/old")
 }
 
@@ -646,15 +649,6 @@ fn swap_last_segment(a: &str) -> String {
         Some(i) => format!("{}/new", &a[..i]),
         None => "new".to_string(),
     }
-}
-
-/// The address ranges `rewrite_wikilink_addresses` is expected to touch.
-fn rewritten_spans(text: &str) -> Vec<Range<usize>> {
-    wikilink_spans(text)
-        .into_iter()
-        .filter(|s| names_old(&text[s.address.clone()]))
-        .map(|s| s.address)
-        .collect()
 }
 
 #[test]
@@ -680,23 +674,30 @@ fn address_rewrites_keep_every_other_byte() {
             "see [[new]] and [[other]] and [[a/new|x]]",
         ),
     ];
+    let mut failures: Vec<String> = Vec::new();
     for (before, want) in rows {
-        let (after, _) = rewrite_wikilink_addresses(before, names_old, swap_last_segment);
-        assert_eq!(&after, want, "row {before:?}");
-        assert!(
-            differs_only_inside(before, &after, &rewritten_spans(before)),
-            "row {before:?} changed bytes outside the address"
-        );
+        let (after, edits) = rewrite_wikilink_addresses(before, names_old, swap_last_segment);
+        if &after != want {
+            failures.push(format!("row {before:?}: got {after:?}, want {want:?}"));
+        }
+        if !differs_only_by(before, &after, &edits) {
+            failures.push(format!("row {before:?}: edits do not explain the change"));
+        }
     }
+    assert!(
+        failures.is_empty(),
+        "failing rows:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
 fn a_rewrite_reports_its_count() {
     let text = "[[old]] [[other]] ![[x/old#h]] `[[old]]` [[#old]]";
-    let (_, n) = rewrite_wikilink_addresses(text, names_old, swap_last_segment);
-    assert_eq!(n, 2);
+    let (_, edits) = rewrite_wikilink_addresses(text, names_old, swap_last_segment);
+    assert_eq!(edits.len(), 2);
     let (same, none) = rewrite_wikilink_addresses("[[other]]", names_old, swap_last_segment);
-    assert_eq!((same.as_str(), none), ("[[other]]", 0));
+    assert_eq!((same.as_str(), none.len()), ("[[other]]", 0));
 }
 
 #[test]
@@ -710,46 +711,85 @@ fn spans_locate_the_trimmed_address() {
     assert!(spans[0].is_embed);
 }
 
-#[test]
-#[allow(clippy::single_range_in_vec_init)] // a one-element slice of spans is the point
-fn differs_only_inside_rejects_a_change_outside_a_span() {
-    let before = "one [[old]] two";
-    let span = 6..9;
-    assert!(!differs_only_inside(
-        before,
-        "ONE [[new]] two",
-        std::slice::from_ref(&span)
-    ));
-    assert!(!differs_only_inside(
-        before,
-        "one [[new]] twO",
-        std::slice::from_ref(&span)
-    ));
-    assert!(!differs_only_inside(before, "one [new]] two", &[span]));
+fn edit(range: Range<usize>, replacement: &str) -> AddressEdit {
+    AddressEdit {
+        range,
+        replacement: replacement.to_string(),
+    }
 }
 
 #[test]
-#[allow(clippy::single_range_in_vec_init)] // a one-element slice of spans is the point
-fn differs_only_inside_accepts_a_length_change_inside_a_span() {
+fn the_predicate_sees_the_full_target_with_its_anchor() {
+    let seen = std::cell::RefCell::new(Vec::new());
+    let text = "[[ notes/c #-notes | l ]] [[#h]] [[x]]";
+    rewrite_wikilink_addresses(
+        text,
+        |t| {
+            seen.borrow_mut().push(t.to_string());
+            false
+        },
+        |a| a.to_string(),
+    );
+    assert_eq!(
+        *seen.borrow(),
+        vec!["notes/c #-notes".to_string(), "x".to_string()]
+    );
+    let spans = wikilink_spans("[[old#Current State]]");
+    assert_eq!(
+        &"[[old#Current State]]"[spans[0].target.clone()],
+        "old#Current State"
+    );
+}
+
+#[test]
+fn differs_only_by_rejects_a_change_outside_an_edit() {
     let before = "one [[old]] two";
-    assert!(differs_only_inside(
+    let edits = [edit(6..9, "new")];
+    assert!(!differs_only_by(before, "ONE [[new]] two", &edits));
+    assert!(!differs_only_by(before, "one [[new]] twO", &edits));
+    assert!(!differs_only_by(before, "one [new]] two", &edits));
+    assert!(!differs_only_by(before, "one [[new]] two", &[]));
+    // Overlapping, out-of-order or out-of-bounds edits are false.
+    let overlap = [edit(6..9, "a"), edit(8..10, "b")];
+    assert!(!differs_only_by(before, "one [[ab]] two", &overlap));
+    let reversed = [edit(8..9, "a"), edit(6..7, "b")];
+    assert!(!differs_only_by(before, "one [[bda]] two", &reversed));
+    assert!(!differs_only_by(before, before, &[edit(6..99, "")]));
+}
+
+#[test]
+fn differs_only_by_rejects_duplicated_text_around_an_edit() {
+    assert!(!differs_only_by(
+        "[[old]] and [[old]]",
+        "[[new]] and [[old]] and [[old]]",
+        &[edit(2..5, "new")]
+    ));
+    assert!(!differs_only_by(
+        "a [[old]] b",
+        "a [[x]] DELETED [[y]] b",
+        &[edit(4..7, "x")]
+    ));
+}
+
+#[test]
+fn differs_only_by_accepts_exactly_the_edits() {
+    let before = "one [[old]] two";
+    assert!(differs_only_by(
         before,
         "one [[a-much-longer-slug]] two",
-        &[6..9]
+        &[edit(6..9, "a-much-longer-slug")]
     ));
-    assert!(differs_only_inside(before, "one [[]] two", &[6..9]));
-    assert!(differs_only_inside(before, before, &[]));
-    assert!(!differs_only_inside(before, "one [[new]] two", &[]));
-    // Two spans, middle text matched exactly.
-    assert!(differs_only_inside(
+    assert!(differs_only_by(before, "one [[]] two", &[edit(6..9, "")]));
+    assert!(differs_only_by(before, before, &[]));
+    assert!(differs_only_by(
         "a[[x]]b[[y]]c",
-        "a[[xx]]b[[]]c",
-        &[3..4, 9..10]
+        "a[[xx]]b[[z]]c",
+        &[edit(3..4, "xx"), edit(9..10, "z")]
     ));
-    assert!(!differs_only_inside(
+    assert!(!differs_only_by(
         "a[[x]]b[[y]]c",
-        "a[[xx]]B[[]]c",
-        &[3..4, 9..10]
+        "a[[xx]]B[[z]]c",
+        &[edit(3..4, "xx"), edit(9..10, "z")]
     ));
 }
 
@@ -805,11 +845,9 @@ fn map_raw(raw: &WikilinkRaw) -> WikilinkRaw {
 proptest! {
     #[test]
     fn rewriting_then_extracting_equals_extracting_then_mapping(text in body()) {
-        let (after, count) = rewrite_wikilink_addresses(&text, names_old, swap_last_segment);
+        let (after, edits) = rewrite_wikilink_addresses(&text, names_old, swap_last_segment);
         let expected: Vec<WikilinkRaw> = extract_wikilinks(&text).iter().map(map_raw).collect();
         prop_assert_eq!(extract_wikilinks(&after), expected);
-        let spans = rewritten_spans(&text);
-        prop_assert_eq!(count, spans.len());
-        prop_assert!(differs_only_inside(&text, &after, &spans));
+        prop_assert!(differs_only_by(&text, &after, &edits));
     }
 }

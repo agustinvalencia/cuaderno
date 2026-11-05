@@ -42,9 +42,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Internal
 
-- `cdno-core` gains `wikilink_spans`, `rewrite_wikilink_addresses` and `differs_only_inside`, with
+- `cdno-core` gains `wikilink_spans`, `rewrite_wikilink_addresses` and `differs_only_by`, with
   `extract_wikilinks` now built on the span scanner; nothing user-visible changes and its output is
-  identical (RFC 0007 stage S2, #855).
+  identical (#886, closes #855).
 
 ## [0.43.0] - 2026-10-20
 

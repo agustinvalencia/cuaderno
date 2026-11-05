@@ -232,6 +232,10 @@ pub struct WikilinkSpan {
     /// trimmed of surrounding whitespace — the range excludes that
     /// whitespace. Empty for `[[#Heading]]`.
     pub address: Range<usize>,
+    /// Bytes between `[[` and the first `|`, trimmed, anchor included
+    /// (`old#Current State` for `[[old#Current State]]`) — the string the
+    /// resolver sees. Contains `address` at its start.
+    pub target: Range<usize>,
     /// Offset of the closing `]]`.
     pub inner_end: usize,
     /// Whether a `!` immediately precedes the opening `[[`.
@@ -269,6 +273,10 @@ pub fn wikilink_spans(body: &str) -> Vec<WikilinkSpan> {
                 let address_part = target_part
                     .find('#')
                     .map_or(target_part, |hash| &target_part[..hash]);
+                let target_trimmed = target_part.trim();
+                let target_lead = target_part.len() - target_part.trim_start().len();
+                let target =
+                    after_open + target_lead..after_open + target_lead + target_trimmed.len();
                 let trimmed = address_part.trim();
                 let address = if trimmed.is_empty() {
                     after_open..after_open
@@ -283,6 +291,7 @@ pub fn wikilink_spans(body: &str) -> Vec<WikilinkSpan> {
                 spans.push(WikilinkSpan {
                     open: start,
                     address,
+                    target,
                     inner_end,
                     is_embed,
                 });
@@ -321,92 +330,73 @@ pub fn extract_wikilinks(body: &str) -> Vec<WikilinkRaw> {
         .collect()
 }
 
-/// Rewrite the address of every wikilink in `text` that `names_target`
-/// accepts, returning the new text and how many links changed.
+/// One replacement made by [`rewrite_wikilink_addresses`]: the byte
+/// range of the address in the original text and what now stands there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddressEdit {
+    pub range: Range<usize>,
+    pub replacement: String,
+}
+
+/// Rewrite the address of every wikilink in `text` whose full target
+/// `names_target` accepts, returning the new text and the edits made
+/// (ranges are into `text`, ascending, non-overlapping).
 ///
-/// Only the span's `address` bytes are replaced; the anchor, label, the
-/// `!` of an embed, whitespace inside the brackets, code spans, code
-/// blocks and HTML stay as they were. A link with an empty address
-/// (`[[#Heading]]`, a same-note reference) is never rewritten.
+/// `names_target` receives the target as the resolver sees it: the text
+/// before the first `|`, trimmed, anchor included (`old#Current State`).
+/// `rewrite` receives the address only, and only the address bytes are
+/// replaced; the anchor, label, the `!` of an embed, whitespace inside
+/// the brackets, code spans, code blocks and HTML stay as they were. A
+/// link with an empty address (`[[#Heading]]`, a same-note reference) is
+/// never rewritten. `rewrite` must return a bare address: non-empty, with
+/// no `#`, `|`, brackets or line breaks, or the link's structure changes.
 pub fn rewrite_wikilink_addresses(
     text: &str,
     names_target: impl Fn(&str) -> bool,
     rewrite: impl Fn(&str) -> String,
-) -> (String, usize) {
+) -> (String, Vec<AddressEdit>) {
     let mut out = String::with_capacity(text.len());
     let mut copied = 0;
-    let mut count = 0;
+    let mut edits = Vec::new();
     for span in wikilink_spans(text) {
         let address = &text[span.address.clone()];
-        if address.is_empty() || !names_target(address) {
+        if address.is_empty() || !names_target(&text[span.target.clone()]) {
             continue;
         }
+        let replacement = rewrite(address);
         out.push_str(&text[copied..span.address.start]);
-        out.push_str(&rewrite(address));
+        out.push_str(&replacement);
         copied = span.address.end;
-        count += 1;
+        edits.push(AddressEdit {
+            range: span.address,
+            replacement,
+        });
     }
     out.push_str(&text[copied..]);
-    (out, count)
+    (out, edits)
 }
 
-/// True when `after` differs from `before` only inside `spans` (byte
-/// ranges of `before`): the bytes of `before` outside the spans appear
-/// in `after`, in order and unchanged, while each span's replacement may
-/// have any length. Spans may be given in any order; overlapping or
-/// touching ones are merged, and ranges past the end are clamped.
-pub fn differs_only_inside(before: &str, after: &str, spans: &[Range<usize>]) -> bool {
-    let mut sorted: Vec<Range<usize>> = spans
-        .iter()
-        .map(|r| r.start.min(before.len())..r.end.min(before.len()))
-        .filter(|r| r.start < r.end)
-        .collect();
-    sorted.sort_by_key(|r| r.start);
-    let mut merged: Vec<Range<usize>> = Vec::new();
-    for r in sorted {
-        match merged.last_mut() {
-            Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
-            _ => merged.push(r),
-        }
-    }
-
-    // The segments of `before` outside every span, in order.
-    let mut gaps: Vec<&[u8]> = Vec::with_capacity(merged.len() + 1);
+/// True exactly when `after` equals `before` with `edits` applied in
+/// order. The ranges must be ascending and non-overlapping, in bounds and
+/// on char boundaries; otherwise the answer is false.
+pub fn differs_only_by(before: &str, after: &str, edits: &[AddressEdit]) -> bool {
+    let mut expected = String::with_capacity(after.len());
     let mut at = 0;
-    for r in &merged {
-        gaps.push(&before.as_bytes()[at..r.start]);
-        at = r.end;
-    }
-    gaps.push(&before.as_bytes()[at..]);
-
-    let after = after.as_bytes();
-    let (first, rest) = gaps.split_first().expect("gaps always holds one segment");
-    if rest.is_empty() {
-        return after == *first;
-    }
-    let last = rest[rest.len() - 1];
-    if after.len() < first.len() + last.len() || !after.starts_with(first) || !after.ends_with(last)
-    {
-        return false;
-    }
-    // Earliest placement of each middle segment leaves the most room for
-    // the next, so a greedy walk finds a match whenever one exists.
-    let limit = after.len() - last.len();
-    let mut cursor = first.len();
-    for gap in &rest[..rest.len() - 1] {
-        match find_bytes(&after[cursor..limit], gap) {
-            Some(pos) => cursor += pos + gap.len(),
-            None => return false,
+    for edit in edits {
+        if edit.range.start < at
+            || edit.range.end < edit.range.start
+            || edit.range.end > before.len()
+            || !before.is_char_boundary(edit.range.start)
+            || !before.is_char_boundary(edit.range.end)
+        {
+            return false;
         }
+        expected.push_str(&before[at..edit.range.start]);
+        expected.push_str(&edit.replacement);
+        at = edit.range.end;
     }
-    true
-}
-
-fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(0);
-    }
-    haystack.windows(needle.len()).position(|w| w == needle)
+    expected.push_str(&before[at..]);
+    expected == after
 }
 
 /// Extract every `[[wikilink]]` from the string values of a note's parsed

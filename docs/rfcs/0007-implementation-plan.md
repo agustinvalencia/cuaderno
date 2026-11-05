@@ -20,7 +20,7 @@ not a contract.
 A third rule, specific to this RFC: **every probe that writes compares bytes.** The exception the
 RFC makes to the append-only rule is "references only, every other byte untouched" (§5.1), and
 the only way to show that is to diff the referrer before and after the operation and assert that
-every differing span is inside a rewritten reference. The `differs_only_inside`
+every differing span is inside a rewritten reference. The `differs_only_by`
 function (T6) is what every later write probe calls.
 
 ## Complexity tiers
@@ -377,19 +377,19 @@ PR.
 **What.** In `crates/cdno-core/src/extractors.rs`, factor the scanner inside
 `extract_wikilinks` (`:230`) into
 `fn wikilink_spans(body: &str) -> Vec<WikilinkSpan>` where
-`WikilinkSpan { open: usize, address: Range<usize>, inner_end: usize, is_embed: bool }` keeps
+`WikilinkSpan { open: usize, address: Range<usize>, target: Range<usize>, inner_end: usize, is_embed: bool }` keeps
 the `start`, `after_open` and `inner_end` offsets the scanner already computes and throws away
-(`:236–271`); `address` is everything between `[[` and the first `#` or `|`, trimmed. The
+(`:236–271`); `address` is everything between `[[` and the first `#` or `|`, trimmed, and `target` is everything before the first `|`, trimmed, anchor included. The
 `protected_ranges` / `is_protected` skip (`:105`, `:141`) stays in one place. `extract_wikilinks`
 is rewritten on top of it and must produce the same `Vec<WikilinkRaw>` for every input. Then
-`pub fn rewrite_wikilink_addresses(text: &str, names_target: impl Fn(&str) -> bool, rewrite: impl Fn(&str) -> String) -> (String, usize)`
-(§5.4), which replaces only the `address` range of each span for which `names_target` holds and
+`pub fn rewrite_wikilink_addresses(text: &str, names_target: impl Fn(&str) -> bool, rewrite: impl Fn(&str) -> String) -> (String, Vec<AddressEdit>)`
+(§5.4), where `AddressEdit { range: Range<usize>, replacement: String }`; it hands `names_target` the span's full `target` (as `resolve_one` sees it), hands `rewrite` the address, replaces only the `address` range of each span for which `names_target` holds, returns the edits it made, and
 leaves every other byte in place — anchors, labels, the `!`, whitespace inside the brackets, code
-spans and code blocks. And, in the same file, `pub fn differs_only_inside(before: &str, after: &str, spans: &[Range<usize>]) -> bool`
-— true when every differing byte of `after` falls inside one of `before`'s spans — which the
+spans and code blocks. And, in the same file, `pub fn differs_only_by(before: &str, after: &str, edits: &[AddressEdit]) -> bool`
+— true exactly when `after` equals `before` with those replacements applied in order (false on overlapping or out-of-order edits) — which the
 later write probes call and which T18's planner asserts on every edit it builds.
 
-**Deliverable.** The span type, the refactor, the rewriter, `differs_only_inside`, `proptest`
+**Deliverable.** The span type, the refactor, the rewriter, `differs_only_by`, `proptest`
 as a dev-dependency (**P3**), tests.
 
 **Depends on.** Nothing.
@@ -417,8 +417,8 @@ address.
 ### T7 — Frontmatter rewrites as text
 
 **What.** In `cdno-core` (a new `frontmatter_edit.rs` beside `frontmatter.rs`, or in it):
-`pub fn rewrite_frontmatter_scalar(frontmatter: &str, key: &str, from: &str, to: &str) -> (String, usize)`
-(§5.4): a top-level `key:` whose scalar value is `from` — bare, single- or double-quoted — gets
+`pub fn rewrite_frontmatter_scalar(frontmatter: &str, key: &str, from: &str, to: &str) -> (String, Vec<AddressEdit>)`
+(§5.4; the edits reuse T6's `AddressEdit`, so the byte check applies): a top-level `key:` whose scalar value is `from` — bare, single- or double-quoted — gets
 `to` in the same quoting; nothing else moves, comments and key order included.
 `pub fn append_frontmatter_list_value(frontmatter: &str, key: &str, value: &str) -> String`:
 extends an existing flow (`[a, b]`) or block (`- a`) list under `key`, or appends `key: [value]`
@@ -787,7 +787,7 @@ in the v1 set of §5.2, or `archived` for `actions/_done/`), `invalid_slug`, `sl
 the snapshot's names, folders and aliases — not the index), `stem_shared` (another path in the
 snapshot has the same `candidate_slug`), and a no-op when `new_slug` equals the current slug
 (`Ok` with an empty plan). For every referrer: wikilink addresses through
-`rewrite_wikilink_addresses` with `names_target` = "resolves to the target in this snapshot"
+`rewrite_wikilink_addresses` with `names_target`, given the full target as `resolve_one` sees it (anchor included), = "resolves to the target in this snapshot"
 (so `[[old]]`, `[[projects/old]]`, `[[projects/_parked/old]]` and `[[old#…]]` all count, and an
 ambiguous `[[old]]` is excluded because `stem_shared` already refused), then §3.5 fields through
 `rewrite_frontmatter_scalar` for the keys whose target type is the target's, then
@@ -818,7 +818,7 @@ silently.
   frozen prefix:
   `the_plan_lists_every_reference_kind_once` (the exact set of paths and `Change`s; the code
   span and the tag are not changes), `every_edit_differs_only_inside_references`
-  (`differs_only_inside` on each `before`/`after`),
+  (`differs_only_by` on each `before`/`after` with the edits the rewriter returned),
   `the_daily_note_has_one_after_with_the_log_line_last`, `a_rename_to_itself_is_an_empty_plan`,
   one test per refusal in the stated order (`a_taken_slug_is_refused_before_stem_shared`, …),
   `an_archived_action_is_not_renamable`, `a_shared_stem_is_refused`,
