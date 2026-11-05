@@ -239,6 +239,15 @@ impl Vault {
             });
         };
 
+        // A `slug` field beside an explicit slug would let the two disagree
+        // (the field overwriting the engine's `{{slug}}`): refuse the pair
+        // before anything is staged.
+        if slug.is_some() && fields.contains_key("slug") {
+            return Err(DomainError::SlugGivenTwice {
+                field: "slug".to_owned(),
+            });
+        }
+
         // `origin` joins the caller's field map (the parameter winning over a
         // `fields["origin"]`), so the declared-field check below refuses it
         // on a type that does not declare it, before anything is written.

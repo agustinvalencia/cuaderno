@@ -1694,3 +1694,28 @@ fn an_explicit_slug_that_is_taken_is_refused_not_suffixed() {
     );
     assert_eq!(snapshot(&store), before, "nothing was written");
 }
+
+#[test]
+fn an_explicit_slug_beside_a_slug_field_is_refused() {
+    let (vault, store) = vault_with(config_with_person(), &[]);
+    let before = snapshot(&store);
+
+    let err = vault
+        .create_custom_note_with_vars(
+            at(),
+            "person",
+            "Ada",
+            &fields(&[("name", "Ada"), ("slug", "surrogate-model")]),
+            &HashMap::new(),
+            None,
+            None,
+            Some("surrogate-calibration"),
+        )
+        .expect_err("the pair is refused");
+
+    assert!(
+        matches!(&err, DomainError::SlugGivenTwice { field } if field == "slug"),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
+}

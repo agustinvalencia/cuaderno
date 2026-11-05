@@ -1842,11 +1842,14 @@ fn an_invalid_slug_is_refused_as_json() {
 
 /// Run `args` under a real pty (stdin and stdout both terminals), typing
 /// `keys` (each after a pause) and return everything it drew. The suite has
-/// no pty crate, so this goes through `script(1)`.
-#[cfg(unix)]
+/// no pty crate, so this goes through `script(1)`. A prompt left unanswered
+/// fails the test after a deadline instead of hanging it.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_in_pty(root: &Path, args: &[&str], keys: &[&str]) -> String {
-    use std::io::Write;
+    use std::io::{Read, Write};
     use std::process::{Command, Stdio};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
 
     let exe = assert_cmd::cargo::cargo_bin("cdno");
     let mut inner = vec![
@@ -1859,7 +1862,12 @@ fn run_in_pty(root: &Path, args: &[&str], keys: &[&str]) -> String {
     if cfg!(target_os = "macos") {
         script.args(["-q", "/dev/null"]).args(&inner);
     } else {
-        script.args(["-qec", &inner.join(" "), "/dev/null"]);
+        // `-c` takes one shell string: single-quote every word.
+        let quoted: Vec<String> = inner
+            .iter()
+            .map(|w| format!("'{}'", w.replace('\'', "'\\''")))
+            .collect();
+        script.args(["-qec", &quoted.join(" "), "/dev/null"]);
     }
     let mut child = script
         .env_remove("CUADERNO_VAULT_PATH")
@@ -1869,14 +1877,42 @@ fn run_in_pty(root: &Path, args: &[&str], keys: &[&str]) -> String {
         .spawn()
         .expect("script(1) is available");
     let mut stdin = child.stdin.take().unwrap();
+    let drawn = Arc::new(Mutex::new(Vec::new()));
+    let mut stdout = child.stdout.take().unwrap();
+    let sink = Arc::clone(&drawn);
+    let reader = std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = stdout.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            sink.lock().unwrap().extend_from_slice(&buf[..n]);
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(20);
     for key in keys {
-        std::thread::sleep(std::time::Duration::from_millis(700));
-        stdin.write_all(key.as_bytes()).unwrap();
-        stdin.flush().unwrap();
+        std::thread::sleep(Duration::from_millis(700));
+        // A broken pipe means the command already ended; the wait below says how.
+        let _ = stdin.write_all(key.as_bytes()).and_then(|()| stdin.flush());
     }
-    let out = child.wait_with_output().unwrap();
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
+            let seen = String::from_utf8_lossy(&drawn.lock().unwrap()).into_owned();
+            panic!("the command did not finish within 20s; it drew:\n{seen}");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    drop(stdin);
+    reader.join().unwrap();
+    let out = drawn.lock().unwrap().clone();
     // Reduce the terminal control stream to its words.
-    let raw = String::from_utf8_lossy(&out.stdout);
+    let raw = String::from_utf8_lossy(&out);
     let mut text = String::new();
     let mut chars = raw.chars().peekable();
     while let Some(c) = chars.next() {
@@ -1893,7 +1929,7 @@ fn run_in_pty(root: &Path, args: &[&str], keys: &[&str]) -> String {
     text
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn slug_is_never_prompted() {
     let dir = vault();

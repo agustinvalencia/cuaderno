@@ -580,7 +580,8 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         // Nothing produces these yet.
         DomainError::InvalidSlug { .. }
         | DomainError::SlugTaken { .. }
-        | DomainError::PortfolioSlugMismatch { .. } => return None,
+        | DomainError::PortfolioSlugMismatch { .. }
+        | DomainError::SlugGivenTwice { .. } => return None,
     };
 
     let message = rejection_message(code, e);

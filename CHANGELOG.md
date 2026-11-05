@@ -17,8 +17,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `action add --note`, `action promote`, `note create`, `stewardship create`, `commit create`): it
   is never prompted, never shown in a confirmation preview, and is refused when the name is taken;
   under `--json` a refusal is an `invalid_slug`, `slug_taken` or `portfolio_slug_mismatch` object.
-  `note create` refuses `--slug` beside `--field slug=…`. `portfolio create --question` accepts a
-  question's slug (RFC 0007, #852).
+  `note create` refuses `--slug` beside `--field slug=…`. The `portfolio create --question` help
+  now says a question's slug is accepted (RFC 0007, #852).
 
 ### Changed
 

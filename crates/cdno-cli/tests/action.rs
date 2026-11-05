@@ -2321,7 +2321,10 @@ fn add_slug_without_note_is_a_clap_error_naming_note() {
         .args(["--slug", "surrogate-calibration"])
         .assert()
         .failure()
-        .stderr(predicates::str::contains("--note"));
+        .stderr(
+            predicates::str::contains("the following required arguments were not provided")
+                .and(predicates::str::contains("--note")),
+        );
 }
 
 #[test]

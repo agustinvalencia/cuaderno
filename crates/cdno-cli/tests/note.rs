@@ -979,7 +979,9 @@ fn slug_and_field_slug_together_are_refused() {
         .args(["--slug", "surrogate-model"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("--slug").and(predicate::str::contains("--field slug")));
+        .stderr(predicate::str::contains(
+            "the slug was given both as the explicit slug and as the 'slug' field",
+        ));
     let made = fs::read_dir(dir.path().join("people")).map_or(0, |d| d.count());
     assert_eq!(made, 0, "nothing created");
 }

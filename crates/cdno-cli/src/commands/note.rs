@@ -115,13 +115,6 @@ pub fn run(
             origin,
             slug,
         } => {
-            // A clap `conflicts_with` cannot see a `--field`'s key, so the
-            // pair is refused here, before anything is read or written.
-            if slug.is_some() && field.iter().any(|(k, _)| k == "slug") {
-                anyhow::bail!(
-                    "--slug and --field slug=… both name the note; pass only one of them"
-                );
-            }
             let fields: HashMap<String, String> = field.into_iter().collect();
             let vars: HashMap<String, String> = var.into_iter().collect();
             let body_from_file = body_file
