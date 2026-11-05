@@ -419,8 +419,9 @@ address.
 **What.** In `cdno-core` (a new `frontmatter_edit.rs` beside `frontmatter.rs`, or in it):
 `pub fn rewrite_frontmatter_scalar(frontmatter: &str, key: &str, from: &str, to: &str) -> (String, Vec<AddressEdit>)`
 (§5.4; the edits reuse T6's `AddressEdit`, so the byte check applies): a top-level `key:` whose scalar value is `from` — bare, single- or double-quoted — gets
-`to` in the same quoting; nothing else moves, comments and key order included.
-`pub fn append_frontmatter_list_value(frontmatter: &str, key: &str, value: &str) -> String`:
+`to` in the same quoting; nothing else moves, comments and key order included. A bare value is rewritten bare only when `to` stays a plain string there (the rule the list append applies to its value), and `to` is double-quoted otherwise.
+`pub fn append_frontmatter_list_value(frontmatter: &str, key: &str, value: &str) -> (String, Vec<AddressEdit>)`
+(one insertion edit, an empty range at the insertion offset, or none when `value` is already present):
 extends an existing flow (`[a, b]`) or block (`- a`) list under `key`, or appends `key: [value]`
 as the block's last line when the key is absent (for `aliases:`, §5.5). And
 `pub fn frontmatter_changed_only_at(before: &str, after: &str, keys: &[&str]) -> Result<(), FrontmatterDrift>`:
@@ -791,7 +792,7 @@ snapshot has the same `candidate_slug`), and a no-op when `new_slug` equals the 
 (so `[[old]]`, `[[projects/old]]`, `[[projects/_parked/old]]` and `[[old#…]]` all count, and an
 ambiguous `[[old]]` is excluded because `stem_shared` already refused), then §3.5 fields through
 `rewrite_frontmatter_scalar` for the keys whose target type is the target's, then
-`frontmatter_changed_only_at` as the guard. The target's own edit adds `Alias`
+`frontmatter_changed_only_at` as the guard. The drift guard compares the frontmatter after the address rewrite (T6's edits, wikilinks inside frontmatter included) with the frontmatter after the field rewrite, so only the §3.5 fields may differ; a `DomainError::ReferenceDrift { path, key }` wraps `FrontmatterDrift`; the alias append is merged as an insertion edit. The target's own edit adds `Alias`
 (`append_frontmatter_list_value`); today's daily note's edit adds `LogLine` (T19's line appended
 through the same pure function `stage_daily_logs` uses to place a line, extracted as
 `append_log_line(content, line) -> String`). All edits of a `PlannedEdit` are expressed in `before`'s byte positions and merged in ascending order before applying (T7's frontmatter edits are relative to the frontmatter block and must be offset). **Exactly one `PlannedEdit` per path**: the daily
@@ -826,9 +827,8 @@ silently.
   `a_diverged_frozen_prefix_is_a_warning_not_a_refusal`, and
   `the_hash_ignores_the_stamp_and_the_date_but_not_a_referrer`.
 - Mutation: plan from `find_backlinks` instead of the snapshot; the `project: old` field rows
-  disappear and the first test fails. Mutation: drop the drift guard; a fixture whose
-  frontmatter holds `project: old` twice (once nested) passes a changed nested value and the
-  second test fails.
+  disappear and the first test fails. Mutation: make the field rewrite also match a nested `project: old`;
+  `references_resolve_after_the_rename`'s byte comparison and the drift guard test both fail.
 
 **Correct means.** The plan names every reference and nothing else, refuses for one stated
 reason, and can be shown to the person before anything is written.

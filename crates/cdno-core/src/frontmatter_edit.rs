@@ -145,11 +145,54 @@ fn scalar_span(line: &str, from_offset: usize) -> Option<ScalarSpan> {
 }
 
 fn escape_double(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04X}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn escape_single(s: &str) -> String {
     s.replace('\'', "''")
+}
+
+/// Whether `value` can stand bare, as a plain string, in a YAML scalar or
+/// list position: it reads back as a string and holds nothing a plain
+/// scalar trips on (`#`, `: `, flow or quote characters, a leading
+/// indicator, edge whitespace, a line break).
+fn plain_safe(value: &str) -> bool {
+    yaml_scalar_is_string(value)
+        && value == value.trim()
+        && !value.contains([',', '[', ']', '{', '}', '#', '"', '\'', '\n', '\r'])
+        && !value.contains(": ")
+        && !value.ends_with(':')
+        && !value.starts_with(['-', '?', '&', '*', '!', '|', '>', '%', '@', '`'])
+}
+
+/// Whether the scalar on `lines[i]` continues onto the next line: the next
+/// line that is not blank is indented and is not a `- ` item.
+fn continues_on_next_line(all: &[Line<'_>], i: usize) -> bool {
+    for l in &all[i + 1..] {
+        let body = l.text.trim_end();
+        if body.is_empty() {
+            continue;
+        }
+        let indented = body.starts_with([' ', '\t']);
+        let trimmed = body.trim_start();
+        return indented
+            && !trimmed.starts_with('#')
+            && trimmed != "-"
+            && !trimmed.starts_with("- ");
+    }
+    false
 }
 
 /// Rewrite the value of every top-level `key:` line whose scalar is
@@ -159,17 +202,19 @@ fn escape_single(s: &str) -> String {
 /// included). The value may be bare, `'single'` or `"double"` quoted,
 /// with any whitespace around it and a trailing `# comment`; each
 /// edit's `range` covers only the value's bytes (inside the quotes),
-/// relative to `frontmatter`. In quoted values `from` and `to` are
-/// given unescaped and escaped to suit the quoting. Nothing else
-/// moves: comments, key order, blank lines, other keys, an indented
-/// key of the same name, a key named inside a comment, and values that
-/// are lists or wikilinks are left alone. A key that appears twice at
-/// top level is rewritten at both places. (The drift check
-/// then reports such a block as unparsable, since the parser rejects duplicate keys.)
-///
-/// A bare `to` is written verbatim, so the caller owns choosing a value
-/// that stays a plain string; [`frontmatter_changed_only_at`] catches a
-/// result that does not.
+/// relative to `frontmatter`. `from` and `to` are given unescaped and
+/// escaped to suit the quoting. A bare value is rewritten bare only when
+/// `to` stays a plain string there (it reads back as a string and holds
+/// no `#`, `: ` or flow/quote character); otherwise `to` is written
+/// double-quoted, so the value always reads back as `to`. Nothing else
+/// moves: comments, key order, blank lines, other keys, an indented key
+/// of the same name, a key named inside a comment, a plain scalar that
+/// continues onto the next line (its value is not `from`), and values
+/// that are lists or wikilinks are left alone. A key that appears twice
+/// at top level is rewritten at both places. (The drift check then
+/// reports such a block as unparsable, since the parser rejects duplicate
+/// keys.) The drift check does not look at the rewritten key, so this
+/// function is what keeps its value a string.
 pub fn rewrite_frontmatter_scalar(
     frontmatter: &str,
     key: &str,
@@ -177,7 +222,8 @@ pub fn rewrite_frontmatter_scalar(
     to: &str,
 ) -> (String, Vec<AddressEdit>) {
     let mut edits = Vec::new();
-    for line in lines(frontmatter) {
+    let all = lines(frontmatter);
+    for (i, line) in all.iter().enumerate() {
         let Some(offset) = key_value_offset(line.text, key) else {
             continue;
         };
@@ -188,7 +234,9 @@ pub fn rewrite_frontmatter_scalar(
         let (matches, replacement) = match span.quote {
             Some('"') => (raw == escape_double(from), escape_double(to)),
             Some(_) => (raw == escape_single(from), escape_single(to)),
-            None => (raw == from, to.to_owned()),
+            None if raw != from || continues_on_next_line(&all, i) => continue,
+            None if plain_safe(to) => (true, to.to_owned()),
+            None => (true, format!("\"{}\"", escape_double(to))),
         };
         if matches {
             edits.push(AddressEdit {
@@ -197,15 +245,19 @@ pub fn rewrite_frontmatter_scalar(
             });
         }
     }
-    let mut out = String::with_capacity(frontmatter.len());
+    (apply(frontmatter, &edits), edits)
+}
+
+fn apply(text: &str, edits: &[AddressEdit]) -> String {
+    let mut out = String::with_capacity(text.len());
     let mut at = 0;
-    for edit in &edits {
-        out.push_str(&frontmatter[at..edit.range.start]);
+    for edit in edits {
+        out.push_str(&text[at..edit.range.start]);
         out.push_str(&edit.replacement);
         at = edit.range.end;
     }
-    out.push_str(&frontmatter[at..]);
-    (out, edits)
+    out.push_str(&text[at..]);
+    out
 }
 
 fn unquote_item(item: &str) -> String {
@@ -223,20 +275,13 @@ fn unquote_item(item: &str) -> String {
 
 /// `value` as a list item: bare when that is safe, double-quoted otherwise.
 fn list_token(value: &str) -> String {
-    let plain = yaml_scalar_is_string(value)
-        && value == value.trim()
-        && !value.contains([',', '[', ']', '{', '}', '#', '"', '\'', '\n'])
-        && !value.contains(": ")
-        && !value.ends_with(':')
-        && !value.starts_with(['-', '?', '&', '*', '!', '|', '>', '%', '@', '`']);
-    if plain {
+    if plain_safe(value) {
         value.to_owned()
     } else {
         format!("\"{}\"", escape_double(value))
     }
 }
 
-/// Strip a trailing ` # comment` from block-list item text.
 fn strip_comment(s: &str) -> &str {
     for (i, _) in s.match_indices('#') {
         if i == 0 || matches!(s.as_bytes()[i - 1], b' ' | b'\t') {
@@ -249,17 +294,40 @@ fn strip_comment(s: &str) -> &str {
 /// Add `value` to the list under top-level `key`, keeping everything else.
 ///
 /// `frontmatter` is the block between the fences (fences not included).
-/// A flow list (`[a, b]`) gets `, value` before the `]` (`[value]` when
-/// empty); a block list (`- a` lines) gets a `- value` line after its
-/// last item at the same indent. An absent key (or `key:` with no
-/// value) gets `key: [value]` as the block's last line, keeping the
-/// block's line-ending and trailing-newline convention (an empty block
-/// gains one newline). `value` is written bare when that is safe and
-/// double-quoted otherwise. When `value` is already an item the text is
-/// returned unchanged, and so it is when `key` holds a scalar or
+/// Returns the new text and the one insertion edit that made it (an empty
+/// `range` at the insertion offset in `frontmatter` and the inserted bytes
+/// as `replacement`; an `[ ]` list is filled by replacing its blank
+/// inside), or no edit when nothing changed. A flow list (`[a, b]`) gets
+/// `, value` before the `]` (`[value]` when empty); a block list (`- a`
+/// lines) gets a `- value` line after its last item at the same indent
+/// (a list of maps is not supported: the result would not parse, and the
+/// drift check reports it). An absent key (or `key:` with no value) gets
+/// `key: [value]` as the block's last line, keeping the block's
+/// line-ending and trailing-newline convention (an empty block gains one
+/// newline). `value` is written bare when that is safe and double-quoted
+/// otherwise. When `value` is already an item nothing changes, and
+/// nothing changes either when `key` holds a scalar (including `null`) or
 /// anything else that is not a list: a list is never conjured by
 /// overwriting a value. Only the first top-level `key:` is considered.
-pub fn append_frontmatter_list_value(frontmatter: &str, key: &str, value: &str) -> String {
+pub fn append_frontmatter_list_value(
+    frontmatter: &str,
+    key: &str,
+    value: &str,
+) -> (String, Vec<AddressEdit>) {
+    match list_append_edit(frontmatter, key, value) {
+        Some(edit) => (apply(frontmatter, std::slice::from_ref(&edit)), vec![edit]),
+        None => (frontmatter.to_owned(), Vec::new()),
+    }
+}
+
+fn insertion(at: usize, text: String) -> Option<AddressEdit> {
+    Some(AddressEdit {
+        range: at..at,
+        replacement: text,
+    })
+}
+
+fn list_append_edit(frontmatter: &str, key: &str, value: &str) -> Option<AddressEdit> {
     let token = list_token(value);
     let all = lines(frontmatter);
     let found = all
@@ -300,23 +368,19 @@ pub fn append_frontmatter_list_value(frontmatter: &str, key: &str, value: &str) 
             }
             prev = c;
         }
-        let Some(close) = close else {
-            return frontmatter.to_owned();
-        };
+        let close = close?;
         let inner = &frontmatter[open + 1..close];
         if inner.trim().is_empty() {
-            return format!(
-                "{}{}{}",
-                &frontmatter[..open + 1],
-                token,
-                &frontmatter[close..]
-            );
+            return Some(AddressEdit {
+                range: open + 1..close,
+                replacement: token,
+            });
         }
         if split_flow_items(inner)
             .iter()
             .any(|i| unquote_item(i) == value)
         {
-            return frontmatter.to_owned();
+            return None;
         }
         let content_end = open + 1 + inner.trim_end().len();
         let sep = if inner.trim_end().ends_with(',') {
@@ -324,18 +388,11 @@ pub fn append_frontmatter_list_value(frontmatter: &str, key: &str, value: &str) 
         } else {
             ", "
         };
-        return format!(
-            "{}{}{}{}",
-            &frontmatter[..content_end],
-            sep,
-            token,
-            &frontmatter[content_end..]
-        );
+        return insertion(content_end, format!("{sep}{token}"));
     }
 
-    let bare_empty = strip_comment(after_ws).trim().is_empty();
-    if !bare_empty {
-        return frontmatter.to_owned();
+    if !strip_comment(after_ws).trim().is_empty() {
+        return None;
     }
 
     // Block list: the run of `- ` items right below the key.
@@ -353,17 +410,14 @@ pub fn append_frontmatter_list_value(frontmatter: &str, key: &str, value: &str) 
     }
     let Some((last, indent)) = last_item else {
         // `key:` with nothing under it is a null: give it the list.
-        let at = line.start + offset;
-        let mut out = frontmatter.to_owned();
-        out.insert_str(at, &format!(" [{token}]"));
-        return out;
+        return insertion(line.start + offset, format!(" [{token}]"));
     };
     for l in &all[idx + 1..=last] {
         let body = l.text.trim_start_matches(' ');
         if let Some(item) = body.strip_prefix("- ")
             && unquote_item(strip_comment(item)) == value
         {
-            return frontmatter.to_owned();
+            return None;
         }
     }
     let eol = if frontmatter.contains("\r\n") {
@@ -373,16 +427,12 @@ pub fn append_frontmatter_list_value(frontmatter: &str, key: &str, value: &str) 
     };
     let new_line = format!("{}- {}", " ".repeat(indent), token);
     let end = all[last].start + all[last].text.len();
-    let mut out = frontmatter.to_owned();
     if frontmatter[end..].is_empty() {
-        out.push_str(eol);
-        out.push_str(&new_line);
+        insertion(end, format!("{eol}{new_line}"))
     } else {
         // `end` stops before a `\n` (and a `\r` is inside `text`).
-        let ins = end + 1;
-        out.insert_str(ins, &format!("{new_line}{eol}"));
+        insertion(end + 1, format!("{new_line}{eol}"))
     }
-    out
 }
 
 fn split_flow_items(inner: &str) -> Vec<&str> {
@@ -413,20 +463,17 @@ fn split_flow_items(inner: &str) -> Vec<&str> {
     items
 }
 
-fn append_absent(frontmatter: &str, key: &str, token: &str) -> String {
+fn append_absent(frontmatter: &str, key: &str, token: &str) -> Option<AddressEdit> {
     let eol = if frontmatter.contains("\r\n") {
         "\r\n"
     } else {
         "\n"
     };
     let line = format!("{key}: [{token}]");
-    if frontmatter.is_empty() {
-        return format!("{line}{eol}");
-    }
-    if frontmatter.ends_with('\n') {
-        format!("{frontmatter}{line}{eol}")
+    if frontmatter.is_empty() || frontmatter.ends_with('\n') {
+        insertion(frontmatter.len(), format!("{line}{eol}"))
     } else {
-        format!("{frontmatter}{eol}{line}")
+        insertion(frontmatter.len(), format!("{eol}{line}"))
     }
 }
 

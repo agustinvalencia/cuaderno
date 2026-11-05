@@ -47,7 +47,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   identical (#886, closes #855).
 - `cdno-core` gains `rewrite_frontmatter_scalar`, `append_frontmatter_list_value` and
   `frontmatter_changed_only_at`, frontmatter edits done as text with a parser-backed drift check;
-  nothing user-visible (RFC 0007 stage S2, #856).
+  nothing user-visible (#887, closes #856).
 
 ## [0.43.0] - 2026-10-20
 
