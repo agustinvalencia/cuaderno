@@ -261,3 +261,102 @@ fn lint_reports_a_shadowed_alias_with_the_path_and_both_names() {
             "[warning] projects/surrogate-model.md: alias `ablation-study` on `projects/surrogate-model.md` is shadowed by `projects/ablation-study.md`",
         ));
 }
+
+/// The second clone (RFC 0007 T16). A rename on one clone rewrites
+/// references inside an archived action's frozen prefix; only the markdown
+/// syncs, so the other clone's index still holds the snapshot taken before
+/// the rename. Here clone B archives through the binary, then receives the
+/// bytes a rename of `old` to `surrogate-model` writes (a longer slug, so
+/// the raw prefix end moves; the same-length case would hide the bug), and
+/// its lint must stay clean of errors.
+#[test]
+fn a_rename_synced_from_another_clone_leaves_lint_clean() {
+    use assert_cmd::Command;
+    use predicates::prelude::*;
+
+    let cdno = |root: &std::path::Path| {
+        let mut cmd = Command::cargo_bin("cdno").expect("cdno binary built");
+        cmd.env_remove("CUADERNO_VAULT_PATH")
+            .env("NO_COLOR", "1")
+            .arg("--vault")
+            .arg(root)
+            .arg("--no-interactive");
+        cmd
+    };
+
+    let b = tempdir().unwrap();
+    init::run(b.path()).expect("init");
+    cdno(b.path())
+        .args(["project", "create", "--title", "Old", "--context", "work"])
+        .assert()
+        .success();
+    cdno(b.path())
+        .args([
+            "action",
+            "add",
+            "--project",
+            "old",
+            "--title",
+            "Characterise",
+        ])
+        .args(["--energy", "deep", "--note"])
+        .assert()
+        .success();
+    let active = b.path().join("actions/characterise.md");
+    let raw = fs::read_to_string(&active).unwrap();
+    fs::write(&active, format!("{raw}\nCalibrated against [[old]].\n")).unwrap();
+    cdno(b.path())
+        .args([
+            "action",
+            "complete",
+            "--project",
+            "old",
+            "--query",
+            "characterise",
+        ])
+        .assert()
+        .success();
+
+    let done = fs::read_dir(b.path().join("actions/_done"))
+        .unwrap()
+        .map(|year| year.unwrap().path().join("characterise.md"))
+        .find(|p| p.exists())
+        .expect("archived note");
+    let archived = fs::read_to_string(&done).unwrap();
+    let renamed = rename_shaped(&archived);
+    assert_ne!(
+        renamed.len(),
+        archived.len(),
+        "a slug of a different length"
+    );
+    fs::write(&done, renamed).unwrap();
+
+    cdno(b.path())
+        .arg("lint")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[error]").not());
+}
+
+/// The bytes a rename of `old` to `surrogate-model` writes into a note:
+/// every wikilink address and the `project:` scalar, through the core
+/// rewriters the rename uses.
+fn rename_shaped(text: &str) -> String {
+    let (linked, edits) = cdno_core::extractors::rewrite_wikilink_addresses(
+        text,
+        |target| target == "old",
+        |_| "surrogate-model".to_owned(),
+    );
+    assert!(!edits.is_empty(), "the fixture must hold a link to rewrite");
+    let (block, _) = cdno_core::frontmatter::split_frontmatter(&linked).expect("frontmatter");
+    let start = block.as_ptr() as usize - linked.as_ptr() as usize;
+    let end = start + block.len();
+    let (rewritten, edits) = cdno_core::frontmatter_edit::rewrite_frontmatter_scalar(
+        block,
+        "project",
+        "old",
+        "surrogate-model",
+    );
+    assert_eq!(edits.len(), 1, "the `project:` scalar is rewritten");
+    format!("{}{rewritten}{}", &linked[..start], &linked[end..])
+}

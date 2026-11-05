@@ -196,17 +196,16 @@ impl Vault {
                 }
             }
 
-            // Append-only-after-completion (design §5.11, #111).
-            // Archived action notes (`actions/_done/<year>/`) may grow
-            // new lines but their pre-archival prefix is frozen. We
-            // verify by re-hashing the first `frozen_size` bytes and
-            // comparing to the snapshot recorded at archival time.
+            // Append-only-after-completion (design §5.11, #111; RFC 0007
+            // §5.4). Archived action notes (`actions/_done/<year>/`) may
+            // grow new lines but their pre-archival prefix is frozen,
+            // except that a rename may re-target a reference inside it.
+            // See `check_append_only` for the either-hash rule.
             if entry.note_type == "action"
                 && path.as_path().starts_with(cdno_core::paths::ACTIONS_DONE)
                 && let Some(snap) = self.index.find_archival_snapshot(&path)?
-                && let Some(msg) = check_append_only(&self.store, &path, &snap)?
             {
-                issues.push(LintIssue::error(path.clone(), msg));
+                issues.extend(check_append_only(&self.store, &path, &snap)?);
             }
 
             // Project status against folder (RFC 0004 §6.2). The locator
@@ -1252,38 +1251,117 @@ fn orphan_folder_for(
     safe
 }
 
-/// Compare the current file against an archival snapshot. Returns
-/// `None` when the file is unchanged or has only grown past the frozen
-/// prefix (both allowed); returns a `Some(message)` describing the
-/// violation otherwise.
+/// Compare the current file against an archival snapshot and return the
+/// rows it earns: none when the frozen prefix verifies, one Error when it
+/// does not, and a Warning when the row's masked hash is at a
+/// `mask_version` this binary does not know.
+///
+/// A row is accepted when **either** hash verifies (RFC 0007 §5.4):
+///
+/// - the **plain** hash over the file's first `frozen_size` bytes, the
+///   check since #111, so a note never renamed behaves exactly as before;
+///   `get(..)` keeps a boundary that now falls mid-character from
+///   panicking, and reads it as a mismatch;
+/// - the **masked** hash, when the row carries one: the whole current file
+///   is masked with the snapshot's reference keys and its first
+///   `masked_size` bytes are hashed. A rename moves `frozen_size` (the raw
+///   prefix grows or shrinks with the slug) but not `masked_size`, which is
+///   why the whole file is masked rather than `content[..frozen_size]`.
+///   A masked file shorter than `masked_size` fails this path as truncated.
+///
+/// The cost, which the lint docs state: a hand edit that only re-targets a
+/// wikilink address or a reference-field value inside a frozen prefix
+/// passes the masked path, so it is no longer detected.
+///
+/// The masked path fails safe. A hand append with no blank line under the
+/// prefix can close an inline code span the prefix left open and change
+/// what is masked; the masked hash then fails while the plain one passes.
+/// The row is an Error only when both paths fail, and the message says
+/// truncated when either path saw the file end before its frozen extent.
 fn check_append_only(
     store: &std::sync::Arc<dyn cdno_core::store::VaultStore>,
     path: &cdno_core::path::VaultPath,
     snap: &cdno_core::index::ArchivalSnapshot,
-) -> Result<Option<String>, DomainError> {
+) -> Result<Vec<LintIssue>, DomainError> {
     let content = store.read_file(path)?;
-    let bytes = content.as_bytes();
-    let frozen = snap.frozen_size as usize;
-    if bytes.len() < frozen {
-        return Ok(Some(format!(
+    let mut issues = Vec::new();
+
+    let plain = verify_extent(&content, snap.frozen_size, &snap.frozen_hash);
+    // The version check runs whichever path accepts the row: an unknown
+    // version is worth a warning even on a note that was never renamed.
+    let masked = match (&snap.masked_hash, snap.mask_version, snap.masked_size) {
+        (Some(hash), Some(version), Some(size)) => {
+            if version == cdno_core::hash::MASK_VERSION {
+                let text = cdno_core::hash::mask_references(
+                    &content,
+                    super::actions::SNAPSHOT_REFERENCE_KEYS,
+                );
+                Some((verify_extent(&text, size, hash), size, text.len()))
+            } else {
+                issues.push(LintIssue::warning(
+                    path.clone(),
+                    format!(
+                        "archival snapshot was masked under mask version {version}, which this \
+                         cdno does not know (it knows {}); only the plain hash was checked, so a \
+                         renamed reference in the frozen prefix reads as an edit; upgrade cdno",
+                        cdno_core::hash::MASK_VERSION
+                    ),
+                ));
+                None
+            }
+        }
+        // Archived before migration 004 and not yet backfilled (its plain
+        // hash failed at open): the plain path alone decides.
+        _ => None,
+    };
+
+    let masked_verified = matches!(masked, Some((Extent::Verified, _, _)));
+    if plain == Extent::Verified || masked_verified {
+        return Ok(issues);
+    }
+
+    let message = if plain == Extent::Truncated {
+        format!(
             "archived action note was truncated below its frozen prefix \
              (was {} bytes at archival, now {})",
             snap.frozen_size,
-            bytes.len(),
-        )));
+            content.len(),
+        )
+    } else if let Some((Extent::Truncated, size, now)) = masked {
+        format!(
+            "archived action note was truncated below its frozen prefix \
+             (masked, was {size} bytes at archival, now {now})"
+        )
+    } else {
+        "archived action note modified an existing line (append-only after completion)".to_owned()
+    };
+    issues.push(LintIssue::error(path.clone(), message));
+    Ok(issues)
+}
+
+/// The verdict of one hash path in [`check_append_only`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Extent {
+    /// The first `size` bytes hash to the stored value.
+    Verified,
+    /// The text ends before `size` bytes.
+    Truncated,
+    /// The first `size` bytes differ, or `size` falls inside a character.
+    Modified,
+}
+
+/// Hash the first `size` bytes of `text` against `expected`.
+fn verify_extent(text: &str, size: u64, expected: &str) -> Extent {
+    let Ok(size) = usize::try_from(size) else {
+        return Extent::Truncated;
+    };
+    if text.len() < size {
+        return Extent::Truncated;
     }
-    // The frozen prefix was valid UTF-8 (it's exactly the file content
-    // at archival), so slicing on `frozen` lands on a char boundary
-    // both then and now — any insert that disturbs the boundary would
-    // already perturb the hash and flag below.
-    let prefix = &content[..frozen];
-    if cdno_core::hash::content_hash(prefix) != snap.frozen_hash {
-        return Ok(Some(
-            "archived action note modified an existing line (append-only after completion)"
-                .to_owned(),
-        ));
+    match text.get(..size) {
+        Some(prefix) if cdno_core::hash::content_hash(prefix) == expected => Extent::Verified,
+        _ => Extent::Modified,
     }
-    Ok(None)
 }
 
 /// The fix a map closed outside `projects/_done/<year>/` needs. Only the

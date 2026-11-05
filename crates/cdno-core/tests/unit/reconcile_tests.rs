@@ -855,6 +855,11 @@ impl VaultIndex for ProbeIndex {
     ) -> Result<Option<cdno_core::index::ArchivalSnapshot>, IndexError> {
         self.inner.find_archival_snapshot(path)
     }
+    fn list_archival_snapshots(
+        &self,
+    ) -> Result<Vec<(VaultPath, cdno_core::index::ArchivalSnapshot)>, IndexError> {
+        self.inner.list_archival_snapshots()
+    }
     fn replace_fts(
         &self,
         path: &VaultPath,

@@ -580,6 +580,10 @@ pub trait VaultIndex: Send + Sync {
         &self,
         path: &VaultPath,
     ) -> Result<Option<ArchivalSnapshot>, IndexError>;
+    /// Every archival snapshot row, paired with its note path, sorted by
+    /// path. The startup backfill of the masked hash (RFC 0007 T16) reads
+    /// it to find the rows archived before migration 004.
+    fn list_archival_snapshots(&self) -> Result<Vec<(VaultPath, ArchivalSnapshot)>, IndexError>;
 }
 
 impl VaultIndex for SqliteIndex {
@@ -1199,6 +1203,38 @@ impl VaultIndex for SqliteIndex {
         .optional()
         .map_err(IndexError::from)
     }
+
+    fn list_archival_snapshots(&self) -> Result<Vec<(VaultPath, ArchivalSnapshot)>, IndexError> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare(
+            "SELECT note_path, frozen_size, frozen_hash, archived_at_ns, masked_hash, mask_version, masked_size \
+             FROM archived_action_snapshots ORDER BY note_path",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                ArchivalSnapshot {
+                    frozen_size: r.get::<_, i64>(1)? as u64,
+                    frozen_hash: r.get(2)?,
+                    archived_at_ns: r.get::<_, i64>(3)? as u64,
+                    masked_hash: r.get(4)?,
+                    mask_version: r.get(5)?,
+                    masked_size: r.get::<_, Option<i64>>(6)?.map(|n| n as u64),
+                },
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (path_str, snap) = row?;
+            let path = VaultPath::new(path_str).map_err(|e| {
+                IndexError::Query(format!(
+                    "invalid stored VaultPath in archived_action_snapshots: {e}"
+                ))
+            })?;
+            out.push((path, snap));
+        }
+        Ok(out)
+    }
 }
 
 /// Encode the `is_hard` flag as the `hard_soft` column's text value.
@@ -1740,5 +1776,17 @@ impl VaultIndex for MemoryIndex {
     ) -> Result<Option<ArchivalSnapshot>, IndexError> {
         let state = self.lock_state();
         Ok(state.archival_snapshots.get(path).cloned())
+    }
+
+    fn list_archival_snapshots(&self) -> Result<Vec<(VaultPath, ArchivalSnapshot)>, IndexError> {
+        let state = self.lock_state();
+        let mut out: Vec<(VaultPath, ArchivalSnapshot)> = state
+            .archival_snapshots
+            .iter()
+            .map(|(p, s)| (p.clone(), s.clone()))
+            .collect();
+        // Match SqliteIndex's `ORDER BY note_path`.
+        out.sort_by_key(|(path, _)| path.to_string());
+        Ok(out)
     }
 }

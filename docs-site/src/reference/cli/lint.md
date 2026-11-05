@@ -37,6 +37,22 @@ deliberately narrow — the marker has to open the entry and be followed immedia
 ordinary prose in `## Logs`, including a sentence that merely mentions starting something or names a
 note mid-sentence, is never flagged.
 
+It checks that an **archived action note** (`actions/_done/<year>/`) has only grown since it was
+archived. The archival recorded the note's frozen prefix; lines appended after it (a late
+retrospective) are fine, while an edit to an existing line, or a cut into the prefix, is an error:
+
+```text
+[error] actions/_done/2026/characterise.md: archived action note modified an existing line (append-only after completion)
+```
+
+A rename may change the prefix in one way only: it re-targets references, rewriting the address of a
+wikilink (`[[old]]` becomes `[[surrogate-model]]`) and a reference field such as `project:`. So the
+prefix is accepted when either its bytes are unchanged or they match with every wikilink address and
+reference-field value set aside. The cost of that rule is that a hand edit which only re-targets a
+reference inside a frozen prefix is no longer detected; any other change still is. A note archived by
+a newer cdno, whose snapshot this cdno cannot read in the second form, gets a warning naming the
+version, and only the unchanged-bytes form is checked for it.
+
 It checks each project map's `status` against the folder the map sits in and against its `closed:`
 date. A status its folder contradicts is an error, since the project verbs find a map by its folder
 and act on it by its status; the message says which way to repair it:

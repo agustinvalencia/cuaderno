@@ -550,6 +550,39 @@ fn archival_snapshot_round_trips_and_cascades_on_note_delete() {
 }
 
 #[test]
+fn list_archival_snapshots_returns_every_row_sorted_by_path() {
+    let (_d, idx) = store();
+    for p in ["actions/_done/2026/zeta.md", "actions/_done/2026/alpha.md"] {
+        idx.upsert_note(&sample_note(p, "action")).unwrap();
+    }
+    let with_mask = ArchivalSnapshot {
+        frozen_size: 10,
+        frozen_hash: "deadbeefcafef00d".to_owned(),
+        archived_at_ns: 1,
+        masked_hash: Some("0123456789abcdef".to_owned()),
+        mask_version: Some(1),
+        masked_size: Some(8),
+    };
+    let without_mask = ArchivalSnapshot {
+        masked_hash: None,
+        mask_version: None,
+        masked_size: None,
+        ..with_mask.clone()
+    };
+    idx.record_archival_snapshot(&vp("actions/_done/2026/zeta.md"), &with_mask)
+        .unwrap();
+    idx.record_archival_snapshot(&vp("actions/_done/2026/alpha.md"), &without_mask)
+        .unwrap();
+    assert_eq!(
+        idx.list_archival_snapshots().unwrap(),
+        vec![
+            (vp("actions/_done/2026/alpha.md"), without_mask),
+            (vp("actions/_done/2026/zeta.md"), with_mask),
+        ]
+    );
+}
+
+#[test]
 fn archival_snapshot_returns_none_when_absent() {
     let (_d, idx) = store();
     idx.upsert_note(&sample_note("actions/active.md", "action"))

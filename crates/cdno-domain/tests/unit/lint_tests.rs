@@ -628,6 +628,246 @@ fn append_only_lint_flags_same_length_prefix_edit() {
 }
 
 // ---------------------------------------------------------------------
+// The either-hash rule (RFC 0007 §5.4, T16). A rename re-targets
+// references inside a frozen prefix; the masked hash, verified over the
+// first `masked_size` bytes of the masked current file, accepts that and
+// nothing else. The slug grows (`old` -> `surrogate-model`), so the raw
+// prefix end moves and the plain hash over `frozen_size` cannot pass.
+// ---------------------------------------------------------------------
+
+/// A vault holding project `old`, plus its store and index so a test can
+/// rewrite the archived file and read the snapshot row.
+fn old_project_vault() -> (Vault, Arc<dyn VaultStore>, Arc<dyn VaultIndex>) {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    store
+        .write_file(&vp("projects/old.md"), ACTIVE_PROJECT_FOR_ARCHIVE)
+        .unwrap();
+    let (vault, _report) = Vault::new(
+        Arc::clone(&store),
+        Arc::clone(&index),
+        VaultConfig::default(),
+    )
+    .expect("Vault::new succeeded");
+    (vault, store, index)
+}
+
+/// Add an attached action on `old`, append `line` to its note, and
+/// complete it through the verb; returns the archived path.
+fn archive_with_line(vault: &Vault, store: &Arc<dyn VaultStore>, line: &str) -> VaultPath {
+    let active = vault
+        .add_action_with_note(
+            dt(2026, 5, 1, 9, 0),
+            "old",
+            "Characterise",
+            EnergyLevel::Deep,
+        )
+        .expect("add action with note");
+    let raw = store.read_file(&active).unwrap();
+    store
+        .write_file(&active, &format!("{raw}\n{line}\n"))
+        .unwrap();
+    vault
+        .complete_action(dt(2026, 5, 2, 9, 0), "old", "characterise")
+        .expect("complete action");
+    vp("actions/_done/2026/characterise.md")
+}
+
+/// The bytes a rename of `old` to `surrogate-model` writes: every wikilink
+/// address and the `project:` scalar, through the same core rewriters the
+/// rename uses.
+fn rename_shaped(text: &str) -> String {
+    let (linked, edits) = cdno_core::extractors::rewrite_wikilink_addresses(
+        text,
+        |target| target == "old",
+        |_| "surrogate-model".to_owned(),
+    );
+    assert!(!edits.is_empty(), "the fixture must hold a link to rewrite");
+    let (block, _) = cdno_core::frontmatter::split_frontmatter(&linked).expect("frontmatter");
+    let start = block.as_ptr() as usize - linked.as_ptr() as usize;
+    let end = start + block.len();
+    let (rewritten, edits) = cdno_core::frontmatter_edit::rewrite_frontmatter_scalar(
+        block,
+        "project",
+        "old",
+        "surrogate-model",
+    );
+    assert_eq!(edits.len(), 1, "the `project:` scalar is rewritten");
+    format!("{}{rewritten}{}", &linked[..start], &linked[end..])
+}
+
+fn errors_on<'a>(
+    report: &'a cdno_domain::LintReport,
+    path: &VaultPath,
+) -> Vec<&'a cdno_domain::LintIssue> {
+    report
+        .issues
+        .iter()
+        .filter(|i| &i.path == path && i.severity == cdno_domain::LintSeverity::Error)
+        .collect()
+}
+
+#[test]
+fn a_reference_only_rewrite_inside_a_frozen_prefix_passes_lint() {
+    let (vault, store, index) = old_project_vault();
+    let done = archive_with_line(
+        &vault,
+        &store,
+        "Calibrated against [[old]] and [[old#Current State|its state]].",
+    );
+    let snap = index
+        .find_archival_snapshot(&done)
+        .unwrap()
+        .expect("snapshot");
+
+    let renamed = rename_shaped(&store.read_file(&done).unwrap());
+    // The plain path cannot accept it: the slug grew, so the raw prefix
+    // end moved and the first `frozen_size` bytes are not the archived ones.
+    let plain = renamed
+        .get(..snap.frozen_size as usize)
+        .map(cdno_core::hash::content_hash);
+    assert_ne!(plain.as_deref(), Some(snap.frozen_hash.as_str()));
+    store.write_file(&done, &renamed).unwrap();
+
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+    assert!(
+        errors_on(&report, &done).is_empty(),
+        "a rename-shaped rewrite is not an edit: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn a_prose_edit_inside_a_frozen_prefix_is_still_an_error() {
+    let (vault, store, _index) = old_project_vault();
+    let done = archive_with_line(&vault, &store, "Calibrated against [[old]].");
+
+    // A rename plus one prose word changed in the frozen prefix, of the
+    // same length, so neither path reads it as a truncation.
+    let renamed = rename_shaped(&store.read_file(&done).unwrap());
+    let edited = renamed.replace("Calibrated against", "Validated  against");
+    assert_ne!(renamed, edited);
+    store.write_file(&done, &edited).unwrap();
+
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+    let errors = errors_on(&report, &done);
+    assert_eq!(errors.len(), 1, "report: {:?}", report.issues);
+    assert!(
+        errors[0].message.contains("modified an existing line"),
+        "message: {}",
+        errors[0].message
+    );
+}
+
+#[test]
+fn a_truncated_frozen_prefix_is_still_an_error() {
+    let (vault, store, index) = old_project_vault();
+    let done = archive_with_line(&vault, &store, "Calibrated against [[old]].");
+    let snap = index
+        .find_archival_snapshot(&done)
+        .unwrap()
+        .expect("snapshot");
+
+    // Renamed, then the last line of the prefix cut. The slug grew by more
+    // than was cut, so the raw file is still longer than `frozen_size`:
+    // only the masked path can see the truncation, and the message must
+    // say so rather than call it an edited line.
+    let renamed = rename_shaped(&store.read_file(&done).unwrap());
+    let cut = renamed
+        .strip_suffix("[[surrogate-model]].\n")
+        .expect("fixture tail");
+    let truncated = format!("{cut}\n");
+    assert!(truncated.len() as u64 > snap.frozen_size);
+    store.write_file(&done, &truncated).unwrap();
+
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+    let errors = errors_on(&report, &done);
+    assert_eq!(errors.len(), 1, "report: {:?}", report.issues);
+    assert!(
+        errors[0].message.contains("truncated"),
+        "message: {}",
+        errors[0].message
+    );
+}
+
+#[test]
+fn a_hand_append_without_a_blank_line_after_an_open_backtick_is_not_an_error() {
+    let (vault, store, index) = old_project_vault();
+    // The prefix ends inside a paragraph holding an unmatched backtick, so
+    // `[[old]]` is a link there and is masked.
+    let done = archive_with_line(&vault, &store, "Ran `the [[old]] sweep");
+    let snap = index
+        .find_archival_snapshot(&done)
+        .unwrap()
+        .expect("snapshot");
+
+    // The append continues that paragraph and closes the code span: the
+    // link becomes code, the mask moves, and the masked hash fails.
+    let original = store.read_file(&done).unwrap();
+    let appended = format!("{original}and` it held.\n");
+    store.write_file(&done, &appended).unwrap();
+    let masked = cdno_core::hash::mask_references(
+        &appended,
+        &["project", "stewardship", "portfolio", "captured_during"],
+    );
+    let masked_now = masked
+        .get(..snap.masked_size.unwrap() as usize)
+        .map(cdno_core::hash::content_hash);
+    assert_ne!(
+        masked_now, snap.masked_hash,
+        "the fixture must defeat the masked path"
+    );
+
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+    assert!(
+        errors_on(&report, &done).is_empty(),
+        "the plain hash still verifies a pure append: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn an_unknown_mask_version_is_a_warning_and_the_plain_hash_still_decides() {
+    let (vault, store, index) = old_project_vault();
+    let done = archive_with_line(&vault, &store, "Calibrated against [[old]].");
+    let snap = index
+        .find_archival_snapshot(&done)
+        .unwrap()
+        .expect("snapshot");
+    index
+        .record_archival_snapshot(
+            &done,
+            &cdno_core::index::ArchivalSnapshot {
+                mask_version: Some(99),
+                ..snap
+            },
+        )
+        .unwrap();
+
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+    let on_done: Vec<_> = report.issues.iter().filter(|i| i.path == done).collect();
+    assert_eq!(on_done.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(on_done[0].severity, cdno_domain::LintSeverity::Warning);
+    assert!(
+        on_done[0].message.contains("mask version 99"),
+        "message: {}",
+        on_done[0].message
+    );
+
+    // A rename now reads as an edit: the masked path is not trusted at an
+    // unknown version, and the plain one fails.
+    let renamed = rename_shaped(&store.read_file(&done).unwrap());
+    store.write_file(&done, &renamed).unwrap();
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+    assert_eq!(
+        errors_on(&report, &done).len(),
+        1,
+        "report: {:?}",
+        report.issues
+    );
+}
+
+// ---------------------------------------------------------------------
 // Attachment stub ↔ artefact-folder pairing (#154). An evidence note
 // with a `kind` field is a stub linking a non-markdown artefact in a
 // sibling folder. Lint checks the pairing in both directions: a stub

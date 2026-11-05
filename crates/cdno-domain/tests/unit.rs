@@ -31,6 +31,7 @@ mod unit {
     mod set_frontmatter_tests;
     mod slots_tests;
     mod slug_tests;
+    mod snapshot_backfill_tests;
     mod stewardships_tests;
     mod support;
     mod template_sync_tests;

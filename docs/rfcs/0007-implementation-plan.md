@@ -761,11 +761,15 @@ append-only by rule.
 
 ### T16 — Backfill and the lint switch
 
-**What.** On startup, after reconciliation, a backfill pass (`vault/mod.rs`, beside the method
-skew check — it is domain policy) computes `masked_hash` and `masked_size` for every snapshot row whose
+**What.** On startup, after reconciliation, a backfill pass (called from `Vault::new` in
+`vault/mod.rs`, beside the method-version notice, with the pass itself in its own
+`vault/snapshot_backfill.rs` — it is domain policy) computes `masked_hash`, `mask_version` and
+`masked_size` for every snapshot row whose
 `masked_hash` is `NULL` **and whose plain hash still verifies**, in one transaction; rows that
-fail the plain hash are left `NULL` and keep failing lint as today. `check_append_only`
-(`lint.rs:1153`) verifies the masked hash when present, by masking the **whole current file** and
+fail the plain hash are left `NULL` and keep failing lint as today. The index gains `VaultIndex::list_archival_snapshots` on both
+implementations to find those rows; the update goes through the existing upsert,
+`record_archival_snapshot`, so no schema change. `check_append_only`
+(`lint.rs:1259` at the T15 merge) verifies the masked hash when present, by masking the **whole current file** and
 hashing its first `masked_size` bytes (a masked file shorter than `masked_size` is the truncation
 Error; `frozen_size` is raw bytes a rename moves, so it is not used for this path) (at the stored `mask_version`; a row at an
 older version is re-masked at read if the version is known, else reported as a Warning naming

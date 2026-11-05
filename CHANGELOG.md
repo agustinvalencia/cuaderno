@@ -30,6 +30,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `captured_during`) replaced by a fixed token, stamped with a `mask_version` and the masked prefix's byte length (`masked_size`, which a rename cannot move), so a rename can later
   rewrite a reference without invalidating the snapshot. Index migration 004 adds the three nullable
   columns; rows archived before it stay `NULL` until the backfill. Nothing reads the masked hash yet.
+- `cdno lint` accepts an archived action note whose frozen prefix changed only by a rename's
+  reference rewrite (RFC 0007 stage S4, #865): a snapshot passes when either the plain hash of its
+  first `frozen_size` bytes or the masked hash of the first `masked_size` bytes of the masked file
+  verifies, so a rename synced from another clone leaves this clone's lint clean. The cost: a hand
+  edit that only re-targets a reference inside a frozen prefix is no longer detected. A snapshot at an
+  unknown `mask_version` is a warning naming the version. Opening a vault backfills the masked hash on
+  every row archived before migration 004 whose plain hash still verifies; a row that fails is left
+  `NULL`. `VaultIndex::list_archival_snapshots` lists the rows.
 
 ### Changed
 
