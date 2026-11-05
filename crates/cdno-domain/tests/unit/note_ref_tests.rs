@@ -640,8 +640,24 @@ fn a_stem_beats_an_alias() {
     assert_eq!(note.resolved_via_alias, None);
 }
 
+/// The holders' paths of an ambiguous resolution, sorted.
+fn ambiguous_paths(vault: &Vault, reference: &str) -> Vec<String> {
+    match vault
+        .resolve_note_ref(reference, day(2026, 8, 21))
+        .expect("resolve")
+    {
+        RefResolution::Ambiguous(hits) => {
+            let mut paths: Vec<String> = hits.iter().map(|c| c.path.to_string()).collect();
+            paths.sort();
+            paths
+        }
+        other => panic!("expected Ambiguous for `{reference}`, got {other:?}"),
+    }
+}
+
 #[test]
-fn a_shared_alias_is_a_miss() {
+fn a_shared_alias_is_ambiguous_with_its_holders() {
+    // Across types: the bare form offers both holders.
     let vault = vault_with(&[
         (
             "projects/new.md",
@@ -649,10 +665,51 @@ fn a_shared_alias_is_a_miss() {
         ),
         ("actions/other.md", aliased("action", "Other", &["old"])),
     ]);
+    assert_eq!(
+        ambiguous_paths(&vault, "old"),
+        vec!["actions/other.md", "projects/new.md"]
+    );
 
-    // Shared across types and within one: neither is guessed.
-    assert!(is_slug_miss(&vault, "old"));
-    assert!(is_slug_miss(&vault, "project:old"));
+    // Within one type: the typed form cannot settle it either.
+    let vault = vault_with(&[
+        (
+            "projects/new.md",
+            aliased("project", "Surrogate model", &["old"]),
+        ),
+        ("projects/other.md", aliased("project", "Other", &["old"])),
+    ]);
+    assert_eq!(
+        ambiguous_paths(&vault, "project:old"),
+        vec!["projects/new.md", "projects/other.md"]
+    );
+}
+
+/// Uniqueness is counted among the holders of the type asked for, as the
+/// stem tier counts: an alias a note of another type also declares does not
+/// hide the project, in `project:old` or in the project selectors.
+#[test]
+fn a_project_alias_also_held_by_a_note_of_another_type_still_resolves_the_project() {
+    let vault = vault_with(&[
+        (
+            "projects/new.md",
+            "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n\
+             aliases: [old]\n---\n\n# Surrogate model\n"
+                .to_owned(),
+        ),
+        ("actions/other.md", aliased("action", "Other", &["old"])),
+    ]);
+
+    let note = resolved_note(&vault, "project:old");
+    assert_eq!(note.path, vp("projects/new.md"));
+    assert_eq!(note.resolved_via_alias.as_deref(), Some("old"));
+    let summary = vault.project_summary("old").expect("the selector finds it");
+    assert_eq!(summary.slug, "new");
+
+    // The bare form still names two notes.
+    assert_eq!(
+        ambiguous_paths(&vault, "old"),
+        vec!["actions/other.md", "projects/new.md"]
+    );
 }
 
 #[test]

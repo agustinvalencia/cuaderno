@@ -566,3 +566,41 @@ fn open_by_an_alias_finds_the_note() {
     // A path names a file, so the former name is not one.
     assert!(resolve_in(dir.path(), "projects/old.md").is_err());
 }
+
+/// A former slug two notes declare offers exactly those two, in the picker
+/// and in the non-interactive message, each by its current typed name.
+#[test]
+fn a_shared_alias_offers_its_holders() {
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+    fs::write(
+        dir.path().join("projects/new.md"),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n\
+         aliases: [old]\n---\n\n# Surrogate model\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("actions/other.md"),
+        "---\ntype: action\nstatus: active\nproject: new\nenergy: light\ncreated: 2026-04-01\n\
+         aliases: [old]\n---\n\n# Other\n",
+    )
+    .unwrap();
+
+    let err = resolve_in(dir.path(), "old").unwrap_err().to_string();
+    assert!(
+        err.contains("project:new") && err.contains("action:other"),
+        "{err}"
+    );
+
+    let (path, prompted, _seeds) = resolve_picking(dir.path(), "old", |items| {
+        let mut paths: Vec<String> = items.iter().map(|c| c.path.to_string()).collect();
+        paths.sort();
+        assert_eq!(paths, vec!["actions/other.md", "projects/new.md"]);
+        items
+            .iter()
+            .position(|c| c.path.as_path().starts_with("projects"))
+            .unwrap()
+    });
+    assert_eq!(path, "projects/new.md");
+    assert!(prompted);
+}

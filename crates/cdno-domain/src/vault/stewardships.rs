@@ -308,12 +308,11 @@ impl Vault {
         if let Some((path, variant)) = self.stewardship_at(slug, &flat_path, &expanded_path)? {
             return Ok((ResolvedNote::direct(path), variant));
         }
-        if let Some((holder, current)) = self.alias_of(&slugified)? {
+        if let Some((_holder, current)) =
+            self.alias_of(&slugified, is_stewardship_dashboard_path)?
+        {
             let (_, flat_path, expanded_path) = resolve_paths_for(&current)?;
-            if (holder == flat_path || holder == expanded_path)
-                && let Some((path, variant)) =
-                    self.stewardship_at(slug, &flat_path, &expanded_path)?
-            {
+            if let Some((path, variant)) = self.stewardship_at(slug, &flat_path, &expanded_path)? {
                 return Ok((ResolvedNote::via_alias(path, current, &slugified), variant));
             }
         }
@@ -484,6 +483,19 @@ pub(in crate::vault) fn stewardship_slug_from_path(path: &VaultPath) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_owned()
+}
+
+/// Whether `path` is a stewardship dashboard: flat `stewardships/<slug>.md`
+/// or expanded `stewardships/<slug>/_index.md`. The alias tier of
+/// [`Vault::resolve_stewardship_with_variant`] counts only holders here.
+fn is_stewardship_dashboard_path(path: &VaultPath) -> bool {
+    let p = path.as_path();
+    let root = Some(std::path::Path::new(cdno_core::paths::STEWARDSHIPS));
+    if p.file_name().and_then(|s| s.to_str()) == Some("_index.md") {
+        p.parent().and_then(|d| d.parent()) == root
+    } else {
+        p.parent() == root && p.extension().is_some_and(|e| e == "md")
+    }
 }
 
 /// Infer the variant from a stewardship's path: `_index.md` filename

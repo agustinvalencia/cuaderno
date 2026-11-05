@@ -160,7 +160,7 @@ pub(in crate::vault) fn is_under_projects_done(path: &VaultPath) -> bool {
 /// Whether `path` is where a project map can live: directly under
 /// `projects/`, `projects/_parked/`, or `projects/_done/<year>/`. The
 /// alias tier of [`Vault::locate_project`] accepts a holder only here.
-fn is_project_map_path(path: &VaultPath) -> bool {
+pub(in crate::vault) fn is_project_map_path(path: &VaultPath) -> bool {
     let parent = path.as_path().parent();
     parent == Some(std::path::Path::new(cdno_core::paths::PROJECTS))
         || parent == Some(std::path::Path::new(cdno_core::paths::PROJECTS_PARKED))
@@ -220,8 +220,7 @@ impl Vault {
         let mut resolved_via_alias = None;
         let mut hits = self.project_map_hits(slug)?;
         if hits.is_empty()
-            && let Some((holder, holder_slug)) = self.alias_of(slug)?
-            && is_project_map_path(&holder)
+            && let Some((_holder, holder_slug)) = self.alias_of(slug, is_project_map_path)?
         {
             hits = self.project_map_hits(&holder_slug)?;
             current = holder_slug;

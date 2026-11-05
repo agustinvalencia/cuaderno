@@ -655,9 +655,9 @@ impl Vault {
         if self.store.exists(&path)? {
             return Ok(ResolvedNote::direct(path));
         }
-        if let Some((holder, current)) = self.alias_of(slug)?
-            && holder == open_commitment_path(&current)?
-            && self.store.exists(&holder)?
+        if let Some((holder, current)) = self.alias_of(slug, |p| {
+            p.as_path().parent() == Some(std::path::Path::new(cdno_core::paths::COMMITMENTS))
+        })? && self.store.exists(&holder)?
         {
             return Ok(ResolvedNote::via_alias(holder, current, slug));
         }

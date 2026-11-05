@@ -247,10 +247,7 @@ impl Vault {
         if let Some((path, qf)) = self.question_by_stem(slug)? {
             return Ok((ResolvedNote::direct(path), qf));
         }
-        if let Some((holder, current)) = self.alias_of(slug)?
-            && QuestionDomain::ALL
-                .iter()
-                .any(|d| question_path(*d, &current).is_ok_and(|p| p == holder))
+        if let Some((_holder, current)) = self.alias_of(slug, is_question_path)?
             && let Some((path, qf)) = self.question_by_stem(&current)?
         {
             return Ok((ResolvedNote::via_alias(path, current, slug), qf));
@@ -326,6 +323,17 @@ impl Vault {
             },
         )
     }
+}
+
+/// Whether `path` is where a question note lives:
+/// `questions/<domain>/<slug>.md`, for either domain. The alias tier of
+/// [`Vault::resolve_question_by_slug`] counts only holders here.
+pub(in crate::vault) fn is_question_path(path: &VaultPath) -> bool {
+    let p = path.as_path();
+    p.extension().is_some_and(|e| e == "md")
+        && QuestionDomain::ALL
+            .iter()
+            .any(|d| p.parent() == Some(std::path::Path::new(&format!("questions/{}", d.as_str()))))
 }
 
 /// Vault-relative path for a question note.
