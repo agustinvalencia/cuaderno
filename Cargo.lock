@@ -311,6 +311,7 @@ version = "0.43.0"
 dependencies = [
  "chrono",
  "globset",
+ "libc",
  "notify",
  "notify-debouncer-mini",
  "proptest",

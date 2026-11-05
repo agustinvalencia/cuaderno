@@ -25,8 +25,15 @@ macro_rules! require_git {
 }
 
 fn git(dir: &Path, args: &[&str]) -> std::process::Output {
-    Command::new("git")
-        .arg("-C")
+    let mut cmd = Command::new("git");
+    // Inside a git hook GIT_DIR, GIT_INDEX_FILE, ... are exported and would
+    // send the fixtures to the wrong repository.
+    for (k, _) in std::env::vars_os() {
+        if k.to_string_lossy().starts_with("GIT_") {
+            cmd.env_remove(k);
+        }
+    }
+    cmd.arg("-C")
         .arg(dir)
         .args([
             "-c",
@@ -196,18 +203,29 @@ fn unmerged_paths_without_a_marker_are_reported() {
 }
 
 #[test]
-fn probes_never_fetch() {
+fn probes_do_not_see_an_unfetched_push() {
     require_git!();
-    let (_tmp, _a, b) = remote_and_clones();
-    ok(&b, &["remote", "set-url", "origin", "file:///nonexistent"]);
+    let (_tmp, a, b) = remote_and_clones();
+    commit_file(&a, "two.md", "two\n");
+    ok(&a, &["push", "-q"]);
+
     let start = Instant::now();
-    let got = upstream(&b);
+    let before = upstream(&b);
     assert!(start.elapsed() < Duration::from_secs(2));
     assert_eq!(
-        got,
+        before,
         Some(Upstream {
             ahead: 0,
             behind: 0
+        })
+    );
+
+    fetch_quietly(&b, Duration::from_secs(20)).unwrap();
+    assert_eq!(
+        upstream(&b),
+        Some(Upstream {
+            ahead: 0,
+            behind: 1
         })
     );
 }
@@ -256,5 +274,129 @@ fn a_failed_paused_probe_is_an_error_not_none() {
             )
         }
         other => panic!("expected a repository, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_git_that_cannot_answer_is_unknown() {
+    require_git!();
+    let dir = TempDir::new().unwrap();
+    init_repo(dir.path());
+    // A malformed config makes git fail with something other than
+    // "not a git repository".
+    let cfg = dir.path().join(".git/config");
+    let mut text = std::fs::read_to_string(&cfg).unwrap();
+    text.push_str("\n[broken\n");
+    std::fs::write(&cfg, text).unwrap();
+    assert!(matches!(git_state(dir.path()), GitState::Unknown(_)));
+}
+
+fn resolve_and_stage(work: &Path, rel: &str) {
+    std::fs::write(work.join(rel), "resolved\n").unwrap();
+    ok(work, &["add", "-A"]);
+}
+
+#[test]
+fn a_paused_merge_is_reported_from_a_subdirectory() {
+    require_git!();
+    let dir = TempDir::new().unwrap();
+    let repo = dir.path();
+    ok(repo, &["init", "-q"]);
+    std::fs::create_dir_all(repo.join("vault")).unwrap();
+    commit_file(repo, "vault/a.md", "base\n");
+    ok(repo, &["checkout", "-q", "-b", "feature"]);
+    commit_file(repo, "vault/a.md", "feature\n");
+    ok(repo, &["checkout", "-q", "-"]);
+    commit_file(repo, "vault/a.md", "main side\n");
+    assert!(!git(repo, &["merge", "feature"]).status.success());
+    resolve_and_stage(repo, "vault/a.md");
+
+    match git_state(&repo.join("vault")) {
+        GitState::Repository {
+            paused: Ok(Some(op)),
+            ..
+        } => assert_eq!(op.marker, Some("MERGE_HEAD")),
+        other => panic!("expected a paused merge, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_paused_merge_is_reported_in_a_linked_worktree() {
+    require_git!();
+    let dir = TempDir::new().unwrap();
+    let repo = dir.path().join("main");
+    let wt = dir.path().join("wt");
+    std::fs::create_dir_all(&repo).unwrap();
+    ok(&repo, &["init", "-q"]);
+    commit_file(&repo, "a.md", "base\n");
+    ok(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature",
+            wt.to_str().unwrap(),
+        ],
+    );
+    commit_file(&wt, "a.md", "feature\n");
+    commit_file(&repo, "a.md", "main side\n");
+    let base = String::from_utf8(git(&repo, &["symbolic-ref", "--short", "HEAD"]).stdout)
+        .unwrap()
+        .trim()
+        .to_string();
+    assert!(!git(&wt, &["merge", &base]).status.success());
+    resolve_and_stage(&wt, "a.md");
+
+    assert!(wt.join(".git").is_file());
+    match git_state(&wt) {
+        GitState::Repository {
+            paused: Ok(Some(op)),
+            ..
+        } => assert_eq!(op.marker, Some("MERGE_HEAD")),
+        other => panic!("expected a paused merge, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_timed_out_fetch_leaves_no_helper_behind() {
+    require_git!();
+    if Command::new("pgrep").arg("-V").output().is_err() {
+        eprintln!("skipping: pgrep is not on PATH");
+        return;
+    }
+    let (_tmp, _a, b) = remote_and_clones();
+    // An http remote makes git spawn a transport helper that then waits
+    // on a server that never answers.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let mut conns = Vec::new();
+        while let Ok((s, _)) = listener.accept() {
+            conns.push(s);
+        }
+    });
+    let url = format!("http://127.0.0.1:{port}/x");
+    ok(&b, &["remote", "set-url", "origin", &url]);
+    let err = fetch_quietly(&b, Duration::from_secs(1)).unwrap_err();
+    assert!(matches!(err, GitError::TimedOut { .. }), "{err:?}");
+
+    let needle = format!("127.0.0.1:{port}");
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let found = Command::new("pgrep")
+            .args(["-f", &needle])
+            .output()
+            .unwrap();
+        if found.stdout.is_empty() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "helper survived: {}",
+            String::from_utf8_lossy(&found.stdout)
+        );
+        std::thread::sleep(Duration::from_millis(50));
     }
 }

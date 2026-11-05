@@ -10,11 +10,13 @@
 //!
 //! **Hang rule.** Every invocation runs with `GIT_TERMINAL_PROMPT=0`,
 //! `GIT_OPTIONAL_LOCKS=0`, a null stdin and a deadline; a process that
-//! outlives it is killed and surfaces as [`GitError::TimedOut`].
+//! outlives it is killed, with its whole process group (transport helpers
+//! included), and surfaces as [`GitError::TimedOut`].
 
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
@@ -25,8 +27,12 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 /// What git says about a vault directory.
 #[derive(Debug)]
 pub enum GitState {
-    /// `root` is not inside a git work tree (or git is unavailable).
+    /// `root` is not inside a git work tree: git said so.
     NotARepository,
+    /// Git could not answer (a timeout, a refused `safe.directory`, git
+    /// not installed, a broken config, ...). Whether `root` is a
+    /// repository is unknown; callers warn and proceed (RFC 0007 §5.8).
+    Unknown(GitError),
     /// `root` is in a repository.
     Repository {
         /// An operation left paused mid-way, if any. An `Err` means the
@@ -76,19 +82,25 @@ pub enum GitError {
 }
 
 /// Read the repository facts for `root`. Never touches the network and
-/// never errors. A failed upstream probe is `None` (unknown or none, the
+/// never errors: a git that cannot answer is [`GitState::Unknown`]. A failed upstream probe is `None` (unknown or none, the
 /// caller warns either way); a failed paused probe stays visible as an
 /// `Err` in `paused`.
 ///
 /// The repository probe is `git rev-parse --is-inside-work-tree`, not a
 /// `root/.git` existence check: in a linked worktree (or a submodule)
 /// `.git` is a *file*, and a vault may also sit in a subdirectory of a
-/// larger repository; asking git handles all three, and git is what the
-/// later probes would consult anyway.
+/// larger repository; asking git handles all three. Only git's own "not a
+/// git repository" (or `false`) is `NotARepository`; any other failure is
+/// `Unknown`.
 pub fn git_state(root: &Path) -> GitState {
     match run_git_with_timeout(root, &["rev-parse", "--is-inside-work-tree"], PROBE_TIMEOUT) {
         Ok(out) if out.trim() == "true" => {}
-        _ => return GitState::NotARepository,
+        // `false`: inside a `.git` directory or a bare repository.
+        Ok(_) => return GitState::NotARepository,
+        Err(GitError::Exit { stderr, .. }) if stderr.contains("not a git repository") => {
+            return GitState::NotARepository;
+        }
+        Err(e) => return GitState::Unknown(e),
     }
     let paused = git_operation_in_progress(root);
     let upstream = run_git_with_timeout(
@@ -134,11 +146,16 @@ fn parse_ahead_behind(out: &str) -> Option<Upstream> {
 /// because it *intends* the caller to make an ordinary commit, so there
 /// is nothing here to protect it from.
 ///
-/// `Ok(None)` means no paused operation was found. The marker checks
-/// assume `root/.git` is a directory; where it is a file (a linked
-/// worktree) only the unmerged-paths fallback can fire.
+/// `Ok(None)` means no paused operation was found.
 pub fn git_operation_in_progress(root: &Path) -> Result<Option<PausedGitOp>, GitError> {
-    let git_dir = root.join(".git");
+    // Ask git where the git dir is: `root/.git` is wrong for a vault in a
+    // subdirectory of a repository and for a linked worktree (whose
+    // per-worktree markers live under the main `.git/worktrees/<name>`).
+    // Fall back to `root/.git` if git cannot say.
+    let git_dir = run_git_with_timeout(root, &["rev-parse", "--absolute-git-dir"], PROBE_TIMEOUT)
+        .ok()
+        .map(|out| std::path::PathBuf::from(out.trim()))
+        .unwrap_or_else(|| root.join(".git"));
 
     for (marker, label) in [
         ("MERGE_HEAD", "a merge"),
@@ -186,35 +203,79 @@ pub fn fetch_quietly(root: &Path, timeout: Duration) -> Result<(), GitError> {
     run_git_with_timeout(root, &["fetch", "--quiet"], timeout).map(|_| ())
 }
 
+/// Environment variables passed through to git. Everything else is
+/// cleared (PR #306 security review, finding 3: an ambient `GIT_DIR`,
+/// `GIT_WORK_TREE`, `GIT_INDEX_FILE` or `GIT_CONFIG_*` must not redirect
+/// the call away from the vault repo). `HOME`/`XDG_CONFIG_HOME` carry the
+/// user's git config, the rest what a fetch needs to reach a remote:
+/// the ssh agent and command, and the proxy settings. `GIT_ASKPASS` and
+/// `SSH_ASKPASS` are deliberately absent: nothing may prompt.
+const PASSTHROUGH_ENV: &[&str] = &[
+    "PATH",
+    "HOME",
+    "XDG_CONFIG_HOME",
+    "SSH_AUTH_SOCK",
+    "GIT_SSH_COMMAND",
+    "http_proxy",
+    "https_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "no_proxy",
+    "NO_PROXY",
+    "ALL_PROXY",
+];
+
+/// How long to wait for the drain threads once git has exited or been
+/// killed, before giving up on whatever a descendant still holds open.
+const DRAIN_GRACE: Duration = Duration::from_secs(1);
+
+/// Kill the child's whole process group (it leads one: see the spawn),
+/// so a transport helper (`git-remote-https`, `ssh`) dies with it. On
+/// non-unix targets only the child itself is killed.
+fn kill_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        // SAFETY: killpg on a pid we spawned as a group leader.
+        unsafe {
+            libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+}
+
 /// Run `git -C root <args>` and return its stdout.
 ///
-/// `env_clear` (PR #306 security review, finding 3) stops an ambient
-/// `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`/`GIT_CONFIG_*` from
-/// redirecting the call away from the vault repo; `PATH` is re-supplied
-/// so `git` is found, and `HOME`, `XDG_CONFIG_HOME` and `SSH_AUTH_SOCK`
-/// so the user's git config and ssh agent work for the fetch.
-///
-/// Output is drained on threads so a chatty child cannot fill a pipe and
-/// stall; the wait is a `try_wait` loop against a deadline, after which
-/// the child is killed. The reader threads are not joined on the timeout
-/// path: a grandchild (a transport helper) may still hold the pipes open.
+/// The child leads its own process group, so on the deadline the whole
+/// tree is killed (a killed `git` alone orphans its transport helper,
+/// which keeps running and keeps the pipes open); a group that is not the
+/// terminal's foreground group also cannot prompt on the tty. Output is
+/// drained on threads so a chatty child cannot fill a pipe and stall; the
+/// wait is a `try_wait` loop against a deadline. Draining is itself
+/// bounded: if a descendant outlives git and holds a pipe, the group is
+/// killed and whatever was read is used.
 fn run_git_with_timeout(root: &Path, args: &[&str], timeout: Duration) -> Result<String, GitError> {
     let command = format!("git {}", args.join(" "));
     let mut cmd = Command::new("git");
     cmd.env_clear();
-    for var in ["PATH", "HOME", "XDG_CONFIG_HOME", "SSH_AUTH_SOCK"] {
+    for var in PASSTHROUGH_ENV {
         if let Some(v) = std::env::var_os(var) {
             cmd.env(var, v);
         }
     }
     cmd.env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_NO_LAZY_FETCH", "1")
         .arg("-C")
         .arg(root)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     let mut child = cmd.spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             GitError::NotInstalled
@@ -224,31 +285,49 @@ fn run_git_with_timeout(root: &Path, args: &[&str], timeout: Duration) -> Result
     })?;
 
     let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let mut buf = Vec::new();
             if let Some(mut p) = pipe {
                 let _ = p.read_to_end(&mut buf);
             }
-            buf
-        })
+            let _ = tx.send(buf);
+        });
+        rx
     };
-    let out_h = drain(child.stdout.take().map(|p| Box::new(p) as _));
-    let err_h = drain(child.stderr.take().map(|p| Box::new(p) as _));
+    let out_rx = drain(child.stdout.take().map(|p| Box::new(p) as _));
+    let err_rx = drain(child.stderr.take().map(|p| Box::new(p) as _));
 
     let deadline = Instant::now() + timeout;
     let status = loop {
-        match child.try_wait()? {
-            Some(status) => break status,
-            None if Instant::now() >= deadline => {
-                let _ = child.kill();
+        match child.try_wait() {
+            Err(e) => {
+                kill_tree(&mut child);
                 let _ = child.wait();
+                return Err(GitError::Io(e));
+            }
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() >= deadline => {
+                kill_tree(&mut child);
+                let _ = child.wait();
+                // The group is dead, so the pipes close; take the readers
+                // down with a bound rather than leave them behind.
+                let _ = out_rx.recv_timeout(DRAIN_GRACE);
+                let _ = err_rx.recv_timeout(DRAIN_GRACE);
                 return Err(GitError::TimedOut { command });
             }
-            None => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
         }
     };
-    let stdout = out_h.join().unwrap_or_default();
-    let stderr = err_h.join().unwrap_or_default();
+    let collect = |rx: mpsc::Receiver<Vec<u8>>, child: &mut std::process::Child| {
+        rx.recv_timeout(DRAIN_GRACE).unwrap_or_else(|_| {
+            // A descendant outlived git holding the pipe.
+            kill_tree(child);
+            Vec::new()
+        })
+    };
+    let stdout = collect(out_rx, &mut child);
+    let stderr = collect(err_rx, &mut child);
     if !status.success() {
         return Err(GitError::Exit {
             command,

@@ -454,13 +454,16 @@ can prove it changed nothing else.
 
 **What.** A mechanics-only module (§5.8 (1)) with
 `pub fn git_state(root: &Path) -> GitState` where
-`pub enum GitState { NotARepository, Repository { paused: Option<PausedGitOp>, upstream: Option<Upstream> } }`
+`pub enum GitState { NotARepository, Unknown(GitError), Repository { paused: Result<Option<PausedGitOp>, GitError>, upstream: Option<Upstream> } }`
+(`Unknown` is a `rev-parse` that failed for any reason but git's own "not a git repository"; an
+`Err` in `paused` is a failed paused probe, so neither reads as "not paused")
 and `pub struct Upstream { ahead: u32, behind: u32 }` from
 `git rev-list --left-right --count HEAD...@{upstream}` (as of the last fetch; `None` when there
 is no upstream or the command fails). `git_operation_in_progress` moves here from
 `crates/cdno-mcp/src/checkpoint.rs:558` with its three checks, and `cdno-mcp` calls the core
 copy. Every call sets `GIT_TERMINAL_PROMPT=0`, runs with a two-second wait (`try_wait` loop
-then `kill`), and **never fetches**. A separate
+then a kill of the whole process group, so a transport helper dies with `git`), and **never
+fetches**. A separate
 `pub fn fetch_quietly(root: &Path, timeout: Duration) -> Result<(), GitError>` exists for the CLI
 (T25) and is the only function in the module that touches the network.
 
@@ -1053,8 +1056,8 @@ not see.
 shared domain-free helper in `cdno-cli` and `cdno-mcp` each (policy belongs to the interfaces;
 the facts are T8's). CLI: unless `--dry-run`, `fetch_quietly(root, 5 s)` **before** the lock; a
 failed or timed-out fetch prints a one-line warning and proceeds. Then `git_state`:
-`NotARepository` → proceed; `paused.is_some()` → refuse with `git_operation_in_progress`, not
-overridable; `behind > 0` → refuse with `behind_upstream` (the message names
+`NotARepository` → skip; `Unknown` → warn and proceed; `paused`: `Ok(Some(_))` → refuse with
+`git_operation_in_progress`, not overridable, `Ok(None)` → proceed, `Err(_)` → warn and proceed; `behind > 0` → refuse with `behind_upstream` (the message names
 `--skip-sync-check` and the sync command) unless `--skip-sync-check`; `upstream == None` or a
 failed probe → warn and proceed; a dirty tree is never consulted. The paused check runs again
 after `rename_note` takes the lock, which means `rename_note` takes
