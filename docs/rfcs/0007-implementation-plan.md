@@ -606,6 +606,22 @@ take the **current** slug from a `ResolvedNote`, never the typed string, so no l
 composed from an old name (§5.5). `find_question_path` (`questions.rs:264`) is **not** changed:
 it is the correlation key and S6 keeps the pair in step.
 
+As landed (#861): the helper takes a filter,
+`alias_of(slug, accepts: impl Fn(&VaultPath) -> bool) -> Option<(VaultPath, String)>`, and
+counts uniqueness only over the holders `accepts` takes. Each selector passes its folder or type
+predicate, and `resolve_note_ref` passes the type for `Typed` and accept-all for `Bare`, so an
+alias on a note of another type cannot hide a holder of the right one. A shared alias is
+`RefResolution::Ambiguous` with exactly its holders on the read path, and not found at a write
+selector. `ProjectLocation` gains `slug` (the current stem) and `resolved_via_alias`, which every
+`resolve_*_project` hands on as a `ResolvedNote`. The commitment lookup is
+`resolve_open_commitment` (complete, drop, reschedule). Loose pointers that need not exist (a
+commitment's `project:` / `stewardship:`, the `resume_action` filter) go through
+`current_project_slug` / `current_stewardship_slug`, which map a former name to the current one
+and leave anything else as given; recorded path-shaped targets (`core_question:`, a portfolio's
+`project:`) go through `current_link_target` the same way. `create_portfolio`'s question
+reference goes through `resolve_question_by_slug`. Each verb shadows its `slug` argument with the
+resolved slug, so the typed string is out of scope wherever a line, a path or an error is built.
+
 **Deliverable.** The tier, the type, the helper, the builders' signatures, tests.
 
 **Depends on.** T11.
@@ -637,6 +653,9 @@ the current one.
 `unique_slug` suffixes past it (§5.5, D5). `find_by_tag` queries for `#action/<slug>` (and any
 `<type>/<slug>` tag form the domain reads) also match the note's aliases: the domain expands the
 query to the slug plus its aliases before calling the index, so the index stays dumb.
+
+`taken_names` needs the inverse lookup, holder → its aliases, from the `list_aliases` rows;
+`alias_of` maps the other way (alias → its one holder) and is not reusable for it.
 
 **Deliverable.** The alias entries in the taken set, the tag expansion, tests.
 
@@ -924,7 +943,10 @@ index-op subtlety all live here.
   (a store that fails the restore too: `RenameIncomplete { failed }` names it),
   `index_stale_is_success` (an index that fails one op), `a_second_rename_extends_aliases`
   (`aliases: [old, older]`, both resolve), `renaming_back_to_an_alias_is_refused_as_taken`
-  (D5: the alias is reserved while listed).
+  (D5: the alias is reserved while listed),
+  `a_rename_stages_remove_note_of_the_source_in_the_same_transaction` (no ghost holder:
+  `alias_of` is unique right after commit; T12's `a_moved_note_leaves_the_alias_unique` shows
+  what breaks without it).
 - `cargo test -p cdno-domain --test unit -- unit::concurrency_tests`:
   `a_rename_holds_the_lock_for_the_whole_plan` (`RacingStore`, `support.rs:97`: a write slipped
   in between snapshot and commit is seen because the snapshot is taken under the lock — the

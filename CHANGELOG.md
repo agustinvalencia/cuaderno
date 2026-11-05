@@ -42,12 +42,22 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   still reports such a link as broken until its straggler warning lands (T14).
 - **A former name works wherever a note is named** (RFC 0007 stage S3, #861). A note's former slug
   (an `aliases:` entry) now resolves in `cdno open`, `project show`, `read_note`, and every verb
-  that takes a project, question, stewardship or commitment, when no note has that name itself;
-  `type:old` matches only a holder of that type, a path never goes through an alias, and an alias two
-  notes share is not found. The journal line a verb writes always names the current slug, and so do
-  the files it moves and the `project:` / `stewardship:` links it records.
+  that takes a project, question, stewardship or commitment, when no note has that name itself. A
+  path never goes through an alias. `type:old` counts only notes of that type, so an alias another
+  type also declares does not hide one; an alias two candidates share is offered as an ambiguity
+  listing exactly those notes, and a verb refuses it as not found. The journal line a verb writes
+  always names the current slug, and so do the files it moves and the `project:` / `stewardship:`
+  links it records; a `core_question:` or a portfolio's `project:` given by a former name is
+  recorded by the current one, and a portfolio created from a question's former name takes the
+  question's current slug and links to it. A due action whose `project:` is a former name now
+  appears in the commitments register under the renamed project, while `cdno orient` still shows
+  the stored source text.
+
+### Fixed
+
 - A tracking entry is now filed under its stewardship's slug, whatever spelling named it: a typed
-  `Health` writes to `stewardships/health/tracking/`, not `stewardships/Health/tracking/` (#861).
+  `Health` writes to `stewardships/health/tracking/`, not `stewardships/Health/tracking/`. Entries
+  already filed under another spelling are not moved (#861).
 
 ### Documentation
 
