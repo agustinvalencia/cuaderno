@@ -300,7 +300,7 @@ fn resolve_with(
         .resolve_note_ref(reference, today)
         .context("resolving the note reference")?
     {
-        RefResolution::Resolved(path) => Ok(path),
+        RefResolution::Resolved(note) => Ok(note.path),
         RefResolution::Ambiguous(hits) => {
             // In a terminal, an ambiguity is a question rather than a dead
             // end: the candidates are already known, so offer exactly those.

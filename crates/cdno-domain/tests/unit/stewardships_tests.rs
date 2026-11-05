@@ -705,3 +705,38 @@ fn an_explicit_expanded_slug_that_is_taken_is_refused_not_suffixed() {
     );
     assert_eq!(snapshot(&store), before, "nothing was written");
 }
+
+// ---------------------------------------------------------------------
+// By old name (RFC 0007 §5.5, T12)
+// ---------------------------------------------------------------------
+
+/// A tracking entry filed by a stewardship's former name lands in the
+/// current folder, and its log line links there; the dashboard reads by the
+/// old name too, in its slugified form.
+#[test]
+fn add_tracking_entry_by_old_name_logs_the_new_slug() {
+    use super::support::{assert_logs_the_new_slug, by_old_name_at, seeded_vault};
+
+    let dashboard = "---\ntype: stewardship\ncontext: personal\naliases: [old]\n---\n\n\
+                     # Health\n\n## Periodic Commitments\n"
+        .to_owned();
+    let (vault, store) = seeded_vault(&[("stewardships/new/_index.md", dashboard)]);
+
+    let (outcome, _source) = vault
+        .add_tracking_entry(by_old_name_at(), TrackingEntryDraft::new("old", "gym"))
+        .expect("tracking by old name");
+    assert_eq!(
+        outcome.primary,
+        vp("stewardships/new/tracking/2026-10-20-gym.md")
+    );
+    assert_logs_the_new_slug(
+        &store,
+        "add_tracking_entry",
+        "Tracked gym: [[stewardships/new/tracking/2026-10-20-gym]]",
+    );
+    let raw = store.read_file(&outcome.primary).unwrap();
+    assert!(raw.contains("stewardship: new"), "{raw}");
+
+    let (_fm, _body, variant) = vault.get_stewardship("Old").expect("read by old name");
+    assert_eq!(variant, StewardshipVariant::Expanded);
+}

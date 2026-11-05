@@ -32,6 +32,7 @@ use super::super::commitments::body_title_or_slug;
 use super::super::frontmatter_edit::merge_fields_into_frontmatter;
 use super::super::index_entry::build_index_entry_for;
 use super::super::normalise::reorder_frontmatter;
+use super::super::note_ref::ResolvedNote;
 use super::super::write_outcome::WriteOutcome;
 use super::actions::{
     LOG_REASON_KEY, flatten_reason, format_action_dropped_log_entry, remove_action_line,
@@ -131,7 +132,9 @@ impl Vault {
         // report the refusal shows, and the hash a cascade is checked
         // against, is the state the close acts on.
         let mut tx = self.transaction()?;
-        let (path, mut doc, frontmatter) = self.resolve_closable_project(slug)?;
+        let (ResolvedNote { path, slug, .. }, mut doc, frontmatter) =
+            self.resolve_closable_project(slug)?;
+        let slug = slug.as_str();
         let status = match closure {
             Closure::Completed => ProjectStatus::Completed,
             Closure::Dropped => ProjectStatus::Dropped,

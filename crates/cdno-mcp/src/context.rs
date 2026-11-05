@@ -522,7 +522,7 @@ pub(crate) fn resolve_note_reference(
     today: chrono::NaiveDate,
 ) -> Result<Result<VaultPath, ErrorData>, DomainError> {
     Ok(match vault.resolve_note_ref(reference, today)? {
-        RefResolution::Resolved(path) => Ok(path),
+        RefResolution::Resolved(note) => Ok(note.path),
         RefResolution::Ambiguous(hits) => Err(ambiguous_note_ref(reference, &hits)),
         RefResolution::NotFound { reference, miss } => Err(unresolved_note_ref(&reference, miss)),
     })

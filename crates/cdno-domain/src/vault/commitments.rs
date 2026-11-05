@@ -32,6 +32,7 @@ use super::projects::actions::{LOG_REASON_KEY, flatten_reason};
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
+use super::note_ref::ResolvedNote;
 use super::projects::rewrite_field_in_frontmatter;
 use super::slug::slugify;
 use super::stewardships::{PERIODIC_COMMITMENTS_SECTION, stewardship_slug_from_path};
@@ -190,8 +191,11 @@ impl Vault {
         // stripping every YAML metacharacter; the template then quotes
         // it — together that keeps an arbitrary input from injecting
         // YAML or being read back as a non-string scalar.
-        let project = slug_link(project);
-        let stewardship = slug_link(stewardship);
+        // A former name (an alias, RFC 0007 §5.5) is written as the name
+        // the project or stewardship has now; an unknown one stays as given,
+        // since the links are loose pointers.
+        let project = slug_link(project).map(|p| self.current_project_slug(&p));
+        let stewardship = slug_link(stewardship).map(|s| self.current_stewardship_slug(&s));
         let mut ctx = VariableContext::new();
         ctx.set_contextual("title", title);
         ctx.set_contextual("status", CommitmentStatus::Active.as_str());
@@ -253,13 +257,12 @@ impl Vault {
         slug: &str,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::COMMITMENTS))?;
-        if !self.store.exists(&active_path)? {
-            return Err(DomainError::Store(StoreError::NotFound(format!(
-                "{active_path}{}",
-                self.available_commitments_hint()
-            ))));
-        }
+        let ResolvedNote {
+            path: active_path,
+            slug,
+            ..
+        } = self.resolve_open_commitment(slug)?;
+        let slug = slug.as_str();
 
         let raw = self.store.read_file(&active_path)?;
         // Defensive frontmatter check: the file is at
@@ -350,13 +353,12 @@ impl Vault {
         reason: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::COMMITMENTS))?;
-        if !self.store.exists(&active_path)? {
-            return Err(DomainError::Store(StoreError::NotFound(format!(
-                "{active_path}{}",
-                self.available_commitments_hint()
-            ))));
-        }
+        let ResolvedNote {
+            path: active_path,
+            slug,
+            ..
+        } = self.resolve_open_commitment(slug)?;
+        let slug = slug.as_str();
 
         let raw = self.store.read_file(&active_path)?;
         let (fm, _body) = Frontmatter::parse(&raw)?;
@@ -443,13 +445,8 @@ impl Vault {
         new_due: NaiveDate,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::COMMITMENTS))?;
-        if !self.store.exists(&path)? {
-            return Err(DomainError::Store(StoreError::NotFound(format!(
-                "{path}{}",
-                self.available_commitments_hint()
-            ))));
-        }
+        let ResolvedNote { path, slug, .. } = self.resolve_open_commitment(slug)?;
+        let slug = slug.as_str();
 
         let raw = self.store.read_file(&path)?;
         let (fm, _body) = Frontmatter::parse(&raw)?;
@@ -549,7 +546,7 @@ impl Vault {
         query: &str,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let path = self.resolve_stewardship_by_slug(stewardship)?;
+        let ResolvedNote { path, .. } = self.resolve_stewardship_by_slug(stewardship)?;
 
         let raw = self.store.read_file(&path)?;
         let mut doc = MarkdownDocument::parse(raw)?;
@@ -639,6 +636,35 @@ impl Vault {
         tx.commit()?;
 
         Ok(path)
+    }
+
+    /// The open commitment `slug` names, at `commitments/<slug>.md`: the
+    /// lookup behind complete, drop and reschedule. The returned
+    /// [`ResolvedNote::slug`] is the commitment's current slug, which each
+    /// of those verbs writes into its log line and its `_done/` destination.
+    ///
+    /// A slug no open commitment's stem matches is tried as a former name:
+    /// the one note declaring it as an alias ([`Vault::alias_of`]), if that
+    /// note is an open commitment (RFC 0007 §5.5). An ended commitment under
+    /// `_done/` is not found either way, as before.
+    ///
+    /// Errors: `Store(NotFound)`, with the open-commitments hint, naming
+    /// the path asked for.
+    fn resolve_open_commitment(&self, slug: &str) -> Result<ResolvedNote, DomainError> {
+        let path = open_commitment_path(slug)?;
+        if self.store.exists(&path)? {
+            return Ok(ResolvedNote::direct(path));
+        }
+        if let Some((holder, current)) = self.alias_of(slug)?
+            && holder == open_commitment_path(&current)?
+            && self.store.exists(&holder)?
+        {
+            return Ok(ResolvedNote::via_alias(holder, current, slug));
+        }
+        Err(DomainError::Store(StoreError::NotFound(format!(
+            "{path}{}",
+            self.available_commitments_hint()
+        ))))
     }
 
     /// " — available commitments: …" suffix for a commitment slug
@@ -981,6 +1007,14 @@ impl Vault {
     fn resolve_project_path(&self, slug: &str) -> Option<VaultPath> {
         self.locate_project(slug).ok().map(|l| l.path)
     }
+}
+
+/// Where an open commitment named `slug` lives: `commitments/<slug>.md`.
+fn open_commitment_path(slug: &str) -> Result<VaultPath, DomainError> {
+    Ok(VaultPath::new(format!(
+        "{}/{slug}.md",
+        cdno_core::paths::COMMITMENTS
+    ))?)
 }
 
 /// Parse an ISO `YYYY-MM-DD` date, returning `None` for any other

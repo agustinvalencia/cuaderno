@@ -30,6 +30,7 @@ use crate::note_type::NoteType;
 use super::super::Vault;
 use super::super::WriteOutcome;
 use super::super::index_entry::build_index_entry_for;
+use super::super::note_ref::ResolvedNote;
 use super::rewrite_field_in_frontmatter;
 
 impl Vault {
@@ -91,7 +92,8 @@ impl Vault {
         };
 
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, doc) = self.resolve_open_project(slug)?;
+        let (ResolvedNote { path, slug, .. }, doc) = self.resolve_open_project(slug)?;
+        let slug = slug.as_str();
 
         // The existing value as it sits in the frontmatter, wikilink
         // wrapping and all — that is what the `was:` line should show,

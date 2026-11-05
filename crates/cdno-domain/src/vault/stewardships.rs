@@ -35,6 +35,7 @@ use crate::recurrence::Recurrence;
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
+use super::note_ref::ResolvedNote;
 use super::slug::slugify;
 
 /// Heading of the section that holds periodic commitment lines on a
@@ -258,7 +259,7 @@ impl Vault {
         if title.is_empty() {
             return Err(DomainError::EmptyField { field: "title" });
         }
-        let path = self.resolve_stewardship_by_slug(stewardship)?;
+        let ResolvedNote { path, .. } = self.resolve_stewardship_by_slug(stewardship)?;
 
         let raw = self.store.read_file(&path)?;
         let mut doc = MarkdownDocument::parse(raw)?;
@@ -285,7 +286,7 @@ impl Vault {
     pub(in crate::vault) fn resolve_stewardship_by_slug(
         &self,
         slug: &str,
-    ) -> Result<VaultPath, DomainError> {
+    ) -> Result<ResolvedNote, DomainError> {
         let (resolved, _variant) = self.resolve_stewardship_with_variant(slug)?;
         Ok(resolved)
     }
@@ -293,22 +294,62 @@ impl Vault {
     /// Like [`resolve_stewardship_by_slug`](Self::resolve_stewardship_by_slug)
     /// but also returns which variant matched — needed by the
     /// tracking-note op (#43) and by `cdno stewardship show` (#44).
+    ///
+    /// The input is slugified before lookup. A slug no stewardship's name
+    /// matches is tried as a former name, in its slugified form: the one
+    /// note declaring it as an alias ([`Vault::alias_of`]), if that note is
+    /// a stewardship dashboard, is located by its current slug, which the
+    /// returned [`ResolvedNote::slug`] carries (RFC 0007 §5.5).
     pub(in crate::vault) fn resolve_stewardship_with_variant(
         &self,
         slug: &str,
-    ) -> Result<(VaultPath, StewardshipVariant), DomainError> {
-        let (_slug, flat_path, expanded_path) = resolve_paths(slug)?;
-        let flat_exists = self.store.exists(&flat_path)?;
-        let expanded_exists = self.store.exists(&expanded_path)?;
-        match (flat_exists, expanded_exists) {
-            (true, true) => Err(DomainError::AmbiguousSlug(slug.to_owned())),
-            (true, false) => Ok((flat_path, StewardshipVariant::Flat)),
-            (false, true) => Ok((expanded_path, StewardshipVariant::Expanded)),
-            (false, false) => Err(DomainError::Store(StoreError::NotFound(format!(
-                "stewardships/{slug}(.md or /_index.md){hint}",
-                hint = self.available_stewardships_hint(),
-            )))),
+    ) -> Result<(ResolvedNote, StewardshipVariant), DomainError> {
+        let (slugified, flat_path, expanded_path) = resolve_paths(slug)?;
+        if let Some((path, variant)) = self.stewardship_at(slug, &flat_path, &expanded_path)? {
+            return Ok((ResolvedNote::direct(path), variant));
         }
+        if let Some((holder, current)) = self.alias_of(&slugified)? {
+            let (_, flat_path, expanded_path) = resolve_paths_for(&current)?;
+            if (holder == flat_path || holder == expanded_path)
+                && let Some((path, variant)) =
+                    self.stewardship_at(slug, &flat_path, &expanded_path)?
+            {
+                return Ok((ResolvedNote::via_alias(path, current, &slugified), variant));
+            }
+        }
+        Err(DomainError::Store(StoreError::NotFound(format!(
+            "stewardships/{slug}(.md or /_index.md){hint}",
+            hint = self.available_stewardships_hint(),
+        ))))
+    }
+
+    /// The current slug of the stewardship `slug` names, through
+    /// [`Vault::resolve_stewardship_with_variant`] (so a former name maps to
+    /// the name it now has), or `slug` itself when it resolves to no single
+    /// dashboard. For a loose pointer, such as a commitment's
+    /// `stewardship:`, whose target is not required to exist.
+    pub(in crate::vault) fn current_stewardship_slug(&self, slug: &str) -> String {
+        self.resolve_stewardship_with_variant(slug)
+            .map(|(resolved, _variant)| resolved.slug)
+            .unwrap_or_else(|_| slug.to_owned())
+    }
+
+    /// Which of a stewardship's two layouts exists on disk, or `None` for
+    /// neither; both is `AmbiguousSlug` naming `slug`, the name asked for.
+    fn stewardship_at(
+        &self,
+        slug: &str,
+        flat_path: &VaultPath,
+        expanded_path: &VaultPath,
+    ) -> Result<Option<(VaultPath, StewardshipVariant)>, DomainError> {
+        let flat_exists = self.store.exists(flat_path)?;
+        let expanded_exists = self.store.exists(expanded_path)?;
+        Ok(match (flat_exists, expanded_exists) {
+            (true, true) => return Err(DomainError::AmbiguousSlug(slug.to_owned())),
+            (true, false) => Some((flat_path.clone(), StewardshipVariant::Flat)),
+            (false, true) => Some((expanded_path.clone(), StewardshipVariant::Expanded)),
+            (false, false) => None,
+        })
     }
 
     /// A human-readable " — available stewardships: …" suffix listing
@@ -352,7 +393,7 @@ impl Vault {
         &self,
         slug: &str,
     ) -> Result<(StewardshipFrontmatter, String, StewardshipVariant), DomainError> {
-        let (path, variant) = self.resolve_stewardship_with_variant(slug)?;
+        let (ResolvedNote { path, .. }, variant) = self.resolve_stewardship_with_variant(slug)?;
         let raw = self.store.read_file(&path)?;
         let (fm, body) = Frontmatter::parse(&raw)?;
         let typed = StewardshipFrontmatter::try_from(fm)?;

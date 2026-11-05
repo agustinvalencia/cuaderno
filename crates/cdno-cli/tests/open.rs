@@ -544,3 +544,25 @@ fn a_miss_settled_in_the_all_notes_picker_reports_it() {
     );
     assert_eq!(seeds, vec![Some("surro".to_owned())]);
 }
+
+/// A former slug (an `aliases:` entry, RFC 0007 §5.5) opens the renamed
+/// note, bare or typed, through the on-disk index.
+#[test]
+fn open_by_an_alias_finds_the_note() {
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+    fs::write(
+        dir.path().join("projects/new.md"),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n\
+         aliases: [old]\n---\n\n# Surrogate model\n",
+    )
+    .unwrap();
+
+    assert_eq!(resolve_in(dir.path(), "old").unwrap(), "projects/new.md");
+    assert_eq!(
+        resolve_in(dir.path(), "project:old").unwrap(),
+        "projects/new.md"
+    );
+    // A path names a file, so the former name is not one.
+    assert!(resolve_in(dir.path(), "projects/old.md").is_err());
+}

@@ -2918,3 +2918,89 @@ fn promoting_with_a_taken_explicit_slug_is_refused_not_suffixed() {
     );
     assert_eq!(snapshot(&store), before, "nothing was written");
 }
+
+// ---------------------------------------------------------------------
+// By old name (RFC 0007 §5.5, T12): the action verbs reach a renamed
+// project through its alias, and every line they log names the new slug.
+// ---------------------------------------------------------------------
+
+type ActionVerb = fn(&Vault, NaiveDateTime) -> Result<(), DomainError>;
+
+#[test]
+fn every_verb_by_old_name_logs_the_new_slug() {
+    use super::support::{assert_logs_the_new_slug, by_old_name_at, seeded_vault};
+
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n\
+               aliases: [old]\n---\n\n# Surrogate model\n\n## Next Actions\n\
+               - [ ] First step (light)\n- [ ] Other step (deep)\n"
+        .to_owned();
+    let later = |at: NaiveDateTime| at + chrono::Duration::minutes(5);
+
+    // (row, the verbs called with "old", in order, the log fragment)
+    let rows: &[(&str, ActionVerb, &str)] = &[
+        (
+            "complete_action",
+            |v, at| v.complete_action(at, "old", "First").map(drop),
+            "action done on [[new]] \u{2014} First step (light)",
+        ),
+        (
+            "drop_action",
+            |v, at| {
+                v.drop_action(at, "old", "First", Some("superseded"))
+                    .map(drop)
+            },
+            "action dropped on [[new]] \u{2014} First step (light)",
+        ),
+        (
+            "promote_action",
+            |v, at| v.promote_action(at, "old", "First").map(drop),
+            "action promoted on [[new]] \u{2014} \"First step\" -> [[actions/first-step]]",
+        ),
+        (
+            "switch_action",
+            |v, at| v.switch_action(at, "old", "First", None, None).map(drop),
+            "started [[new]] \u{2014} First step (light)",
+        ),
+        (
+            "switch_unplanned_action",
+            |v, at| {
+                v.switch_unplanned_action(at, "old", "Unplanned", EnergyLevel::Light, None, None)
+                    .map(drop)
+            },
+            "started [[new]] \u{2014} Unplanned (light)",
+        ),
+        (
+            "pause_action",
+            |v, at| {
+                v.start_action(at, "old", "First")?;
+                v.pause_action(at + chrono::Duration::minutes(5), None, None)
+                    .map(drop)
+            },
+            "action paused on [[new]] \u{2014} First step (light)",
+        ),
+        (
+            "resume_action",
+            |v, at| {
+                v.start_action(at, "old", "First")?;
+                v.pause_action(at + chrono::Duration::minutes(5), None, None)?;
+                v.resume_action(at + chrono::Duration::minutes(10), Some("old"))
+                    .map(drop)
+            },
+            "resumed [[new]] \u{2014} First step (light)",
+        ),
+    ];
+
+    for (row, verb, expected) in rows {
+        let (vault, store) = seeded_vault(&[("projects/new.md", map.clone())]);
+        verb(&vault, by_old_name_at()).unwrap_or_else(|e| panic!("{row}: {e}"));
+        assert_logs_the_new_slug(&store, row, expected);
+    }
+
+    // A promoted note's `project:` is the current slug too.
+    let (vault, store) = seeded_vault(&[("projects/new.md", map.clone())]);
+    let note = vault
+        .promote_action(later(by_old_name_at()), "old", "First")
+        .expect("promote by old name");
+    let raw = store.read_file(&note).unwrap();
+    assert!(raw.contains("project: new\n"), "{raw}");
+}

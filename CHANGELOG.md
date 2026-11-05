@@ -40,6 +40,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   an alias, and an alias two notes share resolves to nothing. Adding or removing an alias, in cdno
   or in an editor, re-resolves the links that name it at the next write or startup. `cdno lint`
   still reports such a link as broken until its straggler warning lands (T14).
+- **A former name works wherever a note is named** (RFC 0007 stage S3, #861). A note's former slug
+  (an `aliases:` entry) now resolves in `cdno open`, `project show`, `read_note`, and every verb
+  that takes a project, question, stewardship or commitment, when no note has that name itself;
+  `type:old` matches only a holder of that type, a path never goes through an alias, and an alias two
+  notes share is not found. The journal line a verb writes always names the current slug, and so do
+  the files it moves and the `project:` / `stewardship:` links it records.
 
 ### Documentation
 

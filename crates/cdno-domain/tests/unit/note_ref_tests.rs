@@ -8,10 +8,12 @@
 use std::sync::Arc;
 
 use cdno_core::config::VaultConfig;
+use cdno_core::index::NoteEntry;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
-use cdno_domain::{Miss, NoteRef, PeriodRef, RefResolution, RelativeDay, Vault};
+use cdno_core::transaction::VaultTransaction;
+use cdno_domain::{Miss, NoteRef, PeriodRef, RefResolution, RelativeDay, ResolvedNote, Vault};
 use chrono::NaiveDate;
 
 fn vp(p: &str) -> VaultPath {
@@ -55,7 +57,7 @@ const TYPES: &[&str] = &[
 
 fn resolved(vault: &Vault, reference: &str, today: NaiveDate) -> String {
     match vault.resolve_note_ref(reference, today).expect("resolve") {
-        RefResolution::Resolved(path) => path.as_path().to_string_lossy().into_owned(),
+        RefResolution::Resolved(note) => note.path.as_path().to_string_lossy().into_owned(),
         other => panic!("expected Resolved for `{reference}`, got {other:?}"),
     }
 }
@@ -553,4 +555,161 @@ fn each_kind_of_miss_is_distinguishable() {
             other => panic!("expected NotFound for `{reference}`, got {other:?}"),
         }
     }
+}
+
+// ---------------------------------------------------------------------
+// The alias tier (RFC 0007 §5.5)
+// ---------------------------------------------------------------------
+
+/// A note carrying `aliases:`, the former names a rename leaves behind.
+fn aliased(note_type: &str, title: &str, aliases: &[&str]) -> String {
+    format!(
+        "---\ntype: {note_type}\naliases: [{}]\n---\n# {title}\n\nBody.\n",
+        aliases.join(", ")
+    )
+}
+
+fn resolved_note(vault: &Vault, reference: &str) -> ResolvedNote {
+    match vault
+        .resolve_note_ref(reference, day(2026, 8, 21))
+        .expect("resolve")
+    {
+        RefResolution::Resolved(note) => note,
+        other => panic!("expected Resolved for `{reference}`, got {other:?}"),
+    }
+}
+
+fn is_slug_miss(vault: &Vault, reference: &str) -> bool {
+    matches!(
+        vault
+            .resolve_note_ref(reference, day(2026, 8, 21))
+            .expect("resolve"),
+        RefResolution::NotFound {
+            miss: Miss::Slug,
+            ..
+        }
+    )
+}
+
+#[test]
+fn a_bare_alias_resolves_and_says_so() {
+    let vault = vault_with(&[(
+        "projects/new.md",
+        aliased("project", "Surrogate model", &["old"]),
+    )]);
+
+    let note = resolved_note(&vault, "old");
+    assert_eq!(note.path, vp("projects/new.md"));
+    assert_eq!(note.slug, "new");
+    assert_eq!(note.resolved_via_alias.as_deref(), Some("old"));
+
+    // The note's own name resolves directly, and says that too.
+    let direct = resolved_note(&vault, "new");
+    assert_eq!(direct.slug, "new");
+    assert_eq!(direct.resolved_via_alias, None);
+}
+
+#[test]
+fn a_typed_alias_resolves_within_its_type() {
+    let vault = vault_with(&[(
+        "projects/new.md",
+        aliased("project", "Surrogate model", &["old"]),
+    )]);
+
+    let note = resolved_note(&vault, "project:old");
+    assert_eq!(note.path, vp("projects/new.md"));
+    assert_eq!(note.slug, "new");
+    assert_eq!(note.resolved_via_alias.as_deref(), Some("old"));
+
+    // The holder is a project, so the alias names no question.
+    assert!(is_slug_miss(&vault, "question:old"));
+}
+
+#[test]
+fn a_stem_beats_an_alias() {
+    let vault = vault_with(&[
+        (
+            "projects/new.md",
+            aliased("project", "Surrogate model", &["old"]),
+        ),
+        ("actions/old.md", note("action", "Old action")),
+    ]);
+
+    let note = resolved_note(&vault, "old");
+    assert_eq!(note.path, vp("actions/old.md"));
+    assert_eq!(note.resolved_via_alias, None);
+}
+
+#[test]
+fn a_shared_alias_is_a_miss() {
+    let vault = vault_with(&[
+        (
+            "projects/new.md",
+            aliased("project", "Surrogate model", &["old"]),
+        ),
+        ("actions/other.md", aliased("action", "Other", &["old"])),
+    ]);
+
+    // Shared across types and within one: neither is guessed.
+    assert!(is_slug_miss(&vault, "old"));
+    assert!(is_slug_miss(&vault, "project:old"));
+}
+
+#[test]
+fn a_path_reference_never_uses_an_alias() {
+    let vault = vault_with(&[(
+        "projects/new.md",
+        aliased("project", "Surrogate model", &["old"]),
+    )]);
+
+    for reference in ["projects/old.md", "projects/old"] {
+        assert_eq!(
+            vault
+                .resolve_note_ref(reference, day(2026, 8, 21))
+                .expect("resolve"),
+            RefResolution::NotFound {
+                reference: reference.to_owned(),
+                miss: Miss::Path,
+            },
+            "`{reference}` must not resolve through the alias"
+        );
+    }
+}
+
+/// The ghost-holder hazard (#861): a move that upserts the destination but
+/// leaves the source's index row behind would make the alias look shared
+/// until the next reconcile. A move done properly, write + delete + upsert +
+/// remove in one transaction, leaves exactly one holder.
+#[test]
+fn a_moved_note_leaves_the_alias_unique() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let content = aliased("project", "Surrogate model", &["old"]);
+    store.write_file(&vp("projects/new.md"), &content).unwrap();
+    let (vault, _report) =
+        Vault::new(store.clone(), index.clone(), VaultConfig::default()).expect("Vault::new");
+    assert_eq!(resolved_note(&vault, "old").path, vp("projects/new.md"));
+
+    let src = vp("projects/new.md");
+    let dest = vp("projects/_parked/new.md");
+    let mut tx = VaultTransaction::new(store.clone(), index.clone()).unwrap();
+    tx.write_file(dest.clone(), content);
+    tx.delete_file(src.clone());
+    tx.upsert_note(NoteEntry {
+        path: dest.clone(),
+        note_type: "project".to_owned(),
+        title: None,
+        content_hash: String::new(),
+        mtime_ns: 0,
+        size: 0,
+        frontmatter: serde_json::json!({ "type": "project", "aliases": ["old"] }),
+        indexed_at_ns: 0,
+    });
+    tx.remove_note(src);
+    tx.commit().unwrap();
+
+    let note = resolved_note(&vault, "old");
+    assert_eq!(note.path, dest);
+    assert_eq!(note.slug, "new");
+    assert_eq!(note.resolved_via_alias.as_deref(), Some("old"));
 }

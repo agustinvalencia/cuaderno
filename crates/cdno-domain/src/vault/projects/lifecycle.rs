@@ -22,6 +22,7 @@ use crate::note_type::NoteType;
 
 use super::super::Vault;
 use super::super::index_entry::build_index_entry_for;
+use super::super::note_ref::ResolvedNote;
 use super::milestones::stage_milestone_index_rows;
 use super::{
     MILESTONES_SECTION, is_closed_project_path, is_under_projects_done,
@@ -213,7 +214,15 @@ impl Vault {
     ///   first).
     pub fn park_project(&self, at: NaiveDateTime, slug: &str) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (active_path, doc) = self.resolve_active_project(slug)?;
+        let (
+            ResolvedNote {
+                path: active_path,
+                slug,
+                ..
+            },
+            doc,
+        ) = self.resolve_active_project(slug)?;
+        let slug = slug.as_str();
         let parked_path =
             VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
         if self.store.exists(&parked_path)? {
@@ -274,6 +283,10 @@ impl Vault {
         // closed under `_done/<year>/`, folder and status agreeing, is
         // `ProjectNotParked`; a missing one is `Store(NotFound)`.
         let location = self.locate_project(slug)?;
+        // The map's current slug from here on: a former name (RFC 0007
+        // §5.5) names neither the destination nor the log line.
+        let slug = location.slug.clone();
+        let slug = slug.as_str();
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
         let parked_path =
             VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;

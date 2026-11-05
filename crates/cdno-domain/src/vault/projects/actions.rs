@@ -18,6 +18,7 @@ use super::super::WriteOutcome;
 use super::super::closure::Closure;
 use super::super::context::{CurrentFocus, LastPause, resumed_focus};
 use super::super::index_entry::build_index_entry_for;
+use super::super::note_ref::ResolvedNote;
 use super::NEXT_ACTIONS_SECTION;
 
 /// One open action bullet from a project's `## Next Actions` section,
@@ -112,6 +113,8 @@ pub enum ResumedKind {
 /// Everything `start_unplanned_action` writes, built but not yet staged.
 struct UnplannedStart {
     path: VaultPath,
+    /// The project's current slug, which every line and the focus name.
+    slug: String,
     new_content: String,
     entry_meta: cdno_core::index::NoteEntry,
     started_text: String,
@@ -199,16 +202,22 @@ impl Vault {
     }
 
     /// Resolve `query` against the project's `## Next Actions` exactly as the
-    /// start verbs do and return the matched bullet's text. Shared by
-    /// `start_action` and `switch_action` so the two cannot disagree (#568).
-    fn resolve_start_target(&self, slug: &str, query: &str) -> Result<String, DomainError> {
-        let (_path, doc) = self.resolve_active_project(slug)?;
+    /// start verbs do and return the project's current slug (RFC 0007 §5.5)
+    /// with the matched bullet's text. Shared by `start_action` and
+    /// `switch_action` so the two cannot disagree (#568).
+    fn resolve_start_target(
+        &self,
+        slug: &str,
+        query: &str,
+    ) -> Result<(String, String), DomainError> {
+        let (ResolvedNote { slug, .. }, doc) = self.resolve_active_project(slug)?;
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
-        let idx = resolve_open_action(&lines, slug, query)?;
-        Ok(parse_open_action_text(lines[idx])
+        let idx = resolve_open_action(&lines, &slug, query)?;
+        let text = parse_open_action_text(lines[idx])
             .expect("matched line was previously parseable")
-            .to_owned())
+            .to_owned();
+        Ok((slug, text))
     }
 
     /// Build, without staging, everything `start_unplanned_action` writes: the
@@ -220,7 +229,8 @@ impl Vault {
         action_text: &str,
         energy: EnergyLevel,
     ) -> Result<UnplannedStart, DomainError> {
-        let (path, mut doc) = self.resolve_active_project(slug)?;
+        let (ResolvedNote { path, slug, .. }, mut doc) = self.resolve_active_project(slug)?;
+        let slug = slug.as_str();
 
         let bullet = format!("- [ ] {action_text} ({})", energy.as_str());
         // Read the started text back out of the bullet we are about to build,
@@ -246,6 +256,7 @@ impl Vault {
             added_entry: format_action_added_log_entry(slug, action_text, energy),
             started_entry: format_action_started_log_entry(slug, &started_text),
             started_text,
+            slug: slug.to_owned(),
             path,
             new_content,
             entry_meta,
@@ -287,7 +298,8 @@ impl Vault {
             return Err(DomainError::EmptyField { field: "action" });
         }
         let mut tx = self.transaction()?;
-        let action_text = self.resolve_start_target(slug, query)?;
+        let (slug, action_text) = self.resolve_start_target(slug, query)?;
+        let slug = slug.as_str();
         let open = self.focus_to_switch_from(at, slug, &action_text)?;
 
         let started_entry = format_action_started_log_entry(slug, &action_text);
@@ -330,6 +342,8 @@ impl Vault {
         }
         let mut tx = self.transaction()?;
         let plan = self.plan_unplanned_start(slug, &action_text, energy)?;
+        let slug = plan.slug.clone();
+        let slug = slug.as_str();
         let open = self.focus_to_switch_from(at, slug, &plan.started_text)?;
 
         let entries = switch_entries(
@@ -449,7 +463,9 @@ impl Vault {
         let mut tx = self.transaction()?;
         let today = at.date();
         let open = self.current_focus(today)?;
-        let project = project.map(str::trim);
+        // A former name filters as the name the log now carries.
+        let project = project.map(|p| self.current_project_slug(p.trim()));
+        let project = project.as_deref();
 
         let ((slug, action), from) = match (&open, project) {
             // A carried focus on the asked-for project (any, for the bare
@@ -501,7 +517,9 @@ impl Vault {
         // before anything is staged (RFC 0006 §8.1): a since-parked or
         // since-closed map is `ProjectNotActive`, a since-removed one
         // `NotFound`.
-        self.resolve_active_project(&slug)?;
+        // The line names the map's current slug, which a pause logged under
+        // a former name (RFC 0007 §5.5) does not.
+        let (ResolvedNote { slug, .. }, _doc) = self.resolve_active_project(&slug)?;
 
         let entry = format_resumed_log_entry(&slug, &action);
         let path = self.stage_daily_log(at, &entry, &mut tx)?;
@@ -569,8 +587,8 @@ impl Vault {
             return Err(DomainError::EmptyField { field: "action" });
         }
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let action_text = self.resolve_start_target(slug, query)?;
-        let action_text = action_text.as_str();
+        let (slug, action_text) = self.resolve_start_target(slug, query)?;
+        let (slug, action_text) = (slug.as_str(), action_text.as_str());
         // After resolution, so a typo is still a typo (RFC 0005 §5.1).
         self.refuse_if_focus_open(at, slug, action_text)?;
 
@@ -663,7 +681,7 @@ impl Vault {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let plan = self.plan_unplanned_start(slug, action_text, energy)?;
         // Before anything is staged: a refused start creates nothing.
-        self.refuse_if_focus_open(at, slug, &plan.started_text)?;
+        self.refuse_if_focus_open(at, &plan.slug, &plan.started_text)?;
 
         let path = plan.path.clone();
         let (added_entry, started_entry) = plan.stage(&mut tx);
@@ -696,7 +714,8 @@ impl Vault {
         energy: EnergyLevel,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_open_project(slug)?;
+        let (ResolvedNote { path, slug, .. }, mut doc) = self.resolve_open_project(slug)?;
+        let slug = slug.as_str();
 
         let action_text = action.trim();
         let bullet = format!("- [ ] {action_text} ({})", energy.as_str());
@@ -752,7 +771,8 @@ impl Vault {
         query: &str,
     ) -> Result<WriteOutcome, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_open_project(slug)?;
+        let (ResolvedNote { path, slug, .. }, mut doc) = self.resolve_open_project(slug)?;
+        let slug = slug.as_str();
 
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
@@ -819,7 +839,8 @@ impl Vault {
         reason: Option<&str>,
     ) -> Result<WriteOutcome, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_open_project(slug)?;
+        let (ResolvedNote { path, slug, .. }, mut doc) = self.resolve_open_project(slug)?;
+        let slug = slug.as_str();
 
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
@@ -891,7 +912,15 @@ impl Vault {
         // read-modify-write (find the bullet, spin the note, rewrite the
         // bullet) serialises under one write lock (#196).
         let mut tx = self.transaction()?;
-        let (project_path, mut doc) = self.resolve_open_project(slug)?;
+        let (
+            ResolvedNote {
+                path: project_path,
+                slug,
+                ..
+            },
+            mut doc,
+        ) = self.resolve_open_project(slug)?;
+        let slug = slug.as_str();
 
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
@@ -964,7 +993,7 @@ impl Vault {
     /// complete map, RFC 0006 §7.1) and propagates any
     /// malformed-frontmatter parse errors from the attached notes.
     pub fn list_actions(&self, slug: &str) -> Result<Vec<ActionListEntry>, DomainError> {
-        let (_path, doc) = self.resolve_open_project(slug)?;
+        let (_project, doc) = self.resolve_open_project(slug)?;
         let Ok(section) = doc.section(NEXT_ACTIONS_SECTION) else {
             return Ok(Vec::new());
         };

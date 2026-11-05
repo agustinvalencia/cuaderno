@@ -26,6 +26,7 @@ use crate::note_type::NoteType;
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
+use super::note_ref::ResolvedNote;
 use super::rewrite_field_in_frontmatter;
 use super::slug::{slugify, validate_explicit_slug};
 
@@ -390,7 +391,13 @@ impl Vault {
             ))));
         }
 
-        let (question_path, _fm) = self.resolve_question_by_slug(question)?;
+        let (
+            ResolvedNote {
+                path: question_path,
+                ..
+            },
+            _fm,
+        ) = self.resolve_question_by_slug(question)?;
         // Stage both ends; either side already linked is a no-op. The
         // commit is unconditional — when nothing changed it's a harmless
         // empty commit rather than a special case to branch on.
