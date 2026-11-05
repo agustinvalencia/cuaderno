@@ -5,6 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use cdno_core::error::StoreError;
+use cdno_core::frontmatter::yaml_scalar_is_string;
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
@@ -80,8 +81,8 @@ impl TakenBy {
 
 /// Check a slug the person typed, as opposed to one derived from a title:
 /// lowercase ASCII alphanumerics joined by single `-`, no leading or
-/// trailing `-`, at most [`SLUG_MAX_CHARS`], and not a value YAML 1.1 would
-/// read back as a non-string (the slug lands in frontmatter and wikilinks).
+/// trailing `-`, at most [`SLUG_MAX_CHARS`], and not a value the repo's YAML
+/// parser reads back as something other than a string (the slug lands in frontmatter and wikilinks).
 /// Pure: whether the name is already taken is [`Vault::taken_names`]'s job.
 pub fn validate_explicit_slug(slug: &str) -> Result<(), SlugRejection> {
     if slug.is_empty() {
@@ -113,34 +114,20 @@ pub fn validate_explicit_slug(slug: &str) -> Result<(), SlugRejection> {
     Ok(())
 }
 
-/// Whether YAML 1.1 reads this (already charset-valid) slug as a bool,
-/// null, integer, float or date rather than a string.
+/// Whether a charset-valid slug would not survive as text in frontmatter:
+/// the repo's YAML parser reads it as a number, bool or null (asked of the
+/// parser itself, [`yaml_scalar_is_string`]), or it is one of the YAML 1.1
+/// bool words or an ISO date, which that parser reads as text but other
+/// tools do not. The extras are deliberate over-rejection.
 fn is_yaml_typed(slug: &str) -> bool {
-    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    if matches!(
-        slug,
-        "true" | "false" | "yes" | "no" | "on" | "off" | "null" | "~"
-    ) {
+    if !yaml_scalar_is_string(slug) {
         return true;
     }
-    // Decimal and octal integers, and `0x` / `0b` forms.
-    if digits(slug) {
-        return true;
-    }
-    if let Some(hex) = slug.strip_prefix("0x") {
-        return !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit());
-    }
-    if let Some(bin) = slug.strip_prefix("0b") {
-        return !bin.is_empty() && bin.bytes().all(|b| b == b'0' || b == b'1');
-    }
-    // `1e3`: digits, `e`, digits.
-    if let Some((mantissa, exponent)) = slug.split_once('e')
-        && digits(mantissa)
-        && digits(exponent)
-    {
+    if matches!(slug, "yes" | "no" | "on" | "off") {
         return true;
     }
     // `2026-11-05`: a year, a month and a day, all digits.
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     let parts: Vec<&str> = slug.split('-').collect();
     parts.len() == 3 && parts[0].len() == 4 && parts.iter().all(|p| digits(p))
 }

@@ -80,7 +80,7 @@ pub enum DomainError {
 
     /// A slug the person typed is already another note's name: `holder` is
     /// that note, `kind` how it holds the name (RFC 0007 §6.2).
-    #[error("slug '{slug}' is taken by {holder} (as its {})", .kind.as_str())]
+    #[error("slug '{slug}' is taken by '{holder}' (as its {})", .kind.as_str())]
     SlugTaken {
         slug: String,
         holder: VaultPath,

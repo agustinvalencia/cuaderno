@@ -123,13 +123,24 @@ fn explicit_slug_rejections_name_their_reason() {
         ("no", SlugRejection::YamlTyped),
         ("1e3", SlugRejection::YamlTyped),
         ("2026-11-05", SlugRejection::YamlTyped),
+        ("0o17", SlugRejection::YamlTyped),
+        ("1e-3", SlugRejection::YamlTyped),
+        ("12e-04", SlugRejection::YamlTyped),
     ];
     for (input, expected) in rows {
         let got = validate_explicit_slug(input).expect_err(input);
         assert_eq!(got, expected, "input {input:?}");
         assert!(!got.to_string().is_empty());
     }
-    for ok in ["surrogate-model", "a", "2026-11", "v2", "a-b-c-d-e-f-g"] {
+    for ok in [
+        "surrogate-model",
+        "a",
+        "y",
+        "n",
+        "2026-11",
+        "v2",
+        "a-b-c-d-e-f-g",
+    ] {
         assert_eq!(validate_explicit_slug(ok), Ok(()), "input {ok:?}");
     }
 }

@@ -575,8 +575,8 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         | DomainError::ConfigChangedDuringMigration
         | DomainError::MigrationStampInvalid { .. } => return None,
 
-        // Nothing produces these yet: the explicit-slug verbs that do get
-        // their `invalid_slug` / `slug_taken` codes with them (RFC 0007).
+        // Stopgap until T4 (#853) adds the `invalid_slug` / `slug_taken`
+        // codes (RFC 0007); delete this arm then. Nothing produces these yet.
         DomainError::InvalidSlug { .. } | DomainError::SlugTaken { .. } => return None,
     };
 

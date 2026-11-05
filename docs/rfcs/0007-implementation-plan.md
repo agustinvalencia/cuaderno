@@ -221,7 +221,7 @@ name that would shadow a folder note is never derived.
 `add_action_with_note_and_vars` and `promote_action_with_vars`), `create_custom_note_with_vars`
 (`custom_notes.rs:193`) and `create_commitment_with_vars` (`commitments.rs:157`). With `Some`,
 the slug is validated (`InvalidSlug`) and checked against `taken_names` (`SlugTaken`, never
-suffixed); with `None`, behaviour is unchanged. The no-vars wrappers pass `None`. The custom-note
+suffixed). Tests seed one holder per name, since with several the reported holder follows index order. With `None`, behaviour is unchanged. The no-vars wrappers pass `None`. The custom-note
 `{{slug}}` placeholder (`ENGINE_SUPPLIED_FIELDS`, `custom_notes.rs:39`) carries the explicit one.
 
 **Deliverable.** Five signatures, their checks, tests.
@@ -332,7 +332,8 @@ are the instruction surface and must say the hint.
 
 **Probes.**
 - `cargo test -p cdno-mcp --test handlers_operations` passes with
-  `create_project_with_slug_names_the_file` and `a_taken_slug_rejects_with_slug_taken` (the
+  `create_project_with_slug_names_the_file`, `an_invalid_slug_rejects_with_invalid_slug` and
+  `a_taken_slug_rejects_with_slug_taken` (the
   envelope's `details.kind` is `"stem"`, `details.holder` is the path).
 - `cargo test -p cdno-mcp --test server` passes with
   `every_create_tool_describes_the_slug_hint` (the eight tools' schemas carry a `slug` property
