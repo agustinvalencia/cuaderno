@@ -493,6 +493,14 @@ impl VaultTransaction {
                 changed_alias_names.extend(before.symmetric_difference(&after).cloned());
             }
         }
+        // Known limitation (#892): when the link inputs fail here — the path
+        // or alias query at the facet seam (`link_inputs_failed`), or the
+        // `list_aliases` below — the commit reports `IndexStale` and the
+        // affected rows stay stale. The next reconcile does not heal them:
+        // the upsert already landed with the file's real mtime, so the note
+        // takes the fast path, and Phase 2b runs only when that pass itself
+        // adds or removes a note or changes the alias map. The path trigger
+        // has had the same gap since #640.
         if (!added_paths.is_empty() || !removed_paths.is_empty() || !changed_alias_names.is_empty())
             && !link_inputs_failed
         {

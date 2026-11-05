@@ -539,19 +539,24 @@ the validator cannot disagree. A free-text alias is simply not returned.
 
 ### T11 — The alias rule in resolution, and its triggers
 
-**What.** `resolve_one` (`extractors.rs:347`), `resolve_wikilinks` (`:331`), `target_may_name`
-(`:464`) and `reresolve_stale_links` (`reconcile.rs:338`) take an `aliases: &AliasMap` beside the
-path set — `AliasMap::from_rows(list_aliases())`, mapping an alias to `Some(path)` when exactly one
-note declares it and to `None` when two or more do, so a shared alias is unresolvable by
-construction. A final rule in `resolve_one`, after the last-segment rule and only on
-**zero** stem matches: the target's last segment equals exactly one note's alias (§5.5; a stem
-match, unique or ambiguous, always wins; an alias shared by two notes resolves to nothing).
+**What.** `resolve_one` (`extractors.rs:347`), `resolve_wikilinks` (`:331`) and
+`reresolve_stale_links` (`reconcile.rs:338`) take an `aliases: &AliasMap` beside the path set —
+`AliasMap::from_rows(list_aliases())`, mapping an alias to `Some(path)` when exactly one note
+declares it and to `None` when two or more do, so a shared alias is unresolvable by construction.
+`target_may_name` (`:464`) keeps its signature: the changed alias names join its `names` set. A
+final rule in `resolve_one`, after the last-segment rule and only on **zero** stem matches: the
+target's last segment equals exactly one note's alias (§5.5; a stem match, unique or ambiguous,
+always wins; an alias shared by two notes resolves to nothing). The alias rule resolves only to a
+holder in the path set, as every other rule does.
 `LinkEntry` (`index.rs:344`) gains `via_alias: bool`, carried through `set_link_resolutions`
 (a column added in T15's migration, or a fourth migration here — one migration per stage, so
 here: `003_links_via_alias.sql`). Triggers: at commit (`transaction.rs:426–444`) re-resolution
 also runs when the alias set of any upserted note changed (compare the `aliases` key of the
 stored `frontmatter` with the new entry's), with `consider_target` widened to the changed alias
-names; at reconcile (`reconcile.rs:252–266`) also when `list_aliases()` before phase 1 differs
+names. The comparison covers only notes that also have a file op in the commit, so reconcile's
+own index-only commits never trigger it; phase 2b covers them. A row resolved via alias is
+reconsidered when a stem with that name is added, at commit and at reconcile, since a stem always
+wins. At reconcile (`reconcile.rs:252–266`) also when `list_aliases()` before phase 1 differs
 from after. The domain's own `resolve_wikilink` (`links.rs:61`) stops re-implementing the rule
 and delegates to core with the alias map.
 

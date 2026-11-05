@@ -773,7 +773,6 @@ fn an_alias_one_note_lists_twice_is_still_unique() {
         ("old", "projects/new.md"),
     ]);
     assert_eq!(shared.unique("old"), None);
-    assert_eq!(shared.names().collect::<Vec<_>>(), vec!["old"]);
 }
 
 #[test]

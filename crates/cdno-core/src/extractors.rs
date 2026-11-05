@@ -523,12 +523,6 @@ impl AliasMap {
         self.0.get(name).and_then(Option::as_ref)
     }
 
-    /// Every alias any note declares, shared ones included — the names an
-    /// alias-rule resolution can end on, for a [`target_may_name`] filter.
-    pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.0.keys().map(String::as_str)
-    }
-
     /// Whether no note declares any alias.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
