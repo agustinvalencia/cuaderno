@@ -65,6 +65,7 @@ impl CuadernoServer {
                     &input.question,
                     input.project.as_deref(),
                     &vars,
+                    None,
                 )
             })
             .await?
@@ -182,9 +183,15 @@ impl CuadernoServer {
             .with_vault(move |vault| {
                 let vars = input.vars.unwrap_or_default();
                 if input.expanded {
-                    vault.create_stewardship_expanded_with_vars(at, &input.name, context, &vars)
+                    vault.create_stewardship_expanded_with_vars(
+                        at,
+                        &input.name,
+                        context,
+                        &vars,
+                        None,
+                    )
                 } else {
-                    vault.create_stewardship_flat_with_vars(at, &input.name, context, &vars)
+                    vault.create_stewardship_flat_with_vars(at, &input.name, context, &vars, None)
                 }
             })
             .await?

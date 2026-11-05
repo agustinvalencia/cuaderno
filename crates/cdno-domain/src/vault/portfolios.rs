@@ -111,7 +111,7 @@ impl Vault {
         question: &str,
         project: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
-        self.create_portfolio_with_vars(at, question, project, &HashMap::new())
+        self.create_portfolio_with_vars(at, question, project, &HashMap::new(), None)
     }
 
     /// As [`create_portfolio`](Self::create_portfolio), with caller-supplied
@@ -122,6 +122,7 @@ impl Vault {
         question: &str,
         project: Option<&str>,
         prompted: &HashMap<String, String>,
+        slug: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let question = question.trim();
@@ -136,7 +137,26 @@ impl Vault {
         // created from the same text computes `foo` and won't correlate to
         // `foo-2`. Rare, and a net improvement over the pre-#225 state where
         // that same pair was an actual resolver ambiguity.
-        let slug = slugify(question);
+        //
+        // `question` is first tried as a question *reference* (RFC 0007 P2):
+        // when a question note has that slug, the portfolio takes it, so a
+        // question created with a chosen slug keeps its correlation. Anything
+        // else is text, and the slug is its raw `slugify`. An explicit `slug`
+        // wins over both, validated and never suffixed.
+        let referenced = if question.contains(['/', '\\']) {
+            None
+        } else {
+            self.find_question_path(question)?
+        };
+        let slug = match (slug, &referenced) {
+            (None, Some(q)) => q
+                .as_path()
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(question)
+                .to_owned(),
+            _ => self.explicit_or_raw_slug(slug, question)?,
+        };
         let path = VaultPath::new(format!("{}/{slug}/_index.md", cdno_core::paths::PORTFOLIOS))?;
         if self.store.exists(&path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
@@ -151,7 +171,11 @@ impl Vault {
         // than a read-modify-write of a file we're creating); the
         // question side is staged onto the same tx so both ends land
         // atomically — or neither does.
-        if let Some(question_path) = self.find_question_path(&slug)? {
+        let linked_question = match referenced {
+            Some(q) => Some(q),
+            None => self.find_question_path(&slug)?,
+        };
+        if let Some(question_path) = linked_question {
             let mut doc = MarkdownDocument::parse(content)?;
             append_wikilink_to_section(
                 &mut doc,

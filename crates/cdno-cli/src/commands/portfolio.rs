@@ -218,7 +218,7 @@ fn create(
         }
     }
     let path = vault
-        .create_portfolio_with_vars(at, &question, project.as_deref(), &template_vars)
+        .create_portfolio_with_vars(at, &question, project.as_deref(), &template_vars, None)
         .context("creating portfolio")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())

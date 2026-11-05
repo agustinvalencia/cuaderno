@@ -276,6 +276,29 @@ impl Vault {
         let Some(slug) = explicit else {
             return self.unique_slug(&slugify(title));
         };
+        self.checked_explicit_slug(slug)
+    }
+
+    /// As [`explicit_or_derived_slug`](Self::explicit_or_derived_slug), for the
+    /// creates that deliberately skip [`unique_slug`](Self::unique_slug)
+    /// (portfolios and stewardships): without `explicit` the slug is the raw
+    /// [`slugify`] of `text`, unsuffixed, and the caller's own
+    /// `AlreadyExists` guard stays the collision check. With it, the same
+    /// validate-and-check as every other create.
+    pub(in crate::vault) fn explicit_or_raw_slug(
+        &self,
+        explicit: Option<&str>,
+        text: &str,
+    ) -> Result<String, DomainError> {
+        match explicit {
+            Some(slug) => self.checked_explicit_slug(slug),
+            None => Ok(slugify(text)),
+        }
+    }
+
+    /// Validate a slug the person typed and refuse it if anything holds the
+    /// name: [`DomainError::InvalidSlug`], then [`DomainError::SlugTaken`].
+    fn checked_explicit_slug(&self, slug: &str) -> Result<String, DomainError> {
         validate_explicit_slug(slug).map_err(|why| DomainError::InvalidSlug {
             slug: slug.to_owned(),
             why,

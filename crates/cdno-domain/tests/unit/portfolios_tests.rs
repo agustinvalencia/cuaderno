@@ -1389,3 +1389,95 @@ fn project_link_resolves_through_the_wikilink_resolver() {
         "must resolve to the portfolio _index, not dangle: {portfolio_link:?}"
     );
 }
+
+/// Every file in the store and its content.
+fn snapshot(store: &Arc<dyn VaultStore>) -> std::collections::BTreeMap<String, String> {
+    store
+        .walk_dir(&VaultPath::root())
+        .unwrap()
+        .into_iter()
+        .map(|p| {
+            let content = store.read_file(&p).unwrap();
+            (p.to_string(), content)
+        })
+        .collect()
+}
+
+#[test]
+fn a_question_reference_gives_the_portfolio_its_slug() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+    let question_path = vault
+        .create_question_with_vars(
+            at,
+            QuestionDomain::Research,
+            "Can the surrogate model be calibrated against the high-fidelity thermal runs?",
+            &std::collections::HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+        .expect("create question");
+
+    let portfolio_path = vault
+        .create_portfolio(at, "surrogate-calibration", None)
+        .expect("create portfolio");
+
+    assert_eq!(
+        portfolio_path,
+        vp("portfolios/surrogate-calibration/_index.md")
+    );
+    let question_raw = store.read_file(&question_path).unwrap();
+    assert!(
+        question_raw
+            .contains("## Related Portfolios\n- [[portfolios/surrogate-calibration/_index]]"),
+        "question should backlink the portfolio:\n{question_raw}"
+    );
+    let portfolio_raw = store.read_file(&portfolio_path).unwrap();
+    assert!(
+        portfolio_raw
+            .contains("## Related Questions\n- [[questions/research/surrogate-calibration]]"),
+        "portfolio should link the question:\n{portfolio_raw}"
+    );
+}
+
+#[test]
+fn question_text_still_slugifies_when_no_question_resolves() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let path = vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Surrogate model fidelity", None)
+        .expect("create portfolio");
+    assert_eq!(path, vp("portfolios/surrogate-model-fidelity/_index.md"));
+    assert!(store.exists(&path).unwrap());
+}
+
+#[test]
+fn an_explicit_portfolio_slug_that_is_a_folder_is_refused() {
+    use cdno_domain::TakenBy;
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+    vault
+        .create_portfolio(at, "Surrogate model", None)
+        .expect("first portfolio");
+    let before = snapshot(&store);
+
+    let err = vault
+        .create_portfolio_with_vars(
+            at,
+            "Another question",
+            None,
+            &std::collections::HashMap::new(),
+            Some("surrogate-model"),
+        )
+        .expect_err("refused");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken {
+                kind: TakenBy::Folder,
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
+}
