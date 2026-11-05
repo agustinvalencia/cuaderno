@@ -10,21 +10,21 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 - **Naming a note at creation** (RFC 0007 stage S1, closes #579). The create operations for a project,
   question, action note, custom note, commitment, portfolio and stewardship accept an explicit slug,
-  validated and refused on collision rather than suffixed (#850, #851). When a portfolio's `question`
+  validated and refused on collision rather than suffixed (#881, #882). When a portfolio's `question`
   is a question's slug, the portfolio takes the question's text as its title and the two are linked
-  both ways; an explicit slug must then be the question's (#851).
+  both ways; an explicit slug must then be the question's (#882).
 - `--slug` on the eight CLI create verbs (`project create`, `question create`, `portfolio create`,
   `action add --note`, `action promote`, `note create`, `stewardship create`, `commit create`): it is
   never prompted, never shown in a confirmation preview, and is refused when the name is taken. Under
   `--json` a refusal is an `invalid_slug`, `slug_taken`, `portfolio_slug_mismatch` or
   `slug_given_twice` object. `note create` refuses `--slug` beside `--field slug=…`, and the
-  `portfolio create --question` help says a question's slug is accepted (#852).
+  `portfolio create --question` help says a question's slug is accepted (#883).
 - MCP: an optional `slug` on the eight create tools (`create_project`, `create_question`,
   `create_portfolio`, `create_custom_note`, `create_stewardship`, `add_action`, `promote_action`,
   `create_commitment`; `add_action` ignores it without `with_note`), `create_portfolio.question`
   accepting a question's slug as well as its text, and four rejection codes with the CLI's `--json`
   shapes: `invalid_slug`, `slug_taken`, `portfolio_slug_mismatch` and `slug_given_twice`. The
-  catalogue is unchanged at 65 tools (#853).
+  catalogue is unchanged at 65 tools (#884).
 
 ### Changed
 
@@ -32,13 +32,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `portfolios/surrogate-model/`), so a question created after a portfolio of the same name gets
   `-2`. A slug-shaped title or reference longer than six words is no longer truncated, in a title
   and in a stewardship reference, a commitment's `project:` / `stewardship:` value and a tracking
-  activity slug (#849).
+  activity slug (#880).
 
 ### Documentation
 
 - The `--slug` flag on each create page of the CLI reference, the shared slug rule on the CLI
   overview, the four refusal objects in the JSON output reference, and the `slug` field and the four
-  codes in the MCP reference; the RFC 0007 row in `STATUS.md` (#854, closes #579).
+  codes in the MCP reference; the RFC 0007 row in `STATUS.md` (#885, closes #579).
 
 ## [0.43.0] - 2026-10-20
 

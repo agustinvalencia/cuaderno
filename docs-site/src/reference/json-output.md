@@ -60,7 +60,7 @@ MCP server returns, and `details` depends on the `code`:
 | `code` | `details` | When |
 |---|---|---|
 | `invalid_slug` | `slug`, `why` | The slug breaks the shape rule; `why` says which part. |
-| `slug_taken` | `slug`, `holder`, `kind` | Another note already holds the name. `holder` is that note's path; `kind` is `stem` (its filename), `folder` (the folder of a folder note) or `alias` (a declared alias). |
+| `slug_taken` | `slug`, `holder`, `kind` | Another note already holds the name. `holder` is that note's path; `kind` is `stem` (its filename) or `folder` (the folder of a folder note). |
 | `portfolio_slug_mismatch` | `question_slug`, `slug` | `portfolio create --question <question-slug>` with an explicit `--slug` that is not that question's slug. |
 | `slug_given_twice` | `field` | `note create` given `--slug` beside `--field slug=…`; `field` is `slug`. |
 
@@ -72,9 +72,9 @@ cdno portfolio create --question "Sparse vs dense attention OOD" --slug surrogat
   "code": "slug_taken",
   "message": "slug 'surrogate-model' is taken by 'projects/surrogate-model.md' (as its stem)",
   "details": {
-    "slug": "surrogate-model",
     "holder": "projects/surrogate-model.md",
-    "kind": "stem"
+    "kind": "stem",
+    "slug": "surrogate-model"
   }
 }
 ```

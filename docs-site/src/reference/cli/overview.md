@@ -86,14 +86,28 @@ An explicit slug must be:
   `2026-11-05`): add a word to it.
 
 An explicit slug is used exactly or refused, never rewritten. If another note already holds the name
-(as its filename, as the folder of a folder note such as `portfolios/surrogate-model/`, or as a
-declared alias) the create is refused and nothing is written; pick another name. The `-2` suffix
-belongs to derived slugs only. `--slug` is never prompted for, so omit it and the behaviour is exactly
-as before. Under [`--json`](../json-output.md#slug-refusals) a refusal is a coded object.
+(as its filename, or as the folder of a folder note such as `portfolios/surrogate-model/`) the create
+is refused and nothing is written; pick another name. The `-2` suffix belongs to derived slugs only.
+`--slug` is never prompted for; omit it and the slug derives from the title. In a terminal a refusal
+reads:
 
-A derived slug also steps past a folder note's name now: a question titled "Surrogate model" created
-beside the portfolio `portfolios/surrogate-model/` gets `surrogate-model-2`, since the bare name would
-shadow the portfolio's `_index` in a `[[surrogate-model]]` link.
+```text
+$ cdno project create --title "Surrogate model" --context work --slug surrogate-model
+Error: creating project
+
+Caused by:
+    slug 'surrogate-model' is taken by 'projects/surrogate-model.md' (as its stem)
+```
+
+Under [`--json`](../json-output.md#slug-refusals) a refusal is a coded object.
+
+A derived slug takes `-2` when the name is held, and a folder note's name counts as held: a question
+titled "Surrogate model" created beside the portfolio `portfolios/surrogate-model/` gets
+`surrogate-model-2`, since the bare name would shadow the portfolio's `_index` in a
+`[[surrogate-model]]` link. This applies to the verbs that disambiguate: `project create`,
+`question create`, `action add --note` and `action promote`, `note create` and `commit create`.
+`portfolio create` and `stewardship create` keep the raw derived slug (a portfolio's slug correlates
+with its question's) and refuse a collision outright.
 
 ```bash
 cdno action add --project surrogate-model --note --energy deep \
