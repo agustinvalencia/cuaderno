@@ -26,7 +26,7 @@ use cdno_core::template::{TemplateSource, VariableContext};
 
 use crate::error::DomainError;
 use crate::frontmatter::TrackingFrontmatter;
-use crate::note_type::NoteType;
+use crate::note_type::{NoteType, STEWARDSHIP_KEY};
 
 use super::Vault;
 use super::frontmatter_edit::merge_fields_into_frontmatter;
@@ -454,7 +454,7 @@ const TRACKING_NOTES_SECTION: &str = "Notes";
 /// `set_frontmatter` refuses this same class through its own default-deny
 /// (declared *and* `settable = true`, then type-checked); this path needs its
 /// own guard because a metric key is caller-supplied and otherwise unchecked.
-const IDENTITY_KEYS: &[&str] = &["type", "stewardship", "activity", "date"];
+const IDENTITY_KEYS: &[&str] = &["type", STEWARDSHIP_KEY, "activity", "date"];
 
 /// Reject a metrics payload naming a key that identifies the note.
 fn check_no_identity_metrics(
@@ -544,7 +544,7 @@ impl Vault {
             None => "null".to_owned(),
         };
         let mut ctx = VariableContext::new();
-        ctx.set_contextual("stewardship", stewardship);
+        ctx.set_contextual(STEWARDSHIP_KEY, stewardship);
         ctx.set_contextual("activity", activity_slug);
         ctx.set_contextual("activity_title", title_case(activity_slug));
         ctx.set_contextual("date", date.format("%Y-%m-%d").to_string());

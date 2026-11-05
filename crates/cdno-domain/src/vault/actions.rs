@@ -22,7 +22,7 @@ use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
 use crate::frontmatter::{ActionStatus, EnergyLevel};
-use crate::note_type::NoteType;
+use crate::note_type::{NoteType, PROJECT_KEY};
 
 use super::Vault;
 use super::closure::Closure;
@@ -84,7 +84,7 @@ impl Vault {
             .unwrap_or_else(|| "null".to_owned());
         let mut ctx = VariableContext::new();
         ctx.set_contextual("status", ActionStatus::Active.as_str());
-        ctx.set_contextual("project", project);
+        ctx.set_contextual(PROJECT_KEY, project);
         ctx.set_contextual("energy", energy.as_str());
         ctx.set_contextual("milestone", milestone_yaml);
         ctx.set_contextual("due", due_yaml);
@@ -302,7 +302,7 @@ impl Vault {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
-        let masked = cdno_core::hash::mask_references(&new_content, SNAPSHOT_REFERENCE_KEYS);
+        let masked = cdno_core::hash::mask_references(&new_content, NoteType::reference_keys());
         let snapshot = cdno_core::index::ArchivalSnapshot {
             frozen_size: new_content.len() as u64,
             frozen_hash: cdno_core::hash::content_hash(&new_content),
@@ -328,14 +328,6 @@ impl Vault {
             .map_err(DomainError::from)
     }
 }
-
-/// The frontmatter keys that hold a bare slug (RFC 0007 §3.5) and so are
-/// masked in the snapshot's masked hash. A literal until T17 replaces it
-/// with the reference table. Shared by the archival stamp, the startup
-/// backfill (`vault/snapshot_backfill.rs`) and the append-only lint, which
-/// must all mask with the same keys or a stored hash never verifies.
-pub(in crate::vault) const SNAPSHOT_REFERENCE_KEYS: &[&str] =
-    &["project", "stewardship", "portfolio", "captured_during"];
 
 /// The slug is the file stem of the note path. `create_action_note`
 /// always builds the path from a slug, so the stem is present and

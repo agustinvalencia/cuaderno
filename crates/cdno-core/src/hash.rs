@@ -29,7 +29,10 @@ pub fn content_hash(content: &str) -> String {
 
 /// Version of the masking rule behind [`masked_content_hash`]. Stamped next
 /// to every masked hash; a change to what is masked bumps it, so a stored
-/// hash is never compared against a different rule.
+/// hash is never compared against a different rule. The set of masked
+/// frontmatter keys is part of that rule: adding or removing a key in the
+/// domain's reference table (`NoteType::reference_keys`) is a change to what
+/// is masked and bumps it.
 pub const MASK_VERSION: u32 = 1;
 
 /// What every masked range is replaced with before hashing.

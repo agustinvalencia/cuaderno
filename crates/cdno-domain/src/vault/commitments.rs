@@ -25,7 +25,7 @@ use crate::frontmatter::{
     ActionFrontmatter, ActionStatus, CommitmentFrontmatter, CommitmentStatus, Context,
     ProjectFrontmatter, ProjectStatus, StewardshipFrontmatter,
 };
-use crate::note_type::NoteType;
+use crate::note_type::{NoteType, PROJECT_KEY, STEWARDSHIP_KEY};
 use crate::recurrence::Recurrence;
 
 use super::projects::actions::{LOG_REASON_KEY, flatten_reason};
@@ -205,8 +205,8 @@ impl Vault {
         // origin links carry a quoted slug when supplied, else `null`.
         ctx.set_contextual("completed", "null");
         ctx.set_contextual("context", context.as_str());
-        ctx.set_contextual("project", yaml_opt_slug(project.as_deref()));
-        ctx.set_contextual("stewardship", yaml_opt_slug(stewardship.as_deref()));
+        ctx.set_contextual(PROJECT_KEY, yaml_opt_slug(project.as_deref()));
+        ctx.set_contextual(STEWARDSHIP_KEY, yaml_opt_slug(stewardship.as_deref()));
         for (k, v) in prompted {
             ctx.set_prompted(k, v);
         }

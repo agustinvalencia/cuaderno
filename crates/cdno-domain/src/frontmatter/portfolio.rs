@@ -11,6 +11,8 @@ use cdno_core::error::ValidationError;
 use cdno_core::frontmatter::Frontmatter;
 use chrono::NaiveDate;
 
+use crate::note_type::PROJECT_KEY;
+
 /// Parsed and validated frontmatter for a portfolio `_index.md`.
 ///
 /// `question` is the unifying question the portfolio collects evidence
@@ -35,7 +37,7 @@ impl TryFrom<Frontmatter> for PortfolioFrontmatter {
         Ok(Self {
             question: fm.require_field::<String>("question")?,
             created: fm.require_field::<NaiveDate>("created")?,
-            project: fm.optional_field::<String>("project")?,
+            project: fm.optional_field::<String>(PROJECT_KEY)?,
         })
     }
 }

@@ -9,7 +9,7 @@ use cdno_core::path::VaultPath;
 use cdno_core::template::VariableContext;
 
 use crate::error::DomainError;
-use crate::note_type::NoteType;
+use crate::note_type::{CAPTURED_DURING_KEY, NoteType};
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
@@ -123,7 +123,7 @@ impl Vault {
         // Copied from the item, not the current focus: the tag outlives the
         // file (RFC 0005 §5.6).
         let during = fm
-            .optional_field::<String>(CAPTURED_DURING)
+            .optional_field::<String>(CAPTURED_DURING_KEY)
             .ok()
             .flatten()
             .filter(|s| !s.trim().is_empty())
@@ -173,9 +173,6 @@ impl Vault {
     }
 }
 
-/// Frontmatter key recording the project in focus when an item was captured.
-const CAPTURED_DURING: &str = "captured_during";
-
 /// Insert `captured_during: <slug>` as the last frontmatter line of
 /// `content`. Content without a frontmatter block is returned unchanged.
 fn add_captured_during(content: String, slug: &str) -> String {
@@ -198,13 +195,13 @@ fn add_captured_during(content: String, slug: &str) -> String {
     // would make the note unparseable.
     if block
         .lines()
-        .any(|l| l.trim_end().starts_with(&format!("{CAPTURED_DURING}:")))
+        .any(|l| l.trim_end().starts_with(&format!("{CAPTURED_DURING_KEY}:")))
     {
         return content;
     }
     let at = open.len() + end;
     format!(
-        "{}{nl}{CAPTURED_DURING}: {slug}{}",
+        "{}{nl}{CAPTURED_DURING_KEY}: {slug}{}",
         &content[..at],
         &content[at..]
     )

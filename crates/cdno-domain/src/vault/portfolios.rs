@@ -22,7 +22,7 @@ use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
 use crate::frontmatter::{EvidenceFrontmatter, PortfolioFrontmatter};
-use crate::note_type::NoteType;
+use crate::note_type::{NoteType, PORTFOLIO_KEY, PROJECT_KEY};
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
@@ -287,7 +287,7 @@ impl Vault {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let project = project.trim();
         if project.is_empty() {
-            return Err(DomainError::EmptyField { field: "project" });
+            return Err(DomainError::EmptyField { field: PROJECT_KEY });
         }
         if project.contains("[[") || project.contains("]]") {
             return Err(DomainError::MalformedWikilink {
@@ -317,7 +317,7 @@ impl Vault {
         // is always in range. Skip the write when it's already this value.
         let portfolio_raw = self.store.read_file(&portfolio_index)?;
         let project_field = format!("\"[[{project}]]\"");
-        let updated = rewrite_field_in_frontmatter(&portfolio_raw, "project", &project_field)?;
+        let updated = rewrite_field_in_frontmatter(&portfolio_raw, PROJECT_KEY, &project_field)?;
         if updated != portfolio_raw {
             let entry =
                 build_index_entry_for(&portfolio_index, &updated, NoteType::Portfolio.as_str())?;
@@ -855,7 +855,7 @@ impl Vault {
         let mut ctx = VariableContext::new();
         ctx.set_contextual("question", question);
         ctx.set_contextual("created", created.format("%Y-%m-%d").to_string());
-        ctx.set_contextual("project", project_field);
+        ctx.set_contextual(PROJECT_KEY, project_field);
         for (k, v) in prompted {
             ctx.set_prompted(k, v);
         }
@@ -877,7 +877,7 @@ impl Vault {
         let mut ctx = VariableContext::new();
         ctx.set_contextual("created", created.format("%Y-%m-%d").to_string());
         ctx.set_contextual("source", source);
-        ctx.set_contextual("portfolio", portfolio);
+        ctx.set_contextual(PORTFOLIO_KEY, portfolio);
         ctx.set_contextual("origin", format!("[[{origin}]]"));
         ctx.set_contextual("content", content.trim_end());
         for (k, v) in prompted {
@@ -941,7 +941,7 @@ fn render_attachment_stub(
          type: evidence\n\
          created: {created}\n\
          source: \"{source_yaml}\"\n\
-         portfolio: {portfolio}\n\
+         {PORTFOLIO_KEY}: {portfolio}\n\
          origin: \"[[{origin_yaml}]]\"\n\
          kind: {kind}\n\
          ---\n\

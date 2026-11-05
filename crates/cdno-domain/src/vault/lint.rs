@@ -1298,10 +1298,7 @@ fn check_append_only(
     let masked = match (&snap.masked_hash, snap.mask_version, snap.masked_size) {
         (Some(hash), Some(version), Some(size)) => {
             if version == cdno_core::hash::MASK_VERSION {
-                let text = cdno_core::hash::mask_references(
-                    &content,
-                    super::actions::SNAPSHOT_REFERENCE_KEYS,
-                );
+                let text = cdno_core::hash::mask_references(&content, NoteType::reference_keys());
                 Some((verify_extent(&text, size, hash), size, text.len()))
             } else {
                 issues.push(LintIssue::warning(
