@@ -2865,8 +2865,10 @@ fn promoting_with_an_explicit_slug_names_the_action_note() {
         .read_file(&vp("journal/2026/daily/2026-05-28.md"))
         .unwrap();
     assert!(
-        daily.contains("action promoted on [[foo]]")
-            && daily.contains("-> [[actions/surrogate-calibration]]"),
+        daily
+            .lines()
+            .any(|l| l.contains("action promoted on [[foo]]")
+                && l.contains("-> [[actions/surrogate-calibration]]")),
         "promotion line names the explicit slug: {daily}"
     );
 }
