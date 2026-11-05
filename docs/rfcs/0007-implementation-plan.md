@@ -684,13 +684,19 @@ never be given to anything else.
 
 ### T14 — Lint: the straggler and the conflict
 
-**What.** In `crates/cdno-domain/src/vault/lint.rs`, the dangling-wikilink pass (`:316–345`)
+**What.** In `crates/cdno-domain/src/vault/lint.rs`, the dangling-wikilink pass (the broken-wikilink check in `lint_all_notes`)
 resolves with the alias map; a link that resolved **only through an alias** is a Warning:
 "`[[old]]` names a renamed note — now `new`" (§5.5). A second Warning when an alias equals
-another note's stem or folder name: "alias `x` on `<path>` is shadowed by `<other>`" (§7: the stem
-wins). Both messages name the current slug so a person can fix the link by hand until T30.
+another note's **file stem** (the stem tier of resolution compares file stems only, and tries
+them first): "alias `x` on `<path>` is shadowed by `<other>`" (§7: the stem wins). A third Warning
+when an alias equals the **folder name** of a folder note (`<dir>/x/_index.md`, whose stem is
+`_index`): "alias `x` on `<path>` takes bare `[[x]]` from folder note `<other>`" — the alias wins
+bare links, and only the folder form `[[<dir>/x]]` reaches the folder note. The straggler's hint
+for a folder note is the folder form (`portfolios/new`), since a bare `[[new]]` would dangle. A stem
+shadow silences the folder warning (the alias is dead, so it takes nothing). The messages name the
+current slug so a person can fix the link by hand until T30.
 
-**Deliverable.** Two warnings, tests.
+**Deliverable.** Three warnings (straggler, stem shadow, folder contest), tests.
 
 **Depends on.** T11, T12.
 
@@ -699,7 +705,12 @@ wins). Both messages name the current slug so a person can fix the link by hand 
 **Probes.**
 - `cargo test -p cdno-domain --test unit -- unit::lint_tests` passes with
   `a_link_through_an_alias_is_a_straggler_warning` (message contains the new slug, severity
-  Warning), `a_link_to_a_stem_is_not_a_straggler`, `an_alias_equal_to_a_stem_is_a_conflict`.
+  Warning), `a_link_to_a_stem_is_not_a_straggler`, `an_alias_equal_to_a_stem_is_a_conflict`, plus
+  `an_alias_equal_to_a_folder_name_is_a_conflict`, `a_folder_notes_own_alias_can_be_shadowed`,
+  `a_vault_can_carry_both_conflict_warnings`,
+  `a_bare_link_to_a_folder_name_held_as_an_alias_is_a_straggler`,
+  `a_straggler_to_a_folder_note_names_the_folder_form`, `a_notes_own_stem_does_not_shadow_its_alias`,
+  `an_alias_listed_twice_is_reported_once`, `a_stem_shadow_silences_the_folder_warning`.
 - `cargo test -p cdno-cli --test lint`: the warning renders with the path and both names.
 
 **Correct means.** Every reference an editor cannot follow is listed, with the fix in the

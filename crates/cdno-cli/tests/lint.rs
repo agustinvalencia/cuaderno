@@ -199,3 +199,65 @@ fn lint_reports_the_over_cap_warning() {
         ))
         .stdout(predicate::str::contains("[[foxtrot]]"));
 }
+
+fn write_project(dir: &std::path::Path, slug: &str, aliases: &str) {
+    fs::write(
+        dir.join(format!("projects/{slug}.md")),
+        format!(
+            "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\n\
+             core_question: null\nclosed: null\naliases: {aliases}\n---\n\n# Map\n\n\
+             ## Current State\n\n## Next Actions\n\n## Milestones\n\n## Waiting On\n"
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn lint_reports_a_straggler_with_the_path_and_both_names() {
+    use assert_cmd::Command;
+    use predicates::prelude::*;
+
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+    write_project(dir.path(), "surrogate-model", "[old-model]");
+    let daily = dir.path().join("journal/2026/daily/2026-04-19.md");
+    fs::create_dir_all(daily.parent().unwrap()).unwrap();
+    fs::write(
+        &daily,
+        "---\ntype: daily\ndate: 2026-04-19\n---\n# Day\n\nSee [[old-model]].\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("cdno")
+        .expect("cdno binary built")
+        .env_remove("CUADERNO_VAULT_PATH")
+        .current_dir(dir.path())
+        .arg("lint")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "[warning] journal/2026/daily/2026-04-19.md: `[[old-model]]` names a renamed note — now `surrogate-model`",
+        ));
+}
+
+#[test]
+fn lint_reports_a_shadowed_alias_with_the_path_and_both_names() {
+    use assert_cmd::Command;
+    use predicates::prelude::*;
+
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+    write_project(dir.path(), "surrogate-model", "[ablation-study]");
+    write_project(dir.path(), "ablation-study", "[]");
+
+    Command::cargo_bin("cdno")
+        .expect("cdno binary built")
+        .env_remove("CUADERNO_VAULT_PATH")
+        .current_dir(dir.path())
+        .arg("lint")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "[warning] projects/surrogate-model.md: alias `ablation-study` on `projects/surrogate-model.md` is shadowed by `projects/ablation-study.md`",
+        ));
+}

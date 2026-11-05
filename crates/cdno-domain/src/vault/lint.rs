@@ -27,6 +27,7 @@ use super::context::{
     parse_promotion_marker, record_time, records_of, str_field,
 };
 use super::method_status::MethodStatus;
+use super::note_ref::candidate_slug;
 use super::orient::{ACTIVE_HABITS_SECTION, parse_habit_line};
 use super::projects::actions::{
     LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_ACTION_PAUSED_PREFIX,
@@ -104,6 +105,12 @@ impl Vault {
         // Built once and shared across every note's link check.
         let paths = self.index.list_all_paths()?;
         let path_set: HashSet<VaultPath> = paths.iter().cloned().collect();
+
+        // The alias rows, read once: the map resolves links with them, and
+        // the conflict pass below reads the rows themselves because the map
+        // drops an alias two notes share by design.
+        let alias_rows = self.index.list_aliases()?;
+        let alias_map = AliasMap::from_rows(alias_rows.iter().cloned());
 
         // Memoise canonical frontmatter order per (type, variant) for this
         // pass so the effective template is resolved once per key, not once
@@ -323,16 +330,31 @@ impl Vault {
             // alongside the resolved entries (same order, 1:1) so the embed
             // flag survives to the message.
             //
-            // Resolved without the alias map for now, so a link through an
-            // alias is still reported here as dangling: RFC 0007 T14 turns
-            // it into the straggler warning that names the current slug.
+            // Resolved with the alias map, so a link that only an alias
+            // carries is a straggler (RFC 0007 §5.5): a Warning naming the
+            // note's current slug, so a person can fix the link by hand.
             let raws = extract_wikilinks(body);
-            let no_aliases = AliasMap::default();
             for (raw, link) in
                 raws.iter()
-                    .zip(resolve_wikilinks(raws.clone(), &path_set, &no_aliases))
+                    .zip(resolve_wikilinks(raws.clone(), &path_set, &alias_map))
             {
-                if link.resolved_path.is_some() {
+                if let Some(resolved) = &link.resolved_path {
+                    if link.via_alias {
+                        // A folder note is followed by its folder form: a
+                        // bare `[[new]]` would not reach `new/_index.md`.
+                        let now = if resolved.as_path().file_stem().and_then(|s| s.to_str())
+                            == Some("_index")
+                        {
+                            resolved.as_path().parent().map(|d| d.display().to_string())
+                        } else {
+                            candidate_slug(resolved)
+                        }
+                        .unwrap_or_else(|| resolved.to_string());
+                        issues.push(LintIssue::warning(
+                            path.clone(),
+                            format!("`[[{}]]` names a renamed note — now `{now}`", raw.target),
+                        ));
+                    }
                     continue;
                 }
                 // A target that names an existing file under the vault is
@@ -352,6 +374,8 @@ impl Vault {
                 issues.push(LintIssue::warning(path.clone(), message));
             }
         }
+
+        issues.extend(alias_conflict_issues(&path_set, &alias_rows));
 
         // `path_set` is the indexed notes; the ignore matcher is compiled
         // from the same config reconciliation used, so lint and the index
@@ -610,6 +634,80 @@ impl Vault {
         }
         Ok(issues)
     }
+}
+
+/// A Warning for each alias that a note's name collides with (RFC 0007 §7).
+///
+/// Resolution's stem tier compares a link's last segment with **file stems**
+/// only, and tries it before the alias tier. Two cases follow, read from the
+/// `list_aliases` rows (not `AliasMap`, which drops a shared alias):
+///
+/// - **Stem.** Another note's file stem equals the alias: the stem wins, so
+///   the alias is dead. "alias `x` on `<holder>` is shadowed by `<other>`".
+/// - **Folder.** A folder note `<dir>/x/_index.md` has the alias as its
+///   folder name. Its stem is `_index`, so the stem tier never sees it and a
+///   bare `[[x]]` goes to the alias holder; only `[[<dir>/x]]` reaches the
+///   folder note. "alias `x` on `<holder>` takes bare `[[x]]` from folder
+///   note `<other>`".
+///
+/// The folder case is reported only when no file stem shadows the alias: a
+/// stem match kills the alias outright, so it takes nothing from anyone.
+///
+/// A note's own stem or folder never collides with its own alias, and a note
+/// listing an alias twice is reported once per case. When several notes
+/// collide, the first by path is named.
+fn alias_conflict_issues(
+    path_set: &HashSet<VaultPath>,
+    alias_rows: &[(String, VaultPath)],
+) -> Vec<LintIssue> {
+    let mut by_stem: HashMap<String, Vec<&VaultPath>> = HashMap::new();
+    let mut by_folder: HashMap<String, Vec<&VaultPath>> = HashMap::new();
+    for path in path_set {
+        let Some(stem) = path.as_path().file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if stem == "_index" {
+            if let Some(folder) = candidate_slug(path) {
+                by_folder.entry(folder).or_default().push(path);
+            }
+        } else {
+            by_stem.entry(stem.to_owned()).or_default().push(path);
+        }
+    }
+    let first_other = |map: &HashMap<String, Vec<&VaultPath>>, alias: &str, holder: &VaultPath| {
+        map.get(alias).and_then(|paths| {
+            paths
+                .iter()
+                .filter(|p| **p != holder)
+                .min_by_key(|p| p.to_string())
+                .map(|p| (*p).clone())
+        })
+    };
+    let mut issues = Vec::new();
+    let mut seen: HashSet<(&str, &VaultPath)> = HashSet::new();
+    for (alias, holder) in alias_rows {
+        if !seen.insert((alias.as_str(), holder)) {
+            continue;
+        }
+        if let Some(other) = first_other(&by_stem, alias, holder) {
+            issues.push(LintIssue::warning(
+                holder.clone(),
+                format!("alias `{alias}` on `{holder}` is shadowed by `{other}`"),
+            ));
+            // The stem wins every link, so the alias is dead and takes
+            // nothing from a folder note: the second warning would be false.
+            continue;
+        }
+        if let Some(other) = first_other(&by_folder, alias, holder) {
+            issues.push(LintIssue::warning(
+                holder.clone(),
+                format!(
+                    "alias `{alias}` on `{holder}` takes bare `[[{alias}]]` from folder note `{other}`"
+                ),
+            ));
+        }
+    }
+    issues
 }
 
 /// A dashboard-section line is a candidate bullet when, ignoring leading
