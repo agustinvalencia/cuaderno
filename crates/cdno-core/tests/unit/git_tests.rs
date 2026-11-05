@@ -4,7 +4,9 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use cdno_core::git::{GitError, GitState, Upstream, fetch_quietly, git_state};
+use cdno_core::git::{
+    GitError, GitState, Upstream, fetch_quietly, git_operation_in_progress, git_state,
+};
 use tempfile::TempDir;
 
 fn have_git() -> bool {
@@ -399,4 +401,24 @@ fn a_timed_out_fetch_leaves_no_helper_behind() {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+#[test]
+fn output_held_open_by_a_descendant_is_a_timeout_not_empty() {
+    require_git!();
+    let dir = TempDir::new().unwrap();
+    init_repo(dir.path());
+    // The fsmonitor hook backgrounds a process that keeps git's stderr
+    // open after git itself has exited.
+    ok(
+        dir.path(),
+        &["config", "core.fsmonitor", "sleep 5 >/dev/null & exit 0"],
+    );
+    let start = Instant::now();
+    let got = git_operation_in_progress(dir.path());
+    if start.elapsed() < Duration::from_secs(1) {
+        eprintln!("skipping: this git did not run the fsmonitor hook for `git diff`");
+        return;
+    }
+    assert!(matches!(got, Err(GitError::TimedOut { .. })), "{got:?}");
 }

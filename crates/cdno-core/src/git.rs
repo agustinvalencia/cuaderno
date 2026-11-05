@@ -319,15 +319,20 @@ fn run_git_with_timeout(root: &Path, args: &[&str], timeout: Duration) -> Result
             Ok(None) => std::thread::sleep(Duration::from_millis(10)),
         }
     };
-    let collect = |rx: mpsc::Receiver<Vec<u8>>, child: &mut std::process::Child| {
-        rx.recv_timeout(DRAIN_GRACE).unwrap_or_else(|_| {
-            // A descendant outlived git holding the pipe.
-            kill_tree(child);
-            Vec::new()
-        })
+    // A descendant that outlived git and still holds a pipe means the
+    // output may be incomplete: empty output would read as "nothing
+    // found", so this is a timeout, and the group goes too.
+    let mut collect = |rx: mpsc::Receiver<Vec<u8>>| match rx.recv_timeout(DRAIN_GRACE) {
+        Ok(buf) => Ok(buf),
+        Err(_) => {
+            kill_tree(&mut child);
+            Err(GitError::TimedOut {
+                command: command.clone(),
+            })
+        }
     };
-    let stdout = collect(out_rx, &mut child);
-    let stderr = collect(err_rx, &mut child);
+    let stdout = collect(out_rx)?;
+    let stderr = collect(err_rx)?;
     if !status.success() {
         return Err(GitError::Exit {
             command,
