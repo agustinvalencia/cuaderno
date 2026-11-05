@@ -29,12 +29,11 @@ pub enum SlugRejection {
     YamlTyped,
 }
 
-/// Check a slug the person typed, as opposed to one derived from a title:
-/// lowercase ASCII alphanumerics joined by single `-`, no leading or
-/// trailing `-`, at most [`SLUG_MAX_CHARS`], and not a value the repo's YAML
-/// parser reads back as something other than a string (the slug lands in frontmatter and wikilinks).
-/// Pure: whether the name is already taken is the domain's job.
-pub fn validate_explicit_slug(slug: &str) -> Result<(), SlugRejection> {
+/// The shape every slug has, however it was made: lowercase ASCII letters
+/// and digits joined by single `-`, no leading or trailing `-`, at most
+/// [`SLUG_MAX_CHARS`]. It says nothing about YAML: `no`, `007` and `2026`
+/// have this shape, and a name derived from a title can be exactly those.
+fn check_shape(slug: &str) -> Result<(), SlugRejection> {
     if slug.is_empty() {
         return Err(SlugRejection::Empty);
     }
@@ -58,6 +57,17 @@ pub fn validate_explicit_slug(slug: &str) -> Result<(), SlugRejection> {
             max: SLUG_MAX_CHARS,
         });
     }
+    Ok(())
+}
+
+/// Check a slug the person typed, as opposed to one derived from a title:
+/// the shape rule ([`is_slug_shaped`]) and, on top of it, not a value the
+/// repo's YAML parser reads back as something other than a string (the slug
+/// lands in frontmatter and wikilinks), nor one of the extra over-rejections
+/// below. So everything this accepts is slug-shaped, not the reverse.
+/// Pure: whether the name is already taken is the domain's job.
+pub fn validate_explicit_slug(slug: &str) -> Result<(), SlugRejection> {
+    check_shape(slug)?;
     if is_yaml_typed(slug) {
         return Err(SlugRejection::YamlTyped);
     }
@@ -86,7 +96,11 @@ fn is_yaml_typed(slug: &str) -> bool {
     parts.len() == 3 && parts[0].len() == 4 && parts.iter().all(|p| digits(p))
 }
 
-/// Whether `text` has the shape of a slug: it passes [`validate_explicit_slug`].
+/// Whether `text` has the shape of a slug: the charset-and-length rule only,
+/// without [`validate_explicit_slug`]'s YAML over-rejections. `no`, `007` and
+/// `2026` are slug-shaped (a title can slugify to them, and a renamed note's
+/// old slug must survive as an alias), though a person may not type them as a
+/// new slug.
 pub fn is_slug_shaped(text: &str) -> bool {
-    validate_explicit_slug(text).is_ok()
+    check_shape(text).is_ok()
 }

@@ -675,3 +675,62 @@ fn aliases_are_ordered_by_path_then_position() {
     .collect();
     assert_eq!(got, want);
 }
+
+#[test]
+fn quoted_numeric_and_bool_looking_aliases_are_read() {
+    let idx = MemoryIndex::new();
+    idx.upsert_note(&note_with(
+        "concepts/a.md",
+        json!({ "aliases": ["2026", "no"] }),
+    ))
+    .unwrap();
+    assert_eq!(
+        idx.list_aliases().unwrap(),
+        vec![
+            ("2026".to_owned(), vp("concepts/a.md")),
+            ("no".to_owned(), vp("concepts/a.md")),
+        ]
+    );
+}
+
+#[test]
+fn an_alias_two_notes_declare_is_returned_twice() {
+    let idx = MemoryIndex::new();
+    idx.upsert_note(&note_with(
+        "concepts/a.md",
+        json!({ "aliases": ["old-slug"] }),
+    ))
+    .unwrap();
+    idx.upsert_note(&note_with(
+        "concepts/b.md",
+        json!({ "aliases": "old-slug" }),
+    ))
+    .unwrap();
+    assert_eq!(
+        idx.list_aliases().unwrap(),
+        vec![
+            ("old-slug".to_owned(), vp("concepts/a.md")),
+            ("old-slug".to_owned(), vp("concepts/b.md")),
+        ]
+    );
+}
+
+#[test]
+fn aliases_are_ordered_by_the_paths_text() {
+    let idx = MemoryIndex::new();
+    idx.upsert_note(&note_with(
+        "x/foo/_index.md",
+        json!({ "aliases": ["in-folder"] }),
+    ))
+    .unwrap();
+    idx.upsert_note(&note_with("x/foo.md", json!({ "aliases": ["in-file"] })))
+        .unwrap();
+    // `.` sorts before `/`, so the flat note comes first.
+    assert_eq!(
+        idx.list_aliases().unwrap(),
+        vec![
+            ("in-file".to_owned(), vp("x/foo.md")),
+            ("in-folder".to_owned(), vp("x/foo/_index.md")),
+        ]
+    );
+}

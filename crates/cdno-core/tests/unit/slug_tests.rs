@@ -45,20 +45,46 @@ fn explicit_slug_rejections_name_their_reason() {
 }
 
 #[test]
-fn is_slug_shaped_agrees_with_the_validator() {
-    for yes in ["old-slug", "surrogate-model", "a", "v2", "2026-11"] {
+fn is_slug_shaped_accepts_what_slugify_produces() {
+    for yes in ["no", "007", "2026", "surrogate-model", "2026-11-05"] {
         assert!(is_slug_shaped(yes), "input {yes:?}");
     }
-    for no in [
+    let long = "a".repeat(51);
+    for no in ["", "A", "a--b", "-a", "a-", "a b", &long] {
+        assert!(!is_slug_shaped(no), "input {no:?}");
+    }
+}
+
+#[test]
+fn is_slug_shaped_agrees_with_the_validator() {
+    // The validator is the shape rule plus the YAML over-rejections, so
+    // whatever it accepts is slug-shaped, and the two differ only on YamlTyped.
+    let long = "a".repeat(51);
+    for input in [
+        "old-slug",
+        "a",
+        "v2",
+        "2026-11",
         "",
-        "A display name",
-        "Old-Slug",
+        "A",
         "a--b",
         "-a",
+        &long,
+        "no",
+        "007",
         "2026",
         "true",
-        "007",
+        "2026-11-05",
+        "A display name",
     ] {
-        assert!(!is_slug_shaped(no), "input {no:?}");
+        let validated = validate_explicit_slug(input);
+        if validated.is_ok() {
+            assert!(is_slug_shaped(input), "input {input:?}");
+        }
+        assert_eq!(
+            is_slug_shaped(input),
+            matches!(validated, Ok(()) | Err(SlugRejection::YamlTyped)),
+            "input {input:?}"
+        );
     }
 }

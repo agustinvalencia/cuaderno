@@ -434,7 +434,10 @@ pub trait VaultIndex: Send + Sync {
     /// An item that is not a string, or is not slug-shaped
     /// ([`is_slug_shaped`](crate::slug::is_slug_shaped)), is skipped, so a
     /// display name such as `"Surrogate model"` contributes nothing. Ordered by
-    /// path, then by position in the note's list.
+    /// path (compared as text), then by position in the note's list.
+    ///
+    /// Rows are not deduplicated: an alias two notes declare is returned once
+    /// per note, and resolution treats it as ambiguous (§5.5).
     ///
     /// Aliases are read from the frontmatter the index already keeps, never
     /// stored separately: there is no table to drift from the note, and a
@@ -1171,8 +1174,6 @@ fn row_to_milestone_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Milestone
     row_to_milestone_entry_from(row, 0)
 }
 
-/// Shared row extractor for the full `notes` column set. Used by
-/// `find_by_path` and `list_by_type`.
 /// The slug-shaped strings of an `aliases` value: a list of strings or one
 /// scalar string; anything else is skipped. Shared by both indexes so they
 /// cannot disagree.
@@ -1190,6 +1191,8 @@ fn alias_slugs(aliases: &JsonValue) -> Vec<String> {
         .collect()
 }
 
+/// Shared row extractor for the full `notes` column set. Used by
+/// `find_by_path` and `list_by_type`.
 fn row_to_note_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<NoteEntry, IndexError>> {
     let path_str: String = row.get(0)?;
     let frontmatter_str: String = row.get(6)?;
@@ -1360,8 +1363,10 @@ impl VaultIndex for MemoryIndex {
 
     fn list_aliases(&self) -> Result<Vec<(String, VaultPath)>, IndexError> {
         let state = self.lock_state();
+        // Ordered by the path's text, as SQLite orders `path`: `Path` compares
+        // by component, which would put `x/foo/_index.md` before `x/foo.md`.
         let mut paths: Vec<&VaultPath> = state.notes.keys().collect();
-        paths.sort_by(|a, b| a.as_path().cmp(b.as_path()));
+        paths.sort_by_cached_key(|p| p.to_string());
         let mut out = Vec::new();
         for path in paths {
             if let Some(aliases) = state.notes[path].frontmatter.get("aliases") {
