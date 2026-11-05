@@ -1820,6 +1820,33 @@ fn a_taken_slug_is_refused_as_json() {
 }
 
 #[test]
+fn an_explicit_slug_that_is_an_alias_is_refused_as_json() {
+    let dir = vault();
+    std::fs::create_dir_all(dir.path().join("projects")).unwrap();
+    std::fs::write(
+        dir.path().join("projects/surrogate-model.md"),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n\
+         aliases: [old]\n---\n\n# Surrogate model\n",
+    )
+    .unwrap();
+    let out = cdno_bin()
+        .args(["--json", "--vault"])
+        .arg(dir.path())
+        .args(["project", "create", "--title", "Calibrating the surrogate"])
+        .args(["--context", "work", "--slug", "old"])
+        .assert()
+        .failure()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+    let v: serde_json::Value = serde_json::from_slice(&out).expect("a JSON object");
+    assert_eq!(v["code"], "slug_taken", "{v}");
+    assert_eq!(v["details"]["kind"], "alias", "{v}");
+    assert_eq!(v["details"]["holder"], "projects/surrogate-model.md", "{v}");
+}
+
+#[test]
 fn an_invalid_slug_is_refused_as_json() {
     let dir = vault();
     let out = cdno_bin()

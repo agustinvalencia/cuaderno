@@ -159,3 +159,72 @@ fn resolve_wikilink_follows_an_alias() {
     assert_eq!(stem.path, vp("inbox/surrogate-model.md"));
     assert!(!stem.via_alias);
 }
+
+// ---------------------------------------------------------------------
+// Tags follow aliases (RFC 0007 §5.5, T13).
+// ---------------------------------------------------------------------
+
+const RENAMED_ACTION: &str = "---\ntype: action\nstatus: open\ncreated: 2026-04-01\naliases: [old]\n---\n\n# Surrogate model\n";
+
+fn daily(body: &str) -> String {
+    format!("---\ntype: daily\ndate: 2026-04-02\n---\n\n{body}\n")
+}
+
+#[test]
+fn a_tag_query_by_old_name_finds_the_note() {
+    let vault = vault_with(&[
+        ("actions/new.md", RENAMED_ACTION),
+        (
+            "journal/2026/daily/2026-04-02.md",
+            &daily("Worked on #action/old today."),
+        ),
+    ]);
+    let day = vec![vp("journal/2026/daily/2026-04-02.md")];
+
+    assert_eq!(
+        vault.notes_tagged("action/old").unwrap(),
+        day,
+        "by the old name"
+    );
+    assert_eq!(
+        vault.notes_tagged("action/new").unwrap(),
+        day,
+        "by the current name"
+    );
+    assert!(vault.notes_tagged("action/other").unwrap().is_empty());
+}
+
+#[test]
+fn a_tag_without_a_slash_is_passed_through() {
+    let vault = vault_with(&[
+        ("actions/new.md", RENAMED_ACTION),
+        (
+            "journal/2026/daily/2026-04-02.md",
+            &daily("A #old thought."),
+        ),
+    ]);
+    assert_eq!(
+        vault.notes_tagged("old").unwrap(),
+        vec![vp("journal/2026/daily/2026-04-02.md")]
+    );
+    assert!(vault.notes_tagged("new").unwrap().is_empty());
+}
+
+#[test]
+fn tag_results_are_deduplicated_in_index_order() {
+    let vault = vault_with(&[
+        ("actions/new.md", RENAMED_ACTION),
+        (
+            "journal/2026/daily/2026-04-03.md",
+            &daily("#action/new and #action/old"),
+        ),
+        ("journal/2026/daily/2026-04-02.md", &daily("#action/old")),
+    ]);
+    assert_eq!(
+        vault.notes_tagged("action/old").unwrap(),
+        vec![
+            vp("journal/2026/daily/2026-04-02.md"),
+            vp("journal/2026/daily/2026-04-03.md"),
+        ]
+    );
+}

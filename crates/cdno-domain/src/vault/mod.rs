@@ -64,6 +64,7 @@ mod set_frontmatter;
 pub(crate) mod slug;
 mod slug_hint;
 mod stewardships;
+mod tags;
 mod template_sync;
 mod templating;
 mod tracking;

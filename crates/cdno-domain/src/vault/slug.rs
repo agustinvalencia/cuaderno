@@ -163,6 +163,21 @@ impl Vault {
     /// (`portfolios/surrogate-model/_index.md`) holds its **folder name**
     /// as well as `_index`: a derived `surrogate-model` would otherwise
     /// shadow it in the last-segment wikilink fallback (RFC 0007 §6.2).
+    ///
+    /// Every slug-shaped alias a note declares is taken too
+    /// ([`TakenBy::Alias`], RFC 0007 §5.5 and D5): a former name keeps
+    /// pointing at its note, so no new note may take it and no old link can
+    /// change referent. That is what refuses an explicit slug equal to
+    /// another note's alias, makes [`unique_slug`](Self::unique_slug) step
+    /// past one, and, for the rename verb (T20), refuses a rename back to a
+    /// name still listed as an alias.
+    ///
+    /// Precedence is first-holder-wins, with stems and folders ahead of
+    /// aliases whatever the paths' order: a name that is some note's stem or
+    /// folder reports that note as `Stem` / `Folder`, as a stem beats an alias
+    /// in resolution. Among aliases the first holder in
+    /// [`list_aliases`](cdno_core::index::VaultIndex::list_aliases)' order
+    /// (path order) is reported; an alias two notes share is still taken.
     pub(in crate::vault) fn taken_names(
         &self,
     ) -> Result<HashMap<String, (VaultPath, TakenBy)>, DomainError> {
@@ -178,6 +193,10 @@ impl Vault {
                     .entry(name)
                     .or_insert_with(|| (path.clone(), TakenBy::Folder));
             }
+        }
+        // Aliases after every stem and folder, so those outrank them.
+        for (alias, holder) in self.index.list_aliases()? {
+            taken.entry(alias).or_insert((holder, TakenBy::Alias));
         }
         Ok(taken)
     }
