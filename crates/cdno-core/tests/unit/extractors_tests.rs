@@ -1,10 +1,13 @@
 use std::collections::HashSet;
 
+use std::ops::Range;
+
 use cdno_core::extractors::{
-    WikilinkRaw, extract_frontmatter_wikilinks, extract_inline_tags, extract_wikilinks,
-    resolve_wikilinks,
+    WikilinkRaw, differs_only_inside, extract_frontmatter_wikilinks, extract_inline_tags,
+    extract_wikilinks, resolve_wikilinks, rewrite_wikilink_addresses, wikilink_spans,
 };
 use cdno_core::path::VaultPath;
+use proptest::prelude::*;
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
@@ -630,4 +633,183 @@ fn extract_wikilinks_a_plain_link_is_not_an_embed() {
 fn extract_wikilinks_a_bang_not_touching_the_brackets_is_not_an_embed() {
     // "no! [[note]]" — the `!` is punctuation, not an embed marker.
     assert!(!extract_wikilinks("no! [[note]]")[0].is_embed);
+}
+
+// ── rewrite_wikilink_addresses (RFC 0007 §5.4) ───────────────────────
+
+fn names_old(a: &str) -> bool {
+    a == "old" || a.ends_with("/old")
+}
+
+fn swap_last_segment(a: &str) -> String {
+    match a.rfind('/') {
+        Some(i) => format!("{}/new", &a[..i]),
+        None => "new".to_string(),
+    }
+}
+
+/// The address ranges `rewrite_wikilink_addresses` is expected to touch.
+fn rewritten_spans(text: &str) -> Vec<Range<usize>> {
+    wikilink_spans(text)
+        .into_iter()
+        .filter(|s| names_old(&text[s.address.clone()]))
+        .map(|s| s.address)
+        .collect()
+}
+
+#[test]
+fn address_rewrites_keep_every_other_byte() {
+    let rows: &[(&str, &str)] = &[
+        ("[[old]]", "[[new]]"),
+        ("[[projects/old]]", "[[projects/new]]"),
+        ("[[projects/_parked/old]]", "[[projects/_parked/new]]"),
+        ("[[old#Current State]]", "[[new#Current State]]"),
+        ("[[old|the calibration]]", "[[new|the calibration]]"),
+        ("![[old]]", "![[new]]"),
+        ("`[[old]]`", "`[[old]]`"),
+        ("```\n[[old]]\n```\n", "```\n[[old]]\n```\n"),
+        ("#action/old", "#action/old"),
+        ("[[ old ]]", "[[ new ]]"),
+        (
+            "[[ old #x | the calibration ]]",
+            "[[ new #x | the calibration ]]",
+        ),
+        ("[[other]]", "[[other]]"),
+        (
+            "see [[old]] and [[other]] and [[a/old|x]]",
+            "see [[new]] and [[other]] and [[a/new|x]]",
+        ),
+    ];
+    for (before, want) in rows {
+        let (after, _) = rewrite_wikilink_addresses(before, names_old, swap_last_segment);
+        assert_eq!(&after, want, "row {before:?}");
+        assert!(
+            differs_only_inside(before, &after, &rewritten_spans(before)),
+            "row {before:?} changed bytes outside the address"
+        );
+    }
+}
+
+#[test]
+fn a_rewrite_reports_its_count() {
+    let text = "[[old]] [[other]] ![[x/old#h]] `[[old]]` [[#old]]";
+    let (_, n) = rewrite_wikilink_addresses(text, names_old, swap_last_segment);
+    assert_eq!(n, 2);
+    let (same, none) = rewrite_wikilink_addresses("[[other]]", names_old, swap_last_segment);
+    assert_eq!((same.as_str(), none), ("[[other]]", 0));
+}
+
+#[test]
+fn spans_locate_the_trimmed_address() {
+    let body = "a ![[ x/y #h|l]]";
+    let spans = wikilink_spans(body);
+    assert_eq!(spans.len(), 1);
+    assert_eq!(&body[spans[0].address.clone()], "x/y");
+    assert_eq!(spans[0].open, 3);
+    assert_eq!(&body[spans[0].inner_end..], "]]");
+    assert!(spans[0].is_embed);
+}
+
+#[test]
+#[allow(clippy::single_range_in_vec_init)] // a one-element slice of spans is the point
+fn differs_only_inside_rejects_a_change_outside_a_span() {
+    let before = "one [[old]] two";
+    let span = 6..9;
+    assert!(!differs_only_inside(
+        before,
+        "ONE [[new]] two",
+        std::slice::from_ref(&span)
+    ));
+    assert!(!differs_only_inside(
+        before,
+        "one [[new]] twO",
+        std::slice::from_ref(&span)
+    ));
+    assert!(!differs_only_inside(before, "one [new]] two", &[span]));
+}
+
+#[test]
+#[allow(clippy::single_range_in_vec_init)] // a one-element slice of spans is the point
+fn differs_only_inside_accepts_a_length_change_inside_a_span() {
+    let before = "one [[old]] two";
+    assert!(differs_only_inside(
+        before,
+        "one [[a-much-longer-slug]] two",
+        &[6..9]
+    ));
+    assert!(differs_only_inside(before, "one [[]] two", &[6..9]));
+    assert!(differs_only_inside(before, before, &[]));
+    assert!(!differs_only_inside(before, "one [[new]] two", &[]));
+    // Two spans, middle text matched exactly.
+    assert!(differs_only_inside(
+        "a[[x]]b[[y]]c",
+        "a[[xx]]b[[]]c",
+        &[3..4, 9..10]
+    ));
+    assert!(!differs_only_inside(
+        "a[[x]]b[[y]]c",
+        "a[[xx]]B[[]]c",
+        &[3..4, 9..10]
+    ));
+}
+
+fn piece() -> impl Strategy<Value = String> {
+    prop_oneof![
+        Just("prose words".to_string()),
+        Just("old".to_string()),
+        Just("[[old]]".to_string()),
+        Just("[[slug]]".to_string()),
+        Just("[[dir/slug]]".to_string()),
+        Just("[[dir/old]]".to_string()),
+        Just("[[old#anchor]]".to_string()),
+        Just("[[slug#anchor]]".to_string()),
+        Just("[[old|label]]".to_string()),
+        Just("[[ dir/old | label ]]".to_string()),
+        Just("[[slug|label]]".to_string()),
+        Just("![[old]]".to_string()),
+        Just("![[slug]]".to_string()),
+        Just("`[[old]]`".to_string()),
+        Just("```\n[[old]]\n```".to_string()),
+        Just("[[".to_string()),
+    ]
+}
+
+fn body() -> impl Strategy<Value = String> {
+    proptest::collection::vec((piece(), prop_oneof![Just(" "), Just("\n")]), 0..12).prop_map(
+        |parts| {
+            parts
+                .into_iter()
+                .map(|(p, sep)| format!("{p}{sep}"))
+                .collect::<String>()
+        },
+    )
+}
+
+/// Swap the address part of a `WikilinkRaw.target`, keeping its anchor.
+fn map_raw(raw: &WikilinkRaw) -> WikilinkRaw {
+    let (address, anchor) = match raw.target.find('#') {
+        Some(i) => raw.target.split_at(i),
+        None => (raw.target.as_str(), ""),
+    };
+    let trimmed = address.trim_end();
+    // Whitespace between the address and the `#` sits outside the address
+    // and survives the rewrite.
+    let gap = &address[trimmed.len()..];
+    let mut out = raw.clone();
+    if names_old(trimmed) {
+        out.target = format!("{}{}{}", swap_last_segment(trimmed), gap, anchor);
+    }
+    out
+}
+
+proptest! {
+    #[test]
+    fn rewriting_then_extracting_equals_extracting_then_mapping(text in body()) {
+        let (after, count) = rewrite_wikilink_addresses(&text, names_old, swap_last_segment);
+        let expected: Vec<WikilinkRaw> = extract_wikilinks(&text).iter().map(map_raw).collect();
+        prop_assert_eq!(extract_wikilinks(&after), expected);
+        let spans = rewritten_spans(&text);
+        prop_assert_eq!(count, spans.len());
+        prop_assert!(differs_only_inside(&text, &after, &spans));
+    }
 }

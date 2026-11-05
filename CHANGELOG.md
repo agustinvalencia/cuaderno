@@ -40,6 +40,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   overview, the four refusal objects in the JSON output reference, and the `slug` field and the four
   codes in the MCP reference; the RFC 0007 row in `STATUS.md` (#885, closes #579).
 
+### Internal
+
+- `cdno-core` gains `wikilink_spans`, `rewrite_wikilink_addresses` and `differs_only_inside`, with
+  `extract_wikilinks` now built on the span scanner; nothing user-visible changes and its output is
+  identical (RFC 0007 stage S2, #855).
+
 ## [0.43.0] - 2026-10-20
 
 ### Added
