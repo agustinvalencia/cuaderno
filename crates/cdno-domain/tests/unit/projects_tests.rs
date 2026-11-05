@@ -6458,3 +6458,40 @@ fn create_project_core_question_by_former_name_writes_the_current_path() {
         "{raw}"
     );
 }
+
+/// An anchor or a label on a former name is kept; only the name changes.
+#[test]
+fn current_link_target_keeps_an_anchor_and_a_label_on_a_former_name() {
+    use super::support::{by_old_name_at, seeded_vault};
+
+    let question = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-01-01\n\
+                    updated: 2026-01-01\naliases: [old]\n---\n\n# Why?\n\n## Heading\n"
+        .to_owned();
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n\
+               core_question: null\n---\n\n# Surrogate model\n"
+        .to_owned();
+
+    for (given, written) in [
+        (
+            "questions/research/old#Heading",
+            "questions/research/new#Heading",
+        ),
+        (
+            "questions/research/old|label",
+            "questions/research/new|label",
+        ),
+    ] {
+        let (vault, store) = seeded_vault(&[
+            ("questions/research/new.md", question.clone()),
+            ("projects/surrogate-model.md", map.clone()),
+        ]);
+        vault
+            .set_core_question(by_old_name_at(), "surrogate-model", Some(given))
+            .unwrap_or_else(|e| panic!("{given}: {e}"));
+        let raw = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+        assert!(
+            raw.contains(&format!("core_question: \"[[{written}]]\"")),
+            "{given}:\n{raw}"
+        );
+    }
+}

@@ -463,7 +463,8 @@ impl super::Vault {
     }
 
     /// The form of a bare wikilink `target` (`projects/surrogate-model`,
-    /// `questions/research/why`) a verb records in a note it writes.
+    /// `questions/research/why`, optionally with a `#Heading` anchor or a
+    /// `|label`, which are kept) a verb records in a note it writes.
     ///
     /// A target naming an existing file, or naming nothing at all, is kept
     /// exactly as given: these are loose pointers and their existence is not
@@ -482,19 +483,25 @@ impl super::Vault {
         target: &str,
         accepts: impl Fn(&VaultPath) -> bool,
     ) -> Result<String, DomainError> {
-        if let Ok(path) = VaultPath::new(format!("{target}.md"))
+        // An anchor (`#Heading`) or a label (`|text`) is not part of the
+        // name: split it off before the lookup and put it back after, as
+        // link resolution strips the anchor before it matches a stem.
+        let (base, suffix) = target
+            .find(['#', '|'])
+            .map_or((target, ""), |at| target.split_at(at));
+        if let Ok(path) = VaultPath::new(format!("{base}.md"))
             && self.store.exists(&path)?
         {
             return Ok(target.to_owned());
         }
-        let (folder, last) = match target.rsplit_once('/') {
+        let (folder, last) = match base.rsplit_once('/') {
             Some((folder, last)) => (Some(folder), last),
-            None => (None, target),
+            None => (None, base),
         };
         Ok(match self.alias_of(last, accepts)? {
             Some((_holder, current)) => match folder {
-                Some(folder) => format!("{folder}/{current}"),
-                None => current,
+                Some(folder) => format!("{folder}/{current}{suffix}"),
+                None => format!("{current}{suffix}"),
             },
             None => target.to_owned(),
         })
