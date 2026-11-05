@@ -24,15 +24,23 @@ cdno portfolio [OPTIONS] <COMMAND>
 
 Create a new portfolio. The slug derives from the question.
 
+`--question` takes either free text or the slug of an existing question. Given a question's slug, the
+portfolio takes that question's text as its title, the two are linked both ways, and the portfolio's
+slug is the question's. An explicit `--slug` must then be omitted or equal to that slug; any other
+value is refused, because the pair is correlated by slug.
+
 | Flag | Description |
 |------|-------------|
-| `--question <QUESTION>` | The question this dossier accumulates evidence for. |
+| `--question <QUESTION>` | The question this dossier accumulates evidence for: its text, or the slug of an existing question. |
+| `--slug <SLUG>` | Name the portfolio's folder yourself instead of deriving it from the question. Must match the question's slug when `--question` names one. Refused if invalid or taken; see [the slug rule](overview.md#naming-a-note---slug). |
 | `--project <PROJECT>` | Optional wikilink to a project to associate it with. |
 | `--var <NAME=VALUE>` | Value for a custom template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
 ```bash
 cdno portfolio create --question "Sparse vs dense attention OOD"
 cdno portfolio create --question "Sparse vs dense attention OOD" --project projects/surrogate-model
+cdno portfolio create --question "Sparse vs dense attention OOD" --slug sparse-vs-dense
+cdno portfolio create --question surrogate-generalises          # from an existing question's slug
 ```
 
 ## `cdno portfolio list`

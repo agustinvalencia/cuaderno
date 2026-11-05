@@ -98,6 +98,19 @@ Five project codes carry details a client is likely to branch on:
 | `project_in_focus` | `slug`, `action` | A project was to be handed off while `action`, one of its actions, is in focus: a project is not handed off while you are in the middle of its work. Pause the action first, if the person wants to hand it off now. |
 | `empty_field` (for `held_by`) | `field: "held_by"`, `value`, `remedy: "take_back"` | The holder given names the person or nobody (`me`, `tbd`, `someone`, …, the vault's `[projects] holder_sentinels`). If they cannot name who has the project, it is theirs: take it back rather than hand it off. Any other `empty_field` carries `field` alone. |
 
+### Slug rejections
+
+An explicit `slug` on a create tool ([Creation and lifecycle](creation-and-lifecycle.md#naming-a-note)) is
+refused with one of four codes, each leaving the vault untouched. They are the same objects the CLI
+prints under [`--json`](../json-output.md#slug-refusals).
+
+| Code | `details` | When |
+|---|---|---|
+| `invalid_slug` | `slug`, `why` | The slug breaks the shape rule (lowercase `a-z`, `0-9`, single `-`, at most 50 characters, not YAML-typed); `why` names the part. Fix the shape, or ask the person for another name. |
+| `slug_taken` | `slug`, `holder`, `kind` (`stem`\|`folder`\|`alias`) | Another note already holds the name. If `holder` is the note you meant, use it; otherwise ask the person for another name. Do not suffix it yourself. |
+| `portfolio_slug_mismatch` | `question_slug`, `slug` | `create_portfolio` with `question` set to a question's slug and a `slug` that is not that slug. Drop `slug` or pass the question's. |
+| `slug_given_twice` | `field` | `create_custom_note` with `slug` and a `slug` entry in `fields`. Pass one of them. |
+
 The test is simply **whether a different argument would change the outcome**. A slug that matches no
 note is a rejection (`not_found`), and its message carries the list of slugs that *do* exist. A note
 missing the section a tool writes into is a rejection. So is a name that is already taken.

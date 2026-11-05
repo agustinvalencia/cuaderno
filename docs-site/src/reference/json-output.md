@@ -51,6 +51,36 @@ returns, on stdout, and exits `1`:
 }
 ```
 
+## Slug refusals
+
+An explicit `--slug` that is refused prints the rejection object on stdout and exits `1`, on any of the
+eight create verbs ([the slug rule](cli/overview.md#naming-a-note---slug)). The shape is the one the
+MCP server returns, and `details` depends on the `code`:
+
+| `code` | `details` | When |
+|---|---|---|
+| `invalid_slug` | `slug`, `why` | The slug breaks the shape rule; `why` says which part. |
+| `slug_taken` | `slug`, `holder`, `kind` | Another note already holds the name. `holder` is that note's path; `kind` is `stem` (its filename), `folder` (the folder of a folder note) or `alias` (a declared alias). |
+| `portfolio_slug_mismatch` | `question_slug`, `slug` | `portfolio create --question <question-slug>` with an explicit `--slug` that is not that question's slug. |
+| `slug_given_twice` | `field` | `note create` given `--slug` beside `--field slug=…`; `field` is `slug`. |
+
+```bash
+cdno portfolio create --question "Sparse vs dense attention OOD" --slug surrogate-model --json
+```
+```json
+{
+  "code": "slug_taken",
+  "message": "slug 'surrogate-model' is taken by 'projects/surrogate-model.md' (as its stem)",
+  "details": {
+    "slug": "surrogate-model",
+    "holder": "projects/surrogate-model.md",
+    "kind": "stem"
+  }
+}
+```
+
+Nothing is written on a refusal. Do not retry with a `-2` of your own; ask for another name.
+
 ## `search --json` → an array of hits
 
 Ranked best-first; each hit:

@@ -6,11 +6,11 @@ Tools that create new notes or move existing ones through their lifecycle.
 
 | Tool | Inputs | Effect |
 |------|--------|--------|
-| `create_project` | `title`, `context`, `core_question?`, `vars?` | Create a project (parked if at the active cap). ([`cdno project create`](../cli/project.md)) |
-| `create_portfolio` | `question`, `project?`, `vars?` | Create an evidence portfolio. |
-| `create_question` | `domain` (`research`\|`life`), `text`, `vars?` | Create a question note. |
-| `create_stewardship` | `name`, `context`, `expanded?`, `vars?` | Create a stewardship; `expanded` adds a `tracking/` folder. |
-| `create_custom_note` | `type_name`, `title`, `fields?`, `vars?`, `body?`, `origin?` | Create a note of a **config-defined** custom type (`[note_types.<name>]`); built-in types have their own dedicated create tools, on this page and under [Write tools](writes.md). `fields` is a name → value map of the type's declared frontmatter fields — every `required` one must be present, and each key must be declared. `body` excludes the title heading (the engine writes the H1) and fills the template's `{{body}}` placeholder, or is inserted after the H1; `origin` is one string of wikilinks to where the note came from, always stored as a frontmatter string, and is refused unless the type declares an `origin` field. Creation is logged to today's daily note as `<type> created [[<folder>/<slug>]] — <title>`; a promotion (creation with `origin`) needs no other log line. A second note with the same title is not refused but created as `<slug>-2`, so for a `concept`, search the library (`search_notes` with `note_type: concept`) and refine an existing note with [`revise_note`](writes.md#revising-a-note) instead. Call [`list_note_types`](reads.md) first to discover a vault's types and their fields. ([`cdno note create`](../cli/note.md)) |
+| `create_project` | `title`, `context`, `core_question?`, `slug?`, `vars?` | Create a project (parked if at the active cap). ([`cdno project create`](../cli/project.md)) |
+| `create_portfolio` | `question`, `project?`, `slug?`, `vars?` | Create an evidence portfolio. `question` is free text or an existing question's slug; given a slug, the portfolio takes that question's text as its title, links both ways, and `slug` must be omitted or equal to it (`portfolio_slug_mismatch` otherwise). |
+| `create_question` | `domain` (`research`\|`life`), `text`, `slug?`, `vars?` | Create a question note. |
+| `create_stewardship` | `name`, `context`, `expanded?`, `slug?`, `vars?` | Create a stewardship; `expanded` adds a `tracking/` folder. |
+| `create_custom_note` | `type_name`, `title`, `fields?`, `slug?`, `vars?`, `body?`, `origin?` | Create a note of a **config-defined** custom type (`[note_types.<name>]`); built-in types have their own dedicated create tools, on this page and under [Write tools](writes.md). `fields` is a name → value map of the type's declared frontmatter fields — every `required` one must be present, and each key must be declared. `body` excludes the title heading (the engine writes the H1) and fills the template's `{{body}}` placeholder, or is inserted after the H1; `origin` is one string of wikilinks to where the note came from, always stored as a frontmatter string, and is refused unless the type declares an `origin` field. Creation is logged to today's daily note as `<type> created [[<folder>/<slug>]] — <title>`; a promotion (creation with `origin`) needs no other log line. Pass `slug` to name the file; passing it beside a `slug` entry in `fields` is refused (`slug_given_twice`). Without `slug`, a second note with the same title is not refused but created as `<slug>-2`, so for a `concept`, search the library (`search_notes` with `note_type: concept`) and refine an existing note with [`revise_note`](writes.md#revising-a-note) instead. Call [`list_note_types`](reads.md) first to discover a vault's types and their fields. ([`cdno note create`](../cli/note.md)) |
 | `link_portfolio_to_question` | `portfolio`, `question` | Retrofit a portfolio→question link (backlinks both ways). |
 | `link_portfolio_to_project` | `portfolio`, `project` | Retrofit a portfolio→project link (sets `project:` and appends to the project's Links). |
 
@@ -47,6 +47,18 @@ project. Rejections:
 - `project_not_active`: the project is completed or dropped.
 
 The tool also appears with the other project writes under [Write tools](writes.md).
+
+## Naming a note
+
+The eight create tools (`create_project`, `create_question`, `create_portfolio`, `create_stewardship`,
+`create_custom_note`, `add_action`, `promote_action`, `create_commitment`) take an optional `slug`
+naming the new note's file; omitted, it is derived from the title as before. Propose one when the title
+is long. It follows [the slug rule](../cli/overview.md#naming-a-note---slug): lowercase `a-z`, `0-9` and single `-`, at most 50 characters, not
+something YAML reads as a number, boolean, null or date. An explicit slug is used exactly or refused,
+never suffixed with `-2`. Refusals are coded rejections with nothing written: `invalid_slug`,
+`slug_taken`, `portfolio_slug_mismatch` and `slug_given_twice`, listed with their `details` under
+[When a call is rejected](overview.md#slug-rejections). `add_action` ignores `slug` unless `with_note`
+is true: an inline bullet has no file.
 
 ## Notes
 

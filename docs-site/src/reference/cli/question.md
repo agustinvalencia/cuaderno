@@ -29,10 +29,12 @@ Create a new question under `questions/<domain>/<slug>.md`. The slug derives fro
 |------|-------------|
 | `--domain <DOMAIN>` | `research` or `life`. |
 | `--text <TEXT>` | The question text (becomes the body H1). |
+| `--slug <SLUG>` | Name the file yourself instead of deriving it from the text. Refused if invalid or taken; see [the slug rule](overview.md#naming-a-note---slug). |
 | `--var <NAME=VALUE>` | Value for a custom template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
 ```bash
 cdno question create --domain research --text "Does sparse attention beat dense OOD?"
+cdno question create --domain research --text "Does the surrogate model generalise to unseen meshes?" --slug surrogate-generalises
 ```
 
 ## Status transitions

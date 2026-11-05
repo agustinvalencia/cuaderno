@@ -41,11 +41,13 @@ Append a next action to a project. `--note` also scaffolds a manifest note and w
 | `--title <TITLE>` | Action title. |
 | `--energy <ENERGY>` | `deep`, `medium`, or `light`. |
 | `--note` | Also create a manifest note alongside the bullet and wikilink it. |
+| `--slug <SLUG>` | Name the action note's file yourself instead of deriving it from the title. Only with `--note`: a plain bullet has no file. Refused if invalid or taken; see [the slug rule](overview.md#naming-a-note---slug). |
 | `--var <NAME=VALUE>` | Value for a custom action-note template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. Only applies with `--note` (a plain bullet isn't templated). See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
 ```bash
 cdno action add --project surrogate-model --title "Profile the assembly step" --energy medium
 cdno action add --project surrogate-model --title "Characterise sample efficiency" --energy deep --note
+cdno action add --project surrogate-model --title "Rerun the ablation on the held-out split with feature set B" --energy deep --note --slug feature-set-b-ablation
 ```
 
 ## `cdno action promote`
@@ -57,10 +59,12 @@ energy is inherited.
 |------|-------------|
 | `--project <SLUG>` | Active or parked project slug. |
 | `--query <QUERY>` | Case-insensitive substring of the bullet text. |
+| `--slug <SLUG>` | Name the new action note's file yourself instead of deriving it from the bullet. Refused if invalid or taken; see [the slug rule](overview.md#naming-a-note---slug). |
 | `--var <NAME=VALUE>` | Value for a custom action-note template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. Promotion scaffolds an action note, so it gathers the same prompts as `add --note`. See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
 ```bash
 cdno action promote --project surrogate-model --query "profile the assembly"
+cdno action promote --project surrogate-model --query "profile the assembly" --slug profile-assembly
 ```
 
 ## `cdno action start`

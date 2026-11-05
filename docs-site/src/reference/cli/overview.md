@@ -66,6 +66,44 @@ and `--json` all behave exactly as they did before. See
 The CLI's JSON shapes match the [MCP server](../mcp/overview.md) DTOs. See
 [JSON output](../json-output.md) for every shape.
 
+## Naming a note: `--slug`
+
+Every verb that creates a note derives its filename, the slug, from the title. For a long title the
+derived slug can stop mid-thought (`rerun-the-surrogate-model-ablation-on`), and it is what every later
+`[[wikilink]]` has to type. The create verbs therefore take an optional `--slug <SLUG>` to name the
+file yourself: [`project create`](project.md#cdno-project-create),
+[`question create`](question.md#cdno-question-create),
+[`portfolio create`](portfolio.md#cdno-portfolio-create), [`action add --note`](action.md#cdno-action-add),
+[`action promote`](action.md#cdno-action-promote), [`note create`](note.md),
+[`stewardship create`](stewardship.md#cdno-stewardship-create) and
+[`commit create`](commit.md#cdno-commit-create). The title is unchanged; only the filename is.
+
+An explicit slug must be:
+
+- lowercase `a-z`, `0-9` and single `-`, with no `-` at either end;
+- at most 50 characters;
+- not something YAML would read as a number, a boolean, a null or a date (`2026`, `yes`, `null`,
+  `2026-11-05`): add a word to it.
+
+An explicit slug is used exactly or refused, never rewritten. If another note already holds the name
+(as its filename, as the folder of a folder note such as `portfolios/surrogate-model/`, or as a
+declared alias) the create is refused and nothing is written; pick another name. The `-2` suffix
+belongs to derived slugs only. `--slug` is never prompted for, so omit it and the behaviour is exactly
+as before. Under [`--json`](../json-output.md#slug-refusals) a refusal is a coded object.
+
+A derived slug also steps past a folder note's name now: a question titled "Surrogate model" created
+beside the portfolio `portfolios/surrogate-model/` gets `surrogate-model-2`, since the bare name would
+shadow the portfolio's `_index` in a `[[surrogate-model]]` link.
+
+```bash
+cdno action add --project surrogate-model --note --energy deep \
+  --title "Rerun the surrogate model ablation on the held-out split with feature set B" \
+  --slug feature-set-b-ablation
+# -> actions/feature-set-b-ablation.md
+```
+
+Renaming a note after the fact is a separate verb, planned under RFC 0007.
+
 ## The commands
 
 | Command | What it does |
