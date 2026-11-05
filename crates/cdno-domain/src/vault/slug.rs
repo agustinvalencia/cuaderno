@@ -260,6 +260,36 @@ impl Vault {
         Ok(taken)
     }
 
+    /// The slug a create operation names its note by. With `explicit`, the
+    /// person's own: validated ([`DomainError::InvalidSlug`]) and checked
+    /// against [`taken_names`](Self::taken_names) ([`DomainError::SlugTaken`]),
+    /// used exactly or refused, never suffixed (RFC 0007 §5.7). Without, the
+    /// slug derived from `title`, disambiguated by [`unique_slug`](Self::unique_slug).
+    ///
+    /// Call it before staging anything in the transaction, so a refusal
+    /// leaves the vault untouched.
+    pub(in crate::vault) fn explicit_or_derived_slug(
+        &self,
+        explicit: Option<&str>,
+        title: &str,
+    ) -> Result<String, DomainError> {
+        let Some(slug) = explicit else {
+            return self.unique_slug(&slugify(title));
+        };
+        validate_explicit_slug(slug).map_err(|why| DomainError::InvalidSlug {
+            slug: slug.to_owned(),
+            why,
+        })?;
+        if let Some((holder, kind)) = self.taken_names()?.remove(slug) {
+            return Err(DomainError::SlugTaken {
+                slug: slug.to_owned(),
+                holder,
+                kind,
+            });
+        }
+        Ok(slug.to_owned())
+    }
+
     /// Make `base` a globally-unique note stem: if any indexed note already
     /// uses that stem or folder name — anywhere in the vault, any note
     /// type — append `-2`, `-3`, … until free (#225). Keeps the

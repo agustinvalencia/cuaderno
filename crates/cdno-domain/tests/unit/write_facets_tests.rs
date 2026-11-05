@@ -144,6 +144,7 @@ fn create_custom_note_with_origin_links_both_ways_on_write() {
             &HashMap::new(),
             None,
             Some("[[journal/2026/daily/2026-09-27#Woodbury identity]]"),
+            None,
         )
         .expect("create concept");
     assert_eq!(path, vp("concepts/sherman-morrison.md"));

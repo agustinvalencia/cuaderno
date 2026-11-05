@@ -39,6 +39,7 @@ impl CuadernoServer {
                     context,
                     input.core_question.as_deref(),
                     &vars,
+                    None,
                 )
             })
             .await?
@@ -128,7 +129,7 @@ impl CuadernoServer {
         let path = self
             .with_vault(move |vault| {
                 let vars = input.vars.unwrap_or_default();
-                vault.create_question_with_vars(at, domain, &input.text, &vars)
+                vault.create_question_with_vars(at, domain, &input.text, &vars, None)
             })
             .await?
             .map_err(into_mcp_error)?;
@@ -157,6 +158,7 @@ impl CuadernoServer {
                     &vars,
                     input.body.as_deref(),
                     input.origin.as_deref(),
+                    None,
                 )
             })
             .await?

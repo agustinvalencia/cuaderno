@@ -6,6 +6,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- The domain create operations (project, question, action note, custom note, commitment) accept an
+  explicit slug, validated and refused on collision rather than suffixed; the CLI and MCP surfaces
+  follow in later tasks (RFC 0007, #850).
+
 ### Changed
 
 - A derived slug now steps past a folder note's name (`surrogate-model-2` beside

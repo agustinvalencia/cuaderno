@@ -870,19 +870,22 @@ impl Vault {
         slug: &str,
         query: &str,
     ) -> Result<VaultPath, DomainError> {
-        self.promote_action_with_vars(at, slug, query, &HashMap::new())
+        self.promote_action_with_vars(at, slug, query, &HashMap::new(), None)
     }
 
     /// As [`promote_action`](Self::promote_action), with caller-supplied
     /// prompted-variable values (`[variables.prompt]`, #238) for the action
     /// note the promotion scaffolds. The CLI gathers these up front; other
-    /// callers use the no-vars wrapper above.
+    /// callers use the no-vars wrapper above. `note_slug` names the action
+    /// note exactly when given (RFC 0007), refused rather than suffixed on a
+    /// clash; `None` derives it from the bullet text.
     pub fn promote_action_with_vars(
         &self,
         at: NaiveDateTime,
         slug: &str,
         query: &str,
         prompted: &HashMap<String, String>,
+        note_slug: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         // One transaction opened before the project read, so the whole
         // read-modify-write (find the bullet, spin the note, rewrite the
@@ -913,8 +916,9 @@ impl Vault {
 
         // Spin the note onto the existing transaction so note write +
         // bullet rewrite + daily log commit together, all under one lock.
-        let note_path =
-            self.create_action_note(&mut tx, at, slug, &title, energy, None, None, prompted)?;
+        let note_path = self.create_action_note(
+            &mut tx, at, slug, &title, energy, None, None, prompted, note_slug,
+        )?;
         let action_slug = note_path
             .as_path()
             .file_stem()

@@ -2,6 +2,7 @@
 //! and `Vault::active_questions` against `MemoryVaultStore` /
 //! `MemoryIndex`.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cdno_core::config::VaultConfig;
@@ -11,10 +12,12 @@ use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::paths::daily_note_relpath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_domain::TakenBy;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{QuestionDomain, QuestionFrontmatter, QuestionStatus};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use std::collections::HashMap;
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
@@ -617,4 +620,66 @@ fn set_question_status_reports_a_no_op_as_untouched() {
         "nothing was written: {:?}",
         outcome.paths
     );
+}
+
+/// Every file in the store and its content.
+fn snapshot(store: &Arc<dyn VaultStore>) -> BTreeMap<String, String> {
+    store
+        .walk_dir(&VaultPath::root())
+        .unwrap()
+        .into_iter()
+        .map(|p| {
+            let content = store.read_file(&p).unwrap();
+            (p.to_string(), content)
+        })
+        .collect()
+}
+
+#[test]
+fn an_explicit_slug_names_the_file() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let text = "Does the surrogate model hold up against the high-fidelity thermal runs?";
+
+    let path = vault
+        .create_question_with_vars(
+            dt(2026, 1, 10, 9, 0),
+            QuestionDomain::Research,
+            text,
+            &HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+        .expect("create succeeds");
+
+    assert_eq!(path, vp("questions/research/surrogate-calibration.md"));
+    assert!(store.read_file(&path).unwrap().contains(text));
+}
+
+#[test]
+fn an_explicit_slug_that_is_taken_is_refused_not_suffixed() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let create = |text: &str| {
+        vault.create_question_with_vars(
+            dt(2026, 1, 10, 9, 0),
+            QuestionDomain::Research,
+            text,
+            &HashMap::new(),
+            Some("surrogate-calibration"),
+        )
+    };
+    create("Does the surrogate model hold?").expect("first create");
+    let before = snapshot(&store);
+
+    let err = create("Another question?").expect_err("second create refused");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken {
+                kind: TakenBy::Stem,
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
 }

@@ -150,6 +150,7 @@ pub fn run(
                 &vars,
                 body.as_deref(),
                 origin.as_deref(),
+                None,
             )?;
             crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))
         }

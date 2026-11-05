@@ -22,7 +22,6 @@ use crate::note_type::NoteType;
 
 use super::super::Vault;
 use super::super::index_entry::build_index_entry_for;
-use super::super::slug::slugify;
 use super::milestones::stage_milestone_index_rows;
 use super::{
     MILESTONES_SECTION, is_closed_project_path, is_under_projects_done,
@@ -86,9 +85,12 @@ impl Vault {
     /// existing one first. The cap is enforced on activation (#28),
     /// not creation.
     ///
-    /// Errors only on slug collisions: if the slug already exists in
+    /// Errors only on slug problems: if the slug already exists in
     /// either `projects/` or `projects/_parked/`, returns
-    /// [`StoreError::AlreadyExists`].
+    /// [`StoreError::AlreadyExists`]; a given slug (see
+    /// [`create_project_with_vars`](Self::create_project_with_vars)) that
+    /// breaks a naming rule is [`DomainError::InvalidSlug`], and one another
+    /// note already holds is [`DomainError::SlugTaken`].
     ///
     /// `core_question` is the wikilink target (e.g.
     /// `"questions/research/foo"`); `create_project` wraps it in
@@ -105,13 +107,15 @@ impl Vault {
         context: Context,
         core_question: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
-        self.create_project_with_vars(at, title, context, core_question, &HashMap::new())
+        self.create_project_with_vars(at, title, context, core_question, &HashMap::new(), None)
     }
 
     /// As [`create_project`](Self::create_project), but with caller-supplied
     /// values for the template's prompted variables (`[variables.prompt]`,
     /// #238 tier 4). The CLI gathers these up front; other callers use the
-    /// no-vars wrapper above.
+    /// no-vars wrapper above. `slug` names the map exactly when given
+    /// (RFC 0007), refused rather than suffixed on a clash; `None` derives it
+    /// from `title`.
     pub fn create_project_with_vars(
         &self,
         at: NaiveDateTime,
@@ -119,6 +123,7 @@ impl Vault {
         context: Context,
         core_question: Option<&str>,
         prompted: &HashMap<String, String>,
+        slug: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         let today = at.date();
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
@@ -135,7 +140,7 @@ impl Vault {
 
         // Globally-unique stem (#225) so a later park to `_parked/` keeps
         // the project's backlinks resolvable.
-        let slug = self.unique_slug(&slugify(title))?;
+        let slug = self.explicit_or_derived_slug(slug, title)?;
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
         let parked_path =
             VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;

@@ -172,6 +172,7 @@ fn create(
             project.as_deref(),
             stewardship.as_deref(),
             &template_vars,
+            None,
         )
         .context("creating commitment")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;

@@ -382,7 +382,7 @@ fn add(
         // scaffolds one); the plain branch below reports the project map.
         // Both are "the file written", just different files per branch.
         let path = vault
-            .add_action_with_note_and_vars(at, &project, &title, energy, &template_vars)
+            .add_action_with_note_and_vars(at, &project, &title, energy, &template_vars, None)
             .context("adding action with note")?;
         crate::output::emit_write_result(
             json,
@@ -1112,7 +1112,7 @@ fn promote(
     }
 
     let note_path = resolving_ambiguity(&project, &query, interactive, "promoting action", |q| {
-        vault.promote_action_with_vars(at, &project, q, &template_vars)
+        vault.promote_action_with_vars(at, &project, q, &template_vars, None)
     })?;
     crate::output::emit_write_result(
         json,

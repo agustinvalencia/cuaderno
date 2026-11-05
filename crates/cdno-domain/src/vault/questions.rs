@@ -30,7 +30,6 @@ use crate::note_type::NoteType;
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::projects::rewrite_field_in_frontmatter;
-use super::slug::slugify;
 
 /// One row in the `Vault::active_questions` / `Vault::list_questions`
 /// output. Carries enough for a renderer to display the question
@@ -59,6 +58,8 @@ impl Vault {
     ///
     /// Errors:
     /// - [`DomainError::EmptyField`] — `text` is whitespace-only.
+    /// - [`DomainError::InvalidSlug`] / [`DomainError::SlugTaken`] — only for a
+    ///   `slug` given to [`create_question_with_vars`](Self::create_question_with_vars).
     /// - [`StoreError::AlreadyExists`] — a question with the same slug
     ///   already exists in *either* domain (slugs are unique across
     ///   the whole `questions/` tree so lookup-by-slug is unambiguous).
@@ -68,17 +69,20 @@ impl Vault {
         domain: QuestionDomain,
         text: &str,
     ) -> Result<VaultPath, DomainError> {
-        self.create_question_with_vars(at, domain, text, &HashMap::new())
+        self.create_question_with_vars(at, domain, text, &HashMap::new(), None)
     }
 
     /// As [`create_question`](Self::create_question), with caller-supplied
-    /// prompted-variable values (`[variables.prompt]`, #238).
+    /// prompted-variable values (`[variables.prompt]`, #238). `slug` names the
+    /// file exactly when given (RFC 0007), refused rather than suffixed on a
+    /// clash; `None` derives it from `text`.
     pub fn create_question_with_vars(
         &self,
         at: NaiveDateTime,
         domain: QuestionDomain,
         text: &str,
         prompted: &HashMap<String, String>,
+        slug: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let text = text.trim();
@@ -86,7 +90,7 @@ impl Vault {
             return Err(DomainError::EmptyField { field: "question" });
         }
         // Globally-unique stem (#225) so backlinks stay resolvable.
-        let slug = self.unique_slug(&slugify(text))?;
+        let slug = self.explicit_or_derived_slug(slug, text)?;
 
         // Cross-domain collision check: even though we'll write under
         // `<domain>/`, the slug must be globally unique so

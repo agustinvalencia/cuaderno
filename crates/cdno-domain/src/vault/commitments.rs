@@ -126,8 +126,11 @@ impl Vault {
     /// commitment, the dominant case per design.md §5.9. The links are
     /// loose pointers — the target's existence isn't validated here.
     ///
-    /// Errors only on slug collisions: if `commitments/<slug>.md`
-    /// already exists, returns [`StoreError::AlreadyExists`].
+    /// Errors only on slug problems: if `commitments/<slug>.md`
+    /// already exists, returns [`StoreError::AlreadyExists`]; a slug given to
+    /// [`create_commitment_with_vars`](Self::create_commitment_with_vars)
+    /// that breaks a naming rule is [`DomainError::InvalidSlug`], and one
+    /// another note already holds is [`DomainError::SlugTaken`].
     /// Completed commitments at `commitments/_done/<year>/<slug>.md`
     /// don't block — slugs only need to be unique among active
     /// commitments.
@@ -148,11 +151,14 @@ impl Vault {
             project,
             stewardship,
             &HashMap::new(),
+            None,
         )
     }
 
     /// As [`create_commitment`](Self::create_commitment), with caller-supplied
-    /// prompted-variable values (`[variables.prompt]`, #238).
+    /// prompted-variable values (`[variables.prompt]`, #238). `slug` names the
+    /// file exactly when given (RFC 0007), refused rather than suffixed on a
+    /// clash; `None` derives it from `title`.
     #[allow(clippy::too_many_arguments)] // thin gather→create passthrough
     pub fn create_commitment_with_vars(
         &self,
@@ -163,12 +169,13 @@ impl Vault {
         project: Option<&str>,
         stewardship: Option<&str>,
         prompted: &HashMap<String, String>,
+        slug: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let title = title.trim();
         // Globally-unique stem (#225) so a later move to `_done/` keeps the
         // commitment's backlinks resolvable.
-        let slug = self.unique_slug(&slugify(title))?;
+        let slug = self.explicit_or_derived_slug(slug, title)?;
         let path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::COMMITMENTS))?;
         if self.store.exists(&path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
