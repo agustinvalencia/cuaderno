@@ -116,7 +116,7 @@ pub struct CreateCustomNoteInput {
     /// The custom note type, declared under `[note_types.<type_name>]`. Built-in
     /// types (project, question, …) have their own dedicated create tools.
     pub type_name: String,
-    /// The note's title; its slug becomes the filename.
+    /// The note's title.
     pub title: String,
     /// Frontmatter field values as a name -> value map. Each key must be a
     /// declared `required`/`optional` field of the type, and every `required`
@@ -141,6 +141,8 @@ pub struct CreateCustomNoteInput {
     /// declare an `origin` field. Overrides `fields.origin`. Omitted or blank
     /// = none.
     pub origin: Option<String>,
+    /// Optional slug naming the note's file. The slug is the name every later reference types; for a long title propose a short one (lower case, `a-z`, `0-9` and `-`). Omitted = derived from the title. Do not also pass a `slug` in `fields`: the call is refused as `slug_given_twice`.
+    pub slug: Option<String>,
 }
 
 /// Input for `update_project_state`.
@@ -168,6 +170,8 @@ pub struct AddActionInput {
     /// otherwise creation fails with an "unresolved prompts" error.
     /// Omitted = none.
     pub vars: Option<HashMap<String, String>>,
+    /// Optional slug naming the action note's file. The slug is the name every later reference types; for a long title propose a short one (lower case, `a-z`, `0-9` and `-`). Ignored unless `with_note: true`: an inline bullet has no file. Omitted = derived from the title.
+    pub slug: Option<String>,
 }
 
 /// Input for `complete_action`. `query` is matched against the bullet
@@ -285,6 +289,8 @@ pub struct PromoteActionInput {
     /// otherwise promotion fails with an "unresolved prompts" error.
     /// Omitted = none.
     pub vars: Option<HashMap<String, String>>,
+    /// Optional slug naming the new action note's file. The slug is the name every later reference types; for a long title propose a short one (lower case, `a-z`, `0-9` and `-`). Omitted = derived from the bullet's title.
+    pub slug: Option<String>,
 }
 
 /// Input for `create_commitment`.
@@ -312,6 +318,8 @@ pub struct CreateCommitmentInput {
     /// uses that has no static `[variables]` default; otherwise creation fails
     /// with an "unresolved prompts" error. Omitted = none.
     pub vars: Option<HashMap<String, String>>,
+    /// Optional slug naming the commitment's file. The slug is the name every later reference types; for a long title propose a short one (lower case, `a-z`, `0-9` and `-`). Omitted = derived from the title.
+    pub slug: Option<String>,
 }
 
 /// Input for `complete_commitment` — commitment slug.
@@ -531,13 +539,17 @@ pub struct CreateProjectInput {
     /// uses that has no static `[variables]` default; otherwise creation fails
     /// with an "unresolved prompts" error. Omitted = none.
     pub vars: Option<HashMap<String, String>>,
+    /// Optional slug naming the project's file. The slug is the name every later reference types; for a long title propose a short one (lower case, `a-z`, `0-9` and `-`). Omitted = derived from the title.
+    pub slug: Option<String>,
 }
 
 /// Input for `create_portfolio` (GH #162). `project` optionally links
 /// the portfolio to a project slug.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreatePortfolioInput {
-    /// The question or topic the portfolio gathers evidence for.
+    /// The question or topic the portfolio gathers evidence for. A question's
+    /// slug is accepted: the portfolio then takes that question's text as its
+    /// title and is linked to it both ways.
     pub question: String,
     pub project: Option<String>,
     /// Values for the template's prompted variables (`[variables.prompt]`),
@@ -546,6 +558,8 @@ pub struct CreatePortfolioInput {
     /// uses that has no static `[variables]` default; otherwise creation fails
     /// with an "unresolved prompts" error. Omitted = none.
     pub vars: Option<HashMap<String, String>>,
+    /// Optional slug naming the portfolio's folder. The slug is the name every later reference types; for a long title propose a short one (lower case, `a-z`, `0-9` and `-`). Omitted = derived from `question`. When `question` is a question's slug, this must be omitted or equal to it.
+    pub slug: Option<String>,
 }
 
 /// Input for `get_commitments` (GH #204). `lookahead_weeks` mirrors
@@ -712,6 +726,8 @@ pub struct CreateQuestionInput {
     /// uses that has no static `[variables]` default; otherwise creation fails
     /// with an "unresolved prompts" error. Omitted = none.
     pub vars: Option<HashMap<String, String>>,
+    /// Optional slug naming the question's file. The slug is the name every later reference types; for a long title propose a short one (lower case, `a-z`, `0-9` and `-`). Omitted = derived from the text.
+    pub slug: Option<String>,
 }
 
 /// Input for `create_stewardship` (GH #162). `expanded` makes a folder
@@ -730,6 +746,8 @@ pub struct CreateStewardshipInput {
     /// uses that has no static `[variables]` default; otherwise creation fails
     /// with an "unresolved prompts" error. Omitted = none.
     pub vars: Option<HashMap<String, String>>,
+    /// Optional slug naming the stewardship's file or folder. The slug is the name every later reference types; for a long title propose a short one (lower case, `a-z`, `0-9` and `-`). Omitted = derived from the name.
+    pub slug: Option<String>,
 }
 
 // `park_project` / `activate_project` (GH #166) reuse [`ProjectSlugInput`].

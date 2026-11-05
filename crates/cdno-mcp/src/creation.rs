@@ -39,7 +39,7 @@ impl CuadernoServer {
                     context,
                     input.core_question.as_deref(),
                     &vars,
-                    None,
+                    input.slug.as_deref(),
                 )
             })
             .await?
@@ -65,7 +65,7 @@ impl CuadernoServer {
                     &input.question,
                     input.project.as_deref(),
                     &vars,
-                    None,
+                    input.slug.as_deref(),
                 )
             })
             .await?
@@ -130,7 +130,13 @@ impl CuadernoServer {
         let path = self
             .with_vault(move |vault| {
                 let vars = input.vars.unwrap_or_default();
-                vault.create_question_with_vars(at, domain, &input.text, &vars, None)
+                vault.create_question_with_vars(
+                    at,
+                    domain,
+                    &input.text,
+                    &vars,
+                    input.slug.as_deref(),
+                )
             })
             .await?
             .map_err(into_mcp_error)?;
@@ -159,7 +165,7 @@ impl CuadernoServer {
                     &vars,
                     input.body.as_deref(),
                     input.origin.as_deref(),
-                    None,
+                    input.slug.as_deref(),
                 )
             })
             .await?
@@ -188,10 +194,16 @@ impl CuadernoServer {
                         &input.name,
                         context,
                         &vars,
-                        None,
+                        input.slug.as_deref(),
                     )
                 } else {
-                    vault.create_stewardship_flat_with_vars(at, &input.name, context, &vars, None)
+                    vault.create_stewardship_flat_with_vars(
+                        at,
+                        &input.name,
+                        context,
+                        &vars,
+                        input.slug.as_deref(),
+                    )
                 }
             })
             .await?

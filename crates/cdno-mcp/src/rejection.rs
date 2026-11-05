@@ -114,6 +114,7 @@ pub(crate) enum RejectionCode {
     ImplausibleDate,
     InvalidField,
     InvalidFieldValue,
+    InvalidSlug,
     MalformedWikilink,
     MilestoneNotFound,
     MissingField,
@@ -128,6 +129,7 @@ pub(crate) enum RejectionCode {
     PeriodicDateUnwritable,
     PeriodicNotFound,
     PeriodicRecurrenceUnreadable,
+    PortfolioSlugMismatch,
     ProjectCapReached,
     ProjectHasOpenItems,
     ProjectInFocus,
@@ -137,6 +139,8 @@ pub(crate) enum RejectionCode {
     ReservedTypeName,
     RevisionInvalid,
     SectionNotFound,
+    SlugGivenTwice,
+    SlugTaken,
     StaleRevision,
     StateTooLong,
     TemplateAlreadyExists,
@@ -165,6 +169,11 @@ pub(crate) enum RejectionCode {
 fn rejection_message(code: RejectionCode, e: &DomainError) -> String {
     match code {
         RejectionCode::FocusOpen => FOCUS_OPEN_MESSAGE.to_string(),
+        // The slug rejections end on the remedy, so the agent reads the fix
+        // without parsing the domain's sentence (RFC 0007 §5.7).
+        RejectionCode::InvalidSlug => format!("{e}; propose another slug"),
+        RejectionCode::SlugTaken => format!("{e}; propose another slug"),
+        RejectionCode::PortfolioSlugMismatch | RejectionCode::SlugGivenTwice => e.to_string(),
         _ => e.to_string(),
     }
 }
@@ -575,13 +584,31 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         | DomainError::ConfigChangedDuringMigration
         | DomainError::MigrationStampInvalid { .. } => return None,
 
-        // Stopgap until T4 (#853) adds the `invalid_slug` / `slug_taken` /
-        // `portfolio_slug_mismatch` codes (RFC 0007); delete this arm then.
-        // Nothing produces these yet.
-        DomainError::InvalidSlug { .. }
-        | DomainError::SlugTaken { .. }
-        | DomainError::PortfolioSlugMismatch { .. }
-        | DomainError::SlugGivenTwice { .. } => return None,
+        // A slug the caller typed (RFC 0007 §5.7, §6.2). The keys and the
+        // `why` / `holder` / `kind` rendering match the CLI's `slug_rejection`
+        // (`cdno-cli/src/commands/rejection.rs`); a test pins the pairing.
+        DomainError::InvalidSlug { slug, why } => (
+            RejectionCode::InvalidSlug,
+            json!({ "slug": slug, "why": why.to_string() }),
+        ),
+        DomainError::SlugTaken { slug, holder, kind } => (
+            RejectionCode::SlugTaken,
+            json!({
+                "slug": slug,
+                "holder": holder.to_string(),
+                "kind": kind.as_str(),
+            }),
+        ),
+        DomainError::PortfolioSlugMismatch {
+            question_slug,
+            slug,
+        } => (
+            RejectionCode::PortfolioSlugMismatch,
+            json!({ "question_slug": question_slug, "slug": slug }),
+        ),
+        DomainError::SlugGivenTwice { field } => {
+            (RejectionCode::SlugGivenTwice, json!({ "field": field }))
+        }
     };
 
     let message = rejection_message(code, e);
@@ -1156,5 +1183,72 @@ mod tests {
             serde_json::to_string_pretty(&payload).unwrap(),
             serde_json::to_string_pretty(&fixture).unwrap()
         );
+    }
+
+    /// The slug rejections (RFC 0007 §5.7) share their `{code, details}`
+    /// shapes with the CLI's `slug_rejection`
+    /// (`cdno-cli/src/commands/rejection.rs`). `cdno-cli` does not depend on
+    /// this crate, and `classify` is `pub(crate)`, so neither can call the
+    /// other: the expected keys below are a literal copy of the CLI's, and the
+    /// CLI side is pinned by its own `--json` tests. Change both together.
+    #[test]
+    fn slug_rejections_carry_the_keys_the_cli_carries() {
+        use cdno_core::path::VaultPath;
+        use cdno_domain::{SlugRejection, TakenBy};
+
+        let cases = [
+            (
+                DomainError::InvalidSlug {
+                    slug: "Surrogate Model".into(),
+                    why: SlugRejection::UpperCase,
+                },
+                "invalid_slug",
+                vec!["slug", "why"],
+            ),
+            (
+                DomainError::SlugTaken {
+                    slug: "surrogate-model".into(),
+                    holder: VaultPath::new("projects/surrogate-model.md").unwrap(),
+                    kind: TakenBy::Stem,
+                },
+                "slug_taken",
+                vec!["holder", "kind", "slug"],
+            ),
+            (
+                DomainError::PortfolioSlugMismatch {
+                    question_slug: "surrogate-calibration".into(),
+                    slug: "surrogate-evidence".into(),
+                },
+                "portfolio_slug_mismatch",
+                vec!["question_slug", "slug"],
+            ),
+            (
+                DomainError::SlugGivenTwice {
+                    field: "slug".into(),
+                },
+                "slug_given_twice",
+                vec!["field"],
+            ),
+        ];
+        for (err, code, keys) in cases {
+            let payload = classify(&err).unwrap_or_else(|| panic!("{code} is a rejection"));
+            assert_eq!(payload["code"], code);
+            let mut got: Vec<&str> = payload["details"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
+            got.sort_unstable();
+            assert_eq!(got, keys, "{code}");
+        }
+        let taken = classify(&DomainError::SlugTaken {
+            slug: "surrogate-model".into(),
+            holder: VaultPath::new("projects/surrogate-model.md").unwrap(),
+            kind: TakenBy::Folder,
+        })
+        .unwrap();
+        assert_eq!(taken["details"]["kind"], "folder");
+        assert_eq!(taken["details"]["holder"], "projects/surrogate-model.md");
     }
 }

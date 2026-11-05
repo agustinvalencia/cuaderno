@@ -1074,3 +1074,35 @@ fn list_projects_says_to_branch_on_counts() {
         );
     }
 }
+
+/// RFC 0007 §5.7 (#853): the schema is the agent's only instruction
+/// surface, so every create tool's `slug` property carries the hint to
+/// propose a short slug.
+#[test]
+fn every_create_tool_describes_the_slug_hint() {
+    let server = empty_server();
+    let tools = server.advertised_tools();
+    for name in [
+        "create_project",
+        "create_question",
+        "create_portfolio",
+        "create_custom_note",
+        "create_stewardship",
+        "add_action",
+        "promote_action",
+        "create_commitment",
+    ] {
+        let tool = tools
+            .iter()
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("{name} is advertised"));
+        let desc = tool
+            .input_schema
+            .get("properties")
+            .and_then(|p| p.get("slug"))
+            .and_then(|s| s.get("description"))
+            .and_then(|d| d.as_str())
+            .unwrap_or_else(|| panic!("{name} has a described `slug` property"));
+        assert!(desc.contains("every later reference"), "{name}: {desc}");
+    }
+}

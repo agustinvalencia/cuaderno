@@ -19,6 +19,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   under `--json` a refusal is an `invalid_slug`, `slug_taken` or `portfolio_slug_mismatch` object.
   `note create` refuses `--slug` beside `--field slug=…`. The `portfolio create --question` help
   now says a question's slug is accepted (RFC 0007, #852).
+- MCP: an optional `slug` on the eight create tools (`create_project`, `create_question`,
+  `create_portfolio`, `create_custom_note`, `create_stewardship`, `add_action`, `promote_action`,
+  `create_commitment`; `add_action` ignores it without `with_note`), and four rejection codes with
+  the CLI's `--json` shapes: `invalid_slug`, `slug_taken`, `portfolio_slug_mismatch` and
+  `slug_given_twice`. The catalogue is unchanged at 65 tools (RFC 0007, #853).
 
 ### Changed
 
@@ -27,6 +32,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `-2`. A slug-shaped title or reference longer than six words is no longer truncated, in a title
   and in a stewardship reference, a commitment's `project:` / `stewardship:` value and a tracking
   activity slug (RFC 0007, #849).
+- MCP `create_portfolio.question` accepts a question's slug as well as its text; the portfolio then
+  takes the question's text as its title (RFC 0007, #853).
 
 ## [0.43.0] - 2026-10-20
 
