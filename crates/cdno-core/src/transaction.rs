@@ -16,11 +16,12 @@
 //! leave the vault in a transient inconsistent state, which the
 //! startup reconciliation pass detects and fixes.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::error::{IndexError, StoreError, TransactionError};
+use crate::extractors::AliasMap;
 use crate::frontmatter::Frontmatter;
 use crate::index::{
     ArchivalSnapshot, DeadlineEntry, LinkEntry, MilestoneEntry, NoteEntry, VaultIndex,
@@ -319,13 +320,52 @@ impl VaultTransaction {
         // Phase 2: index ops. A failure here leaves files correct;
         // collect every error so the caller sees the full picture.
         let mut index_errors: Vec<IndexError> = Vec::new();
+
+        // The aliases each note will declare once this commit's index ops
+        // land (RFC 0007 §5.5): the last `UpsertNote` or `RemoveNote` for a
+        // path decides it. Read from the entries themselves, through the
+        // parser `list_aliases` uses, so it cannot disagree with the index.
+        let pending_aliases = pending_note_aliases(&self.index_ops);
+        // The aliases the index holds, before the ops below, for every note
+        // this commit both wrote (or moved, or deleted) on disk and re-rows.
+        // Compared after the loop with `pending_aliases` to find the alias
+        // names whose holders this commit changed. Reconcile's own
+        // index-only commits stage no file op, so they never land here:
+        // their path set is mid-walk, and Phase 2b re-resolves against the
+        // whole pass instead.
+        let mut aliases_before: Vec<(VaultPath, BTreeSet<String>)> = Vec::new();
+        for path in touched.iter().filter(|p| is_md(p)) {
+            if !pending_aliases.contains_key(path) {
+                continue;
+            }
+            match self.index.find_by_path(path) {
+                Ok(entry) => aliases_before.push((
+                    path.clone(),
+                    entry
+                        .map(|e| crate::index::frontmatter_aliases(&e.frontmatter))
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect(),
+                )),
+                // The comparison cannot be made, so no alias name is treated
+                // as changed; the path trigger below still runs.
+                Err(e) => {
+                    index_errors.push(e);
+                    aliases_before.clear();
+                    break;
+                }
+            }
+        }
+
         // The note paths wikilinks resolve against, for the facet seam
         // below. Built lazily, once per commit, and only when some upsert
         // has a paired write.
         let mut link_targets: Option<HashSet<VaultPath>> = None;
-        // Set when that path query fails, so the re-resolution below does
-        // not repeat it and report the same failure twice.
-        let mut link_targets_failed = false;
+        // The alias map those links resolve against, likewise lazy.
+        let mut link_aliases: Option<AliasMap> = None;
+        // Set when the path or alias query fails, so the re-resolution
+        // below does not repeat it and report the same failure twice.
+        let mut link_inputs_failed = false;
         for op in &self.index_ops {
             let op_ok = match apply_index_op(&*self.index, op) {
                 Ok(()) => true,
@@ -381,17 +421,23 @@ impl VaultTransaction {
                 // (FTS above is equally best-effort); a failed path query
                 // does too, and is reported as `IndexStale`.
                 if let Some((fm, body)) = &parsed {
-                    match link_targets_for(&mut link_targets, &*self.index, &self.file_ops) {
+                    let inputs = link_targets_for(&mut link_targets, &*self.index, &self.file_ops)
+                        .and_then(|targets| {
+                            link_aliases_for(&mut link_aliases, &*self.index, &pending_aliases)
+                                .map(|aliases| (targets, aliases))
+                        });
+                    match inputs {
                         Err(e) => {
-                            link_targets_failed = true;
+                            link_inputs_failed = true;
                             index_errors.push(e);
                         }
-                        Ok(targets) => {
+                        Ok((targets, aliases)) => {
                             let facets = crate::extractors::extract_note_facets(
                                 fm,
                                 &fm.as_json(),
                                 body,
                                 targets,
+                                aliases,
                             );
                             let tags = facets
                                 .tags
@@ -423,18 +469,55 @@ impl VaultTransaction {
         // reconsidered only if its target could name a path this commit
         // added or removed, which keeps a routine note creation from
         // re-resolving every long-standing dangling link in the vault.
-        if (!added_paths.is_empty() || !removed_paths.is_empty()) && !link_targets_failed {
+        //
+        // The alias map is resolution's other input (RFC 0007 §5.5), so a
+        // commit that changed the aliases a note declares re-resolves too,
+        // even with no path added or removed: `[[old]]` written before
+        // `aliases: [old]` arrived gains its edge now, and loses it when the
+        // alias goes. The changed names are the symmetric difference of each
+        // written note's aliases before and after. An unresolved row is
+        // reconsidered when its target could name one of them (or an added
+        // or removed path, as before); a row resolved through an alias also
+        // when its holder's aliases changed, or when its target could name a
+        // path added here (a stem outranks an alias). The map is read from
+        // the index after this commit's upserts.
+        let mut changed_alias_names: HashSet<String> = HashSet::new();
+        let mut alias_changed_paths: HashSet<VaultPath> = HashSet::new();
+        for (path, before) in &aliases_before {
+            let after: BTreeSet<String> = pending_aliases
+                .get(path)
+                .map(|a| a.iter().cloned().collect())
+                .unwrap_or_default();
+            if after != *before {
+                alias_changed_paths.insert(path.clone());
+                changed_alias_names.extend(before.symmetric_difference(&after).cloned());
+            }
+        }
+        if (!added_paths.is_empty() || !removed_paths.is_empty() || !changed_alias_names.is_empty())
+            && !link_inputs_failed
+        {
             let names: HashSet<&str> = added_paths
                 .iter()
                 .chain(removed_paths.iter())
                 .flat_map(crate::extractors::note_link_names)
+                .chain(changed_alias_names.iter().map(String::as_str))
                 .collect();
             let healed = link_targets_for(&mut link_targets, &*self.index, &self.file_ops)
                 .and_then(|targets| {
+                    let aliases = AliasMap::from_rows(self.index.list_aliases()?);
                     crate::reconcile::reresolve_stale_links(
                         &*self.index,
                         targets,
-                        |p| removed_paths.contains(p),
+                        &aliases,
+                        |p, row| {
+                            removed_paths.contains(p)
+                                || (row.via_alias
+                                    && (alias_changed_paths.contains(p)
+                                        || crate::extractors::target_may_name(
+                                            &row.target_raw,
+                                            &names,
+                                        )))
+                        },
                         |t| crate::extractors::target_may_name(t, &names),
                     )
                 });
@@ -508,6 +591,54 @@ fn link_targets_for<'a>(
             }
         }
         *cache = Some(paths);
+    }
+    Ok(cache.as_ref().expect("populated above"))
+}
+
+/// The aliases each note upserted or removed by `index_ops` declares once
+/// they are applied: the last op for a path wins, an `UpsertNote` declaring
+/// its entry's `aliases:` (read as [`VaultIndex::list_aliases`] reads them)
+/// and a `RemoveNote` none.
+fn pending_note_aliases(index_ops: &[IndexOp]) -> HashMap<VaultPath, Vec<String>> {
+    let mut pending = HashMap::new();
+    for op in index_ops {
+        match op {
+            IndexOp::UpsertNote(entry) => {
+                pending.insert(
+                    entry.path.clone(),
+                    crate::index::frontmatter_aliases(&entry.frontmatter),
+                );
+            }
+            IndexOp::RemoveNote(path) => {
+                pending.insert(path.clone(), Vec::new());
+            }
+            _ => {}
+        }
+    }
+    pending
+}
+
+/// The alias map a wikilink written in this transaction resolves against:
+/// the index's aliases with every note this transaction re-rows replaced
+/// by what it will declare (`pending`), so the map is the one the index
+/// holds after the commit's upserts even while they are being applied. A
+/// shared alias stays unresolvable ([`AliasMap::from_rows`]). Computed once
+/// per commit and cached in `cache`, like [`link_targets_for`].
+fn link_aliases_for<'a>(
+    cache: &'a mut Option<AliasMap>,
+    index: &dyn VaultIndex,
+    pending: &HashMap<VaultPath, Vec<String>>,
+) -> Result<&'a AliasMap, IndexError> {
+    if cache.is_none() {
+        let mut rows: Vec<(String, VaultPath)> = index
+            .list_aliases()?
+            .into_iter()
+            .filter(|(_, path)| !pending.contains_key(path))
+            .collect();
+        for (path, aliases) in pending {
+            rows.extend(aliases.iter().map(|a| (a.clone(), path.clone())));
+        }
+        *cache = Some(AliasMap::from_rows(rows));
     }
     Ok(cache.as_ref().expect("populated above"))
 }

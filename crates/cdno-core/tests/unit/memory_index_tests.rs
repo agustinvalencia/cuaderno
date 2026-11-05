@@ -3,7 +3,8 @@
 //! production and test-fake implementations.
 
 use cdno_core::index::{
-    ArchivalSnapshot, DeadlineEntry, LinkEntry, MemoryIndex, MilestoneEntry, NoteEntry, VaultIndex,
+    ArchivalSnapshot, DeadlineEntry, LinkEntry, LinkResolution, LinkResolutionUpdate, MemoryIndex,
+    MilestoneEntry, NoteEntry, VaultIndex,
 };
 use cdno_core::path::VaultPath;
 use serde_json::json;
@@ -114,6 +115,7 @@ fn remove_note_cascades_all_facets() {
             target_raw: "another".to_owned(),
             resolved_path: Some(vp("projects/another.md")),
             label: None,
+            via_alias: false,
         }],
     )
     .unwrap();
@@ -263,16 +265,19 @@ fn replace_links_and_traverse_graph() {
                 target_raw: "b".to_owned(),
                 resolved_path: Some(vp("projects/b.md")),
                 label: None,
+                via_alias: false,
             },
             LinkEntry {
                 target_raw: "c".to_owned(),
                 resolved_path: Some(vp("projects/c.md")),
                 label: Some("see also".to_owned()),
+                via_alias: false,
             },
             LinkEntry {
                 target_raw: "ghost".to_owned(),
                 resolved_path: None,
                 label: None,
+                via_alias: false,
             },
         ],
     )
@@ -283,6 +288,7 @@ fn replace_links_and_traverse_graph() {
             target_raw: "c".to_owned(),
             resolved_path: Some(vp("projects/c.md")),
             label: None,
+            via_alias: false,
         }],
     )
     .unwrap();
@@ -323,11 +329,13 @@ fn find_backlinks_deduplicates_multiple_links_from_same_source() {
                 target_raw: "z".to_owned(),
                 resolved_path: Some(vp("projects/z.md")),
                 label: None,
+                via_alias: false,
             },
             LinkEntry {
                 target_raw: "z again".to_owned(),
                 resolved_path: Some(vp("projects/z.md")),
                 label: Some("see also".to_owned()),
+                via_alias: false,
             },
         ],
     )
@@ -731,6 +739,113 @@ fn aliases_are_ordered_by_the_paths_text() {
         vec![
             ("in-file".to_owned(), vp("x/foo.md")),
             ("in-folder".to_owned(), vp("x/foo/_index.md")),
+        ]
+    );
+}
+
+#[test]
+fn via_alias_round_trips_through_the_links_facet() {
+    // RFC 0007 §5.5: `via_alias` is written by `replace_links` and by
+    // `set_link_resolutions`, and read back by `find_outgoing_links` and
+    // `link_resolutions`.
+    let idx = MemoryIndex::new();
+    for p in [
+        "journal/d.md",
+        "projects/surrogate-model.md",
+        "notes/old.md",
+    ] {
+        idx.upsert_note(&sample_note(p, "project")).unwrap();
+    }
+    let src = vp("journal/d.md");
+    let new = vp("projects/surrogate-model.md");
+    idx.replace_links(
+        &src,
+        &[
+            LinkEntry {
+                target_raw: "old".to_owned(),
+                resolved_path: Some(new.clone()),
+                label: None,
+                via_alias: true,
+            },
+            LinkEntry {
+                target_raw: "surrogate-model".to_owned(),
+                resolved_path: Some(new.clone()),
+                label: None,
+                via_alias: false,
+            },
+            LinkEntry {
+                target_raw: "older".to_owned(),
+                resolved_path: None,
+                label: None,
+                via_alias: false,
+            },
+        ],
+    )
+    .unwrap();
+
+    let flags = |idx: &dyn VaultIndex| -> Vec<(String, Option<VaultPath>, bool)> {
+        idx.find_outgoing_links(&src)
+            .unwrap()
+            .into_iter()
+            .map(|l| (l.target_raw, l.resolved_path, l.via_alias))
+            .collect()
+    };
+    assert_eq!(
+        flags(&idx),
+        vec![
+            ("old".to_owned(), Some(new.clone()), true),
+            ("surrogate-model".to_owned(), Some(new.clone()), false),
+            ("older".to_owned(), None, false),
+        ]
+    );
+    let mut resolutions = idx.link_resolutions().unwrap();
+    resolutions.sort_by(|a, b| a.target_raw.cmp(&b.target_raw));
+    assert_eq!(
+        resolutions,
+        vec![
+            LinkResolution {
+                target_raw: "old".to_owned(),
+                resolved_path: Some(new.clone()),
+                via_alias: true,
+            },
+            LinkResolution {
+                target_raw: "older".to_owned(),
+                resolved_path: None,
+                via_alias: false,
+            },
+            LinkResolution {
+                target_raw: "surrogate-model".to_owned(),
+                resolved_path: Some(new.clone()),
+                via_alias: false,
+            },
+        ]
+    );
+
+    // An update carries the flag both ways: `[[old]]` now finds a stem and
+    // drops it, `[[older]]` resolves through an alias and gains it.
+    let changed = idx
+        .set_link_resolutions(&[
+            LinkResolutionUpdate {
+                target_raw: "old".to_owned(),
+                from: Some(new.clone()),
+                to: Some(vp("notes/old.md")),
+                via_alias: false,
+            },
+            LinkResolutionUpdate {
+                target_raw: "older".to_owned(),
+                from: None,
+                to: Some(new.clone()),
+                via_alias: true,
+            },
+        ])
+        .unwrap();
+    assert_eq!(changed, 2);
+    assert_eq!(
+        flags(&idx),
+        vec![
+            ("old".to_owned(), Some(vp("notes/old.md")), false),
+            ("surrogate-model".to_owned(), Some(new.clone()), false),
+            ("older".to_owned(), Some(new.clone()), true),
         ]
     );
 }

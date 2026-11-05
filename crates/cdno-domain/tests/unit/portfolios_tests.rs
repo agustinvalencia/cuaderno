@@ -226,7 +226,7 @@ fn create_portfolio_backlinks_resolve_through_the_wikilink_resolver() {
     // lives at `portfolios/<slug>/_index.md`, so a bare
     // `[[portfolios/<slug>]]` resolves to nothing (basename is
     // `_index`). Both written bullets must resolve to the real notes.
-    use cdno_core::extractors::{extract_wikilinks, resolve_wikilinks};
+    use cdno_core::extractors::{AliasMap, extract_wikilinks, resolve_wikilinks};
     use std::collections::HashSet;
 
     let (vault, store) = vault_with_seeded_store(&[]);
@@ -244,7 +244,11 @@ fn create_portfolio_backlinks_resolve_through_the_wikilink_resolver() {
 
     // Question -> portfolio resolves to the portfolio's `_index.md`.
     let question_raw = store.read_file(&question_path).unwrap();
-    let to_portfolio = resolve_wikilinks(extract_wikilinks(&question_raw), &vault_paths);
+    let to_portfolio = resolve_wikilinks(
+        extract_wikilinks(&question_raw),
+        &vault_paths,
+        &AliasMap::default(),
+    );
     let portfolio_link = to_portfolio
         .iter()
         .find(|l| l.target_raw.starts_with("portfolios/"))
@@ -257,7 +261,11 @@ fn create_portfolio_backlinks_resolve_through_the_wikilink_resolver() {
 
     // Portfolio -> question resolves to the flat question note.
     let portfolio_raw = store.read_file(&portfolio_path).unwrap();
-    let to_question = resolve_wikilinks(extract_wikilinks(&portfolio_raw), &vault_paths);
+    let to_question = resolve_wikilinks(
+        extract_wikilinks(&portfolio_raw),
+        &vault_paths,
+        &AliasMap::default(),
+    );
     let question_link = to_question
         .iter()
         .find(|l| l.target_raw.starts_with("questions/"))
@@ -1361,7 +1369,7 @@ fn project_link_resolves_through_the_wikilink_resolver() {
     // `_index.md` (not dangle) — the body-scannable form is what later
     // joins the backlink graph. Asserts resolution, not graph membership
     // (the latter only follows a full reindex; see context.rs).
-    use cdno_core::extractors::{extract_wikilinks, resolve_wikilinks};
+    use cdno_core::extractors::{AliasMap, extract_wikilinks, resolve_wikilinks};
     use std::collections::HashSet;
 
     let (vault, store) = vault_with_seeded_store(&[("projects/surrogate-model.md", PROJECT_NOTE)]);
@@ -1378,7 +1386,11 @@ fn project_link_resolves_through_the_wikilink_resolver() {
         .collect();
 
     let project_raw = store.read_file(&project_path).unwrap();
-    let links = resolve_wikilinks(extract_wikilinks(&project_raw), &vault_paths);
+    let links = resolve_wikilinks(
+        extract_wikilinks(&project_raw),
+        &vault_paths,
+        &AliasMap::default(),
+    );
     let portfolio_link = links
         .iter()
         .find(|l| l.target_raw.starts_with("portfolios/"))

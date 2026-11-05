@@ -540,8 +540,10 @@ the validator cannot disagree. A free-text alias is simply not returned.
 ### T11 — The alias rule in resolution, and its triggers
 
 **What.** `resolve_one` (`extractors.rs:347`), `resolve_wikilinks` (`:331`), `target_may_name`
-(`:464`) and `reresolve_stale_links` (`reconcile.rs:338`) take an `aliases: &HashMap<String, VaultPath>`
-beside the path set. A final rule in `resolve_one`, after the last-segment rule and only on
+(`:464`) and `reresolve_stale_links` (`reconcile.rs:338`) take an `aliases: &AliasMap` beside the
+path set — `AliasMap::from_rows(list_aliases())`, mapping an alias to `Some(path)` when exactly one
+note declares it and to `None` when two or more do, so a shared alias is unresolvable by
+construction. A final rule in `resolve_one`, after the last-segment rule and only on
 **zero** stem matches: the target's last segment equals exactly one note's alias (§5.5; a stem
 match, unique or ambiguous, always wins; an alias shared by two notes resolves to nothing).
 `LinkEntry` (`index.rs:344`) gains `via_alias: bool`, carried through `set_link_resolutions`

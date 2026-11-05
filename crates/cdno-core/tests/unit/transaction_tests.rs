@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use cdno_core::error::{IndexError, StoreError, TransactionError};
 use cdno_core::index::{
-    DeadlineEntry, LinkEntry, LinkResolutionUpdate, MemoryIndex, MilestoneEntry, NoteCandidate,
-    NoteEntry, VaultIndex,
+    DeadlineEntry, LinkEntry, LinkResolution, LinkResolutionUpdate, MemoryIndex, MilestoneEntry,
+    NoteCandidate, NoteEntry, VaultIndex,
 };
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
@@ -352,6 +352,7 @@ fn invalid_tags_field_still_stages_links() {
                 target_raw: "concepts/old".to_owned(),
                 resolved_path: Some(vp("concepts/old.md")),
                 label: None,
+                via_alias: false,
             }],
         )
         .unwrap();
@@ -427,6 +428,7 @@ fn upsert_without_paired_write_leaves_facets_alone() {
         target_raw: "x".to_owned(),
         resolved_path: None,
         label: None,
+        via_alias: false,
     }];
     index.replace_links(&a, &links).unwrap();
 
@@ -603,7 +605,7 @@ impl VaultIndex for FailingIndex {
     fn find_outgoing_links(&self, path: &VaultPath) -> Result<Vec<LinkEntry>, IndexError> {
         self.inner.find_outgoing_links(path)
     }
-    fn link_resolutions(&self) -> Result<Vec<(String, Option<VaultPath>)>, IndexError> {
+    fn link_resolutions(&self) -> Result<Vec<LinkResolution>, IndexError> {
         self.inner.link_resolutions()
     }
     fn set_link_resolutions(&self, updates: &[LinkResolutionUpdate]) -> Result<usize, IndexError> {
@@ -946,4 +948,224 @@ fn commit_reresolution_skips_targets_unrelated_to_the_commit() {
 
     commit_note(&store, &index, "concepts/unrelated.md", LINKED_NOTE);
     assert_eq!(resolution_of(&index, src, "late"), None);
+}
+
+// ---------------------------------------------------------------------
+// The alias rule's commit trigger (RFC 0007 §5.5, T11)
+// ---------------------------------------------------------------------
+
+const DAILY: &str = "journal/2026/daily/2026-10-12.md";
+const NEW: &str = "projects/new.md";
+
+/// Write `content` to `path` and upsert its row with `frontmatter`, as a
+/// domain write does (the entry carries the parsed frontmatter).
+fn commit_note_with(
+    store: &Arc<dyn VaultStore>,
+    index: &Arc<dyn VaultIndex>,
+    path: &str,
+    content: &str,
+    frontmatter: serde_json::Value,
+) {
+    let mut tx = VaultTransaction::new(store.clone(), index.clone()).expect("write lock");
+    tx.write_file(vp(path), content);
+    let mut entry = sample_note(path, "project");
+    entry.frontmatter = frontmatter;
+    tx.upsert_note(entry);
+    tx.commit().unwrap();
+}
+
+fn project_with_aliases(aliases: &[&str]) -> (String, serde_json::Value) {
+    let content = if aliases.is_empty() {
+        "---\ntype: project\n---\n\n# Surrogate model\n".to_owned()
+    } else {
+        format!(
+            "---\ntype: project\naliases: [{}]\n---\n\n# Surrogate model\n",
+            aliases.join(", ")
+        )
+    };
+    let fm = if aliases.is_empty() {
+        json!({ "type": "project" })
+    } else {
+        json!({ "type": "project", "aliases": aliases })
+    };
+    (content, fm)
+}
+
+fn link_row(index: &Arc<dyn VaultIndex>, source: &str, target_raw: &str) -> LinkEntry {
+    index
+        .find_outgoing_links(&vp(source))
+        .unwrap()
+        .into_iter()
+        .find(|l| l.target_raw == target_raw)
+        .expect("link row present")
+}
+
+/// `projects/new.md` with no aliases, and a daily note linking `[[old]]`,
+/// which resolves to nothing.
+fn vault_with_a_dangling_old_link() -> (Arc<dyn VaultStore>, Arc<dyn VaultIndex>) {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (content, fm) = project_with_aliases(&[]);
+    commit_note_with(&store, &index, NEW, &content, fm);
+    commit_note(
+        &store,
+        &index,
+        DAILY,
+        "---\ntype: daily\n---\n\n- worked on [[old]]\n",
+    );
+    assert_eq!(link_row(&index, DAILY, "old").resolved_path, None);
+    (store, index)
+}
+
+#[test]
+fn adding_an_alias_in_a_transaction_reresolves_dangling_links() {
+    let (store, index) = vault_with_a_dangling_old_link();
+
+    // No path is added or removed: only the alias set changes.
+    let (content, fm) = project_with_aliases(&["old"]);
+    commit_note_with(&store, &index, NEW, &content, fm);
+
+    assert_eq!(index.find_backlinks(&vp(NEW)).unwrap(), vec![vp(DAILY)]);
+    let row = link_row(&index, DAILY, "old");
+    assert_eq!(row.resolved_path, Some(vp(NEW)));
+    assert!(
+        row.via_alias,
+        "the row records that it resolved through an alias"
+    );
+}
+
+#[test]
+fn removing_an_alias_unresolves_its_links() {
+    let (store, index) = vault_with_a_dangling_old_link();
+    let (content, fm) = project_with_aliases(&["old"]);
+    commit_note_with(&store, &index, NEW, &content, fm);
+    assert_eq!(index.find_backlinks(&vp(NEW)).unwrap(), vec![vp(DAILY)]);
+
+    let (content, fm) = project_with_aliases(&[]);
+    commit_note_with(&store, &index, NEW, &content, fm);
+
+    assert!(index.find_backlinks(&vp(NEW)).unwrap().is_empty());
+    let row = link_row(&index, DAILY, "old");
+    assert_eq!(row.resolved_path, None);
+    assert!(!row.via_alias);
+}
+
+#[test]
+fn an_alias_change_on_one_note_does_not_touch_unrelated_links() {
+    let (store, index) = vault_with_a_dangling_old_link();
+    // Unrelated rows: one resolved by stem, one dangling, one resolved
+    // through another note's alias.
+    commit_note(&store, &index, "concepts/stem.md", LINKED_NOTE);
+    commit_note_with(
+        &store,
+        &index,
+        "projects/other.md",
+        "---\ntype: project\naliases: [elsewhere]\n---\n\n# Other\n",
+        json!({ "type": "project", "aliases": ["elsewhere"] }),
+    );
+    commit_note(
+        &store,
+        &index,
+        "journal/2026/daily/2026-10-13.md",
+        "---\ntype: daily\n---\n\n- [[stem]], [[ghost]], [[elsewhere]] and [[old]] again\n",
+    );
+    let sorted = |mut v: Vec<LinkResolution>| {
+        v.sort_by(|a, b| {
+            (
+                &a.target_raw,
+                a.resolved_path.as_ref().map(|p| p.to_string()),
+            )
+                .cmp(&(
+                    &b.target_raw,
+                    b.resolved_path.as_ref().map(|p| p.to_string()),
+                ))
+        });
+        v
+    };
+    let before = sorted(index.link_resolutions().unwrap());
+    assert!(
+        before
+            .iter()
+            .any(|r| r.target_raw == "elsewhere" && r.via_alias)
+    );
+
+    let (content, fm) = project_with_aliases(&["old"]);
+    commit_note_with(&store, &index, NEW, &content, fm);
+    let after = sorted(index.link_resolutions().unwrap());
+
+    let old_before = LinkResolution {
+        target_raw: "old".to_owned(),
+        resolved_path: None,
+        via_alias: false,
+    };
+    let old_after = LinkResolution {
+        target_raw: "old".to_owned(),
+        resolved_path: Some(vp(NEW)),
+        via_alias: true,
+    };
+    assert!(before.contains(&old_before));
+    assert!(after.contains(&old_after));
+    let rest = |v: &[LinkResolution]| -> Vec<LinkResolution> {
+        v.iter()
+            .filter(|r| r.target_raw != "old")
+            .cloned()
+            .collect()
+    };
+    assert_eq!(rest(&before), rest(&after), "only the `old` rows changed");
+    assert!(!after.contains(&old_before), "every `[[old]]` row moved");
+}
+
+#[test]
+fn a_new_stem_moves_a_link_off_an_alias() {
+    // A stem always wins: a commit creating `notes/old.md` re-resolves a
+    // row that reached `projects/new.md` through the alias `old`.
+    let (store, index) = vault_with_a_dangling_old_link();
+    let (content, fm) = project_with_aliases(&["old"]);
+    commit_note_with(&store, &index, NEW, &content, fm);
+    assert!(link_row(&index, DAILY, "old").via_alias);
+
+    commit_note(&store, &index, "notes/old.md", LINKED_NOTE);
+
+    let row = link_row(&index, DAILY, "old");
+    assert_eq!(row.resolved_path, Some(vp("notes/old.md")));
+    assert!(!row.via_alias);
+}
+
+#[test]
+fn a_second_holder_makes_an_alias_resolve_to_nothing() {
+    let (store, index) = vault_with_a_dangling_old_link();
+    let (content, fm) = project_with_aliases(&["old"]);
+    commit_note_with(&store, &index, NEW, &content, fm.clone());
+    assert_eq!(link_row(&index, DAILY, "old").resolved_path, Some(vp(NEW)));
+
+    commit_note_with(&store, &index, "projects/twin.md", &content, fm);
+
+    let row = link_row(&index, DAILY, "old");
+    assert_eq!(
+        row.resolved_path, None,
+        "a shared alias resolves to nothing"
+    );
+    assert!(!row.via_alias);
+}
+
+#[test]
+fn a_link_staged_before_its_alias_in_one_commit_resolves() {
+    // The facet seam resolves against the map the index holds after the
+    // commit's upserts, even for a linking note staged before the note
+    // that declares the alias.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (content, fm) = project_with_aliases(&["old"]);
+    let mut tx = VaultTransaction::new(store.clone(), index.clone()).expect("write lock");
+    tx.write_file(vp(DAILY), "---\ntype: daily\n---\n\n- [[old]]\n");
+    tx.upsert_note(sample_note(DAILY, "daily"));
+    tx.write_file(vp(NEW), content);
+    let mut entry = sample_note(NEW, "project");
+    entry.frontmatter = fm;
+    tx.upsert_note(entry);
+    tx.commit().unwrap();
+
+    let row = link_row(&index, DAILY, "old");
+    assert_eq!(row.resolved_path, Some(vp(NEW)));
+    assert!(row.via_alias);
 }

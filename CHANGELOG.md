@@ -33,6 +33,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `-2`. A slug-shaped title or reference longer than six words is no longer truncated, in a title
   and in a stewardship reference, a commitment's `project:` / `stewardship:` value and a tracking
   activity slug (#880).
+- **An alias resolves** (RFC 0007 stage S3, #860). A slug-shaped `aliases:` entry on a note, such
+  as one already kept for Obsidian, now makes `[[that-alias]]` resolve to the note (so the link is
+  one of its backlinks) when no note has that stem, whatever folder the link names before it. A stem
+  always wins over an alias, and an alias two notes share resolves to nothing. Adding or removing an
+  alias, in cdno or in an editor, re-resolves the links that name it at the next write or startup. `cdno lint` still reports such a link as broken until its straggler warning lands (T14).
 
 ### Documentation
 
@@ -42,6 +47,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Internal
 
+- Index migration 003 adds `links.via_alias` (0 on every existing row), set when a link resolved
+  through an alias; `LinkEntry`, `LinkResolutionUpdate` and the new `LinkResolution` row of
+  `link_resolutions` carry it, and resolution takes an `AliasMap` beside the path set (#860).
 - `VaultIndex::list_aliases` reads slug-shaped `aliases:` entries from the frontmatter the index already
   keeps; the slug shape rule moves to `cdno-core`; nothing user-visible (RFC 0007 stage S3, #859).
 - `cdno-core` gains `git.rs`, the repository facts the rename will consult (`git_state`,
