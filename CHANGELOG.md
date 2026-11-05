@@ -16,7 +16,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - `--slug` on the eight CLI create verbs (`project create`, `question create`, `portfolio create`,
   `action add --note`, `action promote`, `note create`, `stewardship create`, `commit create`): it
   is never prompted, never shown in a confirmation preview, and is refused when the name is taken;
-  under `--json` a refusal is an `invalid_slug`, `slug_taken` or `portfolio_slug_mismatch` object.
+  under `--json` a refusal is an `invalid_slug`, `slug_taken`, `portfolio_slug_mismatch` or
+  `slug_given_twice` object.
   `note create` refuses `--slug` beside `--field slug=…`. The `portfolio create --question` help
   now says a question's slug is accepted (RFC 0007, #852).
 - MCP: an optional `slug` on the eight create tools (`create_project`, `create_question`,

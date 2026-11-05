@@ -169,11 +169,15 @@ pub(crate) enum RejectionCode {
 fn rejection_message(code: RejectionCode, e: &DomainError) -> String {
     match code {
         RejectionCode::FocusOpen => FOCUS_OPEN_MESSAGE.to_string(),
-        // The slug rejections end on the remedy, so the agent reads the fix
-        // without parsing the domain's sentence (RFC 0007 §5.7).
-        RejectionCode::InvalidSlug => format!("{e}; propose another slug"),
-        RejectionCode::SlugTaken => format!("{e}; propose another slug"),
-        RejectionCode::PortfolioSlugMismatch | RejectionCode::SlugGivenTwice => e.to_string(),
+        // The slug rejections end on the remedy, in the focus refusals' voice
+        // (RFC 0007 §5.7): a collision is refused, not suffixed, so the agent
+        // must not retry with a `-2` of its own.
+        RejectionCode::InvalidSlug => {
+            format!("{e}; ask the person for another name, do not alter or suffix it yourself")
+        }
+        RejectionCode::SlugTaken => format!(
+            "{e}; if that is the note you meant, use it; otherwise ask the person for another name, do not suffix it yourself"
+        ),
         _ => e.to_string(),
     }
 }
@@ -1191,6 +1195,9 @@ mod tests {
     /// this crate, and `classify` is `pub(crate)`, so neither can call the
     /// other: the expected keys below are a literal copy of the CLI's, and the
     /// CLI side is pinned by its own `--json` tests. Change both together.
+    /// The rendered values below are the CLI's, taken from a `--json` run:
+    /// `why` for a `BadChar`, `holder` as the note's path string, `kind` as
+    /// `stem` / `folder` / `alias`.
     #[test]
     fn slug_rejections_carry_the_keys_the_cli_carries() {
         use cdno_core::path::VaultPath;
@@ -1242,13 +1249,31 @@ mod tests {
             got.sort_unstable();
             assert_eq!(got, keys, "{code}");
         }
-        let taken = classify(&DomainError::SlugTaken {
-            slug: "surrogate-model".into(),
-            holder: VaultPath::new("projects/surrogate-model.md").unwrap(),
-            kind: TakenBy::Folder,
+        let invalid = classify(&DomainError::InvalidSlug {
+            slug: "surrogate_model".into(),
+            why: SlugRejection::BadChar('_'),
         })
         .unwrap();
-        assert_eq!(taken["details"]["kind"], "folder");
-        assert_eq!(taken["details"]["holder"], "projects/surrogate-model.md");
+        assert_eq!(
+            invalid["details"]["why"],
+            "'_' is not allowed; use only a-z, 0-9 and '-'"
+        );
+        for (kind, rendered) in [
+            (TakenBy::Stem, "stem"),
+            (TakenBy::Folder, "folder"),
+            (TakenBy::Alias, "alias"),
+        ] {
+            let taken = classify(&DomainError::SlugTaken {
+                slug: "surrogate-model".into(),
+                holder: VaultPath::new("portfolios/surrogate-model/_index.md").unwrap(),
+                kind,
+            })
+            .unwrap();
+            assert_eq!(taken["details"]["kind"], rendered);
+            assert_eq!(
+                taken["details"]["holder"],
+                "portfolios/surrogate-model/_index.md"
+            );
+        }
     }
 }

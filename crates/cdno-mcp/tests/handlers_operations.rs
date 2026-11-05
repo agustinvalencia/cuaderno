@@ -4565,7 +4565,7 @@ async fn a_taken_slug_rejects_with_slug_taken() {
         rejection["message"]
             .as_str()
             .unwrap()
-            .contains("propose another slug"),
+            .contains("do not suffix it yourself"),
         "{rejection}"
     );
 }
@@ -4676,4 +4676,155 @@ async fn add_action_without_note_ignores_slug() {
     let map = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
     assert!(map.contains("- [ ] Book the field hut (light)"), "{map}");
     assert!(!store.exists(&vp("actions/hut.md")).unwrap());
+}
+
+/// The name a created path carries: its file stem, or its folder for a
+/// folder note (`<slug>/_index.md`).
+fn created_name(result: &CallToolResult) -> String {
+    let path = decode_json(result)["path"].as_str().unwrap().to_owned();
+    let p = std::path::Path::new(&path);
+    let named = if p.file_stem().and_then(|s| s.to_str()) == Some("_index") {
+        p.parent().and_then(|d| d.file_name())
+    } else {
+        p.file_stem()
+    };
+    named.and_then(|s| s.to_str()).unwrap().to_owned()
+}
+
+/// Every create tool hands the slug to the domain: a `None` put back at any
+/// pass-through would leave the call succeeding under the derived name.
+/// Names are unique across note types, so each row has its own slug.
+#[tokio::test]
+async fn every_create_tool_passes_the_slug_through() {
+    let (server, _store) = server_with_config(config_with_person(), |vault, s| {
+        seed_today_daily(&s);
+        let at = moment(2026, 1, 1, 9, 0);
+        vault
+            .create_project(at, "Surrogate model", Context::Work, None)
+            .unwrap();
+        vault
+            .add_action(
+                at,
+                "surrogate-model",
+                "Fit the calibration curve",
+                EnergyLevel::Medium,
+            )
+            .unwrap();
+    });
+    let s = |name: &str| Some(format!("surrogate-calibration-{name}"));
+    let mut rows: Vec<(String, CallToolResult)> = Vec::new();
+
+    rows.push((
+        "surrogate-calibration-project".into(),
+        server
+            .create_project(Parameters(CreateProjectInput {
+                title: "Calibrating the surrogate against the solver".to_owned(),
+                context: "work".to_owned(),
+                core_question: None,
+                vars: None,
+                slug: s("project"),
+            }))
+            .await
+            .expect("create_project"),
+    ));
+    rows.push((
+        "surrogate-calibration-question".into(),
+        server
+            .create_question(Parameters(CreateQuestionInput {
+                domain: "research".to_owned(),
+                text: "How well does the surrogate extrapolate beyond its training range?"
+                    .to_owned(),
+                vars: None,
+                slug: s("question"),
+            }))
+            .await
+            .expect("create_question"),
+    ));
+    rows.push((
+        "surrogate-calibration-portfolio".into(),
+        server
+            .create_portfolio(Parameters(CreatePortfolioInput {
+                question: "Evidence on how the surrogate extrapolates".to_owned(),
+                project: None,
+                vars: None,
+                slug: s("portfolio"),
+            }))
+            .await
+            .expect("create_portfolio"),
+    ));
+    rows.push((
+        "surrogate-calibration-note".into(),
+        server
+            .create_custom_note(Parameters(CreateCustomNoteInput {
+                type_name: "person".to_owned(),
+                title: "Ada Lovelace".to_owned(),
+                fields: std::collections::HashMap::from([("name".to_owned(), "Ada".to_owned())]),
+                vars: None,
+                body: None,
+                origin: None,
+                slug: s("note"),
+            }))
+            .await
+            .expect("create_custom_note"),
+    ));
+    for (expanded, name) in [(false, "flat"), (true, "expanded")] {
+        rows.push((
+            format!("surrogate-calibration-{name}"),
+            server
+                .create_stewardship(Parameters(CreateStewardshipInput {
+                    name: "Keeping the surrogate honest".to_owned(),
+                    context: "work".to_owned(),
+                    expanded,
+                    vars: None,
+                    slug: s(name),
+                }))
+                .await
+                .expect("create_stewardship"),
+        ));
+    }
+    rows.push((
+        "surrogate-calibration-action".into(),
+        server
+            .add_action(Parameters(AddActionInput {
+                project: "surrogate-model".to_owned(),
+                title: "Plot the residuals".to_owned(),
+                energy: "light".to_owned(),
+                with_note: true,
+                vars: None,
+                slug: s("action"),
+            }))
+            .await
+            .expect("add_action"),
+    ));
+    rows.push((
+        "surrogate-calibration-promoted".into(),
+        server
+            .promote_action(Parameters(PromoteActionInput {
+                project: "surrogate-model".to_owned(),
+                query: "Fit the calibration".to_owned(),
+                vars: None,
+                slug: s("promoted"),
+            }))
+            .await
+            .expect("promote_action"),
+    ));
+    rows.push((
+        "surrogate-calibration-commitment".into(),
+        server
+            .create_commitment(Parameters(CreateCommitmentInput {
+                title: "Send the surrogate report".to_owned(),
+                due: NaiveDate::from_ymd_opt(2026, 12, 1).unwrap(),
+                context: "work".to_owned(),
+                project: None,
+                stewardship: None,
+                vars: None,
+                slug: s("commitment"),
+            }))
+            .await
+            .expect("create_commitment"),
+    ));
+
+    for (want, result) in &rows {
+        assert_eq!(&created_name(result), want, "{result:?}");
+    }
 }
