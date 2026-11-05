@@ -436,12 +436,9 @@ pub trait VaultIndex: Send + Sync {
     /// display name such as `"Surrogate model"` contributes nothing. Ordered by
     /// path (compared as text), then by position in the note's list.
     ///
-    /// Rows are not deduplicated: an alias two notes declare is returned once
-    /// per note, and resolution treats it as ambiguous (§5.5).
-    ///
-    /// Aliases are read from the frontmatter the index already keeps, never
-    /// stored separately: there is no table to drift from the note, and a
-    /// rebuilt index returns the same list.
+    /// Rows are not deduplicated: an alias is returned once per occurrence,
+    /// so one two notes declare yields two rows (and a note listing it twice,
+    /// two), and resolution treats it as ambiguous (§5.5).
     fn list_aliases(&self) -> Result<Vec<(String, VaultPath)>, IndexError>;
     /// Every indexed note as a [`NoteCandidate`], most-recently-modified
     /// first. The listing behind `cdno open`'s picker and `--list`.

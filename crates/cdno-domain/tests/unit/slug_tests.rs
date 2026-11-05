@@ -10,8 +10,10 @@ use std::sync::Arc;
 use cdno_core::config::VaultConfig;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
+use cdno_core::slug::is_slug_shaped;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::{Context, Vault, slugify};
+use proptest::prelude::*;
 
 #[test]
 fn slugify_leaves_a_title_under_both_caps_alone() {
@@ -137,4 +139,27 @@ fn a_folder_note_takes_its_folder_name() {
         .create_project(at, "Surrogate model", Context::Work, None)
         .unwrap();
     assert_eq!(path.to_string(), "projects/surrogate-model-2.md");
+}
+
+#[test]
+fn slugify_results_are_slug_shaped() {
+    for title in [
+        "Surrogate model for turbulence",
+        "\u{dc}ber Model",
+        "no",
+        "2026",
+        "!!!",
+        &"\u{fc}".repeat(80),
+    ] {
+        let slug = slugify(title);
+        assert!(is_slug_shaped(&slug), "title {title:?} gave {slug:?}");
+    }
+}
+
+proptest! {
+    #[test]
+    fn slugify_is_always_slug_shaped(title in any::<String>()) {
+        let slug = slugify(&title);
+        prop_assert!(is_slug_shaped(&slug), "title {:?} gave {:?}", title, slug);
+    }
 }

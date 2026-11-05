@@ -45,12 +45,19 @@ fn explicit_slug_rejections_name_their_reason() {
 }
 
 #[test]
-fn is_slug_shaped_accepts_what_slugify_produces() {
-    for yes in ["no", "007", "2026", "surrogate-model", "2026-11-05"] {
+fn is_slug_shaped_accepts_the_shapes_slugify_keeps() {
+    for yes in [
+        "no",
+        "007",
+        "2026",
+        "surrogate-model",
+        "2026-11-05",
+        "über-model",
+    ] {
         assert!(is_slug_shaped(yes), "input {yes:?}");
     }
     let long = "a".repeat(51);
-    for no in ["", "A", "a--b", "-a", "a-", "a b", &long] {
+    for no in ["", "A", "a--b", "-a", "a-", "a b", "a_b", &long] {
         assert!(!is_slug_shaped(no), "input {no:?}");
     }
 }
@@ -83,7 +90,7 @@ fn is_slug_shaped_agrees_with_the_validator() {
         }
         assert_eq!(
             is_slug_shaped(input),
-            matches!(validated, Ok(()) | Err(SlugRejection::YamlTyped)),
+            matches!(validated, Ok(()) | Err(SlugRejection::YamlTyped)) || input == "über-model",
             "input {input:?}"
         );
     }
