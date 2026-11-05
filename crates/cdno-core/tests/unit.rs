@@ -9,6 +9,7 @@ mod unit {
     mod frontmatter_tests;
     mod fs_store_tests;
     mod fts_search_tests;
+    mod git_tests;
     mod hash_tests;
     mod index_tests;
     mod markdown_tests;

@@ -27,6 +27,10 @@ tempfile.workspace = true
 notify.workspace = true
 notify-debouncer-mini.workspace = true
 
+# Process-group kill for a timed-out git (git.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 rusqlite.workspace = true
 proptest.workspace = true
