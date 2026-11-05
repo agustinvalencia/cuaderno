@@ -803,6 +803,8 @@ fn piece() -> impl Strategy<Value = String> {
         Just("[[dir/old]]".to_string()),
         Just("[[old#anchor]]".to_string()),
         Just("[[slug#anchor]]".to_string()),
+        Just("[[#h]]".to_string()),
+        Just("[[slug #h]]".to_string()),
         Just("[[old|label]]".to_string()),
         Just("[[ dir/old | label ]]".to_string()),
         Just("[[slug|label]]".to_string()),
@@ -849,5 +851,21 @@ proptest! {
         let expected: Vec<WikilinkRaw> = extract_wikilinks(&text).iter().map(map_raw).collect();
         prop_assert_eq!(extract_wikilinks(&after), expected);
         prop_assert!(differs_only_by(&text, &after, &edits));
+        // Edits built independently of the call that returned them.
+        let expected_edits: Vec<AddressEdit> = wikilink_spans(&text)
+            .into_iter()
+            .filter(|s| !text[s.address.clone()].is_empty() && names_old(&text[s.target.clone()]))
+            .map(|s| AddressEdit {
+                replacement: swap_last_segment(&text[s.address.clone()]),
+                range: s.address,
+            })
+            .collect();
+        prop_assert!(differs_only_by(&text, &after, &expected_edits));
+        // Each returned edit's range is an accepted address span of the original.
+        prop_assert_eq!(
+            edits,
+            expected_edits,
+            "every edit's range must be an accepted address span of wikilink_spans(original)"
+        );
     }
 }

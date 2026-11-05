@@ -794,7 +794,7 @@ ambiguous `[[old]]` is excluded because `stem_shared` already refused), then §3
 `frontmatter_changed_only_at` as the guard. The target's own edit adds `Alias`
 (`append_frontmatter_list_value`); today's daily note's edit adds `LogLine` (T19's line appended
 through the same pure function `stage_daily_logs` uses to place a line, extracted as
-`append_log_line(content, line) -> String`). **Exactly one `PlannedEdit` per path**: the daily
+`append_log_line(content, line) -> String`). All edits of a `PlannedEdit` are expressed in `before`'s byte positions and merged in ascending order before applying (T7's frontmatter edits are relative to the frontmatter block and must be offset). **Exactly one `PlannedEdit` per path**: the daily
 note's address rewrites and its log line are one `after`. A referrer under `actions/_done/`
 whose snapshot's plain hash no longer verifies adds `RenameWarning::FrozenPrefixAlreadyDiverged`
 and is still rewritten (§5.4). `hash` is `content_hash` over every path's `after` in path order
@@ -817,8 +817,9 @@ silently.
   a code span `` `[[old]]` ``, a `#action/old` tag and an archived action with `[[old]]` in its
   frozen prefix:
   `the_plan_lists_every_reference_kind_once` (the exact set of paths and `Change`s; the code
-  span and the tag are not changes), `every_edit_differs_only_inside_references`
-  (`differs_only_by` on each `before`/`after` with the edits the rewriter returned),
+  span and the tag are not changes), `every_edit_differs_only_by_its_reference_edits`
+  (`differs_only_by` on each `before`/`after` with the edits the planner built, and each edit's
+  range is an accepted address span of `wikilink_spans(before)`, as T6's property test checks),
   `the_daily_note_has_one_after_with_the_log_line_last`, `a_rename_to_itself_is_an_empty_plan`,
   one test per refusal in the stated order (`a_taken_slug_is_refused_before_stem_shared`, …),
   `an_archived_action_is_not_renamable`, `a_shared_stem_is_refused`,

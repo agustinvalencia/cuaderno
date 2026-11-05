@@ -234,7 +234,8 @@ pub struct WikilinkSpan {
     pub address: Range<usize>,
     /// Bytes between `[[` and the first `|`, trimmed, anchor included
     /// (`old#Current State` for `[[old#Current State]]`) — the string the
-    /// resolver sees. Contains `address` at its start.
+    /// resolver sees. After trimming, `address` is a prefix of it, or empty
+    /// (`[[ #h]]` has an empty address at the start of the inner text).
     pub target: Range<usize>,
     /// Offset of the closing `]]`.
     pub inner_end: usize,
