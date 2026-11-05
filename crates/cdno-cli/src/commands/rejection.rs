@@ -25,6 +25,9 @@ pub fn slug_rejection(err: &cdno_domain::error::DomainError) -> Option<serde_jso
             "portfolio_slug_mismatch",
             serde_json::json!({ "question_slug": question_slug, "slug": slug }),
         ),
+        DomainError::SlugGivenTwice { field } => {
+            ("slug_given_twice", serde_json::json!({ "field": field }))
+        }
         _ => return None,
     };
     Some(serde_json::json!({

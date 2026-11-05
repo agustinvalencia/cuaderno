@@ -242,7 +242,7 @@ impl Vault {
         // A `slug` field beside an explicit slug would let the two disagree
         // (the field overwriting the engine's `{{slug}}`): refuse the pair
         // before anything is staged.
-        if slug.is_some() && fields.contains_key("slug") {
+        if slug.is_some() && fields.get("slug").is_some_and(|v| !v.trim().is_empty()) {
             return Err(DomainError::SlugGivenTwice {
                 field: "slug".to_owned(),
             });

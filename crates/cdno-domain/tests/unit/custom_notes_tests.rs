@@ -1719,3 +1719,26 @@ fn an_explicit_slug_beside_a_slug_field_is_refused() {
     );
     assert_eq!(snapshot(&store), before, "nothing was written");
 }
+
+#[test]
+fn an_explicit_slug_beside_an_empty_slug_field_is_not_refused() {
+    let (vault, _store) = vault_with(config_with_person(), &[]);
+
+    // An empty field is absent to the domain, so it does not count as a
+    // second slug. (Whether the type then accepts the key is its own rule.)
+    let result = vault.create_custom_note_with_vars(
+        at(),
+        "person",
+        "Ada",
+        &fields(&[("name", "Ada"), ("slug", "  ")]),
+        &HashMap::new(),
+        None,
+        None,
+        Some("surrogate-calibration"),
+    );
+
+    assert!(
+        !matches!(result, Err(DomainError::SlugGivenTwice { .. })),
+        "got {result:?}"
+    );
+}
