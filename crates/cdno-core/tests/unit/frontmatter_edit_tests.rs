@@ -2,7 +2,7 @@ use cdno_core::extractors::differs_only_by;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::frontmatter_edit::{
     DriftSide, FrontmatterDrift, append_frontmatter_list_value, frontmatter_changed_only_at,
-    rewrite_frontmatter_scalar,
+    frontmatter_scalar_spans, rewrite_frontmatter_scalar,
 };
 use proptest::prelude::*;
 
@@ -255,4 +255,38 @@ proptest! {
             Err(FrontmatterDrift::KeyChanged(key.clone()))
         );
     }
+}
+
+#[test]
+fn frontmatter_scalar_spans_match_the_rewrite() {
+    // Bare, double- and single-quoted, indented, commented, continued and
+    // list forms: the spans are exactly the ranges the rewrite changes.
+    for line in [
+        "project: old",
+        "project: \"old\"  # c",
+        "project: 'old'",
+        "project: old\n  continues",
+        "project:\n  - old",
+        "project: [old]",
+    ] {
+        let before = fixture(line);
+        let (_, edits) = rewrite_frontmatter_scalar(&before, "project", "old", "new");
+        let spans = frontmatter_scalar_spans(&before, "project");
+        let changed: Vec<_> = edits.iter().map(|e| e.range.clone()).collect();
+        let matched: Vec<_> = spans
+            .iter()
+            .filter(|r| &before[(*r).clone()] == "old")
+            .cloned()
+            .collect();
+        assert_eq!(matched, changed, "{line:?}");
+    }
+    let before = fixture("project: old");
+    let spans = frontmatter_scalar_spans(&before, "project");
+    assert_eq!(
+        spans.len(),
+        1,
+        "the indented key and the comment are not sites"
+    );
+    assert_eq!(&before[spans[0].clone()], "old");
+    assert!(frontmatter_scalar_spans(&before, "tags").is_empty());
 }

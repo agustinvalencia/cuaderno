@@ -3004,3 +3004,60 @@ fn every_verb_by_old_name_logs_the_new_slug() {
     let raw = store.read_file(&note).unwrap();
     assert!(raw.contains("project: new\n"), "{raw}");
 }
+
+#[test]
+fn archival_stamps_a_masked_hash_with_its_version() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    store
+        .write_file(&vp("projects/foo.md"), ACTIVE_PROJECT)
+        .unwrap();
+    let (vault, _) = Vault::new(
+        Arc::clone(&store),
+        Arc::clone(&index),
+        VaultConfig::default(),
+    )
+    .expect("Vault::new");
+    vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Surrogate model",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+    vault
+        .complete_action(dt(2026, 5, 27, 17, 0), "foo", "surrogate")
+        .unwrap();
+
+    let done = vp("actions/_done/2026/surrogate-model.md");
+    let snap = index.find_archival_snapshot(&done).unwrap().unwrap();
+    let raw = store.read_file(&done).unwrap();
+    assert_eq!(snap.mask_version, Some(cdno_core::hash::MASK_VERSION));
+    assert_eq!(
+        snap.masked_hash,
+        Some(cdno_core::hash::masked_content_hash(
+            &raw,
+            &["project", "stewardship", "portfolio", "captured_during"]
+        ))
+    );
+    // The action's own `project:` field is masked: renaming it keeps the hash.
+    assert_eq!(
+        snap.masked_hash,
+        Some(cdno_core::hash::masked_content_hash(
+            &raw.replace("project: foo", "project: renamed"),
+            &["project", "stewardship", "portfolio", "captured_during"]
+        ))
+    );
+    assert_ne!(snap.masked_hash.as_deref(), Some(snap.frozen_hash.as_str()));
+    let masked = cdno_core::hash::mask_references(
+        &raw,
+        &["project", "stewardship", "portfolio", "captured_during"],
+    );
+    assert_eq!(snap.masked_size, Some(masked.len() as u64));
+    assert_ne!(
+        snap.masked_size,
+        Some(snap.frozen_size),
+        "the masked extent is not the raw one"
+    );
+}

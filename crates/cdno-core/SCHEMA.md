@@ -1,5 +1,5 @@
 ---
-schema_version: 2
+schema_version: 4
 applies_to_crate: cdno-core
 last_updated: 2026-06-11
 ---
@@ -13,12 +13,13 @@ backlinks, …). If the index is lost, corrupted, or behind, startup
 reconciliation rebuilds it from the filesystem — a stale index is
 recoverable, a stale file is data loss.
 
-This document describes **schema version 3**. Migrations:
+This document describes **schema version 4**. Migrations:
 `migrations/001_initial.sql` (the combined initial schema — the
 milestones / archive-snapshots additions that landed during Phase 2 were
 collapsed into it before any release pinned them in place),
 `migrations/002_fts5_search.sql` (the `notes_fts` full-text index, #172) and
-`migrations/003_links_via_alias.sql` (`links.via_alias`, RFC 0007 §5.5, #860).
+`migrations/003_links_via_alias.sql` (`links.via_alias`, RFC 0007 §5.5, #860) and
+`migrations/004_snapshot_masked_hash.sql` (the masked snapshot hash, RFC 0007 §5.4, #864).
 
 ## Conventions
 
@@ -213,7 +214,10 @@ CREATE TABLE archived_action_snapshots (
     note_path       TEXT PRIMARY KEY REFERENCES notes(path) ON DELETE CASCADE,
     frozen_size     INTEGER NOT NULL,    -- file length at archival, bytes
     frozen_hash     TEXT NOT NULL,       -- xxh3_64 hex digest at archival
-    archived_at_ns  INTEGER NOT NULL     -- wall-clock instant of archival
+    archived_at_ns  INTEGER NOT NULL,    -- wall-clock instant of archival
+    masked_hash     TEXT,                -- (004) hash of the masked prefix; NULL until stamped
+    mask_version    INTEGER,             -- (004) the MASK_VERSION it was computed under
+    masked_size     INTEGER              -- (004) byte length of the masked prefix
 ) WITHOUT ROWID;
 ```
 
@@ -224,6 +228,12 @@ CREATE TABLE archived_action_snapshots (
 - **Hash matches `content_hash`**: same xxh3_64 algorithm, so the same
   helper computes both. The frozen_hash is over the full file content at
   archival (frontmatter + body); any edit anywhere in the prefix flags.
+- **Masked hash (004).** `masked_hash` is the same digest over the prefix
+  with wikilink addresses and reference-field values masked
+  (`hash::mask_references`), `masked_size` that masked text's length (a
+  rename cannot move it, unlike `frozen_size`) and `mask_version` the rule
+  they were computed under. All three are NULL until stamped at archival or
+  backfilled; nothing reads them until the lint switch (T16).
 
 ### `notes_fts`
 
@@ -288,7 +298,7 @@ CREATE TABLE schema_migrations (
 | Notes tagged `#X` by recency | `SELECT n.path FROM note_tags t JOIN notes n ON n.path = t.note_path WHERE t.tag = ? ORDER BY n.mtime_ns DESC` — `idx_tags_tag` + PK. |
 | `milestones_for_project(path)` | `SELECT … FROM milestones WHERE note_path = ? ORDER BY id` — `idx_milestones_note` lookup; the caller resolves the project's path. |
 | `milestones_between(from, to)` | `SELECT … FROM milestones WHERE date IS NOT NULL AND date BETWEEN ? AND ? ORDER BY date` — `idx_milestones_date` range scan. |
-| `find_archival_snapshot(path)` | `SELECT frozen_size, frozen_hash, archived_at_ns FROM archived_action_snapshots WHERE note_path = ?` — PK lookup. |
+| `find_archival_snapshot(path)` | `SELECT frozen_size, frozen_hash, archived_at_ns, masked_hash, mask_version, masked_size FROM archived_action_snapshots WHERE note_path = ?` — PK lookup. |
 | `search(query, limit)` | `SELECT f.path, n.note_type, f.title, snippet(...), bm25(notes_fts, 0, 10, 1) FROM notes_fts f JOIN notes n ON n.path = f.path WHERE notes_fts MATCH ? ORDER BY bm25(...) LIMIT ?` — FTS5 index lookup, ranked best-first. |
 
 ## Reconciliation semantics
