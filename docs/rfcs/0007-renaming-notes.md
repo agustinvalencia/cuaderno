@@ -292,7 +292,7 @@ rewritten: the rename neither repairs nor hides it. A markdown-backed snapshot, 
 `cdno reindex`, is a separate issue.
 
 Amended after T16's review: the other clone stays clean only if it opened the vault once on a build
-with the masked hash before the renamed file reached it; a clone whose row predates the masked hash
+with the masked hash with the backfill completing (it is retried at every open, and a lock timeout only postpones it) before the renamed file reached it; a clone whose row predates the masked hash
 when the rename arrives reports an Error that only `cdno reindex` clears, by dropping the snapshots
 (#901).
 

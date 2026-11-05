@@ -34,7 +34,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   reference rewrite (RFC 0007 stage S4, #865): a snapshot passes when either the plain hash of its
   first `frozen_size` bytes or the masked hash of the first `masked_size` bytes of the masked file
   verifies, so a rename synced from another clone leaves this clone's lint clean, provided this clone
-  opened the vault once on this version before the renamed file arrived (otherwise the Error names
+  opened the vault once on this version with the backfill completing (it is retried at every open, and a lock timeout only postpones it) before the renamed file arrived (otherwise the Error names
   `cdno reindex`, which drops every snapshot; #901). The cost: a hand
   edit that only re-targets a reference inside a frozen prefix is no longer detected. A snapshot at an
   unknown `mask_version` is a warning naming the version. Opening a vault backfills the masked hash on

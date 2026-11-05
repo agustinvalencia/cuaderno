@@ -50,7 +50,7 @@ wikilink (`[[old]]` becomes `[[surrogate-model]]`) and a reference field such as
 prefix is accepted when either its bytes are unchanged or they match with every wikilink address and
 reference-field value set aside. The cost of that rule is that a hand edit which only re-targets a
 reference inside a frozen prefix is no longer detected; any other change still is. This holds on every
-clone that opened the vault once on this version before the renamed file arrived: a note archived on an
+clone that opened the vault once on this version with the backfill completing (it is retried at every open, and a lock timeout only postpones it) before the renamed file arrived: a note archived on an
 older version and renamed elsewhere first is reported as an error that names
 [`cdno reindex`](reindex.md), which clears it by rebuilding the index without any archival snapshots,
 so every archived note loses this check. On a renamed note, a hand addition that follows an unmatched

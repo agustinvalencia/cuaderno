@@ -398,6 +398,25 @@ fn a_rename_synced_before_the_first_open_on_this_build_is_reported_with_the_way_
         .stdout(predicate::str::contains(format!("[error] {rel}: ")))
         .stdout(predicate::str::contains("predates the masked hash"))
         .stdout(predicate::str::contains("`cdno reindex`"));
+
+    // The way out the message names: the rebuild drops the snapshot row,
+    // and with it the check, so lint is clean.
+    cdno_at(b.path()).arg("reindex").assert().success();
+    cdno_at(b.path())
+        .arg("lint")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[error]").not());
+    let index = cdno_core::index::SqliteIndex::open(b.path().join(".cuaderno/index.db")).unwrap();
+    assert!(
+        cdno_core::index::VaultIndex::find_archival_snapshot(
+            &index,
+            &cdno_core::path::VaultPath::new(&rel).unwrap(),
+        )
+        .unwrap()
+        .is_none(),
+        "reindex drops the snapshot row"
+    );
 }
 
 /// The backfill is best-effort and never takes the lock for nothing. A

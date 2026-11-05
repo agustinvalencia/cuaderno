@@ -804,7 +804,7 @@ fails there. The probe builds that clone.
   lint back to the plain hash; this test fails.
 
 **Correct means.** A rename on one clone leaves the other clone's lint clean with nothing
-synced but markdown, provided the other clone opened the vault once on a build with migration 004
+synced but markdown, provided the other clone opened the vault once on a build with migration 004 with the backfill completing (it is retried at every open, and a lock timeout only postpones it)
 before the renamed file reached it; a clone that did not keeps an unfillable row that lint reports,
 naming `cdno reindex` (#901, after T20).
 
