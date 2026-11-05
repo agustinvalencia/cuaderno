@@ -24,10 +24,11 @@ impl Vault {
     ///   the current slug or file stem of any indexed note (a stem beats an
     ///   alias) and that no other note declares (a shared alias resolves to
     ///   nothing).
-    /// - `<slug>` names the notes whose current slug it is; if there are any,
-    ///   aliases are not consulted. Otherwise it names the one note that
-    ///   declares it as an alias. With no such note, or several, it names
-    ///   nothing and only the literal tag is queried.
+    /// - `<slug>` names the one note whose current slug it is; if any note
+    ///   has that slug, aliases are not consulted, and if several do (a stem
+    ///   shared across folders) it names nothing. Otherwise it names the one
+    ///   note that declares it as an alias. With no such note, or several, it
+    ///   names nothing and only the literal tag is queried.
     ///
     /// `<word>` is not interpreted, and the expansion is type-blind, as
     /// wikilink resolution is. The index stays a plain lookup by exact tag;
@@ -55,10 +56,13 @@ impl Vault {
                 stems.insert(name);
             }
         }
-        if current.is_empty()
-            && let Some((holder, _)) = self.alias_of(slug, |_| true)?
-        {
-            current.push(holder);
+        if current.is_empty() {
+            if let Some((holder, _)) = self.alias_of(slug, |_| true)? {
+                current.push(holder);
+            }
+        } else if current.len() > 1 {
+            // A shared stem is ambiguous: a wikilink to it resolves to none.
+            current.clear();
         }
 
         // The names the tag's notes answer to, the queried one first.

@@ -272,6 +272,11 @@ fn a_shared_alias_is_not_expanded() {
         vec![vp("journal/2026/daily/2026-04-02.md")],
         "only the literal tag"
     );
+    assert_eq!(
+        vault.notes_tagged("action/a").unwrap(),
+        vec![vp("journal/2026/daily/2026-04-03.md")],
+        "a holder of a shared alias does not answer to it"
+    );
 }
 
 #[test]
@@ -289,5 +294,21 @@ fn a_stem_beats_an_alias_in_tag_expansion() {
         vault.notes_tagged("action/x").unwrap(),
         vec![vp("journal/2026/daily/2026-04-02.md")],
         "x names the stem note only"
+    );
+}
+
+#[test]
+fn a_shared_stem_is_not_expanded() {
+    let vault = vault_with(&[
+        ("actions/dup.md", &action_with_aliases("p-old")),
+        ("inbox/dup.md", &action_with_aliases("i-old")),
+        ("journal/2026/daily/2026-04-02.md", &daily("#action/dup")),
+        ("journal/2026/daily/2026-04-03.md", &daily("#action/p-old")),
+        ("journal/2026/daily/2026-04-04.md", &daily("#action/i-old")),
+    ]);
+    assert_eq!(
+        vault.notes_tagged("action/dup").unwrap(),
+        vec![vp("journal/2026/daily/2026-04-02.md")],
+        "only the literal tag"
     );
 }
