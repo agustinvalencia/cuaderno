@@ -46,6 +46,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `type:old` matches only a holder of that type, a path never goes through an alias, and an alias two
   notes share is not found. The journal line a verb writes always names the current slug, and so do
   the files it moves and the `project:` / `stewardship:` links it records.
+- A tracking entry is now filed under its stewardship's slug, whatever spelling named it: a typed
+  `Health` writes to `stewardships/health/tracking/`, not `stewardships/Health/tracking/` (#861).
 
 ### Documentation
 
