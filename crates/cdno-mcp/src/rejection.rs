@@ -574,6 +574,10 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         DomainError::MigrationTouchesProtectedPath { .. }
         | DomainError::ConfigChangedDuringMigration
         | DomainError::MigrationStampInvalid { .. } => return None,
+
+        // Nothing produces these yet: the explicit-slug verbs that do get
+        // their `invalid_slug` / `slug_taken` codes with them (RFC 0007).
+        DomainError::InvalidSlug { .. } | DomainError::SlugTaken { .. } => return None,
     };
 
     let message = rejection_message(code, e);

@@ -28,7 +28,7 @@ pub use method_version::{
     METHOD_VERSION, MethodSkew, describe_method_version, newer_minor_message,
 };
 pub use type_registry::{FieldInfo, NoteTypeDescriptor, NoteTypeInfo, NoteTypeKind, TypeRegistry};
-pub use vault::slug::slugify;
+pub use vault::slug::{SlugRejection, TakenBy, slugify, validate_explicit_slug};
 pub use vault::{
     ActionListEntry, AttachedAction, BacklinkRef, ClosedProjectEntry, CommitmentEntry,
     CommitmentSource, CompletedActionEntry, CompletedActionSource, ConfigDocument, ConfigSaveError,

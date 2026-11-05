@@ -5,7 +5,13 @@
 //! pin is permanent and visible everywhere a note is referenced: #524
 //! was a cut landing inside a word, leaving `…-and-materia` on disk.
 
-use cdno_domain::slugify;
+use std::sync::Arc;
+
+use cdno_core::config::VaultConfig;
+use cdno_core::index::{MemoryIndex, VaultIndex};
+use cdno_core::path::VaultPath;
+use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_domain::{Context, SlugRejection, Vault, slugify, validate_explicit_slug};
 
 #[test]
 fn slugify_leaves_a_title_under_both_caps_alone() {
@@ -98,4 +104,65 @@ fn slugify_counts_chars_not_bytes_when_the_cap_bites() {
     // would expose a byte/char slip, by panicking on a non-boundary
     // truncate or by misreading the dropped char.
     assert_eq!(slugify(&"\u{fc}".repeat(80)), "\u{fc}".repeat(50));
+}
+
+#[test]
+fn explicit_slug_rejections_name_their_reason() {
+    let long = "a".repeat(51);
+    let rows: Vec<(&str, SlugRejection)> = vec![
+        ("", SlugRejection::Empty),
+        ("Surrogate", SlugRejection::UpperCase),
+        ("a b", SlugRejection::BadChar(' ')),
+        ("\u{e4}", SlugRejection::BadChar('\u{e4}')),
+        ("-a", SlugRejection::LeadingOrTrailingDash),
+        ("a-", SlugRejection::LeadingOrTrailingDash),
+        ("a--b", SlugRejection::DoubleDash),
+        (&long, SlugRejection::TooLong { max: 50 }),
+        ("2026", SlugRejection::YamlTyped),
+        ("true", SlugRejection::YamlTyped),
+        ("no", SlugRejection::YamlTyped),
+        ("1e3", SlugRejection::YamlTyped),
+        ("2026-11-05", SlugRejection::YamlTyped),
+    ];
+    for (input, expected) in rows {
+        let got = validate_explicit_slug(input).expect_err(input);
+        assert_eq!(got, expected, "input {input:?}");
+        assert!(!got.to_string().is_empty());
+    }
+    for ok in ["surrogate-model", "a", "2026-11", "v2", "a-b-c-d-e-f-g"] {
+        assert_eq!(validate_explicit_slug(ok), Ok(()), "input {ok:?}");
+    }
+}
+
+#[test]
+fn an_explicit_slug_is_a_fixed_point_of_slugify() {
+    // Seven words: the word cap would cut it if it were derived.
+    assert_eq!(slugify("a-b-c-d-e-f-g"), "a-b-c-d-e-f-g");
+    // Not a valid slug, so it is still derived.
+    assert_eq!(slugify("A B"), "a-b");
+}
+
+fn vp(p: &str) -> VaultPath {
+    VaultPath::new(p).unwrap()
+}
+
+#[test]
+fn a_folder_note_takes_its_folder_name() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    store
+        .write_file(
+            &vp("portfolios/surrogate-model/_index.md"),
+            "---\ntype: portfolio\n---\n# Surrogate model\n",
+        )
+        .unwrap();
+    let (vault, _report) = Vault::new(store, index, VaultConfig::default()).expect("Vault::new");
+    let at = chrono::NaiveDate::from_ymd_opt(2026, 11, 5)
+        .unwrap()
+        .and_hms_opt(9, 0, 0)
+        .unwrap();
+    let path = vault
+        .create_project(at, "Surrogate model", Context::Work, None)
+        .unwrap();
+    assert_eq!(path.to_string(), "projects/surrogate-model-2.md");
 }

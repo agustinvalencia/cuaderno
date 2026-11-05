@@ -6,6 +6,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- A derived slug now steps past a folder note's name (`surrogate-model-2` beside
+  `portfolios/surrogate-model/`), and a slug-shaped title longer than six words is no longer
+  truncated (RFC 0007, #849).
+
 ## [0.43.0] - 2026-10-20
 
 ### Added
