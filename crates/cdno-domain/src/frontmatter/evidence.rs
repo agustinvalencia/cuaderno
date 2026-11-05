@@ -21,6 +21,8 @@ use cdno_core::error::ValidationError;
 use cdno_core::frontmatter::Frontmatter;
 use chrono::NaiveDate;
 
+use crate::note_type::PORTFOLIO_KEY;
+
 /// Parsed and validated frontmatter for an evidence note.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvidenceFrontmatter {
@@ -48,7 +50,7 @@ impl TryFrom<Frontmatter> for EvidenceFrontmatter {
         Ok(Self {
             created: fm.require_field::<NaiveDate>("created")?,
             source: fm.require_field::<String>("source")?,
-            portfolio: fm.require_field::<String>("portfolio")?,
+            portfolio: fm.require_field::<String>(PORTFOLIO_KEY)?,
             origin: fm.require_field::<String>("origin")?,
             kind: fm.optional_field::<String>("kind")?,
         })

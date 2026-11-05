@@ -22,6 +22,7 @@ use cdno_core::index::SearchHit;
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
+use crate::note_type::PORTFOLIO_KEY;
 
 /// Upper bound on hits pulled from the index when a filter is active.
 ///
@@ -156,7 +157,7 @@ impl super::Vault {
                 };
 
                 if let Some(want) = &filters.portfolio {
-                    let got = fm.optional_field::<String>("portfolio").ok().flatten();
+                    let got = fm.optional_field::<String>(PORTFOLIO_KEY).ok().flatten();
                     if got.as_deref() != Some(want.as_str()) {
                         continue;
                     }

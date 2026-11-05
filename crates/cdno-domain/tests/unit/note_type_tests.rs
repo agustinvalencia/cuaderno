@@ -80,3 +80,60 @@ fn serde_roundtrip_yaml_literal() {
     let back: NoteType = serde_yaml::from_str(&yaml).unwrap();
     assert_eq!(back, NoteType::Commitment);
 }
+
+#[test]
+fn reference_fields_match_the_rfc_table() {
+    // RFC 0007 §3.5: the bare-slug fields each type carries, and the type
+    // each one names.
+    assert_eq!(
+        NoteType::Action.reference_fields(),
+        &[("project", NoteType::Project)]
+    );
+    assert_eq!(
+        NoteType::Commitment.reference_fields(),
+        &[
+            ("project", NoteType::Project),
+            ("stewardship", NoteType::Stewardship),
+        ]
+    );
+    assert_eq!(
+        NoteType::Tracking.reference_fields(),
+        &[("stewardship", NoteType::Stewardship)]
+    );
+    assert_eq!(
+        NoteType::Evidence.reference_fields(),
+        &[("portfolio", NoteType::Portfolio)]
+    );
+    assert_eq!(
+        NoteType::Inbox.reference_fields(),
+        &[("captured_during", NoteType::Project)]
+    );
+    for nt in NoteType::ALL {
+        if !matches!(
+            nt,
+            NoteType::Action
+                | NoteType::Commitment
+                | NoteType::Tracking
+                | NoteType::Evidence
+                | NoteType::Inbox
+        ) {
+            assert!(nt.reference_fields().is_empty(), "{nt} names no other note");
+        }
+    }
+}
+
+#[test]
+fn reference_keys_are_the_four_keys_once_each() {
+    let mut keys = NoteType::reference_keys().to_vec();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        ["captured_during", "portfolio", "project", "stewardship"]
+    );
+    // Every key a type's table names is in the union.
+    for nt in NoteType::ALL {
+        for (key, _) in nt.reference_fields() {
+            assert!(NoteType::reference_keys().contains(key));
+        }
+    }
+}

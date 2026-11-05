@@ -821,9 +821,11 @@ naming `cdno reindex` (#901, after T20).
 `Inbox: [("captured_during", Project)]`, empty otherwise. `pub fn reference_keys() -> &'static [&'static str]`
 (the union, for T15's mask). The writers named in the table (`actions.rs:83`,
 `commitments.rs:197–198`, `tracking.rs:544`, `portfolios.rs:810`, `capture.rs:177`) and the
-readers (`commitments.rs:800–911`, `context.rs:326`, `projects/actions.rs:161`,
-`frontmatter/evidence.rs:51`) each reference the table's constant for the key instead of a
-literal, so the table and the code cannot drift.
+readers (`frontmatter/{action,commitment,portfolio,evidence,tracking}.rs`, `vault/search.rs`,
+`vault/context.rs`'s stewardship filter) each reference the table's constant for the key instead of a
+literal, so the table and the code cannot drift. *Amended in the T17 PR:* the plan's reader lines
+(`commitments.rs:800–911`, `context.rs:326`, `projects/actions.rs:161`) hold no key literal (they read
+typed struct fields), so they are not touched; the readers above are the literal sites.
 
 **Deliverable.** The table, the constant references, tests.
 

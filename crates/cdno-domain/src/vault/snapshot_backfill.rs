@@ -15,9 +15,9 @@ use cdno_core::path::VaultPath;
 use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
+use crate::note_type::NoteType;
 
 use super::Vault;
-use super::actions::SNAPSHOT_REFERENCE_KEYS;
 
 impl Vault {
     /// Stamp the masked hash on every snapshot row that lacks one and whose
@@ -100,7 +100,7 @@ impl Vault {
         if content_hash(prefix) != snap.frozen_hash {
             return None;
         }
-        let masked = mask_references(prefix, SNAPSHOT_REFERENCE_KEYS);
+        let masked = mask_references(prefix, NoteType::reference_keys());
         Some(ArchivalSnapshot {
             masked_hash: Some(content_hash(&masked)),
             mask_version: Some(MASK_VERSION),

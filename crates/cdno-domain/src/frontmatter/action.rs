@@ -21,6 +21,7 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 use super::project::EnergyLevel;
+use crate::note_type::PROJECT_KEY;
 
 /// Lifecycle state of an action note. Created `Active`; flipped to
 /// `Completed` by `Vault::complete_action`, or to `Dropped` by
@@ -131,7 +132,7 @@ impl TryFrom<Frontmatter> for ActionFrontmatter {
     fn try_from(fm: Frontmatter) -> Result<Self, Self::Error> {
         Ok(Self {
             status: fm.require_field::<ActionStatus>("status")?,
-            project: fm.require_field::<String>("project")?,
+            project: fm.require_field::<String>(PROJECT_KEY)?,
             energy: fm.require_field::<EnergyLevel>("energy")?,
             milestone: fm.optional_field::<String>("milestone")?,
             due: fm.optional_field::<NaiveDate>("due")?,

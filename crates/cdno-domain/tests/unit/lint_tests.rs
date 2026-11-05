@@ -859,7 +859,7 @@ fn a_hand_append_without_a_blank_line_after_an_open_backtick_is_not_an_error() {
     store.write_file(&done, &appended).unwrap();
     let masked = cdno_core::hash::mask_references(
         &appended,
-        &["project", "stewardship", "portfolio", "captured_during"],
+        cdno_domain::note_type::NoteType::reference_keys(),
     );
     let masked_now = masked
         .get(..snap.masked_size.unwrap() as usize)

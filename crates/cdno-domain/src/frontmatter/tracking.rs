@@ -12,6 +12,8 @@ use cdno_core::error::ValidationError;
 use cdno_core::frontmatter::Frontmatter;
 use chrono::NaiveDate;
 
+use crate::note_type::STEWARDSHIP_KEY;
+
 /// Parsed and validated frontmatter for a tracking note.
 ///
 /// `stewardship` is the slug (matches the parent folder), `activity`
@@ -38,7 +40,7 @@ impl TryFrom<Frontmatter> for TrackingFrontmatter {
 
     fn try_from(fm: Frontmatter) -> Result<Self, Self::Error> {
         Ok(Self {
-            stewardship: fm.require_field::<String>("stewardship")?,
+            stewardship: fm.require_field::<String>(STEWARDSHIP_KEY)?,
             activity: fm.require_field::<String>("activity")?,
             date: fm.require_field::<NaiveDate>("date")?,
             duration_min: fm.optional_field::<u32>("duration_min")?,

@@ -23,6 +23,23 @@ pub enum NoteType {
     Inbox,
 }
 
+/// Frontmatter key of the project a note belongs to (RFC 0007 §3.5).
+pub(crate) const PROJECT_KEY: &str = "project";
+/// Frontmatter key of the stewardship a note belongs to (RFC 0007 §3.5).
+pub(crate) const STEWARDSHIP_KEY: &str = "stewardship";
+/// Frontmatter key of the portfolio an evidence note files into (RFC 0007 §3.5).
+pub(crate) const PORTFOLIO_KEY: &str = "portfolio";
+/// Frontmatter key recording the project in focus when an item was captured.
+pub(crate) const CAPTURED_DURING_KEY: &str = "captured_during";
+
+/// The union of the reference keys, each once (RFC 0007 §3.5).
+const REFERENCE_KEYS: &[&str] = &[
+    PROJECT_KEY,
+    STEWARDSHIP_KEY,
+    PORTFOLIO_KEY,
+    CAPTURED_DURING_KEY,
+];
+
 impl NoteType {
     pub const ALL: [NoteType; 12] = [
         NoteType::Daily,
@@ -136,6 +153,30 @@ impl NoteType {
             ],
             NoteType::Inbox => &["type", "created"],
         }
+    }
+
+    /// The frontmatter fields this type uses to name another note (RFC 0007
+    /// §3.5), as `(key, target type)` pairs. These are the bare-slug fields a
+    /// rename rewrites and the snapshot's masked hash masks. Empty for a type
+    /// that names no other note.
+    pub fn reference_fields(self) -> &'static [(&'static str, NoteType)] {
+        match self {
+            NoteType::Action => &[(PROJECT_KEY, NoteType::Project)],
+            NoteType::Commitment => &[
+                (PROJECT_KEY, NoteType::Project),
+                (STEWARDSHIP_KEY, NoteType::Stewardship),
+            ],
+            NoteType::Tracking => &[(STEWARDSHIP_KEY, NoteType::Stewardship)],
+            NoteType::Evidence => &[(PORTFOLIO_KEY, NoteType::Portfolio)],
+            NoteType::Inbox => &[(CAPTURED_DURING_KEY, NoteType::Project)],
+            _ => &[],
+        }
+    }
+
+    /// Every key [`Self::reference_fields`] names, each once. The snapshot mask
+    /// and the append-only lint hash with exactly this set.
+    pub fn reference_keys() -> &'static [&'static str] {
+        REFERENCE_KEYS
     }
 
     /// The complete set of `{{placeholders}}` this note type's create path

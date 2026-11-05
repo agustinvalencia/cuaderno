@@ -43,7 +43,7 @@ use crate::frontmatter::{
     ActionFrontmatter, ActionStatus, EnergyLevel, ProjectFrontmatter, ProjectStatus,
     TrackingFrontmatter,
 };
-use crate::note_type::NoteType;
+use crate::note_type::{NoteType, STEWARDSHIP_KEY};
 
 use super::DAILY_LOGS_SECTION;
 use super::Vault;
@@ -848,7 +848,7 @@ impl Vault {
 
         for entry in self.index.list_by_type(NoteType::Tracking.as_str())? {
             let fm = &entry.frontmatter;
-            if str_field(fm, "stewardship") != Some(stewardship) {
+            if str_field(fm, STEWARDSHIP_KEY) != Some(stewardship) {
                 continue;
             }
             let (Some(activity), Some(date)) = (str_field(fm, "activity"), date_field(fm)) else {

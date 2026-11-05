@@ -16,6 +16,7 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 use super::context::Context;
+use crate::note_type::{PROJECT_KEY, STEWARDSHIP_KEY};
 
 /// Lifecycle state of a commitment. Created `Active`, then ended one of
 /// two ways in the same transaction that moves the file to
@@ -110,8 +111,8 @@ impl TryFrom<Frontmatter> for CommitmentFrontmatter {
             created: fm.require_field::<NaiveDate>("created")?,
             completed: fm.optional_field::<NaiveDate>("completed")?,
             context: fm.require_field::<Context>("context")?,
-            project: fm.optional_field::<String>("project")?,
-            stewardship: fm.optional_field::<String>("stewardship")?,
+            project: fm.optional_field::<String>(PROJECT_KEY)?,
+            stewardship: fm.optional_field::<String>(STEWARDSHIP_KEY)?,
         })
     }
 }
