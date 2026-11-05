@@ -501,3 +501,66 @@ fn confinement_recovers_when_the_root_appears_after_first_use() {
         "confinement must engage once the root exists: {write:?}"
     );
 }
+
+#[test]
+fn an_empty_dir_is_removed_and_a_full_one_is_kept() {
+    let (dir, store) = store();
+    fs::create_dir_all(dir.path().join("empty")).unwrap();
+    assert!(store.remove_dir_if_empty(&vp("empty")).unwrap());
+    assert!(!dir.path().join("empty").exists());
+
+    fs::create_dir_all(dir.path().join("one-file")).unwrap();
+    fs::write(dir.path().join("one-file/note.md"), "x").unwrap();
+    assert!(!store.remove_dir_if_empty(&vp("one-file")).unwrap());
+    assert!(dir.path().join("one-file/note.md").exists());
+
+    fs::create_dir_all(dir.path().join("hidden")).unwrap();
+    fs::write(dir.path().join("hidden/.keep"), "").unwrap();
+    assert!(!store.remove_dir_if_empty(&vp("hidden")).unwrap());
+    assert!(dir.path().join("hidden/.keep").exists());
+}
+
+#[test]
+fn a_missing_dir_is_false_not_an_error() {
+    let (_dir, store) = store();
+    assert!(!store.remove_dir_if_empty(&vp("nowhere")).unwrap());
+}
+
+#[test]
+fn a_file_is_false_not_an_error() {
+    let (dir, store) = store();
+    fs::write(dir.path().join("note.md"), "x").unwrap();
+    assert!(!store.remove_dir_if_empty(&vp("note.md")).unwrap());
+    assert!(dir.path().join("note.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_to_a_dir_is_not_followed() {
+    let (dir, store) = store();
+    fs::create_dir_all(dir.path().join("target")).unwrap();
+    std::os::unix::fs::symlink(dir.path().join("target"), dir.path().join("link")).unwrap();
+    assert!(!store.remove_dir_if_empty(&vp("link")).unwrap());
+    assert!(
+        fs::symlink_metadata(dir.path().join("link"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(dir.path().join("target").is_dir());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_pointing_outside_the_vault_is_an_error() {
+    let (dir, store) = store();
+    let outside = TempDir::new().unwrap();
+    fs::create_dir_all(outside.path().join("empty")).unwrap();
+    std::os::unix::fs::symlink(outside.path().join("empty"), dir.path().join("link")).unwrap();
+    let result = store.remove_dir_if_empty(&vp("link"));
+    assert!(
+        matches!(result, Err(StoreError::OutsideVault(_))),
+        "a link escaping the vault must be refused: {result:?}"
+    );
+    assert!(outside.path().join("empty").is_dir());
+}

@@ -45,6 +45,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - `cdno-core` gains `git.rs`, the repository facts the rename will consult (`git_state`,
   `fetch_quietly`); `git_operation_in_progress` moves there from `cdno-mcp`; nothing user-visible
   (RFC 0007 stage S2, #857).
+- `VaultStore::remove_dir_if_empty` removes a directory only when it is empty, for the folder-note
+  rename's pruning; nothing user-visible (RFC 0007 stage S2, #858).
 - `cdno-core` gains `wikilink_spans`, `rewrite_wikilink_addresses` and `differs_only_by`, with
   `extract_wikilinks` now built on the span scanner; nothing user-visible changes and its output is
   identical (#886, closes #855).
