@@ -10,6 +10,7 @@ pub mod error;
 pub mod extractors;
 pub mod file_meta;
 pub mod frontmatter;
+pub mod frontmatter_edit;
 pub mod hash;
 pub mod index;
 pub mod markdown;
