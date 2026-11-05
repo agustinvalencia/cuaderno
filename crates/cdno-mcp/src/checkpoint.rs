@@ -122,6 +122,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use cdno_core::git::{GitError, PausedGitOp, git_operation_in_progress};
 use cdno_core::store::{FsVaultStore, VaultStore};
 
 use crate::nudge::SharedNudge;
@@ -393,6 +394,24 @@ enum CheckpointError {
     Exec(anyhow::Error),
 }
 
+impl From<GitError> for CheckpointError {
+    fn from(e: GitError) -> Self {
+        match e {
+            // Binary absent or unspawnable → fatal, as before.
+            GitError::NotInstalled => CheckpointError::Exec(anyhow::anyhow!(
+                "running git (is it installed in this environment?)"
+            )),
+            GitError::Io(e) => CheckpointError::Exec(
+                anyhow::Error::new(e).context("running git (is it installed in this environment?)"),
+            ),
+            // Non-zero exit or a hang → transient.
+            e @ (GitError::Exit { .. } | GitError::TimedOut { .. }) => {
+                CheckpointError::GitExit(e.to_string())
+            }
+        }
+    }
+}
+
 /// Commit everything if the tree is dirty. `Ok(None)` when clean.
 /// Assumes the caller holds the vault write lock.
 fn git_commit_if_dirty(
@@ -517,85 +536,6 @@ fn nudge_if_dirty(
     Ok(Some(format!(
         "nudged the sync agent ({dirty_paths} dirty path(s), nothing committed here)"
     )))
-}
-
-/// A paused git operation found on disk: a human-readable description
-/// for the log, and — when the operation has a single marker file or
-/// directory an operator could remove to force it away — that marker's
-/// `.git`-relative path, so the warning can name exactly what to remove
-/// rather than gesturing at "some git state".
-struct PausedGitOp {
-    reason: String,
-    marker: Option<&'static str>,
-}
-
-/// Detect any git operation another actor left paused mid-way (GH #546;
-/// scope widened past merge alone in panel review — see the module
-/// doc). Checked in order, each entry catching a state the others miss:
-///
-/// - `.git/MERGE_HEAD`, `.git/CHERRY_PICK_HEAD`, `.git/REVERT_HEAD` —
-///   a merge, cherry-pick, or revert stopped short of a commit. Checked
-///   as marker files directly, **not** inferred from unmerged paths:
-///   "every conflict resolved and staged by hand, `--continue`/commit
-///   not yet run" leaves zero unmerged paths and would otherwise slip
-///   through.
-/// - `.git/rebase-merge`, `.git/rebase-apply` (directories) — a rebase
-///   in progress; `git am` reuses `rebase-apply` and is covered by the
-///   same check.
-/// - `git diff --name-only --diff-filter=U`, as a fallback for an
-///   operation with no head marker of its own — a conflicted `git
-///   stash pop` is the practical example. Asking git directly here is
-///   less error-prone than re-deriving the unmerged porcelain codes
-///   (`DD AU UD UA DU AA UU`) by hand.
-///
-/// `git merge --squash` is deliberately not covered: it sets no marker
-/// because it *intends* the caller to make an ordinary commit, so there
-/// is nothing here to protect it from.
-///
-/// `Ok(None)` means no paused operation was found. Assumes `root/.git`
-/// is a directory, which [`spawn`] already guarantees before any sweep
-/// runs.
-fn git_operation_in_progress(root: &Path) -> Result<Option<PausedGitOp>, CheckpointError> {
-    let git_dir = root.join(".git");
-
-    for (marker, label) in [
-        ("MERGE_HEAD", "a merge"),
-        ("CHERRY_PICK_HEAD", "a cherry-pick"),
-        ("REVERT_HEAD", "a revert"),
-    ] {
-        if git_dir.join(marker).exists() {
-            return Ok(Some(PausedGitOp {
-                reason: format!("{label} is in progress (.git/{marker} present)"),
-                marker: Some(marker),
-            }));
-        }
-    }
-    for marker in ["rebase-merge", "rebase-apply"] {
-        if git_dir.join(marker).is_dir() {
-            return Ok(Some(PausedGitOp {
-                reason: format!("a rebase is in progress (.git/{marker} present)"),
-                marker: Some(marker),
-            }));
-        }
-    }
-
-    let unmerged = run_git(root, &["diff", "--name-only", "--diff-filter=U"])?;
-    if !unmerged.status.success() {
-        return Err(CheckpointError::GitExit(format!(
-            "git diff --diff-filter=U: {}",
-            String::from_utf8_lossy(&unmerged.stderr).trim()
-        )));
-    }
-    if unmerged.stdout.is_empty() {
-        return Ok(None);
-    }
-    let n = unmerged.stdout.iter().filter(|&&b| b == b'\n').count();
-    Ok(Some(PausedGitOp {
-        reason: format!(
-            "{n} unmerged path(s) present with no operation marker (e.g. a conflicted `git stash pop`)"
-        ),
-        marker: None,
-    }))
 }
 
 /// How long to wait before repeating the paused-operation warning while

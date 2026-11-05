@@ -11,6 +11,7 @@ pub mod extractors;
 pub mod file_meta;
 pub mod frontmatter;
 pub mod frontmatter_edit;
+pub mod git;
 pub mod hash;
 pub mod index;
 pub mod markdown;
