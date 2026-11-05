@@ -42,6 +42,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Internal
 
+- `VaultIndex::list_aliases` reads slug-shaped `aliases:` entries from the frontmatter the index already
+  keeps; the slug shape rule moves to `cdno-core`; nothing user-visible (RFC 0007 stage S3, #859).
 - `cdno-core` gains `git.rs`, the repository facts the rename will consult (`git_state`,
   `fetch_quietly`); `git_operation_in_progress` moves there from `cdno-mcp`; nothing user-visible
   (RFC 0007 stage S2, #857).

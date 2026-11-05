@@ -568,6 +568,9 @@ impl VaultIndex for FailingIndex {
         }
         self.inner.list_all_paths()
     }
+    fn list_aliases(&self) -> Result<Vec<(String, VaultPath)>, IndexError> {
+        self.inner.list_aliases()
+    }
     fn list_candidates(&self) -> Result<Vec<NoteCandidate>, IndexError> {
         self.inner.list_candidates()
     }

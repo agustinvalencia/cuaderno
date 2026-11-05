@@ -11,7 +11,7 @@ use cdno_core::config::VaultConfig;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
-use cdno_domain::{Context, SlugRejection, Vault, slugify, validate_explicit_slug};
+use cdno_domain::{Context, Vault, slugify};
 
 #[test]
 fn slugify_leaves_a_title_under_both_caps_alone() {
@@ -104,47 +104,6 @@ fn slugify_counts_chars_not_bytes_when_the_cap_bites() {
     // would expose a byte/char slip, by panicking on a non-boundary
     // truncate or by misreading the dropped char.
     assert_eq!(slugify(&"\u{fc}".repeat(80)), "\u{fc}".repeat(50));
-}
-
-#[test]
-fn explicit_slug_rejections_name_their_reason() {
-    let long = "a".repeat(51);
-    let rows: Vec<(&str, SlugRejection)> = vec![
-        ("", SlugRejection::Empty),
-        ("Surrogate", SlugRejection::UpperCase),
-        ("a b", SlugRejection::BadChar(' ')),
-        ("\u{e4}", SlugRejection::BadChar('\u{e4}')),
-        ("-a", SlugRejection::LeadingOrTrailingDash),
-        ("a-", SlugRejection::LeadingOrTrailingDash),
-        ("a--b", SlugRejection::DoubleDash),
-        (&long, SlugRejection::TooLong { max: 50 }),
-        ("2026", SlugRejection::YamlTyped),
-        ("true", SlugRejection::YamlTyped),
-        ("no", SlugRejection::YamlTyped),
-        ("1e3", SlugRejection::YamlTyped),
-        ("2026-11-05", SlugRejection::YamlTyped),
-        ("007", SlugRejection::YamlTyped),
-        ("00", SlugRejection::YamlTyped),
-        ("0o17", SlugRejection::YamlTyped),
-        ("1e-3", SlugRejection::YamlTyped),
-        ("12e-04", SlugRejection::YamlTyped),
-    ];
-    for (input, expected) in rows {
-        let got = validate_explicit_slug(input).expect_err(input);
-        assert_eq!(got, expected, "input {input:?}");
-        assert!(!got.to_string().is_empty());
-    }
-    for ok in [
-        "surrogate-model",
-        "a",
-        "y",
-        "n",
-        "2026-11",
-        "v2",
-        "a-b-c-d-e-f-g",
-    ] {
-        assert_eq!(validate_explicit_slug(ok), Ok(()), "input {ok:?}");
-    }
 }
 
 #[test]

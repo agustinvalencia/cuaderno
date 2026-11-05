@@ -19,6 +19,7 @@ mod unit {
     mod path_tests;
     mod paths_tests;
     mod reconcile_tests;
+    mod slug_tests;
     mod store_tests;
     mod template_tests;
     mod transaction_tests;

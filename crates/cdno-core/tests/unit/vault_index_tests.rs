@@ -659,3 +659,88 @@ fn list_candidates_agrees_between_the_sqlite_and_memory_indexes() {
         memory.list_candidates().unwrap()
     );
 }
+
+fn note_with(path: &str, frontmatter: serde_json::Value) -> NoteEntry {
+    let mut n = sample_note(path, "concept");
+    n.frontmatter = frontmatter;
+    n
+}
+
+#[test]
+fn aliases_are_read_from_the_frontmatter_json() {
+    let (_dir, idx) = store();
+    idx.upsert_note(&note_with(
+        "concepts/a.md",
+        json!({ "aliases": ["old-slug", "A display name", 42] }),
+    ))
+    .unwrap();
+    assert_eq!(
+        idx.list_aliases().unwrap(),
+        vec![("old-slug".to_owned(), vp("concepts/a.md"))]
+    );
+}
+
+#[test]
+fn a_scalar_alias_is_read() {
+    let (_dir, idx) = store();
+    idx.upsert_note(&note_with(
+        "concepts/a.md",
+        json!({ "aliases": "old-slug" }),
+    ))
+    .unwrap();
+    idx.upsert_note(&note_with(
+        "concepts/b.md",
+        json!({ "aliases": "Not a slug" }),
+    ))
+    .unwrap();
+    assert_eq!(
+        idx.list_aliases().unwrap(),
+        vec![("old-slug".to_owned(), vp("concepts/a.md"))]
+    );
+}
+
+#[test]
+fn notes_without_aliases_contribute_nothing() {
+    let (_dir, idx) = store();
+    idx.upsert_note(&sample_note("concepts/a.md", "concept"))
+        .unwrap();
+    idx.upsert_note(&note_with("concepts/b.md", json!({ "aliases": 7 })))
+        .unwrap();
+    idx.upsert_note(&note_with(
+        "concepts/c.md",
+        json!({ "aliases": { "k": "old-slug" } }),
+    ))
+    .unwrap();
+    assert_eq!(idx.list_aliases().unwrap(), vec![]);
+}
+
+#[test]
+fn aliases_are_ordered_by_path_then_position() {
+    let (_dir, idx) = store();
+    idx.upsert_note(&note_with(
+        "concepts/b.md",
+        json!({ "aliases": ["b-two", "b-one"] }),
+    ))
+    .unwrap();
+    idx.upsert_note(&note_with(
+        "concepts/a.md",
+        json!({ "aliases": ["a-two", "a-one"] }),
+    ))
+    .unwrap();
+    let got: Vec<(String, String)> = idx
+        .list_aliases()
+        .unwrap()
+        .into_iter()
+        .map(|(a, p)| (a, p.to_string()))
+        .collect();
+    let want: Vec<(String, String)> = [
+        ("a-two", "concepts/a.md"),
+        ("a-one", "concepts/a.md"),
+        ("b-two", "concepts/b.md"),
+        ("b-one", "concepts/b.md"),
+    ]
+    .into_iter()
+    .map(|(a, p)| (a.to_owned(), p.to_owned()))
+    .collect();
+    assert_eq!(got, want);
+}
