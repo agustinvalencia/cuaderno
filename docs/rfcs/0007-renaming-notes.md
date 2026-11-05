@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft, amended after review — 2026-11-04 (four-seat review, three rounds, on PR #846; no seat holds a blocking point; §9 names what the maintainer still confirms) |
+| **Status** | Draft, amended after review — 2026-11-04 (four-seat review, three rounds, on PR #846; no seat holds a blocking point; the maintainer settled D3 and D7 on 2026-11-05) |
 | **Tracked by** | PR #846; #579 (created notes cannot be given an explicit slug, so a truncated one is permanent) |
 | **Affects** | `cdno-core` (`extractors.rs`, a new `git.rs`, `store.rs`, `index.rs`, one migration), `cdno-domain` (a new `vault/rename.rs`, `vault/slug.rs`, `note_type.rs`, `vault/note_ref.rs`, the create paths, `vault/lint.rs`), `cdno-cli` (`cdno note rename`, `--slug` on the create verbs), `cdno-mcp` (one tool, one field on the create tools, rejection codes, server instructions), `docs/design.md`, `CLAUDE.md`, `docs-site` (including the method page) |
 | **Related** | #529 (slug collisions from the word-boundary retreat), #524 (mid-word cut, closed), #225 (globally unique stems), #215 (last-segment resolution), #111 (append-only lint for archived actions), #211 (`cdno lint --fix`), #540 (the post-write sync nudge), RFC 0004 (one locator, every move restages), RFC 0005 (the focus fold) |
@@ -475,7 +475,7 @@ reason, and the changelog says so.
 - **D2 — `aliases` as the field name**, for Obsidian's benefit. Agreed by the review.
 - **D3 — a rename changes the slug only.** Three seats chose slug only for v1; one would add
   `--title`, logged as a `title:` continuation, and accepts slug only if retitling gets its own
-  issue. **The maintainer confirms**; if slug only, an issue is opened for retitling.
+  issue. **Decided by the maintainer: slug only.** Retitling gets an issue of its own.
 - **D4 — freshness.** Refuse only when known to be behind; warn and proceed when unknown; never
   refuse for a dirty tree (§5.8). Agreed by the review.
 - **D5 — an alias is reserved while listed.** Releasing it would let an old link change referent
@@ -485,7 +485,7 @@ reason, and the changelog says so.
   milestones; an archived action's own frozen prefix would change. None is needed for the
   truncated-title problem that motivates this RFC.
 - **D7 — the method version.** The review agrees the change is a minor method version with one
-  sentence on the method page. **The maintainer confirms.**
+  sentence on the method page. **Decided by the maintainer: a minor method version.**
 - **D8 — #529.** Explicit slugs (S1) and `--question` on portfolio create give a remedy for both
   collision cases; whether derived portfolio slugs should also disambiguate stays open there.
 
