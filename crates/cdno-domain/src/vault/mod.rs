@@ -63,6 +63,7 @@ mod search;
 mod set_frontmatter;
 pub(crate) mod slug;
 mod slug_hint;
+mod snapshot_backfill;
 mod stewardships;
 mod tags;
 mod template_sync;
@@ -197,16 +198,19 @@ impl Vault {
         let method_notice = method_status::MethodNotice::default();
         method_notice.record(config.vault.method_version);
         let holder_sentinels = HolderSentinels::from_config(&config);
-        Ok((
-            Self {
-                store,
-                index,
-                config,
-                holder_sentinels,
-                method_notice,
-            },
-            report,
-        ))
+        let vault = Self {
+            store,
+            index,
+            config,
+            holder_sentinels,
+            method_notice,
+        };
+        // After reconciliation, so the index lists exactly the snapshots of
+        // the notes on disk: stamp the masked hash on the rows archived
+        // before index migration 004 (RFC 0007 T16). Best-effort: a
+        // failure is logged and the vault still opens.
+        vault.backfill_masked_snapshots();
+        Ok((vault, report))
     }
 
     pub fn config(&self) -> &VaultConfig {

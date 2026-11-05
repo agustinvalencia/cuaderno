@@ -331,8 +331,10 @@ impl Vault {
 
 /// The frontmatter keys that hold a bare slug (RFC 0007 §3.5) and so are
 /// masked in the snapshot's masked hash. A literal until T17 replaces it
-/// with the reference table.
-const SNAPSHOT_REFERENCE_KEYS: &[&str] =
+/// with the reference table. Shared by the archival stamp, the startup
+/// backfill (`vault/snapshot_backfill.rs`) and the append-only lint, which
+/// must all mask with the same keys or a stored hash never verifies.
+pub(in crate::vault) const SNAPSHOT_REFERENCE_KEYS: &[&str] =
     &["project", "stewardship", "portfolio", "captured_during"];
 
 /// The slug is the file stem of the note path. `create_action_note`
