@@ -726,12 +726,15 @@ message.
 `pub fn masked_content_hash(prefix: &str, reference_keys: &[&str]) -> String` — the frozen prefix
 with every wikilink address (T6's spans) and every scalar under a listed frontmatter key (T7's
 machinery) replaced by a fixed token, then `content_hash` (`hash.rs:20`);
-`pub const MASK_VERSION: u32 = 1`. `ArchivalSnapshot` (`index.rs:384`) gains
-`masked_hash: Option<String>` and `mask_version: Option<u32>`; migration
+`pub const MASK_VERSION: u32 = 1`; the masked text itself is exposed as
+`pub fn mask_references(prefix, reference_keys) -> String` and `masked_content_hash` is
+`content_hash` over it. `ArchivalSnapshot` (`index.rs:384`) gains
+`masked_hash: Option<String>`, `mask_version: Option<u32>` and `masked_size: Option<u64>` (the
+masked text's byte length, which a rename cannot move, unlike `frozen_size`); migration
 `004_snapshot_masked_hash.sql` (003 is T11's, shipped; both insert their own `schema_migrations` row,
-`index.rs:268`) adds the two nullable columns; `record_archival_snapshot` /
+`index.rs:268`) adds the three nullable columns; `record_archival_snapshot` /
 `find_archival_snapshot` carry them on both indexes. `stage_action_archival`
-(`actions.rs:204`) stamps both hashes, passing the §3.5 keys from the domain (T17's table once
+(`actions.rs:204`) stamps both hashes and the masked size, passing the §3.5 keys from the domain (T17's table once
 it exists; until then the literal list, replaced in T17). Core knows no key: the list is a
 parameter.
 
@@ -748,8 +751,9 @@ append-only by rule.
   `[[old]]`→`[[new]]` and `project: old`→`project: new` hash equal; differing in one byte of
   prose hash differently; differing in a wikilink **label** hash differently).
 - `cargo test -p cdno-core --test unit -- unit::index_tests`:
-  `migration_004_adds_nullable_columns` (open a 003-level database, migrate, both columns
-  present and `NULL` on an existing row).
+  `migration_004_adds_nullable_columns` (open a 003-level database, migrate, all three columns
+  present and `NULL` on an existing row). `unit::hash_tests`: `masking_is_prefix_local`,
+  `masked_hash_is_stable_under_mask_version_1` (golden).
 - `cargo test -p cdno-domain --test unit -- unit::actions_tests`:
   `archival_stamps_a_masked_hash_with_its_version`.
 
@@ -758,12 +762,14 @@ append-only by rule.
 ### T16 — Backfill and the lint switch
 
 **What.** On startup, after reconciliation, a backfill pass (`vault/mod.rs`, beside the method
-skew check — it is domain policy) computes `masked_hash` for every snapshot row whose
+skew check — it is domain policy) computes `masked_hash` and `masked_size` for every snapshot row whose
 `masked_hash` is `NULL` **and whose plain hash still verifies**, in one transaction; rows that
 fail the plain hash are left `NULL` and keep failing lint as today. `check_append_only`
-(`lint.rs:1153`) verifies the masked hash when present (at the stored `mask_version`; a row at an
+(`lint.rs:1153`) verifies the masked hash when present, by masking the **whole current file** and
+hashing its first `masked_size` bytes (a masked file shorter than `masked_size` is the truncation
+Error; `frozen_size` is raw bytes a rename moves, so it is not used for this path) (at the stored `mask_version`; a row at an
 older version is re-masked at read if the version is known, else reported as a Warning naming
-the version), the plain hash otherwise; truncation below `frozen_size` stays an Error. The
+the version), the plain hash otherwise; truncation below `frozen_size` stays an Error on the plain path. The
 stated cost (§5.4) goes into the lint row's docs: a hand edit that only re-targets a reference
 inside a frozen prefix is no longer detected.
 
@@ -777,7 +783,7 @@ fails there. The probe builds that clone.
 **Probes.**
 - `cargo test -p cdno-domain --test unit -- unit::lint_tests` passes with
   `a_reference_only_rewrite_inside_a_frozen_prefix_passes_lint` (archive an action through
-  the verb; through the **store**, rewrite `[[old]]`→`[[new]]` inside the frozen prefix exactly
+  the verb; through the **store**, rewrite `[[old]]`→`[[surrogate-model]]` (a different length) inside the frozen prefix exactly
   as T6 would; lint has no Error for it), `a_prose_edit_inside_a_frozen_prefix_is_still_an_error`,
   `a_truncated_frozen_prefix_is_still_an_error`.
 - `cargo test -p cdno-core --test unit -- unit::reconcile_tests` or a new
@@ -785,7 +791,8 @@ fails there. The probe builds that clone.
   one tampered: one filled, one `NULL`), `backfill_is_idempotent`.
 - **The second clone** (`cdno-cli --test lint`, real files): vault B archives an action (its
   index holds the snapshot); copy the markdown of a rename-shaped rewrite over B's file (the
-  bytes T6 would produce); reopen B; `cdno lint` reports no Error. Then the mutation: switch
+  bytes T6 would produce, with a slug of a different length: `old`→`surrogate-model`; the
+  same-length case hides the bug); reopen B; `cdno lint` reports no Error. Then the mutation: switch
   lint back to the plain hash; this test fails.
 
 **Correct means.** A rename on one clone leaves the other clone's lint clean with nothing
@@ -846,7 +853,7 @@ ambiguous `[[old]]` is excluded because `stem_shared` already refused), then §3
 through the same pure function `stage_daily_logs` uses to place a line, extracted as
 `append_log_line(content, line) -> String`). All edits of a `PlannedEdit` are expressed in `before`'s byte positions and merged in ascending order before applying (T7's frontmatter edits are relative to the frontmatter block and must be offset). **Exactly one `PlannedEdit` per path**: the daily
 note's address rewrites and its log line are one `after`. A referrer under `actions/_done/`
-whose snapshot's plain hash no longer verifies adds `RenameWarning::FrozenPrefixAlreadyDiverged`
+whose snapshot no longer verifies (the masked hash when the row has one, the plain hash otherwise) adds `RenameWarning::FrozenPrefixAlreadyDiverged`
 and is still rewritten (§5.4). `hash` is `content_hash` over every path's `after` in path order
 with the log line's stamp and today's date excluded (§6.2).
 
@@ -866,7 +873,7 @@ silently.
   `[[old|label]]` and a `[[old#Current State]]`, a portfolio index linking `[[projects/old]]`,
   a note whose frontmatter holds a nested `project: old` under another key, a code span `` `[[old]]` ``, a `#action/old` tag and an archived action with `[[old]]` in its
   frozen prefix:
-  `the_plan_lists_every_reference_kind_once` (the exact set of paths and `Change`s; the code
+  `a_second_rename_of_a_frozen_note_does_not_warn`, `the_plan_lists_every_reference_kind_once` (the exact set of paths and `Change`s; the code
   span and the tag are not changes), `every_edit_differs_only_by_its_reference_edits`
   (`differs_only_by` on each `before`/`after` with the edits the planner built, and each edit's
   range is an accepted address span of `wikilink_spans(before)`, as T6's property test checks),

@@ -3050,4 +3050,14 @@ fn archival_stamps_a_masked_hash_with_its_version() {
         ))
     );
     assert_ne!(snap.masked_hash.as_deref(), Some(snap.frozen_hash.as_str()));
+    let masked = cdno_core::hash::mask_references(
+        &raw,
+        &["project", "stewardship", "portfolio", "captured_during"],
+    );
+    assert_eq!(snap.masked_size, Some(masked.len() as u64));
+    assert_ne!(
+        snap.masked_size,
+        Some(snap.frozen_size),
+        "the masked extent is not the raw one"
+    );
 }

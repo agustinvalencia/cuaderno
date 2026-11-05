@@ -49,7 +49,28 @@ const MASK_TOKEN: &str = "\u{0}masked\u{0}";
 /// "[[x]]"` is masked as an address). A scalar that holds a wikilink is
 /// left to the address mask, which keeps its label. Core knows no key
 /// names: the list is the caller's.
+///
+/// The text is built by [`mask_references`]; this is `content_hash` over it.
 pub fn masked_content_hash(prefix: &str, reference_keys: &[&str]) -> String {
+    content_hash(&mask_references(prefix, reference_keys))
+}
+
+/// The masked text that [`masked_content_hash`] hashes: `prefix` with every
+/// wikilink address and every scalar under `reference_keys` replaced by one
+/// fixed token (see [`masked_content_hash`] for the rule).
+///
+/// Its length does not change when a reference is rewritten to a name of a
+/// different length, which is what makes `masked_size` a stable extent.
+/// Masking is prefix-local: for a prefix that ends at a line boundary and an
+/// appendix that begins on a new line, `mask_references(prefix + appendix)`
+/// starts with `mask_references(prefix)`. The one exception is a `[[` left
+/// unclosed at the end of the prefix and closed by the appendix; the masked
+/// prefix then differs, verification fails, and lint reports it (fail-safe).
+///
+/// The mask relies on reference values being safe to write bare, which the
+/// slug validator guarantees: a rewrite that had to add quotes to a bare
+/// scalar would add bytes outside the masked range and change the text.
+pub fn mask_references(prefix: &str, reference_keys: &[&str]) -> String {
     let mut ranges: Vec<Range<usize>> = wikilink_spans(prefix)
         .into_iter()
         .map(|s| s.address)
@@ -82,5 +103,5 @@ pub fn masked_content_hash(prefix: &str, reference_keys: &[&str]) -> String {
         at = r.end;
     }
     masked.push_str(&prefix[at..]);
-    content_hash(&masked)
+    masked
 }

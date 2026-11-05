@@ -269,27 +269,34 @@ fn migration_004_adds_nullable_columns() {
     }
 
     let index = SqliteIndex::open(&path).unwrap();
-    let (version, columns, masked, mask_version): (u32, i64, Option<String>, Option<u32>) = index
+    let (version, columns, masked, mask_version, masked_size): (
+        u32,
+        i64,
+        Option<String>,
+        Option<u32>,
+        Option<i64>,
+    ) = index
         .with_connection(|c| {
             let version = c.query_row("SELECT MAX(version) FROM schema_migrations", [], |r| {
                 r.get(0)
             })?;
             let columns = c.query_row(
                 "SELECT COUNT(*) FROM pragma_table_info('archived_action_snapshots') \
-                 WHERE name IN ('masked_hash', 'mask_version')",
+                 WHERE name IN ('masked_hash', 'mask_version', 'masked_size')",
                 [],
                 |r| r.get::<_, i64>(0),
             )?;
-            let (masked, mask_version) = c.query_row(
-                "SELECT masked_hash, mask_version FROM archived_action_snapshots",
+            let (masked, mask_version, masked_size) = c.query_row(
+                "SELECT masked_hash, mask_version, masked_size FROM archived_action_snapshots",
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )?;
-            Ok((version, columns, masked, mask_version))
+            Ok((version, columns, masked, mask_version, masked_size))
         })
         .unwrap();
     assert_eq!(version, 4);
-    assert_eq!(columns, 2, "both columns added by 004");
+    assert_eq!(columns, 3, "all three columns added by 004");
+    assert_eq!(masked_size, None);
     assert_eq!(masked, None);
     assert_eq!(mask_version, None);
 }

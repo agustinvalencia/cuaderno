@@ -302,14 +302,13 @@ impl Vault {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
+        let masked = cdno_core::hash::mask_references(&new_content, SNAPSHOT_REFERENCE_KEYS);
         let snapshot = cdno_core::index::ArchivalSnapshot {
             frozen_size: new_content.len() as u64,
             frozen_hash: cdno_core::hash::content_hash(&new_content),
             archived_at_ns,
-            masked_hash: Some(cdno_core::hash::masked_content_hash(
-                &new_content,
-                SNAPSHOT_REFERENCE_KEYS,
-            )),
+            masked_hash: Some(cdno_core::hash::content_hash(&masked)),
+            masked_size: Some(masked.len() as u64),
             mask_version: Some(cdno_core::hash::MASK_VERSION),
         };
 
