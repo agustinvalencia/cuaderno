@@ -1583,6 +1583,44 @@ fn a_numeric_field_rendered_by_the_template_is_left_as_a_number() {
     );
 }
 
+#[test]
+fn a_missing_required_field_is_reported_before_a_taken_slug() {
+    let (vault, store) = vault_with(config_with_person(), &[]);
+    vault
+        .create_custom_note_with_vars(
+            at(),
+            "person",
+            "Ada",
+            &fields(&[("name", "Ada")]),
+            &HashMap::new(),
+            None,
+            None,
+            Some("surrogate-calibration"),
+        )
+        .expect("first create holds the slug");
+    let before = snapshot(&store);
+
+    // `name` is required and absent, and the slug is taken: the field wins.
+    let err = vault
+        .create_custom_note_with_vars(
+            at(),
+            "person",
+            "Grace",
+            &HashMap::new(),
+            &HashMap::new(),
+            None,
+            None,
+            Some("surrogate-calibration"),
+        )
+        .expect_err("create refused");
+
+    assert!(
+        matches!(&err, DomainError::MissingRequiredField { field, .. } if field == "name"),
+        "got {err:?}"
+    );
+    assert_eq!(snapshot(&store), before, "nothing was written");
+}
+
 /// Every file in the store and its content.
 fn snapshot(store: &Arc<dyn VaultStore>) -> BTreeMap<String, String> {
     store
