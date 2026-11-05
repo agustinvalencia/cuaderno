@@ -112,6 +112,21 @@ pub trait VaultStore: Send + Sync {
     /// vault never asks for an empty directory to be cleaned up.
     fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError>;
 
+    /// Remove a directory, but only when it exists and is empty.
+    ///
+    /// Returns `Ok(true)` when the directory was removed. Returns
+    /// `Ok(false)` — and touches nothing — when `dir` is absent, is not
+    /// a directory (a symlink to one counts as not a directory), or
+    /// holds anything at all, a hidden file included. An error is
+    /// returned only for an I/O failure outside those cases. Callers
+    /// use it to prune emptied folders and so can never lose content.
+    ///
+    /// The default returns `Ok(false)`, which suits stores with no
+    /// directories of their own.
+    fn remove_dir_if_empty(&self, _dir: &VaultPath) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
     /// Report whether a file or directory exists at `path`.
     fn exists(&self, path: &VaultPath) -> Result<bool, StoreError>;
 
@@ -253,6 +268,8 @@ impl VaultStore for MemoryVaultStore {
         }
         Ok(())
     }
+
+    // Directories are implicit here; the trait default applies.
 
     fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
         let files = self.files.lock().expect("poisoned mutex");
@@ -631,6 +648,39 @@ impl VaultStore for FsVaultStore {
         // exist; let io_to_store_error translate that into the trait's
         // contract variant.
         fs::remove_file(&full).map_err(|e| io_to_store_error(e, path))
+    }
+
+    fn remove_dir_if_empty(&self, dir: &VaultPath) -> Result<bool, StoreError> {
+        let full = self.resolve(dir)?;
+        // symlink_metadata, not metadata: a symlink to a directory is
+        // not a directory here, and it must never be followed.
+        let meta = match fs::symlink_metadata(&full) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(io_to_store_error(e, dir)),
+        };
+        if !meta.is_dir() {
+            return Ok(false);
+        }
+        let mut entries = fs::read_dir(&full).map_err(|e| io_to_store_error(e, dir))?;
+        match entries.next() {
+            None => {}
+            Some(Ok(_)) => return Ok(false),
+            Some(Err(e)) => return Err(io_to_store_error(e, dir)),
+        }
+        match fs::remove_dir(&full) {
+            Ok(()) => Ok(true),
+            // Something arrived between the emptiness check and the
+            // removal: leave it. The kernel refuses the removal itself,
+            // so nothing is lost.
+            Err(e)
+                if e.kind() == io::ErrorKind::NotFound
+                    || e.kind() == io::ErrorKind::DirectoryNotEmpty =>
+            {
+                Ok(false)
+            }
+            Err(e) => Err(io_to_store_error(e, dir)),
+        }
     }
 
     fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {

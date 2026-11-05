@@ -205,3 +205,12 @@ fn delete_file_fails_when_missing() {
     let err = store.delete_file(&vp("missing.md")).unwrap_err();
     assert!(matches!(err, StoreError::NotFound(_)));
 }
+
+#[test]
+fn remove_dir_if_empty_is_false_on_the_memory_store() {
+    let store = MemoryVaultStore::new();
+    store.write_file(&vp("folder/note.md"), "content").unwrap();
+    assert!(!store.remove_dir_if_empty(&vp("folder")).unwrap());
+    assert!(!store.remove_dir_if_empty(&vp("missing")).unwrap());
+    assert!(store.exists(&vp("folder/note.md")).unwrap());
+}
