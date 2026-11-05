@@ -12,9 +12,12 @@ that "resolves to no note".
 
 A link that resolves only through a note's `aliases:` entry — a former name — is a straggler: it still
 works, but lint warns and names the note's current slug (`[[old]]` names a renamed note — now `new`),
-so you can fix the link by hand. Lint also warns when an alias equals another note's file stem or
-folder name, since the stem always wins and the alias can never be followed (alias `x` on `<path>` is
-shadowed by `<other>`).
+so you can fix the link by hand. Lint also warns when an alias collides with another note's name. If it equals another note's file
+stem, the stem wins and the alias can never be followed (alias `x` on `<path>` is shadowed by
+`<other>`). If it equals the folder name of a folder note such as `portfolios/x/_index.md`, the alias
+takes the bare link `[[x]]` (alias `x` on `<path>` takes bare `[[x]]` from folder note `<other>`);
+the folder form `[[portfolios/x]]` still reaches the folder note. A straggler to a folder note is
+told to use the folder form, since a bare link to the new name would not resolve.
 
 It also reports lines that were plainly meant to be structured but will never be read as such,
 because the parsers that consume them skip what they cannot parse rather than complaining. That

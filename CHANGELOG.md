@@ -59,8 +59,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   link can never change referent, whatever the type created.
 - **Lint warns on a straggler link and a shadowed alias** (RFC 0007 stage S3, #863). A wikilink that
   resolves only through an alias is a Warning naming the note's current slug (`[[old]]` names a
-  renamed note — now `new`), and an alias equal to another note's stem or folder name is a Warning
-  that the stem wins (alias `x` on `<path>` is shadowed by `<other>`). Neither is an error.
+  renamed note — now `new`; a folder note is named by its folder form), and an alias equal to another
+  note's file stem is a Warning that the stem wins (alias `x` on `<path>` is shadowed by `<other>`),
+  while one equal to a folder note's folder name is a Warning that the alias takes the bare link
+  (alias `x` on `<path>` takes bare `[[x]]` from folder note `<other>`). Neither is an error, but
+  `cdno lint --strict` now fails on them.
 
 ### Fixed
 
