@@ -70,12 +70,12 @@ cdno portfolio create --question "Sparse vs dense attention OOD" --slug surrogat
 ```json
 {
   "code": "slug_taken",
-  "message": "slug 'surrogate-model' is taken by 'projects/surrogate-model.md' (as its stem)",
   "details": {
     "holder": "projects/surrogate-model.md",
     "kind": "stem",
     "slug": "surrogate-model"
-  }
+  },
+  "message": "slug 'surrogate-model' is taken by 'projects/surrogate-model.md' (as its stem)"
 }
 ```
 
