@@ -123,7 +123,7 @@ pub use migrate::{
 pub use monthly::{MonthlyNoteView, MonthlySection};
 pub use monthly_context::{MonthlyContext, ParkedProject};
 pub use normalise::NormaliseReport;
-pub use note_ref::{Miss, NoteRef, PeriodRef, RefResolution, RelativeDay};
+pub use note_ref::{Miss, NoteRef, PeriodRef, RefResolution, RelativeDay, ResolvedNote};
 pub use notes::NoteView;
 pub use notes_section::NoteToDailyOutcome;
 pub use orient::{GroupParent, LapsedHabit, OrientationContext, ProjectGroup};

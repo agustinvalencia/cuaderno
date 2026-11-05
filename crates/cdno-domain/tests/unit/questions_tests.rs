@@ -683,3 +683,33 @@ fn an_explicit_slug_that_is_taken_is_refused_not_suffixed() {
     );
     assert_eq!(snapshot(&store), before, "nothing was written");
 }
+
+// ---------------------------------------------------------------------
+// By old name (RFC 0007 §5.5, T12)
+// ---------------------------------------------------------------------
+
+#[test]
+fn set_question_status_by_old_name_logs_the_new_slug() {
+    use super::support::{assert_logs_the_new_slug, by_old_name_at, seeded_vault};
+
+    let question = "---\ntype: question\ndomain: research\nstatus: active\n\
+                    created: 2026-01-10\nupdated: 2026-01-10\naliases: [old]\n---\n\n\
+                    # Why does the surrogate model drift?\n"
+        .to_owned();
+    let (vault, store) = seeded_vault(&[("questions/research/new.md", question)]);
+
+    let outcome = vault
+        .set_question_status(by_old_name_at(), "old", QuestionStatus::Parked)
+        .expect("status by old name");
+    assert_eq!(outcome.primary, vp("questions/research/new.md"));
+    assert_logs_the_new_slug(
+        &store,
+        "set_question_status",
+        "status on [[questions/research/new]]",
+    );
+
+    // And the read side.
+    vault
+        .question_backlinks("old")
+        .expect("backlinks by old name");
+}

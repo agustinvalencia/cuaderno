@@ -504,7 +504,7 @@ impl Vault {
     ) -> Result<ProjectFull, DomainError> {
         let location = self.locate_project(slug)?;
         let (_fm, body) = Frontmatter::parse(&location.raw)?;
-        let last_paused = self.last_paused(today)?.get(slug).cloned();
+        let last_paused = self.last_paused(today)?.get(&location.slug).cloned();
         Ok(ProjectFull {
             frontmatter: location.frontmatter,
             body: body.to_owned(),
@@ -561,8 +561,8 @@ impl Vault {
     /// body-level references (e.g. a question's `## Related Projects -
     /// [[projects/foo]]` section).
     pub fn project_backlinks(&self, slug: &str) -> Result<ProjectBacklinks, DomainError> {
-        let (project_path, _doc, _project) = self.resolve_any_project(slug)?;
-        let backlinks = self.index.find_backlinks(&project_path)?;
+        let (project, _doc, _frontmatter) = self.resolve_any_project(slug)?;
+        let backlinks = self.index.find_backlinks(&project.path)?;
         let mut out = ProjectBacklinks::default();
         for source in backlinks {
             // One lookup serves both the bucketing and the label: the entry
@@ -621,8 +621,8 @@ impl Vault {
     /// `projects` bucket, as does a body reference (a portfolio's or evidence
     /// note's `[[questions/…]]` wikilink).
     pub fn question_backlinks(&self, slug: &str) -> Result<QuestionBacklinks, DomainError> {
-        let (question_path, _qf) = self.resolve_question_by_slug(slug)?;
-        let backlinks = self.index.find_backlinks(&question_path)?;
+        let (question, _qf) = self.resolve_question_by_slug(slug)?;
+        let backlinks = self.index.find_backlinks(&question.path)?;
         let mut out = QuestionBacklinks::default();
         for source in backlinks {
             let bucket = match self.index.find_by_path(&source)? {

@@ -40,6 +40,7 @@ use super::super::Vault;
 use super::super::WriteOutcome;
 use super::super::frontmatter_edit::merge_fields_into_frontmatter;
 use super::super::index_entry::build_index_entry_for;
+use super::super::note_ref::ResolvedNote;
 use super::rewrite_field_in_frontmatter;
 
 /// The frontmatter key the verb owns. Reserved from `set_frontmatter`.
@@ -114,7 +115,8 @@ impl Vault {
         };
 
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, doc) = self.resolve_open_project(slug)?;
+        let (ResolvedNote { path, slug, .. }, doc) = self.resolve_open_project(slug)?;
+        let slug = slug.as_str();
         let frontmatter = ProjectFrontmatter::try_from(doc.frontmatter().clone())?;
 
         // What the map says now, as every counting surface reads it: only a

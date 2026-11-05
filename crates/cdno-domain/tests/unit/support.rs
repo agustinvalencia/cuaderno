@@ -173,3 +173,60 @@ impl VaultStore for RacingStore {
 pub fn lint_day() -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()
 }
+
+// ---------------------------------------------------------------------
+// By old name (RFC 0007 §5.5, T12)
+// ---------------------------------------------------------------------
+//
+// The `*_by_old_name_logs_the_new_slug` tables: a note renamed `old` →
+// `new` carries `aliases: [old]`, a verb is called with `"old"`, and the
+// line it writes to the daily log must name `new` and never `old`.
+
+/// When every by-old-name row writes, and so whose daily note it reads.
+pub fn by_old_name_at() -> chrono::NaiveDateTime {
+    chrono::NaiveDate::from_ymd_opt(2026, 10, 20)
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap()
+}
+
+/// The daily note [`by_old_name_at`] writes to.
+pub const BY_OLD_NAME_DAILY: &str = "journal/2026/daily/2026-10-20.md";
+
+/// A vault seeded with `notes`, and the store it reads, so a row can read
+/// back what its verb wrote.
+pub fn seeded_vault(notes: &[(&str, String)]) -> (cdno_domain::Vault, Arc<dyn VaultStore>) {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn cdno_core::index::VaultIndex> =
+        Arc::new(cdno_core::index::MemoryIndex::new());
+    for (path, body) in notes {
+        store
+            .write_file(&VaultPath::new(*path).unwrap(), body)
+            .unwrap();
+    }
+    let (vault, _report) = cdno_domain::Vault::new(
+        Arc::clone(&store),
+        index,
+        cdno_core::config::VaultConfig::default(),
+    )
+    .expect("Vault::new");
+    (vault, store)
+}
+
+/// Assert the row's daily note holds `expected` and names `old` in no
+/// wikilink: neither `[[old` nor `/old]]` nor `/old#`.
+pub fn assert_logs_the_new_slug(store: &Arc<dyn VaultStore>, row: &str, expected: &str) {
+    let daily = store
+        .read_file(&VaultPath::new(BY_OLD_NAME_DAILY).unwrap())
+        .unwrap_or_else(|e| panic!("{row}: no daily note: {e}"));
+    assert!(
+        daily.contains(expected),
+        "{row}: the log lacks `{expected}`:\n{daily}"
+    );
+    for old in ["[[old", "/old]]", "/old#"] {
+        assert!(
+            !daily.contains(old),
+            "{row}: the log names the old slug (`{old}`):\n{daily}"
+        );
+    }
+}

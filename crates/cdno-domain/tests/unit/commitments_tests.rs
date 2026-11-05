@@ -2133,3 +2133,127 @@ fn an_explicit_slug_that_is_taken_is_refused_not_suffixed() {
     );
     assert_eq!(snapshot(&store), before, "nothing was written");
 }
+
+// ---------------------------------------------------------------------
+// By old name (RFC 0007 §5.5, T12): a commitment, and the project or
+// stewardship it points at, are reached by a former slug, and what is
+// written names the current one.
+// ---------------------------------------------------------------------
+
+type CommitmentVerb = fn(&Vault, NaiveDateTime) -> Result<(), DomainError>;
+
+#[test]
+fn every_verb_by_old_name_logs_the_new_slug() {
+    use super::support::{assert_logs_the_new_slug, by_old_name_at, seeded_vault};
+
+    let commitment = "---\ntype: commitment\nstatus: active\ndue: 2026-11-30\n\
+                      created: 2026-10-01\ncompleted: null\ncontext: personal\nproject: null\n\
+                      stewardship: null\naliases: [old]\n---\n\n# Renew passport\n"
+        .to_owned();
+    let stewardship = "---\ntype: stewardship\ncontext: personal\naliases: [old]\n---\n\n\
+                       # Health\n\n## Current Status\nN/A.\n\n## Periodic Commitments\n\
+                       - Dental check-up \u{2014} every 6 months \u{2014} next: 2026-11-01\n"
+        .to_owned();
+
+    // (row, the verb called with "old", the log fragment, the path it wrote)
+    let rows: &[(&str, CommitmentVerb, &str, Option<&str>)] = &[
+        (
+            "complete_commitment",
+            |v, at| v.complete_commitment(at, "old").map(drop),
+            "commitment completed [[new]] \u{2014} Renew passport",
+            Some("commitments/_done/2026/new.md"),
+        ),
+        (
+            "drop_commitment",
+            |v, at| v.drop_commitment(at, "old", Some("moved")).map(drop),
+            "commitment dropped on [[new]] \u{2014} Renew passport",
+            Some("commitments/_done/2026/new.md"),
+        ),
+        (
+            "reschedule_commitment",
+            |v, at| {
+                v.reschedule_commitment(at, "old", NaiveDate::from_ymd_opt(2026, 12, 15).unwrap())
+                    .map(drop)
+            },
+            "commitment rescheduled on [[new]] \u{2014} Renew passport",
+            Some("commitments/new.md"),
+        ),
+        (
+            "complete_periodic",
+            |v, at| v.complete_periodic(at, "old", "Dental").map(drop),
+            "periodic done on [[new]] \u{2014} Dental check-up",
+            None,
+        ),
+    ];
+
+    for (row, verb, expected, written) in rows {
+        // The periodic row's alias is the stewardship's; seeding the
+        // commitment beside it would make `old` a shared alias.
+        let seed = if *row == "complete_periodic" {
+            ("stewardships/new.md", stewardship.clone())
+        } else {
+            ("commitments/new.md", commitment.clone())
+        };
+        let (vault, store) = seeded_vault(&[seed]);
+        verb(&vault, by_old_name_at()).unwrap_or_else(|e| panic!("{row}: {e}"));
+        assert_logs_the_new_slug(&store, row, expected);
+        if let Some(path) = written {
+            assert!(store.exists(&vp(path)).unwrap(), "{row}: no {path}");
+        }
+        assert!(
+            !store.exists(&vp("commitments/_done/2026/old.md")).unwrap(),
+            "{row}: archived under the old name"
+        );
+    }
+}
+
+#[test]
+fn a_commitment_created_with_an_old_project_name_holds_the_new_slug() {
+    use super::support::{assert_logs_the_new_slug, by_old_name_at, seeded_vault};
+
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n\
+               aliases: [old]\n---\n\n# Surrogate model\n"
+        .to_owned();
+    let stewardship = "---\ntype: stewardship\ncontext: personal\naliases: [former]\n---\n\n\
+                       # Health\n"
+        .to_owned();
+    let (vault, store) = seeded_vault(&[
+        ("projects/new.md", map),
+        ("stewardships/health.md", stewardship),
+    ]);
+
+    let path = vault
+        .create_commitment(
+            by_old_name_at(),
+            "Submit the paper",
+            NaiveDate::from_ymd_opt(2026, 12, 1).unwrap(),
+            Context::Work,
+            Some("old"),
+            Some("former"),
+        )
+        .expect("create");
+
+    let fm = read_commitment_frontmatter(&store, &path);
+    assert_eq!(fm.project.as_deref(), Some("new"));
+    assert_eq!(fm.stewardship.as_deref(), Some("health"));
+    assert_logs_the_new_slug(
+        &store,
+        "create_commitment",
+        "commitment created [[submit-the-paper]] \u{2014} Submit the paper",
+    );
+
+    // A name that is nobody's, current or former, stays as given: the
+    // links are loose pointers.
+    let path = vault
+        .create_commitment(
+            by_old_name_at(),
+            "Another",
+            NaiveDate::from_ymd_opt(2026, 12, 2).unwrap(),
+            Context::Work,
+            Some("someday"),
+            None,
+        )
+        .expect("create");
+    let fm = read_commitment_frontmatter(&store, &path);
+    assert_eq!(fm.project.as_deref(), Some("someday"));
+}

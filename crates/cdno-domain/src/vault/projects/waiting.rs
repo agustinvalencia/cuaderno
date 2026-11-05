@@ -12,6 +12,7 @@ use crate::note_type::NoteType;
 
 use super::super::Vault;
 use super::super::index_entry::build_index_entry_for;
+use super::super::note_ref::ResolvedNote;
 use super::WAITING_ON_SECTION;
 
 /// Placeholder body for an empty `## Waiting On` section. Treated as
@@ -36,7 +37,8 @@ impl Vault {
         description: &str,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_open_project(slug)?;
+        let (ResolvedNote { path, slug, .. }, mut doc) = self.resolve_open_project(slug)?;
+        let slug = slug.as_str();
 
         let description = description.trim();
         let bullet = format!("- {description}");
@@ -78,7 +80,8 @@ impl Vault {
         query: &str,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_open_project(slug)?;
+        let (ResolvedNote { path, slug, .. }, mut doc) = self.resolve_open_project(slug)?;
+        let slug = slug.as_str();
 
         let section = doc.section(WAITING_ON_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();

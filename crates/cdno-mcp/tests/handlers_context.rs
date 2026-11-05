@@ -3087,3 +3087,23 @@ async fn a_map_whose_holder_is_me_reports_null_and_counts() {
     assert_eq!(context["frontmatter"]["held_by"], "me");
     assert_eq!(context["counts"], true);
 }
+
+/// A former slug (an `aliases:` entry, RFC 0007 §5.5) reads the renamed
+/// note, bare or typed; a path never goes through an alias.
+#[tokio::test]
+async fn read_note_by_an_alias_resolves() {
+    let renamed = "---\ntype: concept\ncreated: 2026-09-01\naliases: [old]\n---\n\n# Renamed\n";
+    let (_store, _vault, server) = concept_vault(&[("concepts/new.md", renamed)]);
+
+    for note in ["old", "concept:old"] {
+        let json = decode_json(
+            &read(&server, note)
+                .await
+                .unwrap_or_else(|e| panic!("`{note}` did not resolve: {e:?}")),
+        );
+        assert_eq!(json["path"], "concepts/new.md", "`{note}`");
+    }
+    read(&server, "concepts/old.md")
+        .await
+        .expect_err("a path names a file, not a former slug");
+}

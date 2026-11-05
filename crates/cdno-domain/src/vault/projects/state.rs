@@ -13,6 +13,7 @@ use super::super::Vault;
 use super::super::WriteOutcome;
 use super::super::index_entry::build_index_entry_for;
 use super::super::log::flatten_for_log;
+use super::super::note_ref::ResolvedNote;
 use super::CURRENT_STATE_SECTION;
 
 impl Vault {
@@ -57,7 +58,8 @@ impl Vault {
         // Resolved from the disk: closed and misfiled maps are
         // `ProjectNotActive`, a missing slug is `Store(NotFound)`, and
         // folder and frontmatter must agree (active or parked).
-        let (path, mut doc) = self.resolve_open_project(slug)?;
+        let (ResolvedNote { path, slug, .. }, mut doc) = self.resolve_open_project(slug)?;
+        let slug = slug.as_str();
 
         let old_state = doc.section(CURRENT_STATE_SECTION)?.trim().to_owned();
         let new_trimmed = new_state.trim();

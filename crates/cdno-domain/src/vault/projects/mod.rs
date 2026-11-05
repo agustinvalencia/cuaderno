@@ -39,6 +39,13 @@
 //! switching or resuming work, and parking, need an active map and use
 //! [`Vault::resolve_active_project`]: a map you start work on is a map that
 //! counts. Closed and misfiled maps are refused by both.
+//!
+//! **Which slug a verb writes** (RFC 0007 §5.5). Every resolver goes through
+//! [`Vault::locate_project`], which also accepts a former name (an
+//! `aliases:` entry), and returns a [`ResolvedNote`] whose `slug` is the
+//! map's current one. A verb shadows its `slug` argument with that before it
+//! builds a log line, a destination path or an error, so no journal entry is
+//! ever composed from a name the caller happened to type.
 
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
@@ -50,6 +57,7 @@ use crate::frontmatter::{ProjectFrontmatter, ProjectStatus};
 use crate::note_type::NoteType;
 
 use super::Vault;
+use super::note_ref::ResolvedNote;
 
 pub(in crate::vault) mod actions;
 mod closed;
@@ -102,10 +110,28 @@ pub(super) const MILESTONES_SECTION: &str = "Milestones";
 #[derive(Debug, Clone)]
 pub struct ProjectLocation {
     pub path: VaultPath,
+    /// The project's current slug, the stem of `path`. Differs from the
+    /// slug the locator was asked for only when that was a former name,
+    /// an alias (RFC 0007 §5.5).
+    pub slug: String,
+    /// The alias the asked-for slug matched, `None` for a stem match.
+    pub resolved_via_alias: Option<String>,
     pub frontmatter: ProjectFrontmatter,
     /// The text the locator read, so a caller that also needs the body
     /// parses the same bytes the frontmatter came from.
     pub(in crate::vault) raw: String,
+}
+
+impl ProjectLocation {
+    /// The located map as a [`ResolvedNote`], for the selectors that hand
+    /// the current slug on to their verbs.
+    fn resolved(&self) -> ResolvedNote {
+        ResolvedNote {
+            path: self.path.clone(),
+            slug: self.slug.clone(),
+            resolved_via_alias: self.resolved_via_alias.clone(),
+        }
+    }
 }
 
 /// The `ProjectNotActive` error for a located map.
@@ -129,6 +155,16 @@ fn is_year_dir_name(name: &str) -> bool {
 /// closed map can never fail a live-vault query (RFC 0004 §5.5).
 pub(in crate::vault) fn is_under_projects_done(path: &VaultPath) -> bool {
     path.as_path().starts_with(cdno_core::paths::PROJECTS_DONE)
+}
+
+/// Whether `path` is where a project map can live: directly under
+/// `projects/`, `projects/_parked/`, or `projects/_done/<year>/`. The
+/// alias tier of [`Vault::locate_project`] accepts a holder only here.
+pub(in crate::vault) fn is_project_map_path(path: &VaultPath) -> bool {
+    let parent = path.as_path().parent();
+    parent == Some(std::path::Path::new(cdno_core::paths::PROJECTS))
+        || parent == Some(std::path::Path::new(cdno_core::paths::PROJECTS_PARKED))
+        || is_closed_project_path(path)
 }
 
 /// Whether `path` is a map under `projects/_done/<year>/`.
@@ -162,6 +198,12 @@ impl Vault {
     /// - `Store(NotFound)` also for a path-shaped slug (containing `/` or
     ///   `\`), which names no project and must not be probed as a path.
     /// - a parse error when the one file found has malformed frontmatter.
+    ///
+    /// A slug no map's stem matches is tried as a former name: the one note
+    /// declaring it as an alias ([`Vault::alias_of`]), if that note sits
+    /// where a project map lives, is located by its current slug, which the
+    /// returned [`ProjectLocation::slug`] carries (RFC 0007 §5.5). A stem
+    /// always beats an alias, and a shared alias is not found.
     pub(in crate::vault) fn locate_project(
         &self,
         slug: &str,
@@ -174,8 +216,51 @@ impl Vault {
             ))));
         }
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
+        let mut current = slug.to_owned();
+        let mut resolved_via_alias = None;
+        let mut hits = self.project_map_hits(slug)?;
+        if hits.is_empty()
+            && let Some((_holder, holder_slug)) = self.alias_of(slug, is_project_map_path)?
+        {
+            hits = self.project_map_hits(&holder_slug)?;
+            current = holder_slug;
+            resolved_via_alias = Some(slug.to_owned());
+        }
+
+        match hits.len() {
+            0 => Err(DomainError::Store(StoreError::NotFound(format!(
+                "{active_path}{}",
+                self.available_projects_hint()
+            )))),
+            1 => {
+                let path = hits.remove(0);
+                let raw = self.store.read_file(&path)?;
+                let (fm, _body) = Frontmatter::parse(&raw)?;
+                let frontmatter = ProjectFrontmatter::try_from(fm)?;
+                Ok(ProjectLocation {
+                    path,
+                    slug: current,
+                    resolved_via_alias,
+                    frontmatter,
+                    raw,
+                })
+            }
+            _ => {
+                hits.sort_by(|a, b| a.as_path().cmp(b.as_path()));
+                Err(DomainError::AmbiguousProject {
+                    slug: current,
+                    candidates: hits,
+                })
+            }
+        }
+    }
+
+    /// Every location on disk holding a map with stem `slug`:
+    /// `projects/<slug>.md`, `projects/_parked/<slug>.md`, then
+    /// `projects/_done/<year>/<slug>.md` for each year directory.
+    fn project_map_hits(&self, slug: &str) -> Result<Vec<VaultPath>, DomainError> {
         let mut candidates = vec![
-            active_path.clone(),
+            VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?,
             VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?,
         ];
         for entry in self
@@ -202,31 +287,18 @@ impl Vault {
                 hits.push(candidate);
             }
         }
+        Ok(hits)
+    }
 
-        match hits.len() {
-            0 => Err(DomainError::Store(StoreError::NotFound(format!(
-                "{active_path}{}",
-                self.available_projects_hint()
-            )))),
-            1 => {
-                let path = hits.remove(0);
-                let raw = self.store.read_file(&path)?;
-                let (fm, _body) = Frontmatter::parse(&raw)?;
-                let frontmatter = ProjectFrontmatter::try_from(fm)?;
-                Ok(ProjectLocation {
-                    path,
-                    frontmatter,
-                    raw,
-                })
-            }
-            _ => {
-                hits.sort_by(|a, b| a.as_path().cmp(b.as_path()));
-                Err(DomainError::AmbiguousProject {
-                    slug: slug.to_owned(),
-                    candidates: hits,
-                })
-            }
-        }
+    /// The current slug of the project `slug` names, read through
+    /// [`Vault::locate_project`] (so a former name maps to the name it now
+    /// has), or `slug` itself when it locates no single map. For a verb
+    /// whose project is a filter or a loose pointer rather than a map it
+    /// must act on, so a miss stays the caller's to report.
+    pub(in crate::vault) fn current_project_slug(&self, slug: &str) -> String {
+        self.locate_project(slug)
+            .map(|location| location.slug)
+            .unwrap_or_else(|_| slug.to_owned())
     }
 
     /// Resolve a project slug to its active file plus parsed
@@ -241,15 +313,17 @@ impl Vault {
     pub(super) fn resolve_active_project(
         &self,
         slug: &str,
-    ) -> Result<(VaultPath, MarkdownDocument), DomainError> {
+    ) -> Result<(ResolvedNote, MarkdownDocument), DomainError> {
         let location = self.locate_project(slug)?;
+        let slug = location.slug.as_str();
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
         if location.frontmatter.status != ProjectStatus::Active || location.path != active_path {
             return Err(not_active(slug, &location.frontmatter));
         }
 
+        let resolved = location.resolved();
         let doc = MarkdownDocument::parse(location.raw)?;
-        Ok((location.path, doc))
+        Ok((resolved, doc))
     }
 
     /// Resolve a project slug to an open map, folder and frontmatter
@@ -265,8 +339,9 @@ impl Vault {
     pub(super) fn resolve_open_project(
         &self,
         slug: &str,
-    ) -> Result<(VaultPath, MarkdownDocument), DomainError> {
+    ) -> Result<(ResolvedNote, MarkdownDocument), DomainError> {
         let location = self.locate_project(slug)?;
+        let slug = location.slug.as_str();
         let expected = match location.frontmatter.status {
             ProjectStatus::Active => cdno_core::paths::PROJECTS,
             ProjectStatus::Parked => cdno_core::paths::PROJECTS_PARKED,
@@ -278,8 +353,9 @@ impl Vault {
             return Err(not_active(slug, &location.frontmatter));
         }
 
+        let resolved = location.resolved();
         let doc = MarkdownDocument::parse(location.raw)?;
-        Ok((location.path, doc))
+        Ok((resolved, doc))
     }
 
     /// Resolve a project slug to a map a closing verb may act on, folder
@@ -293,8 +369,9 @@ impl Vault {
     pub(super) fn resolve_closable_project(
         &self,
         slug: &str,
-    ) -> Result<(VaultPath, MarkdownDocument, ProjectFrontmatter), DomainError> {
+    ) -> Result<(ResolvedNote, MarkdownDocument, ProjectFrontmatter), DomainError> {
         let location = self.locate_project(slug)?;
+        let slug = location.slug.as_str();
         let in_place = match location.frontmatter.status {
             ProjectStatus::Active => {
                 location.path
@@ -312,8 +389,9 @@ impl Vault {
             return Err(not_active(slug, &location.frontmatter));
         }
 
+        let resolved = location.resolved();
         let doc = MarkdownDocument::parse(location.raw)?;
-        Ok((location.path, doc, location.frontmatter))
+        Ok((resolved, doc, location.frontmatter))
     }
 
     /// Resolve a project slug to its file plus parsed markdown plus
@@ -329,10 +407,11 @@ impl Vault {
     pub(in crate::vault) fn resolve_any_project(
         &self,
         slug: &str,
-    ) -> Result<(VaultPath, MarkdownDocument, ProjectFrontmatter), DomainError> {
+    ) -> Result<(ResolvedNote, MarkdownDocument, ProjectFrontmatter), DomainError> {
         let location = self.locate_project(slug)?;
+        let resolved = location.resolved();
         let doc = MarkdownDocument::parse(location.raw)?;
-        Ok((location.path, doc, location.frontmatter))
+        Ok((resolved, doc, location.frontmatter))
     }
 
     /// " — available projects: …" suffix for a project slug not-found,

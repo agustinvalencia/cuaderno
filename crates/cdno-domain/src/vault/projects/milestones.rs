@@ -16,6 +16,7 @@ use crate::note_type::NoteType;
 
 use super::super::Vault;
 use super::super::index_entry::build_index_entry_for;
+use super::super::note_ref::ResolvedNote;
 use super::MILESTONES_SECTION;
 use super::actions::{LOG_REASON_KEY, flatten_reason};
 
@@ -109,7 +110,8 @@ impl Vault {
         }
 
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_open_project(slug)?;
+        let (ResolvedNote { path, slug, .. }, mut doc) = self.resolve_open_project(slug)?;
+        let slug = slug.as_str();
 
         let date_str = match target_date {
             Some(date) => date.format("%Y-%m-%d").to_string(),
@@ -163,7 +165,8 @@ impl Vault {
         query: &str,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_open_project(slug)?;
+        let (ResolvedNote { path, slug, .. }, mut doc) = self.resolve_open_project(slug)?;
+        let slug = slug.as_str();
 
         let section = doc.section(MILESTONES_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
@@ -235,7 +238,8 @@ impl Vault {
         reason: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_open_project(slug)?;
+        let (ResolvedNote { path, slug, .. }, mut doc) = self.resolve_open_project(slug)?;
+        let slug = slug.as_str();
 
         let section = doc.section(MILESTONES_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
@@ -266,8 +270,8 @@ impl Vault {
     /// when no map exists, or with a parse error when its frontmatter
     /// is malformed.
     pub fn open_milestones(&self, slug: &str) -> Result<Vec<MilestoneEntry>, DomainError> {
-        let (path, _doc, _project) = self.resolve_any_project(slug)?;
-        let all = self.index.milestones_for_project(&path)?;
+        let (project, _doc, _frontmatter) = self.resolve_any_project(slug)?;
+        let all = self.index.milestones_for_project(&project.path)?;
         Ok(all.into_iter().filter(|m| !m.completed).collect())
     }
 }

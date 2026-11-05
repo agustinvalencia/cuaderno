@@ -29,6 +29,7 @@ use crate::note_type::NoteType;
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
+use super::note_ref::ResolvedNote;
 use super::projects::rewrite_field_in_frontmatter;
 
 /// One row in the `Vault::active_questions` / `Vault::list_questions`
@@ -149,7 +150,10 @@ impl Vault {
         new_status: QuestionStatus,
     ) -> Result<WriteOutcome, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, current) = self.resolve_question_by_slug(slug)?;
+        // `slug` from here on is the question's current slug, so a former
+        // name (RFC 0007 §5.5) never reaches the log line.
+        let (ResolvedNote { path, slug, .. }, current) = self.resolve_question_by_slug(slug)?;
+        let slug = slug.as_str();
         if current.status == new_status {
             // A silent no-op. Reported via `touched() == false` so a caller
             // cannot journal an echo-suppression entry over a path this
@@ -223,16 +227,43 @@ impl Vault {
     }
 
     /// Locate `slug` across both question domains, returning the
-    /// resolved path and parsed frontmatter. Helper for
+    /// resolved note and parsed frontmatter. Helper for
     /// `set_question_status`, `link_portfolio_to_question`, and any
     /// future read-side ops. Errors with `Store(NotFound)` when the
     /// slug exists in neither domain — callers that want a missing
     /// slug to be a soft no-op use
     /// [`find_question_path`](Self::find_question_path) instead.
+    ///
+    /// A slug no question's stem matches is tried as a former name: the
+    /// one note declaring it as an alias ([`Vault::alias_of`]), if that note
+    /// is a question, is located by its current slug, which the returned
+    /// [`ResolvedNote::slug`] carries (RFC 0007 §5.5).
+    /// [`find_question_path`](Self::find_question_path) takes no alias: it is
+    /// a correlation key, not a selector.
     pub(in crate::vault) fn resolve_question_by_slug(
         &self,
         slug: &str,
-    ) -> Result<(VaultPath, QuestionFrontmatter), DomainError> {
+    ) -> Result<(ResolvedNote, QuestionFrontmatter), DomainError> {
+        if let Some((path, qf)) = self.question_by_stem(slug)? {
+            return Ok((ResolvedNote::direct(path), qf));
+        }
+        if let Some((_holder, current)) = self.alias_of(slug, is_question_path)?
+            && let Some((path, qf)) = self.question_by_stem(&current)?
+        {
+            return Ok((ResolvedNote::via_alias(path, current, slug), qf));
+        }
+        Err(DomainError::Store(StoreError::NotFound(format!(
+            "questions/*/{slug}.md{}",
+            self.available_questions_hint()
+        ))))
+    }
+
+    /// The question whose stem is `slug`, in either domain, with its
+    /// frontmatter; `AmbiguousSlug` when both domains hold one.
+    fn question_by_stem(
+        &self,
+        slug: &str,
+    ) -> Result<Option<(VaultPath, QuestionFrontmatter)>, DomainError> {
         let mut found: Option<(VaultPath, QuestionFrontmatter)> = None;
         for d in QuestionDomain::ALL {
             let path = question_path(d, slug)?;
@@ -247,12 +278,7 @@ impl Vault {
             }
             found = Some((path, qf));
         }
-        found.ok_or_else(|| {
-            DomainError::Store(StoreError::NotFound(format!(
-                "questions/*/{slug}.md{}",
-                self.available_questions_hint()
-            )))
-        })
+        Ok(found)
     }
 
     /// Locate the note for `slug` across both question domains
@@ -297,6 +323,17 @@ impl Vault {
             },
         )
     }
+}
+
+/// Whether `path` is where a question note lives:
+/// `questions/<domain>/<slug>.md`, for either domain. The alias tier of
+/// [`Vault::resolve_question_by_slug`] counts only holders here.
+pub(in crate::vault) fn is_question_path(path: &VaultPath) -> bool {
+    let p = path.as_path();
+    p.extension().is_some_and(|e| e == "md")
+        && QuestionDomain::ALL
+            .iter()
+            .any(|d| p.parent() == Some(std::path::Path::new(&format!("questions/{}", d.as_str()))))
 }
 
 /// Vault-relative path for a question note.

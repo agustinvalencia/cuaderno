@@ -27,6 +27,7 @@ use crate::note_type::NoteType;
 use super::Vault;
 use super::closure::Closure;
 use super::index_entry::build_index_entry_for;
+use super::note_ref::ResolvedNote;
 use super::projects::{NEXT_ACTIONS_SECTION, rewrite_field_in_frontmatter};
 
 impl Vault {
@@ -145,7 +146,18 @@ impl Vault {
         // creation (#196). The project is validated under the lock; a bad
         // project errors and the uncommitted transaction rolls back.
         let mut tx = self.transaction()?;
-        let (project_path, mut doc) = self.resolve_open_project(project)?;
+        // `project` from here on is the map's current slug, so a former
+        // name (RFC 0007 §5.5) reaches neither the note's `project:` nor
+        // the log line.
+        let (
+            ResolvedNote {
+                path: project_path,
+                slug: project,
+                ..
+            },
+            mut doc,
+        ) = self.resolve_open_project(project)?;
+        let project = project.as_str();
         let note_path = self.create_action_note(
             &mut tx, at, project, title, energy, None, None, prompted, slug,
         )?;

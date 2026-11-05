@@ -91,7 +91,7 @@ impl Vault {
     ///
     /// [`Store(NotFound)`]: cdno_core::error::StoreError::NotFound
     pub fn project_summary(&self, slug: &str) -> Result<ProjectSummary, DomainError> {
-        let (_path, doc, project) = self.resolve_any_project(slug)?;
+        let (resolved, doc, project) = self.resolve_any_project(slug)?;
 
         // Tolerate drift: a section being absent (or ambiguous) just
         // returns an empty snippet / no top action, rather than
@@ -116,7 +116,8 @@ impl Vault {
         let held_by = project.holder_name(&self.holder_sentinels);
 
         Ok(ProjectSummary {
-            slug: slug.to_owned(),
+            // The current slug, which a former name (RFC 0007 §5.5) is not.
+            slug: resolved.slug,
             status: project.status,
             context: project.context,
             core_question: project.core_question,

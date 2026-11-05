@@ -6157,3 +6157,341 @@ fn an_invalid_slug_is_refused_before_anything_is_written() {
     );
     assert_eq!(snapshot(&store), before, "nothing was written");
 }
+
+// ---------------------------------------------------------------------
+// By old name (RFC 0007 §5.5, T12): every project verb accepts a former
+// slug, and the line it logs names the current one.
+// ---------------------------------------------------------------------
+
+/// A project map renamed `old` → `new`: `aliases: [old]`, one open action,
+/// one waiting-on item, one open milestone.
+fn renamed_map(status: &str) -> String {
+    format!(
+        "---\ntype: project\ncontext: work\nstatus: {status}\ncreated: 2026-04-01\n\
+         core_question: null\naliases: [old]\n---\n\n# Surrogate model\n\n## Current State\nInitial.\n\n\
+         ## Next Actions\n- [ ] First step (light)\n\n## Waiting On\n- Compute allocation\n\n\
+         ## Milestones\n- [ ] Draft \u{2014} target: 2026-12-01\n"
+    )
+}
+
+type ProjectVerb = fn(&Vault, chrono::NaiveDateTime) -> Result<(), DomainError>;
+
+#[test]
+fn every_verb_by_old_name_logs_the_new_slug() {
+    use super::support::{assert_logs_the_new_slug, by_old_name_at, seeded_vault};
+    use cdno_domain::{HolderChange, LOG_HOLDER_PREFIX, OpenItems};
+
+    // (row, where the map starts, the verb called with "old", the log
+    // fragment naming the new slug, a path the verb must have written)
+    let rows: &[(&str, &str, ProjectVerb, &str, Option<&str>)] = &[
+        (
+            "update_project_state",
+            "projects/new.md",
+            |v, at| v.update_project_state(at, "old", "Moved on.").map(drop),
+            "state on [[new]]",
+            None,
+        ),
+        (
+            "park_project",
+            "projects/new.md",
+            |v, at| v.park_project(at, "old").map(drop),
+            "project [[new]] parked",
+            Some("projects/_parked/new.md"),
+        ),
+        (
+            "activate_project",
+            "projects/_parked/new.md",
+            |v, at| v.activate_project(at, "old").map(drop),
+            "project [[new]] activated",
+            Some("projects/new.md"),
+        ),
+        (
+            "add_action",
+            "projects/new.md",
+            |v, at| {
+                v.add_action(at, "old", "Second step", EnergyLevel::Light)
+                    .map(drop)
+            },
+            "action added to [[new]] \u{2014} Second step (light)",
+            None,
+        ),
+        (
+            "add_action_with_note",
+            "projects/new.md",
+            |v, at| {
+                v.add_action_with_note(at, "old", "Second step", EnergyLevel::Light)
+                    .map(drop)
+            },
+            "action added to [[new]] with note [[actions/second-step]]",
+            None,
+        ),
+        (
+            "start_action",
+            "projects/new.md",
+            |v, at| v.start_action(at, "old", "First step").map(drop),
+            "started [[new]] \u{2014} First step (light)",
+            None,
+        ),
+        (
+            "start_unplanned_action",
+            "projects/new.md",
+            |v, at| {
+                v.start_unplanned_action(at, "old", "Unplanned", EnergyLevel::Deep)
+                    .map(drop)
+            },
+            "started [[new]] \u{2014} Unplanned (deep)",
+            None,
+        ),
+        (
+            "add_milestone",
+            "projects/new.md",
+            |v, at| {
+                v.add_milestone(at, "old", "Submit", Some(day(2026, 12, 15)), true)
+                    .map(drop)
+            },
+            "milestone added to [[new]] \u{2014} Submit (hard: 2026-12-15)",
+            None,
+        ),
+        (
+            "complete_milestone",
+            "projects/new.md",
+            |v, at| v.complete_milestone(at, "old", "Draft").map(drop),
+            "milestone done on [[new]] \u{2014} Draft",
+            None,
+        ),
+        (
+            "drop_milestone",
+            "projects/new.md",
+            |v, at| v.drop_milestone(at, "old", "Draft", None).map(drop),
+            "milestone dropped on [[new]] \u{2014} Draft",
+            None,
+        ),
+        (
+            "add_waiting_on",
+            "projects/new.md",
+            |v, at| v.add_waiting_on(at, "old", "Review").map(drop),
+            "waiting added on [[new]] \u{2014} Review",
+            None,
+        ),
+        (
+            "resolve_waiting_on",
+            "projects/new.md",
+            |v, at| v.resolve_waiting_on(at, "old", "Compute").map(drop),
+            "waiting resolved on [[new]] \u{2014} Compute allocation",
+            None,
+        ),
+        (
+            "set_core_question",
+            "projects/new.md",
+            |v, at| {
+                v.set_core_question(at, "old", Some("questions/research/why"))
+                    .map(drop)
+            },
+            "core question on [[new]]",
+            None,
+        ),
+        (
+            "hand_off",
+            "projects/new.md",
+            |v, at| {
+                v.hand_off(at, "old", HolderChange::HandTo("Colleague".to_owned()))
+                    .map(drop)
+            },
+            // The prefix is the holder module's own.
+            "",
+            None,
+        ),
+        (
+            "drop_project",
+            "projects/new.md",
+            |v, at| {
+                v.drop_project(
+                    at,
+                    "old",
+                    None,
+                    OpenItems::Drop {
+                        expected: None,
+                        hash_required: false,
+                    },
+                )
+                .map(drop)
+            },
+            "project dropped on [[new]] \u{2014} Surrogate model",
+            Some("projects/_done/2026/new.md"),
+        ),
+    ];
+
+    let holder_line = format!("{LOG_HOLDER_PREFIX}[[new]]");
+    for (row, at_path, verb, expected, written) in rows {
+        let (vault, store) = seeded_vault(&[(
+            at_path,
+            renamed_map(if at_path.contains("_parked") {
+                "parked"
+            } else {
+                "active"
+            }),
+        )]);
+        verb(&vault, by_old_name_at()).unwrap_or_else(|e| panic!("{row}: {e}"));
+        let expected = if expected.is_empty() {
+            holder_line.as_str()
+        } else {
+            expected
+        };
+        assert_logs_the_new_slug(&store, row, expected);
+        if let Some(path) = written {
+            assert!(store.exists(&vp(path)).unwrap(), "{row}: no {path}");
+        }
+        for old in [
+            "projects/old.md",
+            "projects/_parked/old.md",
+            "projects/_done/2026/old.md",
+        ] {
+            assert!(!store.exists(&vp(old)).unwrap(), "{row}: wrote {old}");
+        }
+    }
+}
+
+/// The read side: `project_summary` and `get_project_full` (behind `cdno
+/// project show`) find the map by its former name too.
+#[test]
+fn a_project_is_read_by_its_old_name() {
+    let vault = vault_with_notes(&[("projects/new.md", &renamed_map("active"))]);
+    let summary = vault.project_summary("old").expect("summary by old name");
+    assert_eq!(summary.slug, "new");
+    vault
+        .get_project_full("old", day(2026, 10, 20))
+        .expect("full by old name");
+}
+
+/// A stem always beats an alias, and a project alias does not leak onto
+/// another type's holder.
+#[test]
+fn a_project_alias_held_by_another_type_is_not_found() {
+    let action = "---\ntype: action\nstatus: active\nproject: other\nenergy: light\n\
+                  created: 2026-04-01\naliases: [old]\n---\n# An action\n";
+    let vault = vault_with_notes(&[("actions/new.md", action)]);
+    let err = vault
+        .update_project_state(dt(2026, 10, 20, 10, 0), "old", "x")
+        .expect_err("an action's alias names no project");
+    assert!(
+        matches!(err, DomainError::Store(StoreError::NotFound(_))),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn set_core_question_by_former_name_writes_the_current_path() {
+    use super::support::{assert_logs_the_new_slug, by_old_name_at, seeded_vault};
+
+    let question = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-01-01\n\
+                    updated: 2026-01-01\naliases: [old]\n---\n\n# Why?\n"
+        .to_owned();
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n\
+               core_question: null\n---\n\n# Surrogate model\n"
+        .to_owned();
+    let (vault, store) = seeded_vault(&[
+        ("questions/research/new.md", question),
+        ("projects/surrogate-model.md", map),
+    ]);
+
+    vault
+        .set_core_question(
+            by_old_name_at(),
+            "surrogate-model",
+            Some("questions/research/old"),
+        )
+        .expect("set");
+
+    let raw = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert!(
+        raw.contains("core_question: \"[[questions/research/new]]\""),
+        "{raw}"
+    );
+    assert_logs_the_new_slug(
+        &store,
+        "set_core_question",
+        "now: [[questions/research/new]]",
+    );
+}
+
+#[test]
+fn create_project_core_question_by_former_name_writes_the_current_path() {
+    use super::support::{assert_logs_the_new_slug, by_old_name_at, seeded_vault};
+
+    let question = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-01-01\n\
+                    updated: 2026-01-01\naliases: [old]\n---\n\n# Why?\n"
+        .to_owned();
+    let (vault, store) = seeded_vault(&[("questions/research/new.md", question)]);
+
+    let path = vault
+        .create_project(
+            by_old_name_at(),
+            "Surrogate model",
+            Context::Work,
+            Some("questions/research/old"),
+        )
+        .expect("create");
+
+    let raw = store.read_file(&path).unwrap();
+    assert!(
+        raw.contains("core_question: \"[[questions/research/new]]\""),
+        "{raw}"
+    );
+    assert_logs_the_new_slug(
+        &store,
+        "create_project",
+        "project created [[projects/surrogate-model]]",
+    );
+
+    // A pointer to nothing is written as given.
+    let path = vault
+        .create_project(
+            by_old_name_at(),
+            "Another",
+            Context::Work,
+            Some("questions/research/unwritten"),
+        )
+        .expect("create");
+    let raw = store.read_file(&path).unwrap();
+    assert!(
+        raw.contains("core_question: \"[[questions/research/unwritten]]\""),
+        "{raw}"
+    );
+}
+
+/// An anchor or a label on a former name is kept; only the name changes.
+#[test]
+fn current_link_target_keeps_an_anchor_and_a_label_on_a_former_name() {
+    use super::support::{by_old_name_at, seeded_vault};
+
+    let question = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-01-01\n\
+                    updated: 2026-01-01\naliases: [old]\n---\n\n# Why?\n\n## Heading\n"
+        .to_owned();
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n\
+               core_question: null\n---\n\n# Surrogate model\n"
+        .to_owned();
+
+    for (given, written) in [
+        (
+            "questions/research/old#Heading",
+            "questions/research/new#Heading",
+        ),
+        (
+            "questions/research/old|label",
+            "questions/research/new|label",
+        ),
+    ] {
+        let (vault, store) = seeded_vault(&[
+            ("questions/research/new.md", question.clone()),
+            ("projects/surrogate-model.md", map.clone()),
+        ]);
+        vault
+            .set_core_question(by_old_name_at(), "surrogate-model", Some(given))
+            .unwrap_or_else(|e| panic!("{given}: {e}"));
+        let raw = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+        assert!(
+            raw.contains(&format!("core_question: \"[[{written}]]\"")),
+            "{given}:\n{raw}"
+        );
+    }
+}

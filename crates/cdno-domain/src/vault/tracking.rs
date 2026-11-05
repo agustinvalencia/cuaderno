@@ -182,12 +182,15 @@ impl Vault {
             check_plausible_date(date, now.date())?;
         }
 
-        let (_dashboard_path, variant) = self.resolve_stewardship_with_variant(stewardship)?;
+        let (dashboard, variant) = self.resolve_stewardship_with_variant(stewardship)?;
         if variant != StewardshipVariant::Expanded {
             return Err(DomainError::TrackingOnFlatStewardship(
                 stewardship.to_owned(),
             ));
         }
+        // The dashboard's current slug from here on: the entry is filed in
+        // its folder and names it, never a former name (RFC 0007 §5.5).
+        let stewardship = dashboard.slug.as_str();
 
         let filename = format!("{}-{activity_slug}.md", date.format("%Y-%m-%d"));
         let path = VaultPath::new(format!("stewardships/{stewardship}/tracking/{filename}",))?;

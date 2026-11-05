@@ -18,6 +18,14 @@
 //! The split is what lets a *write* verb reuse the grammar without inheriting
 //! the fuzzy, ambiguity-tolerant resolution that only a read verb can afford.
 //!
+//! A slug reference that matches no note's stem gets one more tier: the one
+//! note declaring it as an alias, a former name (RFC 0007 §5.5). The result
+//! is a [`ResolvedNote`] carrying the current slug and, when the alias tier
+//! matched, the alias; a shared alias is ambiguous between its holders.
+//! [`Vault::alias_of`] is that rule on its own, shared by the per-type
+//! selectors (project, question, stewardship, commitment), each counting
+//! uniqueness over the holders of its own type.
+//!
 //! **What this deliberately does not do:** fuzzy matching. An exact-slug miss
 //! comes back as [`RefResolution::NotFound`], and the interface layer decides
 //! whether to offer a picker or error. Keeping the matcher in one place (the
@@ -92,7 +100,7 @@ pub enum PeriodRef {
 /// failures (a store read that blew up, a path the index cannot parse).
 #[derive(Debug, Clone, PartialEq)]
 pub enum RefResolution {
-    Resolved(VaultPath),
+    Resolved(ResolvedNote),
     /// One slug, several notes. Never resolved by preference order: guessing
     /// silently opens the wrong file, which is the one failure a navigation
     /// verb cannot afford, because you find out only after typing into it.
@@ -101,6 +109,43 @@ pub enum RefResolution {
         reference: String,
         miss: Miss,
     },
+}
+
+/// A note a reference or a selector resolved to (RFC 0007 §5.5).
+///
+/// `slug` is the note's **current** name (`candidate_slug` of `path`),
+/// whatever the reference spelled. It is the one a verb writes into a log
+/// line, so a journal entry is never composed from a former name the caller
+/// happened to type. `resolved_via_alias` is the alias the reference matched,
+/// `None` when it matched the note's stem or path directly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedNote {
+    pub path: VaultPath,
+    pub slug: String,
+    pub resolved_via_alias: Option<String>,
+}
+
+impl ResolvedNote {
+    /// A note reached by its own stem or path, not through an alias.
+    pub(in crate::vault) fn direct(path: VaultPath) -> Self {
+        let slug = candidate_slug(&path).unwrap_or_else(|| path.to_string());
+        Self {
+            path,
+            slug,
+            resolved_via_alias: None,
+        }
+    }
+
+    /// A note reached through `alias`, one of its former slugs. `slug` is
+    /// the holder's current one, as [`Vault::alias_of`](super::Vault::alias_of)
+    /// returns it.
+    pub(in crate::vault) fn via_alias(path: VaultPath, slug: String, alias: &str) -> Self {
+        Self {
+            path,
+            slug,
+            resolved_via_alias: Some(alias.to_owned()),
+        }
+    }
 }
 
 /// What kind of reference failed to resolve.
@@ -112,6 +157,10 @@ pub enum RefResolution {
 pub enum Miss {
     /// A slug matched nothing. The only kind that deserves "did you mean…" —
     /// there is a set of candidates it could plausibly have been.
+    ///
+    /// A slug no stem matches and no note declares as an alias is this
+    /// miss; one two or more notes declare is
+    /// [`RefResolution::Ambiguous`] with those notes (RFC 0007 §5.5).
     Slug,
     /// A calendar word or date named a journal note that does not exist yet.
     /// Journal notes are scaffolded lazily on first write, so this is
@@ -268,7 +317,7 @@ impl super::Vault {
         // opens something adjacent.
         let path = VaultPath::new(&relpath)?;
         if self.is_note_file(&path)? {
-            return Ok(RefResolution::Resolved(path));
+            return Ok(RefResolution::Resolved(ResolvedNote::direct(path)));
         }
         // A path without `.md` is how a wikilink spells a note
         // (`[[concepts/foo]]`), so a reference copied from one names
@@ -283,7 +332,9 @@ impl super::Vault {
         {
             let with_extension = VaultPath::new(format!("{relpath}.md"))?;
             if self.is_note_file(&with_extension)? {
-                return Ok(RefResolution::Resolved(with_extension));
+                return Ok(RefResolution::Resolved(ResolvedNote::direct(
+                    with_extension,
+                )));
             }
         }
         Ok(RefResolution::NotFound {
@@ -304,31 +355,156 @@ impl super::Vault {
     /// longer ambiguous. Still returns [`RefResolution::Ambiguous`] when one
     /// *type* holds two notes of that slug (both stewardship variants, say),
     /// which is the case the typed form cannot disambiguate on its own.
+    ///
+    /// On no stem match, the alias tier: the one note declaring `slug` as an
+    /// alias, provided it is of `note_type`.
     fn resolve_typed_ref(
         &self,
         note_type: &str,
         slug: &str,
         reference: &str,
     ) -> Result<RefResolution, DomainError> {
-        let hits: Vec<NoteCandidate> = self
+        let typed: Vec<NoteCandidate> = self
             .index
             .list_candidates()?
             .into_iter()
             .filter(|c| c.note_type == note_type)
-            .filter(|c| candidate_slug(&c.path).as_deref() == Some(slug))
             .collect();
-        Ok(Self::narrow(hits, reference))
+        self.resolve_in_pool(typed, slug, reference)
     }
 
-    /// A bare slug, matched across every type.
+    /// A bare slug, matched across every type, then through the alias tier.
     fn resolve_bare_slug(&self, slug: &str, reference: &str) -> Result<RefResolution, DomainError> {
-        let hits: Vec<NoteCandidate> = self
-            .index
-            .list_candidates()?
-            .into_iter()
+        let all = self.index.list_candidates()?;
+        self.resolve_in_pool(all, slug, reference)
+    }
+
+    /// Resolve `slug` among the notes of `pool`: by stem first, and only on
+    /// no stem match through the alias tier (RFC 0007 §5.5), so a stem always
+    /// beats an alias. The alias tier counts only holders in `pool`, so for
+    /// `type:slug` a note of another type declaring the same alias neither
+    /// answers nor hides the one that should. One holder resolves; several
+    /// are [`RefResolution::Ambiguous`] with exactly those notes, so a picker
+    /// offers the notes that claim the name rather than a fuzzy list of
+    /// current names that cannot contain it.
+    fn resolve_in_pool(
+        &self,
+        pool: Vec<NoteCandidate>,
+        slug: &str,
+        reference: &str,
+    ) -> Result<RefResolution, DomainError> {
+        let hits: Vec<NoteCandidate> = pool
+            .iter()
             .filter(|c| candidate_slug(&c.path).as_deref() == Some(slug))
+            .cloned()
             .collect();
-        Ok(Self::narrow(hits, reference))
+        if !hits.is_empty() {
+            return Ok(Self::narrow(hits, reference));
+        }
+        let holders = self.alias_holders(slug, |holder| pool.iter().any(|c| &c.path == holder))?;
+        Ok(match holders.as_slice() {
+            [] => RefResolution::NotFound {
+                reference: reference.to_owned(),
+                miss: Miss::Slug,
+            },
+            [holder] => {
+                let note = ResolvedNote::direct(holder.clone());
+                RefResolution::Resolved(ResolvedNote::via_alias(note.path, note.slug, slug))
+            }
+            _ => RefResolution::Ambiguous(
+                pool.into_iter()
+                    .filter(|c| holders.contains(&c.path))
+                    .collect(),
+            ),
+        })
+    }
+
+    /// Every distinct note declaring `slug` as an alias that `accepts`
+    /// takes, in the index's order. Read from the index's alias rows
+    /// ([`VaultIndex::list_aliases`](cdno_core::index::VaultIndex::list_aliases)),
+    /// which carry only slug-shaped values; a note listing the alias twice
+    /// counts once.
+    pub(in crate::vault) fn alias_holders(
+        &self,
+        slug: &str,
+        accepts: impl Fn(&VaultPath) -> bool,
+    ) -> Result<Vec<VaultPath>, DomainError> {
+        let mut holders: Vec<VaultPath> = Vec::new();
+        for (alias, path) in self.index.list_aliases()? {
+            if alias == slug && !holders.contains(&path) && accepts(&path) {
+                holders.push(path);
+            }
+        }
+        Ok(holders)
+    }
+
+    /// The one note declaring `slug` as an alias among those `accepts`
+    /// takes, and that note's current slug; `None` when none does, or when
+    /// two or more share it.
+    ///
+    /// The single alias rule every selector shares, so `cdno open`, the
+    /// project, question, stewardship and commitment lookups cannot disagree
+    /// about which note an old name means. Uniqueness is counted only over
+    /// the accepted holders, as the stem tier counts only notes of the type
+    /// asked for: each selector passes its own folder or type predicate, so
+    /// a hand-written alias on a note of another type cannot hide a project.
+    /// Callers consult it only after their own exact lookup missed.
+    pub(in crate::vault) fn alias_of(
+        &self,
+        slug: &str,
+        accepts: impl Fn(&VaultPath) -> bool,
+    ) -> Result<Option<(VaultPath, String)>, DomainError> {
+        let mut holders = self.alias_holders(slug, accepts)?;
+        if holders.len() != 1 {
+            return Ok(None);
+        }
+        let path = holders.remove(0);
+        Ok(candidate_slug(&path).map(|current| (path, current)))
+    }
+
+    /// The form of a bare wikilink `target` (`projects/surrogate-model`,
+    /// `questions/research/why`, optionally with a `#Heading` anchor or a
+    /// `|label`, which are kept) a verb records in a note it writes.
+    ///
+    /// A target naming an existing file, or naming nothing at all, is kept
+    /// exactly as given: these are loose pointers and their existence is not
+    /// required. Only when the file is missing and its last segment is a
+    /// former name, the alias of exactly one note `accepts` takes, is that
+    /// segment replaced by the note's current slug (RFC 0007 §5.5). The
+    /// caller's folder form is kept — `projects/<slug>`, never the parked or
+    /// closed path the map happens to sit at — and the last-segment rule of
+    /// link resolution finds the note from there, as it does for every link.
+    ///
+    /// The one place a path-shaped value meets the alias tier: a reference a
+    /// person types to *open* a path still never does, but a pointer cdno
+    /// *writes* must not carry a name it knows is stale.
+    pub(in crate::vault) fn current_link_target(
+        &self,
+        target: &str,
+        accepts: impl Fn(&VaultPath) -> bool,
+    ) -> Result<String, DomainError> {
+        // An anchor (`#Heading`) or a label (`|text`) is not part of the
+        // name: split it off before the lookup and put it back after, as
+        // link resolution strips the anchor before it matches a stem.
+        let (base, suffix) = target
+            .find(['#', '|'])
+            .map_or((target, ""), |at| target.split_at(at));
+        if let Ok(path) = VaultPath::new(format!("{base}.md"))
+            && self.store.exists(&path)?
+        {
+            return Ok(target.to_owned());
+        }
+        let (folder, last) = match base.rsplit_once('/') {
+            Some((folder, last)) => (Some(folder), last),
+            None => (None, base),
+        };
+        Ok(match self.alias_of(last, accepts)? {
+            Some((_holder, current)) => match folder {
+                Some(folder) => format!("{folder}/{current}{suffix}"),
+                None => format!("{current}{suffix}"),
+            },
+            None => target.to_owned(),
+        })
     }
 
     /// Collapse exact-slug hits to a resolution, applying the single
@@ -339,7 +515,7 @@ impl super::Vault {
                 reference: reference.to_owned(),
                 miss: Miss::Slug,
             },
-            1 => RefResolution::Resolved(hits[0].path.clone()),
+            1 => RefResolution::Resolved(ResolvedNote::direct(hits[0].path.clone())),
             _ => {
                 // An active project beats its parked namesake. This is a
                 // *read* rule: writes go through `locate_project`, which
@@ -364,7 +540,7 @@ impl super::Vault {
                 // resolve to whichever the index returned first — the silent
                 // wrong-file open this enum exists to prevent.
                 if projects_only && let (Some(active), None) = (unparked.next(), unparked.next()) {
-                    return RefResolution::Resolved(active.path.clone());
+                    return RefResolution::Resolved(ResolvedNote::direct(active.path.clone()));
                 }
                 RefResolution::Ambiguous(hits)
             }
