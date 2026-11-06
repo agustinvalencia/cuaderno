@@ -23,7 +23,7 @@ use cdno_core::store::{MemoryVaultStore, VaultStore, VaultWriteLock};
 use cdno_domain::Vault;
 use cdno_mcp::CuadernoServer;
 use cdno_mcp::nudge::SyncNudge;
-use cdno_mcp::server::{AppendToLogInput, CaptureInput};
+use cdno_mcp::server::{AppendToLogInput, CaptureInput, RenameNoteInput};
 use rmcp::handler::server::wrapper::Parameters;
 use tempfile::TempDir;
 
@@ -94,7 +94,7 @@ impl VaultStore for SwallowingStore {
 fn server_over(store: Arc<dyn VaultStore>) -> CuadernoServer {
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _report) = Vault::new(store, index, VaultConfig::default()).expect("open vault");
-    CuadernoServer::new(Arc::new(vault))
+    CuadernoServer::new(Arc::new(vault), scratch_root())
 }
 
 #[tokio::test]
@@ -189,4 +189,59 @@ fn the_default_sentinel_hides_under_dot_git() {
     // mirror will carry it, so the signal can never become content.
     let path = SyncNudge::default_path(Path::new("/vault"));
     assert_eq!(path, Path::new("/vault/.git/cdno-sync.nudge"));
+}
+
+/// RFC 0007 §5.8 (3), T26: a written rename wakes the sync agent once, and a
+/// preview, which writes nothing, never does (a signal for a write that did
+/// not happen teaches the agent to ignore the signal).
+#[tokio::test]
+async fn a_written_rename_nudges_and_a_dry_run_does_not() {
+    let dir = TempDir::new().unwrap();
+    let sentinel = dir.path().join("cdno-sync.nudge");
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    store
+        .write_file(
+            &VaultPath::new("projects/surrogate-model.md").unwrap(),
+            "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nCalibrating.\n\n## Next Actions\n\n## Milestones\n",
+        )
+        .unwrap();
+    let server = server_over(store).with_sync_nudge(Arc::new(SyncNudge::new(sentinel.clone())));
+    let input = |dry_run: bool, expected_plan: Option<String>| RenameNoteInput {
+        note: "surrogate-model".to_owned(),
+        to: "emulator-study".to_owned(),
+        reason: None,
+        dry_run: Some(dry_run),
+        expected_plan,
+        skip_sync_check: None,
+    };
+
+    let preview = server
+        .rename_note(Parameters(input(true, None)))
+        .await
+        .expect("a preview");
+    assert!(
+        !sentinel.exists(),
+        "a dry run writes nothing, so it must not nudge"
+    );
+
+    let text = match &preview.content[0].raw {
+        rmcp::model::RawContent::Text(t) => t.text.clone(),
+        other => panic!("{other:?}"),
+    };
+    let hash = serde_json::from_str::<serde_json::Value>(&text).unwrap()["plan_hash"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    server
+        .rename_note(Parameters(input(false, Some(hash))))
+        .await
+        .expect("the previewed plan is written");
+    assert!(sentinel.exists(), "a written rename must nudge");
+}
+
+/// A fresh empty directory as the server's vault root: the in-memory vault
+/// has no folder of its own, and the root must not be a place git could find
+/// a repository above (a developer's temp dir may sit inside one).
+fn scratch_root() -> std::path::PathBuf {
+    tempfile::TempDir::new().expect("tempdir").keep()
 }

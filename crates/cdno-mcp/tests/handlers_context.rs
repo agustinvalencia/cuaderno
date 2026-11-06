@@ -44,7 +44,7 @@ fn empty_server() -> CuadernoServer {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _r) = Vault::new(store, index, VaultConfig::default()).unwrap();
-    CuadernoServer::new(Arc::new(vault))
+    CuadernoServer::new(Arc::new(vault), scratch_root())
 }
 
 fn server_with<F: FnOnce(&Vault)>(seed: F) -> CuadernoServer {
@@ -52,7 +52,7 @@ fn server_with<F: FnOnce(&Vault)>(seed: F) -> CuadernoServer {
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _r) = Vault::new(store, index, VaultConfig::default()).unwrap();
     seed(&vault);
-    CuadernoServer::new(Arc::new(vault))
+    CuadernoServer::new(Arc::new(vault), scratch_root())
 }
 
 /// Build a server from raw seeded `(path, body)` notes — for tests
@@ -67,7 +67,7 @@ fn server_with_notes(notes: &[(&str, &str)]) -> CuadernoServer {
             .unwrap();
     }
     let (vault, _r) = Vault::new(store, index, VaultConfig::default()).unwrap();
-    CuadernoServer::new(Arc::new(vault))
+    CuadernoServer::new(Arc::new(vault), scratch_root())
 }
 
 /// Build a server from a custom `VaultConfig` — for tests exercising
@@ -76,7 +76,7 @@ fn server_with_config(config: VaultConfig) -> CuadernoServer {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _r) = Vault::new(store, index, config).unwrap();
-    CuadernoServer::new(Arc::new(vault))
+    CuadernoServer::new(Arc::new(vault), scratch_root())
 }
 
 /// Decode the single JSON content item of a successful tool result.
@@ -646,7 +646,7 @@ async fn get_weekly_context_includes_a_log_from_today() {
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     seed_daily_with_log(&store, today(), "MCP weekly smoke");
     let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
-    let server = CuadernoServer::new(Arc::new(vault));
+    let server = CuadernoServer::new(Arc::new(vault), scratch_root());
 
     let result = server
         .get_weekly_context(Parameters(EmptyInput::default()))
@@ -728,7 +728,7 @@ async fn get_weekly_context_payload_is_bounded_for_a_heavy_week() {
     }
 
     let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
-    let server = CuadernoServer::new(Arc::new(vault));
+    let server = CuadernoServer::new(Arc::new(vault), scratch_root());
 
     let result = server
         .get_weekly_context(Parameters(EmptyInput::default()))
@@ -794,7 +794,7 @@ async fn first_new_state(was: &str, now: &str) -> String {
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     seed_daily_week_fixture(&store, today(), 0, Some(("nfm", was, now)));
     let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
-    let server = CuadernoServer::new(Arc::new(vault));
+    let server = CuadernoServer::new(Arc::new(vault), scratch_root());
     let result = server
         .get_weekly_context(Parameters(EmptyInput::default()))
         .await
@@ -862,7 +862,7 @@ async fn get_weekly_context_leaves_a_normal_small_week_untouched() {
     // continuations), so the expected count is 10 + 1 = 11.
     seed_daily_week_fixture(&store, today(), 10, Some(("nfm", short_state, short_state)));
     let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
-    let server = CuadernoServer::new(Arc::new(vault));
+    let server = CuadernoServer::new(Arc::new(vault), scratch_root());
 
     let result = server
         .get_weekly_context(Parameters(EmptyInput::default()))
@@ -1040,7 +1040,7 @@ async fn get_project_context_returns_none_for_unresolved_core_question() {
         )
         .unwrap();
     let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
-    let server = CuadernoServer::new(Arc::new(vault));
+    let server = CuadernoServer::new(Arc::new(vault), scratch_root());
 
     use cdno_mcp::server::ProjectSlugInput;
     let result = server
@@ -1107,7 +1107,7 @@ async fn get_project_context_caps_recent_mentions() {
     }
 
     let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
-    let server = CuadernoServer::new(Arc::new(vault));
+    let server = CuadernoServer::new(Arc::new(vault), scratch_root());
 
     use cdno_mcp::server::ProjectSlugInput;
     let result = server
@@ -1157,7 +1157,7 @@ async fn get_project_context_caps_a_pathologically_long_body() {
         )
         .unwrap();
     let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
-    let server = CuadernoServer::new(Arc::new(vault));
+    let server = CuadernoServer::new(Arc::new(vault), scratch_root());
 
     use cdno_mcp::server::ProjectSlugInput;
     let result = server
@@ -1770,7 +1770,7 @@ async fn get_stewardship_tracking_returns_the_declared_contract() {
     vault
         .create_stewardship_expanded(moment(2026, 1, 1, 9, 0), "Study", Context::Personal)
         .unwrap();
-    let server = CuadernoServer::new(Arc::new(vault));
+    let server = CuadernoServer::new(Arc::new(vault), scratch_root());
 
     let result = server
         .get_stewardship_tracking(Parameters(GetStewardshipTrackingInput {
@@ -1836,7 +1836,7 @@ async fn a_derived_metric_is_marked_as_computed_in_the_contract() {
     vault
         .create_stewardship_expanded(moment(2026, 1, 1, 9, 0), "Finances", Context::Household)
         .unwrap();
-    let server = CuadernoServer::new(Arc::new(vault));
+    let server = CuadernoServer::new(Arc::new(vault), scratch_root());
 
     let result = server
         .get_stewardship_tracking(Parameters(GetStewardshipTrackingInput {
@@ -1927,7 +1927,7 @@ async fn get_stewardship_tracking_returns_aggregated_series() {
             .unwrap();
     }
     let (vault, _r) = Vault::new(Arc::clone(&store), index, config).unwrap();
-    let server = CuadernoServer::new(Arc::new(vault));
+    let server = CuadernoServer::new(Arc::new(vault), scratch_root());
 
     let result = server
         .get_stewardship_tracking(Parameters(GetStewardshipTrackingInput {
@@ -2065,7 +2065,7 @@ fn concept_vault(notes: &[(&str, &str)]) -> (Arc<dyn VaultStore>, Arc<Vault>, Cu
     }
     let (vault, _r) = Vault::new(Arc::clone(&store), index, concept_config()).unwrap();
     let vault = Arc::new(vault);
-    let server = CuadernoServer::new(Arc::clone(&vault));
+    let server = CuadernoServer::new(Arc::clone(&vault), scratch_root());
     (store, vault, server)
 }
 
@@ -2644,7 +2644,7 @@ fn server_with_review_fixture() -> CuadernoServer {
             None,
         )
         .unwrap();
-    CuadernoServer::new(Arc::new(vault))
+    CuadernoServer::new(Arc::new(vault), scratch_root())
 }
 
 /// Normalise every date in `text` to an offset from today, and every
@@ -2954,7 +2954,7 @@ async fn a_map_with_an_unreadable_holder_reports_null_and_counts() {
             .unwrap();
     }
     let (vault, _r) = Vault::new(store, index, config).unwrap();
-    let server = CuadernoServer::new(Arc::new(vault));
+    let server = CuadernoServer::new(Arc::new(vault), scratch_root());
 
     let orientation = decode_json(
         &server
@@ -3033,7 +3033,7 @@ async fn a_parked_map_with_a_sentinel_holder_reports_null_on_the_monthly_shelf()
         .write_file(&VaultPath::new("projects/_parked/kite.md").unwrap(), parked)
         .unwrap();
     let (vault, _r) = Vault::new(store, index, config).unwrap();
-    let server = CuadernoServer::new(Arc::new(vault));
+    let server = CuadernoServer::new(Arc::new(vault), scratch_root());
 
     let monthly = decode_json(
         &server
@@ -3106,4 +3106,11 @@ async fn read_note_by_an_alias_resolves() {
     read(&server, "concepts/old.md")
         .await
         .expect_err("a path names a file, not a former slug");
+}
+
+/// A fresh empty directory as the server's vault root: the in-memory vault
+/// has no folder of its own, and the root must not be a place git could find
+/// a repository above (a developer's temp dir may sit inside one).
+fn scratch_root() -> std::path::PathBuf {
+    tempfile::TempDir::new().expect("tempdir").keep()
 }

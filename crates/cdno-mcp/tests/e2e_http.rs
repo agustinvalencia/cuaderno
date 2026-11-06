@@ -175,7 +175,7 @@ async fn full_catalogue_and_tool_call_over_http() {
     // to look plausible.
     assert_eq!(
         names.len(),
-        65,
+        66,
         "HTTP catalogue diverged from the stdio pin: {names:?}"
     );
     assert!(names.iter().any(|n| n == "get_orientation"), "{names:?}");
@@ -689,4 +689,50 @@ async fn many_sessions_leave_the_thread_count_at_baseline() {
         "after {SESSIONS} sessions and a settle the process holds {settled} threads, up from a \
          baseline of {baseline} — threads are not being returned (peak during load was {peak})"
     );
+}
+
+/// The HTTP binary hands the vault root to the server too: a merge left
+/// paused in the vault's git repository refuses `rename_note` with
+/// `git_operation_in_progress`, whatever `skip_sync_check` says.
+#[tokio::test]
+async fn rename_note_over_http_is_refused_while_a_merge_is_paused() {
+    let dir = TempDir::new().expect("tempdir");
+    make_vault(dir.path());
+    std::fs::write(
+        dir.path().join("projects/surrogate-model.md"),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nCalibrating.\n\n## Next Actions\n\n## Milestones\n",
+    )
+    .unwrap();
+    let init = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir.path())
+        .args(["init", "-q"])
+        .output()
+        .expect("git init");
+    assert!(init.status.success());
+    std::fs::write(dir.path().join(".git/MERGE_HEAD"), "0".repeat(40) + "\n").unwrap();
+    let server = HttpServer::spawn(Some(dir.path()), &[]);
+    let client = reqwest::Client::new();
+
+    let (status, resp) = post_mcp(
+        &client,
+        server.port,
+        &json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": { "name": "rename_note", "arguments": {
+                "note": "surrogate-model", "to": "emulator-study",
+                "dry_run": true, "skip_sync_check": true
+            } }
+        }),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(resp["result"]["isError"], json!(true), "{resp}");
+    let rejection: Value =
+        serde_json::from_str(resp["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        rejection["code"], "git_operation_in_progress",
+        "{rejection}"
+    );
+    assert!(dir.path().join("projects/surrogate-model.md").exists());
 }

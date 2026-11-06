@@ -12,7 +12,7 @@ use cdno_core::index::NoteCandidate;
 use cdno_core::path::VaultPath;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{ProjectFrontmatter, QuestionDomain};
-use cdno_domain::{Miss, RefResolution, SearchFilters, Vault};
+use cdno_domain::{Miss, RefResolution, ResolvedNote, SearchFilters, Vault};
 
 use crate::dto::{
     CommitmentEntryDto, CurrentFocusDto, DailyNoteViewDto, InboxItemDto, LintReportDto,
@@ -436,7 +436,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Read any vault note whole. Returns `{ path, note_type, frontmatter, body, content_hash, backlinks, headings }`. `note` takes the references `cdno open` takes: a vault path with or without `.md` (`concepts/woodbury-identity`), a bare slug (`woodbury-identity`), a typed slug (`concept:woodbury-identity`), or a journal date (`2026-09-27`, `2026-W39`, `2026-09`, `today`). A slug shared by several notes is refused with code `ambiguous_slug` and the candidates' paths in `details.candidates` -- pass one of those paths; a reference that matches no note is refused with code `not_found` (`search_notes` finds a note by its title). The body is uncapped, unlike `get_project_context`'s. `content_hash` is the hash of the bytes just read: pass it to `revise_note` as `expected_hash`, so a change made since this read is detected rather than overwritten. A concept's `origin` holds wikilinks to the daily `## Notes` entries it came from (`[[journal/<year>/daily/<date>#<heading>]]`); read one the same way, passing the part before the `#` (the whole link, anchor included, is refused with code `not_found`), and find the entry under that heading. `headings` lists every heading in the body with inline markup stripped, the form a section argument takes. `backlinks` lists the paths of notes that link here; it comes from the index, which every cuaderno write updates, so a link written through cuaderno appears at once and one made by editing a file elsewhere appears once the index next reconciles."
+        description = "Read any vault note whole. Returns `{ path, note_type, frontmatter, body, content_hash, backlinks, headings }`. `note` takes the references `cdno open` takes: a vault path with or without `.md` (`concepts/woodbury-identity`), a bare slug (`woodbury-identity`), a typed slug (`concept:woodbury-identity`), or a journal date (`2026-09-27`, `2026-W39`, `2026-09`, `today`). A slug shared by several notes is refused with code `ambiguous_slug` and the candidates' paths in `details.candidates` -- pass one of those paths; a reference that matches no note is refused with code `not_found` (`search_notes` finds a note by its title). The body is uncapped, unlike `get_project_context`'s. `content_hash` is the hash of the bytes just read: pass it to `revise_note` as `expected_hash`, so a change made since this read is detected rather than overwritten. A concept's `origin` holds wikilinks to the daily `## Notes` entries it came from (`[[journal/<year>/daily/<date>#<heading>]]`); read one the same way, passing the part before the `#` (the whole link, anchor included, is refused with code `not_found`), and find the entry under that heading. `headings` lists every heading in the body with inline markup stripped, the form a section argument takes. When `note` was a former name of the note (it was renamed), `found_by_former_name` carries it and `path` shows the current location: use the current slug from now on. `backlinks` lists the paths of notes that link here; it comes from the index, which every cuaderno write updates, so a link written through cuaderno appears at once and one made by editing a file elsewhere appears once the index next reconciles."
     )]
     pub async fn read_note(
         &self,
@@ -447,14 +447,18 @@ impl CuadernoServer {
         refuse_reference_outside_the_vault(&reference)?;
         let outcome = self
             .with_vault(move |vault| {
-                Ok::<_, DomainError>(match resolve_note_reference(vault, &reference, today)? {
-                    Ok(path) => Ok(vault.read_note(&path)?),
+                Ok::<_, DomainError>(match resolve_note(vault, &reference, today)? {
+                    Ok(note) => Ok((vault.read_note(&note.path)?, note.resolved_via_alias)),
                     Err(rejection) => Err(rejection),
                 })
             })
             .await?
             .map_err(into_mcp_error)??;
-        json_result(ReadNoteResponse::from(outcome))
+        let (view, via_alias) = outcome;
+        json_result(ReadNoteResponse {
+            found_by_former_name: via_alias,
+            ..ReadNoteResponse::from(view)
+        })
     }
 
     #[tool(
@@ -521,8 +525,34 @@ pub(crate) fn resolve_note_reference(
     reference: &str,
     today: chrono::NaiveDate,
 ) -> Result<Result<VaultPath, ErrorData>, DomainError> {
+    Ok(resolve_note(vault, reference, today)?.map(|note| note.path))
+}
+
+/// [`resolve_note_reference`] keeping the whole [`ResolvedNote`]: the note's
+/// current slug, and the former name the reference matched when it was one
+/// (RFC 0007 §5.5), for the tools that report it.
+pub(crate) fn resolve_note(
+    vault: &Vault,
+    reference: &str,
+    today: chrono::NaiveDate,
+) -> Result<Result<ResolvedNote, ErrorData>, DomainError> {
     Ok(match vault.resolve_note_ref(reference, today)? {
-        RefResolution::Resolved(note) => Ok(note.path),
+        RefResolution::Resolved(note) => Ok(note),
+        RefResolution::Ambiguous(hits) => Err(ambiguous_note_ref(reference, &hits)),
+        RefResolution::NotFound { reference, miss } => Err(unresolved_note_ref(&reference, miss)),
+    })
+}
+
+/// [`resolve_note`] for a note about to be renamed: the domain's
+/// [`Vault::resolve_rename_target`], so a question and its same-slug
+/// portfolio resolve to the question here as they do in the CLI.
+pub(crate) fn resolve_rename_note(
+    vault: &Vault,
+    reference: &str,
+    today: chrono::NaiveDate,
+) -> Result<Result<ResolvedNote, ErrorData>, DomainError> {
+    Ok(match vault.resolve_rename_target(reference, today)?.0 {
+        RefResolution::Resolved(note) => Ok(note),
         RefResolution::Ambiguous(hits) => Err(ambiguous_note_ref(reference, &hits)),
         RefResolution::NotFound { reference, miss } => Err(unresolved_note_ref(&reference, miss)),
     })

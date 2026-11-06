@@ -224,7 +224,7 @@ fn tools_list_returns_all_advertised_tools() {
     let tools = response["result"]["tools"].as_array().expect("tools array");
     assert_eq!(
         tools.len(),
-        65,
+        66,
         "expected the full catalogue advertised over stdio; tests/server.rs pins the names, got {}",
         tools.len()
     );
@@ -723,4 +723,114 @@ fn read_note_then_revise_note_round_trips_through_the_content_hash() {
     assert_eq!(after["body"], new_body, "{after}");
     assert_ne!(after["content_hash"], before["content_hash"]);
     assert_eq!(after["content_hash"], revised["new_hash"], "{revised}");
+}
+
+/// `rename_note` over the wire: preview, write the plan that was shown, then
+/// the old name still resolves (RFC 0007 §6.4, T26).
+#[test]
+fn rename_note_over_stdio() {
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    std::fs::write(
+        dir.path().join("projects/surrogate-model.md"),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nCalibrating.\n\n## Next Actions\n\n## Milestones\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("inbox/2026-05-08-link.md"),
+        "---\ntype: inbox\ncreated: 2026-05-08\n---\n\nSee [[surrogate-model]].\n",
+    )
+    .unwrap();
+    let mut mcp = McpSubprocess::spawn(dir.path());
+    initialise(&mut mcp);
+
+    let mut call = |id: u64, name: &str, arguments: Value| -> Value {
+        mcp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": { "name": name, "arguments": arguments }
+        }));
+        mcp.read_response(id)
+    };
+
+    let preview = call_payload(&call(
+        20,
+        "rename_note",
+        json!({ "note": "surrogate-model", "to": "emulator-study", "dry_run": true }),
+    ));
+    assert_eq!(preview["written"], json!(false), "{preview}");
+    assert!(dir.path().join("projects/surrogate-model.md").exists());
+    let hash = preview["plan_hash"].as_str().expect("plan_hash").to_owned();
+
+    // A plan that moved is a rejection the agent can read, not a transport error.
+    let stale = call(
+        21,
+        "rename_note",
+        json!({ "note": "surrogate-model", "to": "emulator-study", "expected_plan": "stale" }),
+    );
+    assert_eq!(stale["result"]["isError"], json!(true), "{stale}");
+    let rejection: Value =
+        serde_json::from_str(stale["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(rejection["code"], "stale_plan", "{rejection}");
+    assert_eq!(rejection["details"]["actual"], json!(hash));
+
+    let written = call_payload(&call(
+        22,
+        "rename_note",
+        json!({ "note": "surrogate-model", "to": "emulator-study", "expected_plan": hash }),
+    ));
+    assert_eq!(written["written"], json!(true), "{written}");
+    assert!(dir.path().join("projects/emulator-study.md").exists());
+    assert!(!dir.path().join("projects/surrogate-model.md").exists());
+
+    let read = call_payload(&call(23, "read_note", json!({ "note": "surrogate-model" })));
+    assert_eq!(read["path"], "projects/emulator-study.md", "{read}");
+    assert_eq!(read["found_by_former_name"], "surrogate-model", "{read}");
+    let inbox = std::fs::read_to_string(dir.path().join("inbox/2026-05-08-link.md")).unwrap();
+    assert!(inbox.contains("[[emulator-study]]"), "{inbox}");
+}
+
+/// The binary hands the vault root to the server: a merge left paused in
+/// the vault's git repository refuses the rename, a preview included, with
+/// a code the agent can read. A server with no root would skip the check.
+#[test]
+fn rename_note_over_stdio_is_refused_while_a_merge_is_paused() {
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    std::fs::write(
+        dir.path().join("projects/surrogate-model.md"),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nCalibrating.\n\n## Next Actions\n\n## Milestones\n",
+    )
+    .unwrap();
+    let init = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir.path())
+        .args(["init", "-q"])
+        .output()
+        .expect("git init");
+    assert!(init.status.success());
+    std::fs::write(dir.path().join(".git/MERGE_HEAD"), "0".repeat(40) + "\n").unwrap();
+    let mut mcp = McpSubprocess::spawn(dir.path());
+    initialise(&mut mcp);
+
+    for (id, dry_run) in [(30u64, true), (31, false)] {
+        mcp.send(&json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "name": "rename_note", "arguments": {
+                "note": "surrogate-model", "to": "emulator-study",
+                "dry_run": dry_run, "skip_sync_check": true
+            } }
+        }));
+        let response = mcp.read_response(id);
+        assert_eq!(response["result"]["isError"], json!(true), "{response}");
+        let rejection: Value =
+            serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap())
+                .unwrap();
+        assert_eq!(
+            rejection["code"], "git_operation_in_progress",
+            "{rejection}"
+        );
+    }
+    assert!(dir.path().join("projects/surrogate-model.md").exists());
 }

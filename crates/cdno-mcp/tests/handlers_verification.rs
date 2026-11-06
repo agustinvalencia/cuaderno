@@ -108,7 +108,7 @@ impl VaultStore for SwallowingStore {
 fn server_over(store: Arc<dyn VaultStore>) -> CuadernoServer {
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _report) = Vault::new(store, index, VaultConfig::default()).expect("open vault");
-    CuadernoServer::new(Arc::new(vault))
+    CuadernoServer::new(Arc::new(vault), scratch_root())
 }
 
 fn healthy_server() -> CuadernoServer {
@@ -528,4 +528,11 @@ async fn the_unplanned_verbs_rewrite_shape_is_pinned_by_a_map_that_has_a_logs_se
         "a rewrite emits no tail even when the map HAS a Logs section; \
          an append shape here would emit one: {v}"
     );
+}
+
+/// A fresh empty directory as the server's vault root: the in-memory vault
+/// has no folder of its own, and the root must not be a place git could find
+/// a repository above (a developer's temp dir may sit inside one).
+fn scratch_root() -> std::path::PathBuf {
+    tempfile::TempDir::new().expect("tempdir").keep()
 }

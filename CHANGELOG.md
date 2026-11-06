@@ -8,6 +8,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **The `rename_note` tool** (RFC 0007 T26, closes #875). `rename_note { note, to, reason?,
+  dry_run?, expected_plan?, skip_sync_check? }` previews and writes a rename over MCP; the catalogue
+  goes 65 to 66. `dry_run: true` returns the plan and writes nothing; a write given the previewed
+  `plan_hash` as `expected_plan` writes exactly that plan. The result is the plan in the shape
+  `cdno note rename --json` prints, plus `written`, `index_stale` and `verification`, and a written
+  rename nudges the sync agent while a preview never does. The freshness check of T25 runs first
+  and again under the lock, never fetching; the servers now carry the vault root for it
+  (`CuadernoServer::with_vault_root`). Eight rejection codes: `stem_shared`, `note_not_renamable`,
+  `reference_drift`, `reference_unaddressable`, `behind_upstream` (message ends on the remedy),
+  `git_operation_in_progress` (both git codes carry the check's `warnings` in `details`),
+  `stale_plan { expected, actual }` and `rename_incomplete { paths, source }`. `read_note` reports
+  `found_by_former_name` when the reference was a former name.
 - **The rename's sync check** (RFC 0007 T25, closes #874). In a vault that is a git repository,
   `cdno note rename` fetches the upstream first (at most 5 s, no prompt; a failed fetch warns and
   proceeds; `--dry-run` never fetches) and then refuses only when the vault is behind its upstream

@@ -126,6 +126,8 @@ tell an agent how to use the focus; see [Write tools](writes.md#focus-tools).
   the body with inline markup stripped, the form `revise_note`'s `section` takes. To follow a
   heading link such as a concept's `origin` (`[[journal/2026/daily/2026-09-02#Woodbury
   identity]]`), pass the part before the `#` and find the entry under that heading: the whole link,
-  anchor included, is refused as `not_found`.
+  anchor included, is refused as `not_found`. When `note` was a former name of a renamed note, the
+  payload adds `found_by_former_name` (the name typed) and `path` shows where the note is now: use
+  the current slug from then on.
 - These pair naturally with the [write tools](writes.md): read context, propose an action, then
   write it.
