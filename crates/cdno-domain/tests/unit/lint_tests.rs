@@ -3911,11 +3911,16 @@ fn a_linked_was_is_a_warning() {
         .iter()
         .filter(|i| {
             i.message
-                .contains("`was:` under a rename is a copied value")
+                .contains("is a copied value; a link here is rewritten by the next rename")
         })
         .collect();
     assert_eq!(found.len(), 1, "issues: {:?}", report.issues);
     assert_eq!(found[0].severity, LintSeverity::Warning);
+    assert!(
+        found[0].message.contains("under renamed [[alpha]]"),
+        "the message names the head: {}",
+        found[0].message
+    );
 }
 
 #[test]
@@ -3933,7 +3938,7 @@ fn a_linked_was_under_another_entry_is_left_alone() {
         !report
             .issues
             .iter()
-            .any(|i| i.message.contains("`was:` under a rename")),
+            .any(|i| i.message.contains("is a copied value")),
         "issues: {:?}",
         report.issues
     );

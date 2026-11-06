@@ -669,6 +669,24 @@ fn focus_pointers_are_in_the_tool_descriptions() {
         );
     }
 
+    // `lint` sits near the cut (its description lists every near-miss
+    // class), so it is asserted by name as well as by the sweep below.
+    let lint = empty_server()
+        .advertised_tools()
+        .into_iter()
+        .find(|t| t.name == "lint")
+        .expect("lint is advertised");
+    let lint_len = lint
+        .description
+        .as_deref()
+        .unwrap_or_default()
+        .chars()
+        .count();
+    assert!(
+        lint_len <= CLIENT_CUT,
+        "lint description is {lint_len} chars, past the {CLIENT_CUT}-char client cut"
+    );
+
     // Every description fits the client's cut, except these, which were
     // over it before RFC 0005 and are not its to shorten.
     let over_before = ["create_custom_note"];

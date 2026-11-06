@@ -474,7 +474,7 @@ impl Vault {
                     )
                 } else {
                     format!(
-                        "log line `{}` reads as a `{}` log line but is not read back as one -- {}",
+                        "log line `{}` reads as a `{}` log line but is not in the shape a rename writes -- {}",
                         line.trim(),
                         claim.prefix.trim(),
                         focus_marker_hint(&claim)
@@ -768,14 +768,17 @@ fn habit_line_hint(line: &str) -> &'static str {
 }
 
 /// Warn on a `was:` continuation under a `renamed` head whose value holds a
-/// link. The value is a copied slug; a link there would be rewritten by the
+/// link. The continuation scope is every indented line after the head and
+/// ends at the first non-indented line, a blank line included (the writer
+/// never emits one; this only matters for hand edits, and it is not a
+/// markdown-continuation reader). The value is a copied slug; a link there would be rewritten by the
 /// next rename and the record would stop saying what the note was called.
 fn linked_was_issues(path: &VaultPath, lines: &[&str]) -> Vec<LintIssue> {
     let mut issues = Vec::new();
-    let mut under_rename = false;
+    let mut under_rename: Option<String> = None;
     for line in lines {
         if line.starts_with(char::is_whitespace) {
-            if under_rename
+            if let Some(head) = under_rename.as_deref()
                 && line
                     .trim_start()
                     .strip_prefix(LOG_WAS_KEY)
@@ -784,22 +787,28 @@ fn linked_was_issues(path: &VaultPath, lines: &[&str]) -> Vec<LintIssue> {
                 issues.push(LintIssue::warning(
                     path.clone(),
                     format!(
-                        "`was:` under a rename is a copied value; a link here is rewritten by the next rename -- `{}`",
+                        "`was:` under {head} is a copied value; a link here is rewritten by the next rename -- `{}`",
                         line.trim()
                     ),
                 ));
             }
             continue;
         }
+        // The head's own link, so a day with several renames says which.
         under_rename = parse_log_entry_heads(line)
             .first()
-            .is_some_and(|(_, text)| text.starts_with(LOG_RENAMED_PREFIX));
+            .filter(|(_, text)| text.starts_with(LOG_RENAMED_PREFIX))
+            .map(|(_, text)| match text.split_once("]]") {
+                Some((head, _)) => format!("{head}]]"),
+                None => LOG_RENAMED_PREFIX.trim().to_owned(),
+            });
     }
     issues
 }
 
-/// A `## Logs` line that reached for a focus marker, as
-/// [`focus_marker_claim`] read it. Carries only what the hint needs; the
+/// A `## Logs` line that reached for one of the [`MARKER_PREFIXES`] -- a
+/// focus marker or the non-focus `renamed` line, which no reader folds --
+/// as [`focus_marker_claim`] read it. Carries only what the hint needs; the
 /// accept/reject verdict is the canonical parsers'.
 struct FocusClaim<'a> {
     /// Which marker the writer reached for.
@@ -886,7 +895,8 @@ fn focus_marker_claim(line: &str) -> Option<FocusClaim<'_>> {
     })
 }
 
-/// Best-effort guess at *why* a focus-marker line will not be read back.
+/// Best-effort guess at *why* a marker line (a focus marker, or the
+/// `renamed` line, whose text part is a title) will not be read back.
 /// Heuristic only, mirroring [`habit_line_hint`]: the verdict belongs to
 /// the canonical parsers. Ordered most-specific first.
 fn focus_marker_hint(claim: &FocusClaim<'_>) -> String {
@@ -903,6 +913,8 @@ fn focus_marker_hint(claim: &FocusClaim<'_>) -> String {
     if !claim.bulleted {
         return "the line does not open with a `- ` bullet, so it is not a log entry".to_owned();
     }
+    // `renamed` carries a title where the focus markers carry an action.
+    let what = if claim.is_focus { "action" } else { "title" };
     let after_prefix = claim
         .text
         .strip_prefix(claim.prefix)
@@ -917,7 +929,7 @@ fn focus_marker_hint(claim: &FocusClaim<'_>) -> String {
         // before any dash guess, so the hint never blames a dash that is
         // not broken.
         if project.is_empty() || action.trim().is_empty() {
-            return "the slug or the action either side of the em-dash is empty".to_owned();
+            return format!("the slug or the {what} either side of the em-dash is empty");
         }
         if claim.prefix == LOG_ACTION_PROMOTED_PREFIX {
             return "the line does not match `action promoted on [[project]] \u{2014} \"title\" -> [[actions/<slug>]]` (quoted title, ASCII `->`, and the target in `[[ ]]`)"
@@ -927,14 +939,16 @@ fn focus_marker_hint(claim: &FocusClaim<'_>) -> String {
     }
     if rest.starts_with('\u{2013}') {
         // En-dash: the near-miss the naked eye cannot tell from an em-dash.
-        return "found an en-dash (\u{2013}) where an em-dash (\u{2014}) separates the slug from the action"
-            .to_owned();
+        return format!(
+            "found an en-dash (\u{2013}) where an em-dash (\u{2014}) separates the slug from the {what}"
+        );
     }
     if rest.starts_with('-') {
-        return "found an ASCII hyphen (-) where an em-dash (\u{2014}) separates the slug from the action"
-            .to_owned();
+        return format!(
+            "found an ASCII hyphen (-) where an em-dash (\u{2014}) separates the slug from the {what}"
+        );
     }
-    "missing the em-dash (\u{2014}) that separates the slug from the action".to_owned()
+    format!("missing the em-dash (\u{2014}) that separates the slug from the {what}")
 }
 
 /// Name a JSON scalar's kind for a diagnostic, so the message can say what
