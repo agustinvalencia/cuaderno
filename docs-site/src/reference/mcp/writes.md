@@ -260,6 +260,45 @@ A blank `reason`, `body` together with `section`, `section` without `content`, `
 `section`, or `body` without `expected_hash` is refused as an invalid argument (`-32602`) naming
 the field.
 
+
+## Renaming a note
+
+| Tool | Inputs | Effect |
+|------|--------|--------|
+| `rename_note` | `note`, `to`, `reason?`, `dry_run?`, `expected_plan?`, `skip_sync_check?` | Rename a note's slug and follow every reference to it in one transaction, logging a `renamed` line to today's daily note. ([`cdno note rename`](../cli/note.md#cdno-note-rename-note)) |
+
+The preview is the contract. Call with `dry_run: true` to get the plan and write nothing, show it to
+the person, then call again with the same `note` and `to` and `expected_plan` set to the plan's
+`plan_hash`: what is written is the plan that was shown. `note` takes the references
+[`read_note`](reads.md) takes, including a former name of the note; `reason` is a short clause for
+the log line.
+
+The result is the plan, whether or not it was written: `dry_run`, `target`, `from` (the note's
+current slug), `new_slug`, `found_by_former_name` (the former name `note` matched, or `null`),
+`moves` (`{from, to}`), `edits` (a `path` with its `changes`, each of kind `links` with a `count`,
+`field` with a `key`, `alias` or `log_line`), `references`, `notes`, `warnings` (each with a `kind`
+and a `message`: `frozen_prefix_already_diverged`, `old_slug_already_an_alias`, or `sync_check`),
+`plan_hash`, `log_line` (`null` when the plan is empty), then `written`, `index_stale` (`true`: the
+files are written and the rename succeeded; the index catches up on the next open) and
+`verification`. A write nudges the sync agent; a preview does not.
+
+Before planning, the tool checks the vault against its upstream **as last fetched**: it never
+fetches. A preview is refused exactly as a write would be.
+
+Refusals (a [rejection](overview.md); nothing is written):
+
+| Code | When |
+|------|------|
+| `stale_plan` | The vault changed since the preview (any log append does it). `details` carries `expected` and `actual`. Preview again and show the new plan; never retry the same `expected_plan`. |
+| `behind_upstream` | The vault is `details.behind` commits behind its upstream. Retry in a few seconds; if still behind, the sync is stalled: tell the person rather than set `skip_sync_check`. |
+| `git_operation_in_progress` | A merge, rebase or similar was left paused. Never overridable. Both git codes carry the check's `warnings` in `details` when it had any. |
+| `stem_shared` | Another note shares the slug, so links to it cannot be told apart. |
+| `note_not_renamable` | The note is of a kind the rename does not take (`details.reason`: `archived`, `folder`, a type). A portfolio whose slug a question shares is renamed through the question. |
+| `reference_drift` / `reference_unaddressable` | A referrer's frontmatter would change beyond the reference, or names the note in a form the rewrite cannot address; the person fixes the note by hand first. |
+| `rename_incomplete` | A write failed and the rollback could not restore `details.paths`: the person checks them by hand. |
+| `slug_taken` / `invalid_slug` | `to` is taken or malformed: refused, never suffixed. |
+| `not_found` / `ambiguous_slug` | The `note` reference matches no note, or several, as for `read_note`. |
+
 ## Frontmatter
 
 | Tool | Inputs | Effect |

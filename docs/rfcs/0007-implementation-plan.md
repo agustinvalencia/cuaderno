@@ -1375,6 +1375,34 @@ says 65 (`docs-site/src/getting-started/connect-to-claude.md:35`, `reference/mcp
 **Correct means.** An agent can preview, show, and write the same plan, and is told in a code
 why it could not.
 
+**As built.** `rename_note` is in `operations.rs` beside `revise_note`; `RenameNoteInput` in
+`input.rs`; `RenamePlanDto` (with `RenameMoveDto`, `RenameEditDto`, `RenameChangeDto`,
+`RenameWarningDto`) in `dto.rs`. Plan amendments:
+- The server held no vault root: `CuadernoServer::with_vault_root` (called by `cdno-mcp` and
+  `cdno-mcp-server`) supplies it. A server built without one, as the in-process tests do, treats
+  the vault as not under git and skips the check; the tests that need git set a root.
+- The DTO carries `dry_run` (as the CLI's `--json` does), `references` and `notes` (the CLI's
+  totals), and `verification` (null unless a write landed), beside the fields the plan names;
+  `found_by_former_name` is the alias string or null, as in the CLI.
+- The git refusals' `warnings` in `details` come from `rejection::error_with_warnings`; the guard's
+  fresh warnings are included. `behind_upstream`'s message is the domain text plus `BEHIND_REMEDY`,
+  built in `rejection_message`, so every route to the code says it; `details` also carries `remedy`
+  as the CLI does. `stale_plan`'s message adds "preview again ... do not retry with the same
+  expected_plan".
+- `rename_incomplete`'s details are `{paths, source}` (the domain's `failed` is renamed on the
+  wire, as in the CLI); a clean rollback is the plain store error (mechanical, no code).
+- The per-code classify tests live inline in `rejection.rs` (`classify` is `pub(crate)`, and the
+  module's convention is inline tests), not in `handlers_operations`. The `FlakyIndex` double is
+  copied into `tests/support/flaky_index.rs` for `rename_note_index_stale_is_success`.
+- `read_note` gains `found_by_former_name` (omitted when the reference matched directly). The
+  other reads that resolve through an alias (project and question context) were not touched: they
+  take slugs through other resolvers, so surfacing it there is a separate change, not a one-field
+  addition.
+- Probes added: `a_paused_git_operation_refuses_a_preview_and_a_write_alike`,
+  `rename_note_reports_a_former_name_and_read_note_does_too`, `rename_note_to_a_taken_slug_is_refused_not_suffixed`,
+  `rename_note_of_an_unknown_note_is_not_found`, `a_blank_expected_plan_is_a_missing_one`,
+  `rename_note_description_states_the_contract`.
+
 ### T27 — Instructions and descriptions
 
 **What.** The `rename_note` description (§6.4): preview, show the person, write with

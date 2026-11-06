@@ -441,6 +441,31 @@ pub struct ReviseNoteInput {
     pub reason: String,
 }
 
+/// Input for `rename_note` (RFC 0007 §6.4, T26). `note` and `to` are trimmed
+/// by the handler; the flags default to false.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RenameNoteInput {
+    /// Which note to rename, in any form `read_note` accepts: a vault path,
+    /// a bare slug, a typed slug (`project:surrogate-model`), or a former
+    /// name of the note.
+    pub note: String,
+    /// The new slug, which becomes the file's name (or its folder's, for a
+    /// portfolio). Refused, not suffixed, when it is taken or malformed.
+    pub to: String,
+    /// Why the note is renamed, in a short clause; it is written into the
+    /// daily-log line the rename appends.
+    pub reason: Option<String>,
+    /// Return the plan and write nothing. The plan's `plan_hash` is what a
+    /// later call passes as `expected_plan`.
+    pub dry_run: Option<bool>,
+    /// The `plan_hash` of the plan the person was shown. The write is
+    /// refused as `stale_plan` when the vault no longer produces that plan.
+    pub expected_plan: Option<String>,
+    /// Rename even when the vault is known to be behind its upstream. Never
+    /// overrides a git operation left paused (a merge or rebase).
+    pub skip_sync_check: Option<bool>,
+}
+
 /// Input for `note_to_daily` (RFC 0002 T10, #623). `heading` and `body`
 /// are trimmed by the handler, and either one blank is refused as
 /// `INVALID_PARAMS` naming the field.

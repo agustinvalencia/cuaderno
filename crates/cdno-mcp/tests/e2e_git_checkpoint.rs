@@ -221,3 +221,118 @@ fn nudge_only_mode_signals_the_agent_and_never_commits() {
         "nudge-only mode must leave the change for the external agent; status was:\n{status}"
     );
 }
+
+/// RFC 0007 §5.8 (2), T26: the `rename_note` tool never fetches. The vault's
+/// upstream is an unreachable remote the branch is recorded as ahead of: a
+/// tool that fetched would hit it, and say so in a warning. This one reads
+/// the upstream as last fetched, so it neither warns about a fetch nor
+/// blocks, and git is left with no `FETCH_HEAD`.
+#[test]
+fn rename_note_never_fetches() {
+    use std::io::{BufRead, BufReader, Write};
+
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    cdno_cli::commands::init::run(dir.path()).expect("cdno init");
+    std::fs::write(
+        dir.path().join("projects/surrogate-model.md"),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nCalibrating.\n\n## Next Actions\n\n## Milestones\n",
+    )
+    .unwrap();
+    let ok = |args: &[&str]| {
+        let out = git(dir.path(), args);
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    };
+    ok(&["init", "-q", "-b", "main"]);
+    ok(&["add", "-A"]);
+    ok(&["commit", "-q", "-m", "baseline"]);
+    // An upstream that cannot be reached, recorded as one commit behind
+    // HEAD: ahead 1, behind 0, as a fetch last left it.
+    let unreachable = dir.path().join("no-such-remote");
+    ok(&["remote", "add", "origin", unreachable.to_str().unwrap()]);
+    ok(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    ok(&["config", "branch.main.remote", "origin"]);
+    ok(&["config", "branch.main.merge", "refs/heads/main"]);
+    ok(&[
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "ahead of the upstream",
+    ]);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cdno-mcp"))
+        .env("CUADERNO_VAULT_PATH", dir.path())
+        .env("RUST_LOG", "off")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn cdno-mcp");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut send = |msg: serde_json::Value| {
+        writeln!(stdin, "{msg}").unwrap();
+        stdin.flush().unwrap();
+    };
+    let mut read = |id: u64| -> serde_json::Value {
+        loop {
+            let mut line = String::new();
+            assert!(stdout.read_line(&mut line).unwrap() > 0, "server closed");
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if value["id"] == id {
+                return value;
+            }
+        }
+    };
+    send(serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05", "capabilities": {},
+            "clientInfo": { "name": "never-fetches", "version": "0" }
+        }
+    }));
+    read(1);
+    send(serde_json::json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
+
+    let mut plan_hash = String::new();
+    for (id, dry_run) in [(2u64, true), (3, false)] {
+        let mut arguments = serde_json::json!({
+            "note": "surrogate-model", "to": "emulator-study", "dry_run": dry_run
+        });
+        if !dry_run {
+            arguments["expected_plan"] = serde_json::json!(plan_hash);
+        }
+        send(serde_json::json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "name": "rename_note", "arguments": arguments }
+        }));
+        let response = read(id);
+        assert_ne!(
+            response["result"]["isError"],
+            serde_json::json!(true),
+            "an upstream recorded as ahead must not block: {response}"
+        );
+        let text = response["result"]["content"][0]["text"].as_str().unwrap();
+        let payload: serde_json::Value = serde_json::from_str(text).unwrap();
+        let fetch_warnings: Vec<&serde_json::Value> = payload["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|w| w["message"].as_str().is_some_and(|m| m.contains("fetch")))
+            .collect();
+        assert!(fetch_warnings.is_empty(), "{payload}");
+        if dry_run {
+            plan_hash = payload["plan_hash"].as_str().unwrap().to_owned();
+        } else {
+            assert_eq!(payload["written"], serde_json::json!(true), "{payload}");
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(
+        !dir.path().join(".git/FETCH_HEAD").exists(),
+        "git fetch leaves FETCH_HEAD; the tool never ran one"
+    );
+    assert!(dir.path().join("projects/emulator-study.md").exists());
+}

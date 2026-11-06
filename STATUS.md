@@ -143,11 +143,12 @@ Alongside, the vault says out loud something that was already true: **`cdno sear
 | `switch_action` | Wired (RFC 0005; pause plus start in one commit; `focus_open` when the target is already in focus) |
 | `switch_unplanned_action` | Wired (RFC 0005; the unplanned form, adds the bullet and starts it) |
 | `resume_action` | Wired (RFC 0005; re-anchors a carried focus or reopens a pause; payload carries `resumed_from`) |
+| `rename_note` | Wired (RFC 0007 T26; `dry_run` returns the plan, a write takes its `plan_hash` as `expected_plan`; `stale_plan`, `behind_upstream` and six more rejection codes; never fetches) |
 | `set_question_status` | Wired (#166; `active`/`parked`/`answered`/`retired`) |
 | `add_periodic_commitment` | Wired (#166; recurrence + next date) |
 | `search_notes` | Wired (#172; FTS5 content search, optional note-type / date / portfolio filters) |
 
-**All 65 tools are wired through to the domain** — context reads, daily/weekly/monthly note access, the write operations, structural creation, lifecycle transitions, and the generic frontmatter setter. The authoritative catalogue is the sorted-set assertion in `crates/cdno-mcp/tests/server.rs`, not a count maintained by hand here: the breakdown this sentence used to enumerate summed to 42 while the pin asserted 52 — ten tools behind. No stubs remain. All 65 are advertised in `tools/list` with full schemas, so Claude can discover them at startup. The lifecycle group is split into its own `#[tool_router]` (in `lifecycle.rs`), merged in `CuadernoServer::new` — the first slice of the handler-group split.
+**All 66 tools are wired through to the domain** — context reads, daily/weekly/monthly note access, the write operations, structural creation, lifecycle transitions, and the generic frontmatter setter. The authoritative catalogue is the sorted-set assertion in `crates/cdno-mcp/tests/server.rs`, not a count maintained by hand here: the breakdown this sentence used to enumerate summed to 42 while the pin asserted 52 — ten tools behind. No stubs remain. All 66 are advertised in `tools/list` with full schemas, so Claude can discover them at startup. The lifecycle group is split into its own `#[tool_router]` (in `lifecycle.rs`), merged in `CuadernoServer::new` — the first slice of the handler-group split.
 
 ## What works today
 

@@ -103,6 +103,7 @@ pub(crate) enum RejectionCode {
     AmbiguousSection,
     AmbiguousSlug,
     AmbiguousWaitingOn,
+    BehindUpstream,
     BuiltinTypeNotCustom,
     BulletMissingEnergy,
     CommitmentAlreadyDue,
@@ -110,6 +111,7 @@ pub(crate) enum RejectionCode {
     EmptyField,
     FieldNotSettable,
     FocusOpen,
+    GitOperationInProgress,
     HardMilestoneRequiresDate,
     ImplausibleDate,
     InvalidField,
@@ -125,6 +127,7 @@ pub(crate) enum RejectionCode {
     MissingSection,
     NoFocus,
     NotFound,
+    NoteNotRenamable,
     NoteNotRevisable,
     PeriodicDateUnwritable,
     PeriodicNotFound,
@@ -135,14 +138,19 @@ pub(crate) enum RejectionCode {
     ProjectInFocus,
     ProjectNotActive,
     ProjectNotParked,
+    ReferenceDrift,
+    ReferenceUnaddressable,
+    RenameIncomplete,
     ReservedSchemaField,
     ReservedTypeName,
     RevisionInvalid,
     SectionNotFound,
     SlugGivenTwice,
     SlugTaken,
+    StalePlan,
     StaleRevision,
     StateTooLong,
+    StemShared,
     TemplateAlreadyExists,
     TrackingOnFlatStewardship,
     UndeclaredSchemaField,
@@ -172,6 +180,11 @@ fn rejection_message(code: RejectionCode, e: &DomainError) -> String {
         // The slug rejections end on the remedy, in the focus refusals' voice
         // (RFC 0007 §5.7): a collision is refused, not suffixed, so the agent
         // must not retry with a `-2` of its own.
+        // The domain carries the fact; the remedy is this interface's.
+        RejectionCode::BehindUpstream => format!("{e}; {}", crate::freshness::BEHIND_REMEDY),
+        RejectionCode::StalePlan => format!(
+            "{e}; the vault changed since the preview (any log append does it): call rename_note with dry_run: true again, show the person the new plan, and write that one. Do not retry with the same expected_plan"
+        ),
         RejectionCode::InvalidSlug => {
             format!("{e}; fix the shape as the message says, or ask the person for another name")
         }
@@ -588,21 +601,49 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         | DomainError::ConfigChangedDuringMigration
         | DomainError::MigrationStampInvalid { .. } => return None,
 
-        // The rename's refusals (RFC 0007 §5.2, §5.4, §6.2). No MCP tool
-        // reaches the planner or the write yet; the `rename_note` tool (T26)
-        // gives them their codes: `note_not_renamable`, `stem_shared`,
-        // `reference_drift`, `reference_unaddressable`, `stale_plan`,
-        // `rename_incomplete`, and the freshness refusals of
-        // `crate::freshness` (T25), `behind_upstream` and
-        // `git_operation_in_progress`.
-        DomainError::NoteNotRenamable { .. }
-        | DomainError::StemShared { .. }
-        | DomainError::ReferenceDrift { .. }
-        | DomainError::ReferenceUnaddressable { .. }
-        | DomainError::StalePlan { .. }
-        | DomainError::RenameIncomplete { .. }
-        | DomainError::BehindUpstream { .. }
-        | DomainError::GitOperationInProgress { .. } => return None,
+        // The rename's refusals (RFC 0007 §5.2, §5.4, §6.2), which the
+        // `rename_note` tool (T26) reaches. `rename_incomplete` is the one
+        // mechanical-looking failure that is a rejection: a rollback that
+        // failed names the paths the person must check by hand.
+        DomainError::NoteNotRenamable { path, reason } => (
+            RejectionCode::NoteNotRenamable,
+            json!({ "path": path, "reason": reason }),
+        ),
+        DomainError::StemShared { slug, path, others } => (
+            RejectionCode::StemShared,
+            json!({
+                "slug": slug,
+                "path": path.to_string(),
+                "others": others.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            }),
+        ),
+        DomainError::StalePlan { expected, actual } => (
+            RejectionCode::StalePlan,
+            json!({ "expected": expected, "actual": actual }),
+        ),
+        DomainError::ReferenceDrift { path, drift } => (
+            RejectionCode::ReferenceDrift,
+            json!({ "path": path.to_string(), "drift": drift.to_string() }),
+        ),
+        DomainError::ReferenceUnaddressable { path, key } => (
+            RejectionCode::ReferenceUnaddressable,
+            json!({ "path": path.to_string(), "key": key }),
+        ),
+        DomainError::RenameIncomplete { failed, source } => (
+            RejectionCode::RenameIncomplete,
+            json!({
+                "paths": failed.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "source": source.to_string(),
+            }),
+        ),
+        DomainError::BehindUpstream { behind } => (
+            RejectionCode::BehindUpstream,
+            json!({ "behind": behind, "remedy": crate::freshness::BEHIND_REMEDY }),
+        ),
+        DomainError::GitOperationInProgress { reason } => (
+            RejectionCode::GitOperationInProgress,
+            json!({ "reason": reason }),
+        ),
         // An internal invariant of the planner: overlapping edits for one
         // path. Nothing the caller passes differently changes it, so it never
         // gets a code.
@@ -637,6 +678,19 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
 
     let message = rejection_message(code, e);
     Some(json!({ "code": code, "message": message, "details": details }))
+}
+
+/// [`into_mcp_error`](crate::util::into_mcp_error) for the freshness refusals
+/// of `rename_note`: the rejection also carries the assessment's `warnings`
+/// in `details` when it had any, since an MCP client has no stderr (T25).
+pub(crate) fn error_with_warnings(e: &DomainError, warnings: &[String]) -> ErrorData {
+    let mut data = envelope(e);
+    if !warnings.is_empty()
+        && let Some(rejection) = data.as_mut().and_then(|d| d.get_mut(MARKER))
+    {
+        rejection["details"]["warnings"] = json!(warnings);
+    }
+    ErrorData::internal_error(e.to_string(), data)
 }
 
 /// Wrap a classified rejection for transport in `ErrorData::data`.
@@ -1295,5 +1349,157 @@ mod tests {
                 "portfolios/surrogate-model/_index.md"
             );
         }
+    }
+
+    // -- rename_note (RFC 0007 T26): one test per code the tool adds --------
+
+    fn vp(p: &str) -> cdno_core::path::VaultPath {
+        cdno_core::path::VaultPath::new(p).unwrap()
+    }
+
+    #[test]
+    fn stem_shared_classifies_with_the_note_and_the_others() {
+        let payload = classify(&DomainError::StemShared {
+            slug: "surrogate-model".into(),
+            path: vp("projects/surrogate-model.md"),
+            others: vec![vp("actions/surrogate-model.md")],
+        })
+        .expect("the person can resolve a shared stem");
+        assert_eq!(payload["code"], "stem_shared");
+        assert_eq!(payload["details"]["slug"], "surrogate-model");
+        assert_eq!(payload["details"]["path"], "projects/surrogate-model.md");
+        assert_eq!(
+            payload["details"]["others"],
+            json!(["actions/surrogate-model.md"])
+        );
+    }
+
+    #[test]
+    fn note_not_renamable_classifies_with_its_reason() {
+        let payload = classify(&DomainError::NoteNotRenamable {
+            path: "actions/_done/2026/fit-the-baseline.md".into(),
+            reason: "archived".into(),
+        })
+        .expect("a refusal the person reads");
+        assert_eq!(payload["code"], "note_not_renamable");
+        assert_eq!(payload["details"]["reason"], "archived");
+        assert_eq!(
+            payload["details"]["path"],
+            "actions/_done/2026/fit-the-baseline.md"
+        );
+    }
+
+    #[test]
+    fn reference_drift_classifies_with_the_path_and_the_drift() {
+        let payload = classify(&DomainError::ReferenceDrift {
+            path: vp("actions/fit-the-baseline.md"),
+            drift: cdno_core::frontmatter_edit::FrontmatterDrift::KeyChanged("status".into()),
+        })
+        .expect("person-fixable");
+        assert_eq!(payload["code"], "reference_drift");
+        assert_eq!(payload["details"]["path"], "actions/fit-the-baseline.md");
+        assert_eq!(
+            payload["details"]["drift"],
+            "frontmatter key `status` changed"
+        );
+    }
+
+    #[test]
+    fn reference_unaddressable_classifies_with_the_path_and_the_key() {
+        let payload = classify(&DomainError::ReferenceUnaddressable {
+            path: vp("actions/fit-the-baseline.md"),
+            key: "project".into(),
+        })
+        .expect("person-fixable");
+        assert_eq!(payload["code"], "reference_unaddressable");
+        assert_eq!(payload["details"]["key"], "project");
+        assert_eq!(payload["details"]["path"], "actions/fit-the-baseline.md");
+    }
+
+    #[test]
+    fn behind_upstream_classifies_and_the_message_ends_on_the_remedy() {
+        let payload = classify(&DomainError::BehindUpstream { behind: 2 }).expect("a refusal");
+        assert_eq!(payload["code"], "behind_upstream");
+        assert_eq!(payload["details"]["behind"], 2);
+        let message = payload["message"].as_str().unwrap();
+        assert!(
+            message.starts_with("the vault is 2 commits behind its upstream")
+                && message.ends_with(crate::freshness::BEHIND_REMEDY),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn git_operation_in_progress_classifies_with_git_s_reason() {
+        let payload = classify(&DomainError::GitOperationInProgress {
+            reason: "a merge is in progress (.git/MERGE_HEAD present)".into(),
+        })
+        .expect("a refusal");
+        assert_eq!(payload["code"], "git_operation_in_progress");
+        assert_eq!(
+            payload["details"]["reason"],
+            "a merge is in progress (.git/MERGE_HEAD present)"
+        );
+    }
+
+    #[test]
+    fn stale_plan_classifies_with_both_hashes_and_says_to_preview_again() {
+        let payload = classify(&DomainError::StalePlan {
+            expected: "aaaa".into(),
+            actual: "bbbb".into(),
+        })
+        .expect("a refusal");
+        assert_eq!(payload["code"], "stale_plan");
+        assert_eq!(payload["details"]["expected"], "aaaa");
+        assert_eq!(payload["details"]["actual"], "bbbb");
+        let message = payload["message"].as_str().unwrap();
+        assert!(
+            message.contains("dry_run: true") && message.contains("Do not retry"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn rename_incomplete_classifies_with_the_paths_and_the_source() {
+        let payload = classify(&DomainError::RenameIncomplete {
+            failed: vec![
+                vp("projects/surrogate-model.md"),
+                vp("actions/fit-the-baseline.md"),
+            ],
+            source: StoreError::PermissionDenied("projects/surrogate-model.md".into()),
+        })
+        .expect("the person checks these paths by hand");
+        assert_eq!(payload["code"], "rename_incomplete");
+        assert_eq!(
+            payload["details"]["paths"],
+            json!(["projects/surrogate-model.md", "actions/fit-the-baseline.md"])
+        );
+        assert!(
+            payload["details"]["source"]
+                .as_str()
+                .unwrap()
+                .contains("permission"),
+            "{payload}"
+        );
+    }
+
+    #[test]
+    fn freshness_warnings_ride_in_the_details_of_a_refusal() {
+        let err = error_with_warnings(
+            &DomainError::BehindUpstream { behind: 1 },
+            &["no upstream (none set, or it could not be read)".to_owned()],
+        );
+        let rejection = &err.data.as_ref().unwrap()[MARKER];
+        assert_eq!(rejection["code"], "behind_upstream");
+        assert_eq!(
+            rejection["details"]["warnings"],
+            json!(["no upstream (none set, or it could not be read)"])
+        );
+        let plain = error_with_warnings(&DomainError::BehindUpstream { behind: 1 }, &[]);
+        assert!(
+            plain.data.as_ref().unwrap()[MARKER]["details"]
+                .get("warnings")
+                .is_none()
+        );
     }
 }

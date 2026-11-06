@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
     // (RFC 0006 §8.4).
     cdno_mcp::startup::log_method_notice(&opened.vault);
 
-    let server = CuadernoServer::new(Arc::new(opened.vault));
+    let server = CuadernoServer::new(Arc::new(opened.vault)).with_vault_root(root.clone());
     // Derive the count from the merged router rather than hardcoding it,
     // so the startup log can't fall out of sync as tools are added.
     tracing::info!(

@@ -94,6 +94,8 @@ fn advertised_catalogue_matches_expected_surface() {
         "update_project_state",
         // Revise a mutable custom note in place (RFC 0002 T9, #622).
         "revise_note",
+        // Rename a note and follow every reference to it (RFC 0007 T26).
+        "rename_note",
         "add_action",
         "promote_action",
         "start_action",
@@ -145,7 +147,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 65);
+    assert_eq!(tools.len(), 66);
 }
 
 /// `read_note` is a read, so it rides the context router onto the
@@ -567,6 +569,7 @@ fn concept_method_clauses_are_pinned_on_the_tool_descriptions() {
         "note_to_daily",
         "upsert_daily_section",
         "revise_note",
+        "rename_note",
     ] {
         let desc = description_of(name);
         assert!(
@@ -1123,4 +1126,38 @@ fn every_create_tool_describes_the_slug_hint() {
             .unwrap_or_else(|| panic!("{name} has a described `slug` property"));
         assert!(desc.contains("every later reference"), "{name}: {desc}");
     }
+}
+
+/// RFC 0007 §6.4, T26: the `rename_note` description is the agent's only
+/// instruction surface for the preview contract and its refusals, so each
+/// instruction is pinned, inside the client cut, in one paragraph.
+#[test]
+fn rename_note_description_states_the_contract() {
+    let desc = description_of("rename_note");
+    for phrase in [
+        // The preview is the contract.
+        "`dry_run: true`",
+        "`expected_plan`",
+        "`plan_hash`",
+        // A stale plan is previewed again, never retried.
+        "`stale_plan`",
+        "never retry blindly",
+        // Behind the upstream: retry, then tell the person.
+        "`behind_upstream`",
+        "retry in a few seconds",
+        "tell the person rather than set `skip_sync_check`",
+        // A portfolio is renamed through its question.
+        "renamed through the question",
+        // The current slug is reported when a former name was typed.
+        "`found_by_former_name`",
+        "`from` is the current slug",
+    ] {
+        assert!(desc.contains(phrase), "missing {phrase:?}: {desc}");
+    }
+    assert!(!desc.contains('\n'), "one paragraph: {desc}");
+    assert!(
+        desc.chars().count() <= CLIENT_CUT,
+        "{} chars is past the {CLIENT_CUT}-char client cut",
+        desc.chars().count()
+    );
 }

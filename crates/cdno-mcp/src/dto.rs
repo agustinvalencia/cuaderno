@@ -1543,6 +1543,11 @@ pub struct ReadNoteResponse {
     /// Text of every heading in the body, all levels, in document order,
     /// with inline markup stripped: the form a section argument matches.
     pub headings: Vec<String>,
+    /// The former name `note` matched, when it was one: the note answers
+    /// to its current slug (`path` shows it) and an agent should use that
+    /// from now on. Absent when the reference matched the note directly.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub found_by_former_name: Option<String>,
 }
 
 impl From<cdno_domain::vault::NoteView> for ReadNoteResponse {
@@ -1555,6 +1560,7 @@ impl From<cdno_domain::vault::NoteView> for ReadNoteResponse {
             content_hash: v.content_hash,
             backlinks: v.backlinks.into_iter().map(|p| p.to_string()).collect(),
             headings: v.headings,
+            found_by_former_name: None,
         }
     }
 }
@@ -1896,6 +1902,196 @@ impl From<SearchResultEntry> for SearchResultDto {
             title: r.title,
             snippet: r.snippet,
             score: r.score,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
+// rename_note (RFC 0007 §6.4, T26)
+// ---------------------------------------------------------------------
+
+/// Output of `rename_note`: the plan, whether or not it was written. The
+/// fields of the plan are the ones `cdno note rename --json` prints.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RenamePlanDto {
+    /// `true` for a preview: nothing was written and no sync was nudged.
+    pub dry_run: bool,
+    /// Vault-relative path of the note being renamed, before the rename.
+    pub target: String,
+    /// The note's current slug: the one to use from now on when `note` was
+    /// a former name.
+    pub from: String,
+    pub new_slug: String,
+    /// The former name `note` matched, when it was one; null otherwise.
+    pub found_by_former_name: Option<String>,
+    /// The note's own move(s); a portfolio's folder moves as one.
+    pub moves: Vec<RenameMoveDto>,
+    /// One entry per path the rename rewrites, in path order.
+    pub edits: Vec<RenameEditDto>,
+    /// References rewritten (links plus fields).
+    pub references: usize,
+    /// Notes holding those references.
+    pub notes: usize,
+    /// Things to show the person that do not stop the plan.
+    pub warnings: Vec<RenameWarningDto>,
+    /// Pass this as `expected_plan` to write exactly this plan.
+    pub plan_hash: String,
+    /// The `renamed` entry the rename appends to today's daily log, without
+    /// its time stamp; null when the plan is empty (a rename to the current
+    /// slug).
+    pub log_line: Option<String>,
+    /// Whether anything was written: false on a dry run and for an empty plan.
+    pub written: bool,
+    /// The files are written but the index failed to follow for some of
+    /// them; the next open reconciles it. The rename itself succeeded.
+    pub index_stale: bool,
+    /// Read-back proof the new note landed, as every write tool carries;
+    /// null when nothing was written.
+    pub verification: Option<WriteVerificationDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RenameMoveDto {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RenameEditDto {
+    pub path: String,
+    pub changes: Vec<RenameChangeDto>,
+}
+
+/// One kind of change in an edit: `links` (with `count`), `field` (with
+/// `key`), `alias`, or `log_line`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RenameChangeDto {
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+}
+
+/// A warning: `kind` is `frozen_prefix_already_diverged` (with `path`),
+/// `old_slug_already_an_alias` (with `holder`) or `sync_check`; `message`
+/// says it in a sentence.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RenameWarningDto {
+    pub kind: &'static str,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub holder: Option<String>,
+}
+
+impl RenamePlanDto {
+    /// The plan as the tool reports it. `sync_warnings` are the freshness
+    /// check's, in the order they arose.
+    pub fn new(
+        plan: &cdno_domain::vault::RenamePlan,
+        sync_warnings: &[String],
+        dry_run: bool,
+        written: bool,
+        index_stale: bool,
+    ) -> Self {
+        use cdno_domain::vault::{Change, RenameWarning};
+        let mut references = 0;
+        let mut notes = 0;
+        for edit in &plan.edits {
+            let here: usize = edit
+                .changes
+                .iter()
+                .map(|c| match c {
+                    Change::Address { count } => *count,
+                    Change::Field { .. } => 1,
+                    Change::Alias | Change::LogLine => 0,
+                })
+                .sum();
+            references += here;
+            notes += usize::from(here > 0);
+        }
+        let change = |c: &Change| match c {
+            Change::Address { count } => RenameChangeDto {
+                kind: "links",
+                count: Some(*count),
+                key: None,
+            },
+            Change::Field { key } => RenameChangeDto {
+                kind: "field",
+                count: None,
+                key: Some(key.clone()),
+            },
+            Change::Alias => RenameChangeDto {
+                kind: "alias",
+                count: None,
+                key: None,
+            },
+            Change::LogLine => RenameChangeDto {
+                kind: "log_line",
+                count: None,
+                key: None,
+            },
+        };
+        let warning = |w: &RenameWarning| match w {
+            RenameWarning::FrozenPrefixAlreadyDiverged { path } => RenameWarningDto {
+                kind: "frozen_prefix_already_diverged",
+                message: format!(
+                    "{path} already failed its archival check before this rename; it is rewritten anyway and stays flagged"
+                ),
+                path: Some(path.to_string()),
+                holder: None,
+            },
+            RenameWarning::OldSlugAlreadyAnAlias { holder } => RenameWarningDto {
+                kind: "old_slug_already_an_alias",
+                message: format!(
+                    "the old slug is already an alias of {holder}; once this note lists it too the alias is shared and resolves to nothing"
+                ),
+                path: None,
+                holder: Some(holder.to_string()),
+            },
+        };
+        Self {
+            dry_run,
+            target: plan.target.path.to_string(),
+            from: plan.target.slug.clone(),
+            new_slug: plan.new_slug.clone(),
+            found_by_former_name: plan.target.resolved_via_alias.clone(),
+            moves: plan
+                .moves
+                .iter()
+                .map(|(from, to)| RenameMoveDto {
+                    from: from.to_string(),
+                    to: to.to_string(),
+                })
+                .collect(),
+            edits: plan
+                .edits
+                .iter()
+                .map(|e| RenameEditDto {
+                    path: e.path.to_string(),
+                    changes: e.changes.iter().map(change).collect(),
+                })
+                .collect(),
+            references,
+            notes,
+            warnings: plan
+                .warnings
+                .iter()
+                .map(warning)
+                .chain(sync_warnings.iter().map(|m| RenameWarningDto {
+                    kind: "sync_check",
+                    message: m.clone(),
+                    path: None,
+                    holder: None,
+                }))
+                .collect(),
+            plan_hash: plan.hash.clone(),
+            log_line: plan.log_line.clone(),
+            written,
+            index_stale,
+            verification: None,
         }
     }
 }

@@ -27,7 +27,7 @@ use cdno_mcp::server::{
     DiscardInboxItemInput, DropActionInput, DropProjectInput, FileToPortfolioInput,
     HandOffProjectInput, LinkPortfolioToProjectInput, LinkPortfolioToQuestionInput,
     NoteToDailyInput, OpenItemsChoice, PauseActionInput, ProjectSlugInput, PromoteActionInput,
-    ReadDailyNoteInput, ReadMonthlyNoteInput, ReadNoteInput, ReadWeeklyNoteInput,
+    ReadDailyNoteInput, ReadMonthlyNoteInput, ReadNoteInput, ReadWeeklyNoteInput, RenameNoteInput,
     ResolveWaitingOnInput, ResumeActionInput, ReviseNoteInput, SetCoreQuestionInput,
     SetFrontmatterInput, SetQuestionStatusInput, StartActionInput, StartUnplannedActionInput,
     SwitchActionInput, SwitchUnplannedActionInput, UpdateProjectStateInput,
@@ -5031,5 +5031,327 @@ mod freshness {
                 "skip {skip}: {got:?}"
             );
         }
+    }
+}
+
+// ---------------------------------------------------------------------
+// rename_note (RFC 0007 §6.4, T26)
+// ---------------------------------------------------------------------
+
+#[path = "support/flaky_index.rs"]
+mod flaky_index;
+
+mod rename {
+    use super::*;
+
+    use std::sync::Arc;
+
+    use cdno_core::index::MemoryIndex;
+    use serde_json::json;
+
+    use crate::flaky_index::FlakyIndex;
+
+    const PROJECT: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nCalibrating.\n\n## Next Actions\n- [ ] [[actions/fit-the-baseline]] (deep)\n\n## Milestones\n- [ ] Baseline fitted \u{2014} hard: 2026-05-20\n";
+    const ACTION: &str = "---\ntype: action\nstatus: active\nproject: surrogate-model\nenergy: deep\ncreated: 2026-05-01\n---\n\n# Fit the baseline\n\nSee [[surrogate-model]].\n";
+    const OLD: &str = "projects/surrogate-model.md";
+    const NEW: &str = "projects/emulator-study.md";
+
+    fn seeded_store() -> Arc<dyn VaultStore> {
+        let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+        store.write_file(&vp(OLD), PROJECT).unwrap();
+        store
+            .write_file(&vp("actions/fit-the-baseline.md"), ACTION)
+            .unwrap();
+        store
+    }
+
+    fn server_over(store: &Arc<dyn VaultStore>, index: Arc<dyn VaultIndex>) -> CuadernoServer {
+        let (vault, _r) =
+            Vault::new(Arc::clone(store), index, VaultConfig::default()).expect("vault opens");
+        CuadernoServer::new(Arc::new(vault))
+    }
+
+    fn server() -> (CuadernoServer, Arc<dyn VaultStore>) {
+        let store = seeded_store();
+        let server = server_over(&store, Arc::new(MemoryIndex::new()));
+        (server, store)
+    }
+
+    fn input(note: &str, to: &str) -> RenameNoteInput {
+        RenameNoteInput {
+            note: note.to_owned(),
+            to: to.to_owned(),
+            reason: Some("the model became an emulator study".to_owned()),
+            dry_run: None,
+            expected_plan: None,
+            skip_sync_check: None,
+        }
+    }
+
+    async fn preview(server: &CuadernoServer) -> serde_json::Value {
+        let result = server
+            .rename_note(Parameters(RenameNoteInput {
+                dry_run: Some(true),
+                ..input("surrogate-model", "emulator-study")
+            }))
+            .await
+            .expect("a dry run");
+        decode_json(&result)
+    }
+
+    #[tokio::test]
+    async fn rename_note_dry_run_returns_the_plan_and_writes_nothing() {
+        let (server, store) = server();
+        let before = store.walk_dir(&VaultPath::root()).unwrap();
+        let plan = preview(&server).await;
+
+        assert_eq!(plan["dry_run"], json!(true));
+        assert_eq!(plan["written"], json!(false));
+        assert_eq!(plan["index_stale"], json!(false));
+        assert_eq!(plan["target"], OLD);
+        assert_eq!(plan["from"], "surrogate-model");
+        assert_eq!(plan["new_slug"], "emulator-study");
+        assert_eq!(plan["found_by_former_name"], json!(null));
+        assert_eq!(plan["moves"], json!([{ "from": OLD, "to": NEW }]));
+        assert!(plan["plan_hash"].as_str().is_some_and(|h| !h.is_empty()));
+        assert!(
+            plan["log_line"]
+                .as_str()
+                .is_some_and(|l| l.contains("renamed")),
+            "{plan}"
+        );
+        assert_eq!(plan["verification"], json!(null));
+        let edits = plan["edits"].as_array().unwrap();
+        let action = edits
+            .iter()
+            .find(|e| e["path"] == "actions/fit-the-baseline.md")
+            .unwrap_or_else(|| panic!("the referrer is planned: {plan}"));
+        assert!(
+            action["changes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["kind"] == "links" && c["count"] == 1),
+            "{action}"
+        );
+        assert!(
+            action["changes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["kind"] == "field" && c["key"] == "project"),
+            "{action}"
+        );
+        // Nothing moved, nothing created.
+        assert_eq!(store.walk_dir(&VaultPath::root()).unwrap(), before);
+        assert!(store.exists(&vp(OLD)).unwrap());
+        assert!(!store.exists(&vp(NEW)).unwrap());
+    }
+
+    #[tokio::test]
+    async fn rename_note_with_the_previewed_hash_writes() {
+        let (server, store) = server();
+        let plan = preview(&server).await;
+        let result = server
+            .rename_note(Parameters(RenameNoteInput {
+                expected_plan: Some(plan["plan_hash"].as_str().unwrap().to_owned()),
+                ..input("surrogate-model", "emulator-study")
+            }))
+            .await
+            .expect("the previewed plan is written");
+        let written = decode_json(&result);
+
+        assert_eq!(written["written"], json!(true));
+        assert_eq!(written["dry_run"], json!(false));
+        assert_eq!(written["plan_hash"], plan["plan_hash"]);
+        assert_eq!(written["verification"]["verified"], "content");
+        assert!(!store.exists(&vp(OLD)).unwrap());
+        assert!(store.exists(&vp(NEW)).unwrap());
+        let action = store.read_file(&vp("actions/fit-the-baseline.md")).unwrap();
+        assert!(
+            action.contains("project: emulator-study") && action.contains("[[emulator-study]]"),
+            "{action}"
+        );
+        let daily = today_daily_text(&store);
+        assert!(daily.contains("renamed"), "{daily}");
+    }
+
+    #[tokio::test]
+    async fn rename_note_with_a_stale_hash_is_stale_plan() {
+        let (server, store) = server();
+        let plan = preview(&server).await;
+        let err = server
+            .rename_note(Parameters(RenameNoteInput {
+                expected_plan: Some("0000stale".to_owned()),
+                ..input("surrogate-model", "emulator-study")
+            }))
+            .await
+            .expect_err("a plan that moved is refused");
+        let rejection = rejection_of(&err);
+        assert_eq!(rejection["code"], "stale_plan");
+        assert_eq!(rejection["details"]["expected"], "0000stale");
+        assert_eq!(rejection["details"]["actual"], plan["plan_hash"]);
+        assert!(
+            rejection["message"]
+                .as_str()
+                .unwrap()
+                .contains("Do not retry"),
+            "{rejection}"
+        );
+        assert!(store.exists(&vp(OLD)).unwrap(), "nothing was written");
+        assert!(!store.exists(&vp(NEW)).unwrap());
+    }
+
+    #[tokio::test]
+    async fn rename_note_index_stale_is_success() {
+        let store = seeded_store();
+        let flaky = Arc::new(FlakyIndex::new(Arc::new(MemoryIndex::new())));
+        let index: Arc<dyn VaultIndex> = flaky.clone();
+        let server = server_over(&store, index);
+        let plan = preview(&server).await;
+        flaky.arm();
+        let result = server
+            .rename_note(Parameters(RenameNoteInput {
+                expected_plan: Some(plan["plan_hash"].as_str().unwrap().to_owned()),
+                ..input("surrogate-model", "emulator-study")
+            }))
+            .await
+            .expect("the files landed, so the rename succeeded");
+        let written = decode_json(&result);
+        assert_eq!(written["index_stale"], json!(true), "{written}");
+        assert_eq!(written["written"], json!(true));
+        assert!(store.exists(&vp(NEW)).unwrap());
+        assert!(!store.exists(&vp(OLD)).unwrap());
+    }
+
+    #[tokio::test]
+    async fn rename_note_reports_a_former_name_and_read_note_does_too() {
+        let (server, _store) = server();
+        let plan = preview(&server).await;
+        server
+            .rename_note(Parameters(RenameNoteInput {
+                expected_plan: Some(plan["plan_hash"].as_str().unwrap().to_owned()),
+                ..input("surrogate-model", "emulator-study")
+            }))
+            .await
+            .expect("renamed");
+
+        let read = server
+            .read_note(Parameters(ReadNoteInput {
+                note: "surrogate-model".to_owned(),
+            }))
+            .await
+            .expect("the old name resolves");
+        let read = decode_json(&read);
+        assert_eq!(read["path"], NEW);
+        assert_eq!(read["found_by_former_name"], "surrogate-model");
+        let current = server
+            .read_note(Parameters(ReadNoteInput {
+                note: "emulator-study".to_owned(),
+            }))
+            .await
+            .unwrap();
+        assert!(decode_json(&current).get("found_by_former_name").is_none());
+
+        // And the rename tool says so when it is given the former name.
+        let again = server
+            .rename_note(Parameters(RenameNoteInput {
+                dry_run: Some(true),
+                ..input("surrogate-model", "emulator-notes")
+            }))
+            .await
+            .expect("a dry run by the former name");
+        let again = decode_json(&again);
+        assert_eq!(again["found_by_former_name"], "surrogate-model");
+        assert_eq!(again["from"], "emulator-study");
+    }
+
+    #[tokio::test]
+    async fn rename_note_of_an_unknown_note_is_not_found() {
+        let (server, _store) = server();
+        let err = server
+            .rename_note(Parameters(input("no-such-note", "emulator-study")))
+            .await
+            .expect_err("nothing to rename");
+        assert_eq!(rejection_code(&err), "not_found");
+    }
+
+    #[tokio::test]
+    async fn rename_note_to_a_taken_slug_is_refused_not_suffixed() {
+        let (server, store) = server();
+        let err = server
+            .rename_note(Parameters(input("surrogate-model", "fit-the-baseline")))
+            .await
+            .expect_err("the stem is taken");
+        assert_eq!(rejection_code(&err), "slug_taken");
+        assert!(store.exists(&vp(OLD)).unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_blank_expected_plan_is_a_missing_one() {
+        let (server, store) = server();
+        let result = server
+            .rename_note(Parameters(RenameNoteInput {
+                expected_plan: Some("  ".to_owned()),
+                ..input("surrogate-model", "emulator-study")
+            }))
+            .await
+            .expect("no hash given, so none to be stale against");
+        assert_eq!(decode_json(&result)["written"], json!(true));
+        assert!(store.exists(&vp(NEW)).unwrap());
+    }
+
+    fn today_daily_text(store: &Arc<dyn VaultStore>) -> String {
+        let today = chrono::Local::now().date_naive();
+        store
+            .read_file(&vp(&cdno_core::paths::daily_note_relpath(today)))
+            .unwrap_or_default()
+    }
+
+    /// A git repository whose merge is left paused: the refusal the tool
+    /// makes before it plans, for a preview as for a write.
+    #[tokio::test]
+    async fn a_paused_git_operation_refuses_a_preview_and_a_write_alike() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let run = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .output()
+                .expect("git");
+            assert!(out.status.success(), "{args:?}: {out:?}");
+        };
+        run(&["init", "-q"]);
+        std::fs::write(dir.path().join(".git/MERGE_HEAD"), "0".repeat(40) + "\n").unwrap();
+        let store = seeded_store();
+        let server = server_over(&store, Arc::new(MemoryIndex::new()))
+            .with_vault_root(dir.path().to_path_buf());
+
+        for dry_run in [true, false] {
+            for skip in [false, true] {
+                let err = server
+                    .rename_note(Parameters(RenameNoteInput {
+                        dry_run: Some(dry_run),
+                        skip_sync_check: Some(skip),
+                        ..input("surrogate-model", "emulator-study")
+                    }))
+                    .await
+                    .expect_err("a paused merge is never overridable");
+                let rejection = rejection_of(&err);
+                assert_eq!(
+                    rejection["code"], "git_operation_in_progress",
+                    "dry_run {dry_run}, skip {skip}: {rejection}"
+                );
+                assert!(
+                    rejection["details"]["reason"]
+                        .as_str()
+                        .unwrap()
+                        .contains("MERGE_HEAD"),
+                    "{rejection}"
+                );
+            }
+        }
+        assert!(store.exists(&vp(OLD)).unwrap(), "nothing was written");
     }
 }

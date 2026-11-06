@@ -412,7 +412,7 @@ async fn serve() -> Result<()> {
             tracing::info!("read-only mode: mutating tools are not registered");
             CuadernoServer::read_only(vault)
         } else {
-            let server = CuadernoServer::new(vault);
+            let server = CuadernoServer::new(vault).with_vault_root(root.clone());
             if args.sync_nudge {
                 tracing::info!(
                     sentinel = %sentinel.path().display(),

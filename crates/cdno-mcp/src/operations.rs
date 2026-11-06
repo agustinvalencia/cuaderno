@@ -13,10 +13,10 @@ use cdno_domain::frontmatter::{Context, EnergyLevel};
 use cdno_domain::vault::Revision;
 use cdno_domain::{DailySection, MonthlySection, TrackingEntryDraft, WeeklySection};
 
-use crate::context::{refuse_reference_outside_the_vault, resolve_note_reference};
+use crate::context::{refuse_reference_outside_the_vault, resolve_note, resolve_note_reference};
 use crate::dto::{
-    CurrentFocusDto, NoteToDailyResponse, PauseResultDto, ResumeResultDto, ResumedFromDto,
-    ReviseNoteResponse, SwitchResultDto,
+    CurrentFocusDto, NoteToDailyResponse, PauseResultDto, RenamePlanDto, ResumeResultDto,
+    ResumedFromDto, ReviseNoteResponse, SwitchResultDto,
 };
 use crate::input::*;
 
@@ -465,6 +465,139 @@ impl CuadernoServer {
         let response = ReviseNoteResponse::from(outcome);
         self.verified_write_with(path, WriteShape::Rewritten, move |verification| {
             ReviseNoteResponse {
+                verification: Some(verification),
+                ..response
+            }
+        })
+        .await
+    }
+
+    /// Rename a note and follow every reference to it (RFC 0007 §6.4, T26).
+    ///
+    /// A thin handler over [`Vault::rename_preview`] and
+    /// [`Vault::rename_note`]. The freshness check of
+    /// [`crate::freshness`] runs first, for a dry run and a write alike,
+    /// and again under the write lock as the domain's guard; it never
+    /// fetches. A dry run goes through no write path and nudges nothing.
+    /// A write goes through
+    /// [`verified_write_with`](CuadernoServer::verified_write_with), so a
+    /// success fires the sync nudge; an empty plan (a rename to the current
+    /// slug) writes nothing and has nothing to verify or nudge.
+    ///
+    /// [`Vault::rename_preview`]: cdno_domain::Vault::rename_preview
+    /// [`Vault::rename_note`]: cdno_domain::Vault::rename_note
+    #[tool(
+        description = "Rename a note's slug and follow every reference to it, in one transaction: every wikilink and reference field (the journal included: an address is rewritten, no other byte of any note changes), the old slug kept as an alias on the note, and a `renamed` line logged to today's daily note. The preview is the contract: first call with `dry_run: true`, which writes nothing and returns the plan (`moves`, `edits`, `log_line`, `warnings`, `plan_hash`); show it to the person; only when they agree call again with the same `note` and `to` and `expected_plan` set to that `plan_hash`. Code `stale_plan` means the vault changed since the preview (any log append does it): preview again and show the new plan, never retry blindly. `note` takes the references `read_note` takes, including a former name; when one was typed, `found_by_former_name` says so and `from` is the current slug: use it from now on. `to` is refused, not suffixed, when taken or malformed (`slug_taken`, `invalid_slug`); `stem_shared`, `note_not_renamable`, `reference_drift` and `reference_unaddressable` are the person's to fix, not yours to work around. A portfolio whose slug a question shares is renamed through the question. `behind_upstream` means the vault is behind its upstream as last fetched: retry in a few seconds, and if still behind, tell the person rather than set `skip_sync_check`; `git_operation_in_progress` (a merge or rebase left paused) is never overridable. `reason` is a short clause for the log line. The result is the plan plus `written` and `index_stale` (true: the files are written and the rename succeeded; the index catches up on the next open). `rename_incomplete` lists the paths a failed rollback left for the person to check by hand."
+    )]
+    pub async fn rename_note(
+        &self,
+        Parameters(input): Parameters<RenameNoteInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let reference = input.note.trim().to_owned();
+        refuse_reference_outside_the_vault(&reference)?;
+        let to = input.to.trim().to_owned();
+        let reason = input.reason.filter(|r| !r.trim().is_empty());
+        let dry_run = input.dry_run.unwrap_or(false);
+        let skip = input.skip_sync_check.unwrap_or(false);
+        // A blank hash would be a hash that matches nothing: `stale_plan`
+        // with advice that does not apply. It is a missing hash.
+        let expected = input.expected_plan.filter(|h| !h.trim().is_empty());
+        let root = self.vault_root().map(std::path::Path::to_path_buf);
+
+        let run = self
+            .with_vault(move |vault| -> Result<RenameRun, RenameFail> {
+                let note = match resolve_note(vault, &reference, at.date())
+                    .map_err(|e| RenameFail::Domain(Box::new((e, Vec::new()))))?
+                {
+                    Ok(note) => note,
+                    Err(rejection) => return Err(RenameFail::Reject(rejection)),
+                };
+                // The typed name goes through only when it carried a former
+                // name to report; otherwise the resolved path does, so a hit
+                // taken from an ambiguity is the note the domain plans for.
+                let target = if note.resolved_via_alias.is_some() {
+                    reference.clone()
+                } else {
+                    note.path.to_string()
+                };
+                // The freshness check, before the preview: a dry run is
+                // refused as the write would be. No root: not under git.
+                let checked = match &root {
+                    Some(root) => crate::freshness::check(root, skip),
+                    None => crate::freshness::Assessment::default(),
+                };
+                if let Some(refusal) = checked.refusal {
+                    return Err(RenameFail::Domain(Box::new((refusal, checked.warnings))));
+                }
+                let shown = checked.warnings;
+                if dry_run {
+                    let plan = vault
+                        .rename_preview(&target, &to, reason.as_deref(), at)
+                        .map_err(|e| RenameFail::Domain(Box::new((e, shown.clone()))))?;
+                    return Ok(RenameRun {
+                        plan,
+                        sync_warnings: shown,
+                        written: Vec::new(),
+                        index_stale: false,
+                    });
+                }
+                // The whole check again under the lock; what it newly warns
+                // about joins the first check's.
+                let fresh = std::cell::RefCell::new(Vec::new());
+                let outcome = match &root {
+                    Some(root) => vault.rename_note(
+                        &target,
+                        &to,
+                        reason.as_deref(),
+                        expected.as_deref(),
+                        at,
+                        crate::freshness::guard(root, skip, &shown, &fresh),
+                    ),
+                    None => vault.rename_note(
+                        &target,
+                        &to,
+                        reason.as_deref(),
+                        expected.as_deref(),
+                        at,
+                        || Ok(()),
+                    ),
+                };
+                let mut sync_warnings = shown;
+                sync_warnings.extend(fresh.into_inner());
+                match outcome {
+                    Ok(outcome) => Ok(RenameRun {
+                        plan: outcome.plan,
+                        sync_warnings,
+                        written: outcome.written,
+                        index_stale: outcome.index_stale,
+                    }),
+                    Err(e) => Err(RenameFail::Domain(Box::new((e, sync_warnings)))),
+                }
+            })
+            .await?;
+        let run = match run {
+            Ok(run) => run,
+            Err(RenameFail::Reject(rejection)) => return Err(rejection),
+            Err(RenameFail::Domain(failure)) => {
+                let (e, warnings) = *failure;
+                return Err(crate::rejection::error_with_warnings(&e, &warnings));
+            }
+        };
+        let response = RenamePlanDto::new(
+            &run.plan,
+            &run.sync_warnings,
+            dry_run,
+            !run.written.is_empty(),
+            run.index_stale,
+        );
+        // A preview and an empty plan wrote nothing: no verification, no
+        // nudge. The note's new path is the first of `written`.
+        let Some(landed) = run.written.first().cloned() else {
+            return json_result(response);
+        };
+        self.verified_write_with(landed, WriteShape::Rewritten, move |verification| {
+            RenamePlanDto {
                 verification: Some(verification),
                 ..response
             }
@@ -1141,4 +1274,20 @@ impl CuadernoServer {
         })
         .await
     }
+}
+
+/// What the rename handler's blocking closure hands back on success.
+struct RenameRun {
+    plan: cdno_domain::vault::RenamePlan,
+    sync_warnings: Vec<String>,
+    written: Vec<cdno_core::path::VaultPath>,
+    index_stale: bool,
+}
+
+/// How it fails: a resolver rejection (already an `ErrorData`), or a domain
+/// error with the freshness warnings gathered so far, which a refusal
+/// carries in its `details`.
+enum RenameFail {
+    Reject(ErrorData),
+    Domain(Box<(DomainError, Vec<String>)>),
 }

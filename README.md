@@ -110,7 +110,7 @@ Wire it into Claude Desktop / Claude Code with:
 
 The vault path can also be omitted; the server then opens whichever vault the working directory belongs to.
 
-**Tool surface today.** All 65 tools are wired through to the domain — context-gathering reads, daily/weekly note access, the write operations, structural creation, and lifecycle transitions. The authoritative catalogue is the sorted-set assertion in `crates/cdno-mcp/tests/server.rs`; [`STATUS.md`](STATUS.md) describes the main ones but its table is not exhaustive.
+**Tool surface today.** All 66 tools are wired through to the domain — context-gathering reads, daily/weekly note access, the write operations, structural creation, and lifecycle transitions. The authoritative catalogue is the sorted-set assertion in `crates/cdno-mcp/tests/server.rs`; [`STATUS.md`](STATUS.md) describes the main ones but its table is not exhaustive.
 
 ### Where to go next
 
