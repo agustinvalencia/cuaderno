@@ -588,14 +588,17 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         | DomainError::ConfigChangedDuringMigration
         | DomainError::MigrationStampInvalid { .. } => return None,
 
-        // The rename planner's refusals (RFC 0007 §5.2, §5.4). No MCP tool
-        // reaches the planner yet; the `rename_note` tool (T26) gives them
-        // their codes: `note_not_renamable`, `stem_shared`, `reference_drift`
-        // and `reference_unaddressable`.
+        // The rename's refusals (RFC 0007 §5.2, §5.4, §6.2). No MCP tool
+        // reaches the planner or the write yet; the `rename_note` tool (T26)
+        // gives them their codes: `note_not_renamable`, `stem_shared`,
+        // `reference_drift`, `reference_unaddressable`, `stale_plan` and
+        // `rename_incomplete`.
         DomainError::NoteNotRenamable { .. }
         | DomainError::StemShared { .. }
         | DomainError::ReferenceDrift { .. }
-        | DomainError::ReferenceUnaddressable { .. } => return None,
+        | DomainError::ReferenceUnaddressable { .. }
+        | DomainError::StalePlan { .. }
+        | DomainError::RenameIncomplete { .. } => return None,
         // An internal invariant of the planner: overlapping edits for one
         // path. Nothing the caller passes differently changes it, so it never
         // gets a code.

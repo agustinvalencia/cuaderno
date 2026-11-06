@@ -5,14 +5,19 @@
 //! daily note must not lose log lines. `log_to_daily_note` is a
 //! read-modify-write full rewrite; without the cross-process lock,
 //! concurrent writers clobber each other. With it, every line survives.
+//! The rename (RFC 0007 T20) reads the whole vault under the same lock.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
+use std::time::Duration;
 
 use cdno_core::config::VaultConfig;
+use cdno_core::error::StoreError;
+use cdno_core::file_meta::FileMeta;
 use cdno_core::index::{SqliteIndex, VaultIndex};
-use cdno_core::store::{FsVaultStore, VaultStore};
+use cdno_core::path::VaultPath;
+use cdno_core::store::{FsVaultStore, VaultStore, VaultWriteLock};
 use cdno_domain::Vault;
 use cdno_domain::frontmatter::{Context, EnergyLevel};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
@@ -125,5 +130,155 @@ fn concurrent_add_action_keeps_every_bullet() {
     assert_eq!(
         got, WRITERS,
         "lost action bullets under concurrent add_action (got {got}, want {WRITERS}):\n{project}"
+    );
+}
+
+/// A `FsVaultStore` that, once armed, starts a second writer the first
+/// time `trigger` is read, and gives it a moment to land before the read
+/// returns. The second writer goes through the vault, so it honours the
+/// write lock: it lands at once when the lock is free, and waits for the
+/// commit when the reader holds it. `RacingStore` (support.rs) writes
+/// behind the lock's back, so it cannot tell a read under the lock from
+/// one before it; this store can.
+struct SecondWriterStore {
+    inner: FsVaultStore,
+    trigger: VaultPath,
+    writer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    handle: Mutex<Option<thread::JoinHandle<()>>>,
+}
+
+impl SecondWriterStore {
+    fn arm(&self, writer: impl FnOnce() + Send + 'static) {
+        *self.writer.lock().unwrap() = Some(Box::new(writer));
+    }
+
+    fn join(&self) {
+        if let Some(handle) = self.handle.lock().unwrap().take() {
+            handle.join().unwrap();
+        }
+    }
+}
+
+impl VaultStore for SecondWriterStore {
+    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        let read = self.inner.read_file(path);
+        if *path == self.trigger
+            && let Some(writer) = self.writer.lock().unwrap().take()
+        {
+            let (done, landed) = mpsc::channel();
+            *self.handle.lock().unwrap() = Some(thread::spawn(move || {
+                writer();
+                let _ = done.send(());
+            }));
+            // Landed, or blocked on the lock: either way, carry on.
+            let _ = landed.recv_timeout(Duration::from_millis(500));
+        }
+        read
+    }
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.inner.read_bytes(path)
+    }
+    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.write_file(path, content)
+    }
+    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.append_to_file(path, content)
+    }
+    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.move_file(src, dest)
+    }
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        self.inner.delete_file(path)
+    }
+    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
+        self.inner.exists(path)
+    }
+    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.list_dir(path)
+    }
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.walk_dir(path)
+    }
+    fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
+        self.inner.metadata(path)
+    }
+    fn import_external(&self, src: &Path, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.import_external(src, dest)
+    }
+    fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
+        self.inner.acquire_write_lock()
+    }
+}
+
+#[test]
+fn a_rename_holds_the_lock_for_the_whole_plan() {
+    // A second writer appends to today's daily note (which the rename also
+    // rewrites) while the rename reads the vault. The snapshot is taken
+    // under the lock, so that writer waits for the commit and its line
+    // lands after the rename's. Read before the lock, the rename would
+    // plan against the daily note without the line and overwrite it: a
+    // lost update.
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join(".cuaderno")).unwrap();
+    let at: NaiveDateTime = NaiveDate::from_ymd_opt(2026, 6, 13)
+        .unwrap()
+        .and_time(NaiveTime::from_hms_opt(9, 0, 0).unwrap());
+    let daily = "journal/2026/daily/2026-06-13.md";
+
+    let setup = build_fs_vault(root);
+    setup
+        .create_project(at, "Surrogate model", Context::Work, None)
+        .expect("create project");
+    setup
+        .log_to_daily_note(at, "calibrating [[surrogate-model]]")
+        .expect("log");
+    drop(setup);
+
+    // Built before the race, so only the writes race (opening reconciles,
+    // which takes the lock too).
+    let second = build_fs_vault(root);
+    let store = Arc::new(SecondWriterStore {
+        inner: FsVaultStore::new(root),
+        // Read after the daily note in the snapshot's path order.
+        trigger: VaultPath::new("projects/surrogate-model.md").unwrap(),
+        writer: Mutex::new(None),
+        handle: Mutex::new(None),
+    });
+    let index: Arc<dyn VaultIndex> =
+        Arc::new(SqliteIndex::open(root.join(".cuaderno/index.db")).expect("open index"));
+    let dyn_store: Arc<dyn VaultStore> = store.clone();
+    let (vault, _report) =
+        Vault::new(dyn_store, index, VaultConfig::default()).expect("construct vault");
+
+    let plan = vault
+        .rename_preview("surrogate-model", "surrogate-calibration", None, at)
+        .expect("preview");
+    store.arm(move || {
+        second
+            .log_to_daily_note(at, "the second writer")
+            .expect("second writer");
+    });
+    let outcome = vault.rename_note(
+        "surrogate-model",
+        "surrogate-calibration",
+        None,
+        Some(&plan.hash),
+        at,
+    );
+    store.join();
+    outcome.expect("the rename wrote the plan it previewed");
+
+    let text = std::fs::read_to_string(root.join(daily)).expect("daily note");
+    let renamed = text
+        .find("renamed [[surrogate-calibration]]")
+        .unwrap_or_else(|| panic!("no rename line:\n{text}"));
+    let second_line = text
+        .find("the second writer")
+        .unwrap_or_else(|| panic!("the second writer's line was lost:\n{text}"));
+    assert!(renamed < second_line, "{text}");
+    assert!(
+        text.contains("calibrating [[surrogate-calibration]]"),
+        "{text}"
     );
 }

@@ -79,6 +79,7 @@ pub use actions::{
 pub use closed::ClosedProjectEntry;
 pub use closing::ProjectClosureOutcome;
 pub use holder::{HolderChange, LOG_HOLDER_PREFIX, NO_HOLDER};
+pub(in crate::vault) use lifecycle::stage_project_index_rows;
 pub use open_items::{
     LinkedCommitment, OpenAction, OpenItems, OpenItemsHash, OpenItemsReport, OpenMilestone,
 };

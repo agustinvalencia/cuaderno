@@ -1,26 +1,32 @@
-//! `Vault::plan_rename` (RFC 0007 §5.2–§5.4, §6.2; T18): the pure planner
-//! over a store snapshot. Every probe plans against a snapshot read from a
-//! `MemoryVaultStore`; nothing here writes through the vault.
+//! The rename (RFC 0007 §5.2–§5.6, §6.2). `Vault::plan_rename` (T18), the
+//! pure planner over a store snapshot, planned against a snapshot read from
+//! a `MemoryVaultStore`; then `rename_preview` and `rename_note` (T20), the
+//! write under the lock, on the same fixture.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cdno_core::config::VaultConfig;
+use cdno_core::error::StoreError;
 use cdno_core::extractors::{differs_only_by, wikilink_spans};
 use cdno_core::frontmatter::split_frontmatter;
 use cdno_core::frontmatter_edit::frontmatter_scalar_spans;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_domain::TakenBy;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::EnergyLevel;
 use cdno_domain::vault::{
-    Change, RenamePlan, RenameWarning, VaultSnapshot, format_renamed_log_entry,
+    Change, CommitmentSource, RefResolution, RenameOutcome, RenamePlan, RenameWarning,
+    VaultSnapshot, format_renamed_log_entry,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
-const PROJECT: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nCalibrating.\n\n## Next Actions\n";
+use super::support::{FailingStore, FlakyIndex};
+
+const PROJECT: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nCalibrating.\n\n## Next Actions\n- [ ] [[actions/fit-the-baseline]] (deep)\n\n## Milestones\n- [ ] Baseline fitted \u{2014} hard: 2026-05-20\n";
 
 const ACTION: &str = "---\ntype: action\nstatus: active\nproject: old\nenergy: deep\ncreated: 2026-05-01\n---\n\n# Fit the baseline\n\n## Notes\nTagged #action/old in the log.\n";
 
@@ -29,7 +35,7 @@ const COMMITMENT: &str = "---\ntype: commitment\nstatus: active\ndue: 2026-06-01
 const INBOX: &str =
     "---\ntype: inbox\ncreated: 2026-05-08\ncaptured_during: old\n---\n\nTry a smaller kernel.\n";
 
-const EMULATOR: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-02\n---\n\n# Emulator\n\n## Current State\nWaiting on [[old]].\n\n## Next Actions\n";
+const EMULATOR: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-02\n---\n\n# Emulator\n\n## Current State\nWaiting on [[old]].\n\n## Next Actions\n\n## Milestones\n- [ ] Hand-off from [[old]] \u{2014} target: 2026-06-15\n";
 
 /// A note whose frontmatter holds `project: old` nested under another key:
 /// not a §3.5 field, since only a top-level key is one.
@@ -63,6 +69,10 @@ fn at() -> NaiveDateTime {
 
 struct Fixture {
     store: Arc<dyn VaultStore>,
+    /// The store and index under `store` and the vault, for a test that
+    /// opens the vault again over a wrapper of either.
+    mem: Arc<MemoryVaultStore>,
+    index: Arc<MemoryIndex>,
     vault: Vault,
 }
 
@@ -107,16 +117,12 @@ impl Fixture {
 /// `[[old]]` in its frozen prefix, archived through the verb so its snapshot
 /// row is exactly what archival stamps.
 fn fixture() -> Fixture {
-    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
-    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let mem = Arc::new(MemoryVaultStore::new());
+    let mem_index = Arc::new(MemoryIndex::new());
+    let store: Arc<dyn VaultStore> = mem.clone();
+    let index: Arc<dyn VaultIndex> = mem_index.clone();
     store.write_file(&vp("projects/old.md"), PROJECT).unwrap();
-    let vault = Vault::new(
-        Arc::clone(&store),
-        Arc::clone(&index),
-        VaultConfig::default(),
-    )
-    .expect("vault opens")
-    .0;
+    let vault = open(Arc::clone(&store), Arc::clone(&index));
     let action = vault
         .add_action_with_note(
             dt(7, 9, 0),
@@ -147,7 +153,6 @@ fn fixture() -> Fixture {
             store.delete_file(&path).unwrap();
         }
     }
-    let fixture = Fixture { store, vault };
     for (path, content) in [
         ("projects/old.md", PROJECT),
         ("actions/fit-the-baseline.md", ACTION),
@@ -160,9 +165,24 @@ fn fixture() -> Fixture {
         ("journal/2026/daily/2026-05-09.md", DAY_9),
         (DAILY_TODAY, DAY_10),
     ] {
-        fixture.write(path, content);
+        store.write_file(&vp(path), content).unwrap();
     }
-    fixture
+    // Opened again, so reconciliation indexes the files written by hand
+    // and the index agrees with the store before any rename.
+    drop(vault);
+    let vault = open(Arc::clone(&store), index);
+    Fixture {
+        store,
+        mem,
+        index: mem_index,
+        vault,
+    }
+}
+
+fn open(store: Arc<dyn VaultStore>, index: Arc<dyn VaultIndex>) -> Vault {
+    Vault::new(store, index, VaultConfig::default())
+        .expect("vault opens")
+        .0
 }
 
 fn changes_by_path(plan: &RenamePlan) -> BTreeMap<String, Vec<Change>> {
@@ -213,7 +233,7 @@ fn the_plan_lists_every_reference_kind_once() {
             "portfolios/surrogate-error-budget/_index.md",
             vec![Change::Address { count: 1 }],
         ),
-        ("projects/emulator.md", vec![Change::Address { count: 1 }]),
+        ("projects/emulator.md", vec![Change::Address { count: 2 }]),
         ("projects/old.md", vec![Change::Alias]),
     ]
     .into_iter()
@@ -737,4 +757,508 @@ fn the_hash_ignores_the_stamp_and_the_date_but_not_a_referrer() {
     );
     let changed = f.plan("old", "new").unwrap();
     assert_ne!(base.hash, changed.hash);
+}
+
+// ---------------------------------------------------------------------
+// The write (T20): `rename_preview`, then `rename_note` under the lock.
+// ---------------------------------------------------------------------
+
+impl Fixture {
+    fn preview(&self, target: &str, new_slug: &str) -> RenamePlan {
+        self.vault
+            .rename_preview(target, new_slug, None, at())
+            .expect("preview")
+    }
+
+    /// Preview, then write that plan, as a surface does.
+    fn rename(&self, target: &str, new_slug: &str) -> RenameOutcome {
+        let plan = self.preview(target, new_slug);
+        self.vault
+            .rename_note(target, new_slug, None, Some(&plan.hash), at())
+            .expect("rename")
+    }
+
+    /// Every file in the store, by path.
+    fn files(&self) -> BTreeMap<String, String> {
+        files_of(&*self.store)
+    }
+
+    fn resolves(&self, reference: &str) -> VaultPath {
+        match self
+            .vault
+            .resolve_note_ref(reference, at().date())
+            .expect("resolve")
+        {
+            RefResolution::Resolved(note) => note.path,
+            other => panic!("`{reference}` did not resolve: {other:?}"),
+        }
+    }
+}
+
+fn files_of(store: &dyn VaultStore) -> BTreeMap<String, String> {
+    store
+        .walk_dir(&VaultPath::root())
+        .unwrap()
+        .into_iter()
+        .map(|p| (p.to_string(), store.read_file(&p).unwrap()))
+        .collect()
+}
+
+/// Where each planned edit's `after` lands: its path, or the target's new
+/// path.
+fn destinations(plan: &RenamePlan) -> BTreeMap<VaultPath, String> {
+    plan.edits
+        .iter()
+        .map(|e| {
+            let dest = plan
+                .moves
+                .iter()
+                .find(|(from, _)| *from == e.path)
+                .map_or(e.path.clone(), |(_, to)| to.clone());
+            (dest, e.after.clone())
+        })
+        .collect()
+}
+
+#[test]
+fn a_rename_writes_exactly_the_plan() {
+    let f = fixture();
+    let before = f.files();
+    let preview = f.preview("old", "new");
+    let outcome = f
+        .vault
+        .rename_note("old", "new", None, Some(&preview.hash), at())
+        .expect("rename");
+    assert_eq!(
+        outcome.plan, preview,
+        "the plan written is the one previewed"
+    );
+    assert!(!outcome.index_stale);
+
+    let planned = destinations(&preview);
+    let written: std::collections::BTreeSet<VaultPath> = outcome.written.iter().cloned().collect();
+    assert_eq!(
+        written.len(),
+        outcome.written.len(),
+        "each path written once"
+    );
+    assert_eq!(
+        written,
+        planned.keys().cloned().collect(),
+        "the paths written are the plan's"
+    );
+    for (path, after) in &planned {
+        assert_eq!(&f.read(&path.to_string()), after, "{path}");
+    }
+    // The old path is gone, and nothing outside the plan changed.
+    let after = f.files();
+    assert!(!after.contains_key("projects/old.md"));
+    let touched: Vec<String> = preview.edits.iter().map(|e| e.path.to_string()).collect();
+    for (path, content) in &before {
+        if !touched.contains(path) {
+            assert_eq!(after.get(path), Some(content), "{path} changed");
+        }
+    }
+    assert_eq!(
+        after.len(),
+        before.len(),
+        "{:?}",
+        after.keys().collect::<Vec<_>>()
+    );
+
+    let note = f.read("projects/new.md");
+    assert!(note.contains("aliases: [old]\n---\n"), "{note}");
+    assert!(
+        f.read(DAILY_TODAY)
+            .ends_with("- **10:30**: renamed [[new]] \u{2014} Surrogate model\n  was: old\n")
+    );
+}
+
+#[test]
+fn references_resolve_after_the_rename() {
+    let f = fixture();
+    let outcome = f.rename("old", "new");
+    let new = vp("projects/new.md");
+    let old = vp("projects/old.md");
+
+    // Every referrer by wikilink is a backlink of the new path, and none
+    // is left on the old one.
+    let mut backlinks = f.index.find_backlinks(&new).unwrap();
+    backlinks.sort();
+    let mut linking: Vec<VaultPath> = outcome
+        .plan
+        .edits
+        .iter()
+        .filter(|e| {
+            e.changes
+                .iter()
+                .any(|c| matches!(c, Change::Address { .. }))
+        })
+        .map(|e| e.path.clone())
+        .collect();
+    linking.sort();
+    assert_eq!(backlinks, linking);
+    assert!(f.index.find_backlinks(&old).unwrap().is_empty());
+
+    // The moved note's own links and its search row are at the new path.
+    let outgoing = f.index.find_outgoing_links(&new).unwrap();
+    assert!(
+        outgoing
+            .iter()
+            .any(|l| l.resolved_path.as_ref() == Some(&vp("actions/fit-the-baseline.md"))),
+        "{outgoing:?}"
+    );
+    let hits: Vec<VaultPath> = f
+        .index
+        .search("Calibrating", 10)
+        .unwrap()
+        .into_iter()
+        .map(|h| h.path)
+        .collect();
+    assert!(hits.contains(&new), "{hits:?}");
+    assert!(!hits.contains(&old), "{hits:?}");
+
+    // The attached action, the milestones and the hard deadline follow.
+    let actions = f.vault.list_actions("new").expect("list actions");
+    assert!(
+        actions.iter().any(|a| a
+            .attached
+            .as_ref()
+            .is_some_and(|n| n.slug == "fit-the-baseline")),
+        "{actions:?}"
+    );
+    assert!(!f.index.milestones_for_project(&new).unwrap().is_empty());
+    assert!(f.index.milestones_for_project(&old).unwrap().is_empty());
+    let commitments = f.vault.commitments(at().date(), 14).expect("commitments");
+    assert!(
+        commitments
+            .iter()
+            .any(|c| c.title.contains("Baseline fitted")
+                && c.source == CommitmentSource::ProjectMilestone("new".to_owned())),
+        "{commitments:?}"
+    );
+    assert!(
+        f.read("commitments/send-the-error-budget.md")
+            .contains("project: \"new\"\n")
+    );
+    // A referrer project's milestone rows carry its rewritten text.
+    let emulator = f
+        .index
+        .milestones_for_project(&vp("projects/emulator.md"))
+        .unwrap();
+    assert_eq!(emulator.len(), 1);
+    assert!(emulator[0].name.contains("[[new]]"), "{emulator:?}");
+}
+
+#[test]
+fn history_is_one_search_over_the_new_slug() {
+    let f = fixture();
+    let from = NaiveDate::from_ymd_opt(2026, 5, 1).unwrap();
+    let states = |vault: &Vault| {
+        vault
+            .project_state_changes_between(from, at().date())
+            .unwrap()
+    };
+    let before_states = states(&f.vault);
+    // The focus started on the 8th, read on the 9th (inside the default
+    // one-day carry-over window).
+    let day_9 = NaiveDate::from_ymd_opt(2026, 5, 9).unwrap();
+    let before_focus = f
+        .vault
+        .current_focus(day_9)
+        .unwrap()
+        .expect("a focus is open");
+    assert_eq!(before_focus.project, "old");
+    assert_eq!(before_states.len(), 1);
+    assert_eq!(before_states[0].project, "old");
+
+    f.rename("old", "new");
+
+    let after_states = states(&f.vault);
+    assert_eq!(after_states.len(), 1);
+    assert_eq!(after_states[0].project, "new");
+    assert_eq!(
+        (
+            &after_states[0].old_state,
+            &after_states[0].new_state,
+            after_states[0].date
+        ),
+        (
+            &before_states[0].old_state,
+            &before_states[0].new_state,
+            before_states[0].date
+        )
+    );
+    let after_focus = f
+        .vault
+        .current_focus(day_9)
+        .unwrap()
+        .expect("the focus is still open");
+    assert_eq!(after_focus.project, "new");
+    assert_eq!(
+        (&after_focus.action, after_focus.started, after_focus.date),
+        (
+            &before_focus.action,
+            before_focus.started,
+            before_focus.date
+        )
+    );
+}
+
+#[test]
+fn a_stale_plan_is_refused_and_writes_nothing() {
+    let f = fixture();
+    let preview = f.preview("old", "new");
+    f.write(
+        "projects/emulator.md",
+        &EMULATOR.replace("Waiting on [[old]].", "Waiting on [[old]] again."),
+    );
+    let before = f.files();
+    let err = f
+        .vault
+        .rename_note("old", "new", None, Some(&preview.hash), at())
+        .unwrap_err();
+    assert!(
+        matches!(&err, DomainError::StalePlan { expected, actual }
+            if *expected == preview.hash && *actual != preview.hash),
+        "{err:?}"
+    );
+    assert_eq!(f.files(), before, "nothing is written");
+    assert!(
+        f.index
+            .find_by_path(&vp("projects/old.md"))
+            .unwrap()
+            .is_some()
+    );
+
+    // Without an expected plan there is nothing to be stale against.
+    f.vault
+        .rename_note("old", "new", None, None, at())
+        .expect("unchecked rename");
+    assert!(f.read("projects/new.md").contains("aliases: [old]"));
+}
+
+#[test]
+fn a_rollover_is_a_stale_plan() {
+    let f = fixture();
+    let preview = f.preview("old", "new");
+    let before = f.files();
+    let err = f
+        .vault
+        .rename_note("old", "new", None, Some(&preview.hash), dt(11, 0, 5))
+        .unwrap_err();
+    assert!(matches!(err, DomainError::StalePlan { .. }), "{err:?}");
+    assert_eq!(f.files(), before, "nothing is written");
+
+    // Later the same day is the same plan: the stamp is not in the hash.
+    let outcome = f
+        .vault
+        .rename_note("old", "new", None, Some(&preview.hash), dt(10, 23, 59))
+        .expect("same day");
+    assert_eq!(outcome.plan.hash, preview.hash);
+}
+
+#[test]
+fn a_rename_to_itself_writes_nothing() {
+    let f = fixture();
+    let before = f.files();
+    let plan = f.preview("old", "old");
+    let outcome = f
+        .vault
+        .rename_note("old", "old", None, Some(&plan.hash), at())
+        .expect("no-op");
+    assert!(outcome.plan.is_empty());
+    assert!(outcome.written.is_empty());
+    assert_eq!(f.files(), before);
+}
+
+#[test]
+fn a_failed_write_rolls_back_byte_identical() {
+    let f = fixture();
+    let preview = f.preview("old", "new");
+    let before = files_of(&*f.mem);
+    // The move is the first two ops (write the new path, delete the old);
+    // the third, the first referrer's write, fails.
+    let failing: Arc<dyn VaultStore> = Arc::new(FailingStore::new(Arc::clone(&f.mem), 3));
+    let index: Arc<dyn VaultIndex> = f.index.clone();
+    let vault = open(failing, index);
+    let err = vault
+        .rename_note("old", "new", None, Some(&preview.hash), at())
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::Store(StoreError::PermissionDenied(_))),
+        "{err:?}"
+    );
+    assert_eq!(files_of(&*f.mem), before, "rolled back byte for byte");
+    assert!(
+        f.index
+            .find_by_path(&vp("projects/old.md"))
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        f.index
+            .find_by_path(&vp("projects/new.md"))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn a_failed_rollback_is_reported_per_path() {
+    let f = fixture();
+    let preview = f.preview("old", "new");
+    // The third op fails, and the rollback's restore of the deleted old
+    // path fails too; removing the new path still succeeds.
+    let failing: Arc<dyn VaultStore> =
+        Arc::new(FailingStore::new(Arc::clone(&f.mem), 3).with_stuck_path(vp("projects/old.md")));
+    let index: Arc<dyn VaultIndex> = f.index.clone();
+    let vault = open(failing, index);
+    let err = vault
+        .rename_note("old", "new", None, Some(&preview.hash), at())
+        .unwrap_err();
+    assert!(
+        matches!(&err, DomainError::RenameIncomplete { failed }
+            if *failed == vec![vp("projects/old.md")]),
+        "{err:?}"
+    );
+    assert!(err.to_string().contains("projects/old.md"), "{err}");
+}
+
+#[test]
+fn index_stale_is_success() {
+    let f = fixture();
+    let preview = f.preview("old", "new");
+    let flaky = Arc::new(FlakyIndex::new(f.index.clone()));
+    let index: Arc<dyn VaultIndex> = flaky.clone();
+    let vault = open(Arc::clone(&f.store), index);
+    flaky.arm();
+    let outcome = vault
+        .rename_note("old", "new", None, Some(&preview.hash), at())
+        .expect("the files landed, so the rename succeeded");
+    assert!(outcome.index_stale);
+    for (path, after) in destinations(&preview) {
+        assert_eq!(f.read(&path.to_string()), after, "{path}");
+    }
+    assert!(!f.store.exists(&vp("projects/old.md")).unwrap());
+}
+
+#[test]
+fn a_second_rename_extends_aliases() {
+    let f = fixture();
+    f.rename("old", "older");
+    f.rename("older", "new");
+    let note = f.read("projects/new.md");
+    assert!(note.contains("aliases: [old, older]\n"), "{note}");
+    assert_eq!(f.resolves("old"), vp("projects/new.md"));
+    assert_eq!(f.resolves("older"), vp("projects/new.md"));
+    assert!(
+        f.read(DAILY_TODAY)
+            .contains("renamed [[new]] \u{2014} Surrogate model\n  was: older\n")
+    );
+}
+
+#[test]
+fn renaming_back_to_an_own_alias_drops_it_from_the_list() {
+    let f = fixture();
+    f.rename("old", "new");
+    let outcome = f.rename("new", "old");
+    assert_eq!(
+        outcome.plan.moves,
+        vec![(vp("projects/new.md"), vp("projects/old.md"))]
+    );
+    // A slug is never its own alias; the slug left is one.
+    let note = f.read("projects/old.md");
+    assert!(note.contains("aliases: [new]\n"), "{note}");
+    let aliases: Vec<String> = f
+        .index
+        .list_aliases()
+        .unwrap()
+        .into_iter()
+        .filter(|(_, holder)| *holder == vp("projects/old.md"))
+        .map(|(alias, _)| alias)
+        .collect();
+    assert_eq!(aliases, vec!["new".to_owned()]);
+    assert_eq!(f.resolves("old"), vp("projects/old.md"));
+    assert_eq!(f.resolves("new"), vp("projects/old.md"));
+    // `[[old]]` and `[[new]]` both reach it from a note written now.
+    f.vault
+        .log_to_daily_note(dt(10, 11, 0), "compare [[old]] with [[new]]")
+        .unwrap();
+    let links = f.index.find_outgoing_links(&vp(DAILY_TODAY)).unwrap();
+    for raw in ["old", "new"] {
+        assert!(
+            links
+                .iter()
+                .any(|l| l.target_raw == raw
+                    && l.resolved_path.as_ref() == Some(&vp("projects/old.md"))),
+            "`[[{raw}]]`: {links:?}"
+        );
+    }
+}
+
+#[test]
+fn another_notes_alias_is_still_taken() {
+    let f = fixture();
+    // The emulator lists `newer`; the renamed note lists `shared`, and so
+    // does the emulator: its own listing does not free a name another note
+    // holds.
+    f.write(
+        "projects/emulator.md",
+        &EMULATOR.replace(
+            "created: 2026-04-02\n",
+            "created: 2026-04-02\naliases: [newer, shared]\n",
+        ),
+    );
+    f.write(
+        "projects/old.md",
+        &PROJECT.replace(
+            "created: 2026-04-01\n",
+            "created: 2026-04-01\naliases: [shared]\n",
+        ),
+    );
+    let before = f.files();
+    for slug in ["newer", "shared"] {
+        let err = f
+            .vault
+            .rename_note("projects/old", slug, None, None, at())
+            .unwrap_err();
+        assert!(
+            matches!(&err, DomainError::SlugTaken { slug: s, holder, kind: TakenBy::Alias }
+                if s == slug && *holder == vp("projects/emulator.md")),
+            "{slug}: {err:?}"
+        );
+    }
+    assert_eq!(f.files(), before, "nothing is written");
+}
+
+#[test]
+fn a_rename_stages_remove_note_of_the_source_in_the_same_transaction() {
+    let f = fixture();
+    f.rename("old", "older");
+    f.rename("older", "new");
+    // No ghost row at a path the note left: the alias `old` has one holder
+    // right after the commit, with no reconcile in between.
+    assert!(
+        f.index
+            .find_by_path(&vp("projects/old.md"))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        f.index
+            .find_by_path(&vp("projects/older.md"))
+            .unwrap()
+            .is_none()
+    );
+    let holders: Vec<VaultPath> = f
+        .index
+        .list_aliases()
+        .unwrap()
+        .into_iter()
+        .filter(|(alias, _)| alias == "old")
+        .map(|(_, holder)| holder)
+        .collect();
+    assert_eq!(holders, vec![vp("projects/new.md")]);
+    assert_eq!(f.resolves("old"), vp("projects/new.md"));
 }

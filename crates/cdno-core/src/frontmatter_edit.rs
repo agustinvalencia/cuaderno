@@ -383,31 +383,8 @@ fn list_append_edit(frontmatter: &str, key: &str, value: &str) -> Option<Address
     let value_start = line.start + offset + (rest.len() - after_ws.len());
 
     if after_ws.starts_with('[') {
-        // Flow list, possibly spanning lines: find the closing bracket
-        // outside quotes.
         let open = value_start;
-        let mut quote: Option<char> = None;
-        let mut close = None;
-        let mut prev = '\0';
-        for (i, c) in frontmatter[open + 1..].char_indices() {
-            match quote {
-                Some(q) => {
-                    if c == q && !(q == '"' && prev == '\\') {
-                        quote = None;
-                    }
-                }
-                None => match c {
-                    '"' | '\'' => quote = Some(c),
-                    ']' => {
-                        close = Some(open + 1 + i);
-                        break;
-                    }
-                    _ => {}
-                },
-            }
-            prev = c;
-        }
-        let close = close?;
+        let close = flow_close(frontmatter, open)?;
         let inner = &frontmatter[open + 1..close];
         if inner.trim().is_empty() {
             return Some(AddressEdit {
@@ -472,6 +449,137 @@ fn list_append_edit(frontmatter: &str, key: &str, value: &str) -> Option<Address
         // `end` stops before a `\n` (and a `\r` is inside `text`).
         insertion(end + 1, format!("{new_line}{eol}"))
     }
+}
+
+/// The closing `]` of the flow list opening at `open`, which may span
+/// lines, found outside quotes.
+fn flow_close(frontmatter: &str, open: usize) -> Option<usize> {
+    let mut quote: Option<char> = None;
+    let mut prev = '\0';
+    for (i, c) in frontmatter[open + 1..].char_indices() {
+        match quote {
+            Some(q) => {
+                if c == q && !(q == '"' && prev == '\\') {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '"' | '\'' => quote = Some(c),
+                ']' => return Some(open + 1 + i),
+                _ => {}
+            },
+        }
+        prev = c;
+    }
+    None
+}
+
+/// Remove `value` from the list under top-level `key`, keeping everything
+/// else: the counterpart of [`append_frontmatter_list_value`], with the
+/// same shape.
+///
+/// `frontmatter` is the block between the fences. Returns the new text and
+/// the one edit that made it (a range of `frontmatter` and its
+/// replacement), or no edit when nothing changed. In a flow list
+/// (`[a, b]`) the item goes with one separator, so `[a, value, b]` becomes
+/// `[a, b]` and `[value]` becomes `[]`; in a block list (`- a` lines) its
+/// line goes, and removing the only item leaves `key:` with no value. Only
+/// the first item equal to `value` (quoted or bare) of the first top-level
+/// `key:` is removed. Nothing changes when `value` is not an item, when
+/// `key` is absent, or when it holds anything that is not a list.
+pub fn remove_frontmatter_list_value(
+    frontmatter: &str,
+    key: &str,
+    value: &str,
+) -> (String, Vec<AddressEdit>) {
+    match list_remove_edit(frontmatter, key, value) {
+        Some(edit) => (apply(frontmatter, std::slice::from_ref(&edit)), vec![edit]),
+        None => (frontmatter.to_owned(), Vec::new()),
+    }
+}
+
+fn list_remove_edit(frontmatter: &str, key: &str, value: &str) -> Option<AddressEdit> {
+    let all = lines(frontmatter);
+    let (idx, offset) = all
+        .iter()
+        .enumerate()
+        .find_map(|(i, l)| key_value_offset(l.text, key).map(|o| (i, o)))?;
+    let line = &all[idx];
+    let rest = &line.text[offset..];
+    let after_ws = rest.trim_start_matches([' ', '\t']);
+    let value_start = line.start + offset + (rest.len() - after_ws.len());
+    let removal = |range: Range<usize>| {
+        Some(AddressEdit {
+            range,
+            replacement: String::new(),
+        })
+    };
+
+    if after_ws.starts_with('[') {
+        let open = value_start;
+        let close = flow_close(frontmatter, open)?;
+        let inner_start = open + 1;
+        let inner = &frontmatter[inner_start..close];
+        // Each item's trimmed range, in `frontmatter`'s bytes.
+        let items: Vec<Range<usize>> = split_flow_items(inner)
+            .into_iter()
+            .map(|item| {
+                let at = inner_start + (item.as_ptr() as usize - inner.as_ptr() as usize);
+                let lead = item.len() - item.trim_start().len();
+                at + lead..at + lead + item.trim().len()
+            })
+            .collect();
+        let i = items
+            .iter()
+            .position(|r| unquote_item(&frontmatter[r.clone()]) == value)?;
+        return match (items.len(), i + 1 < items.len()) {
+            (1, _) => removal(inner_start..close),
+            // Not the last: the item, its comma and the space before the
+            // next item.
+            (_, true) => removal(items[i].start..items[i + 1].start),
+            // The last: from the end of the item before it.
+            (_, false) => removal(items[i - 1].end..items[i].end),
+        };
+    }
+
+    if !strip_comment(after_ws).trim().is_empty() {
+        return None;
+    }
+
+    // Block list: the run of `- ` items right below the key.
+    let mut want: Option<usize> = None;
+    for l in all.iter().skip(idx + 1) {
+        let indent = l.text.len() - l.text.trim_start_matches(' ').len();
+        let body = l.text[indent..].trim_end();
+        let is_item = body == "-" || body.starts_with("- ");
+        if body.is_empty() || body.starts_with('#') {
+            continue;
+        }
+        if !is_item || want.is_some_and(|w| w != indent) {
+            break;
+        }
+        want = Some(indent);
+        if let Some(item) = body.strip_prefix("- ")
+            && unquote_item(strip_comment(item)) == value
+        {
+            let end = l.start + l.text.len();
+            return if end < frontmatter.len() {
+                // The line and its `\n`.
+                removal(l.start..end + 1)
+            } else {
+                // The block's last line, with no line break after it: take
+                // the one before it instead.
+                removal(
+                    all[idx..]
+                        .iter()
+                        .take_while(|p| p.start < l.start)
+                        .last()
+                        .map_or(l.start, |p| p.start + p.text.len())..end,
+                )
+            };
+        }
+    }
+    None
 }
 
 fn split_flow_items(inner: &str) -> Vec<&str> {

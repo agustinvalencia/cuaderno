@@ -8,6 +8,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **The rename write** (RFC 0007 T20, closes #869). `Vault::rename_preview` plans a rename against
+  the vault as it is, without the write lock; `Vault::rename_note` takes the lock, plans again from
+  the store, refuses with `StalePlan` when the plan's hash differs from the one previewed (a
+  referrer changed, or the day rolled over), and writes exactly that plan in one transaction: the
+  note at its new path with the old slug in `aliases:`, every referrer, today's `renamed` line, and
+  the index rows of the moved note and every project map it rewrites. A rollback that fails part-way
+  is `RenameIncomplete` naming each path; an index failure after the files landed is success with
+  `index_stale`. A note may take one of its own former names back: the alias leaves its list (a slug
+  is never its own alias), while another note's alias stays taken. No CLI or MCP surface yet.
 - **Lint reads the `renamed` log line** (RFC 0007 T19, closes #868). The near-miss check now covers
   `renamed [[new]] — Title` lines (a malformed stamp or an ASCII hyphen for the em dash), and a `was:`
   continuation under one that contains a `[[` link is a warning. `renamed` is not a focus marker:
