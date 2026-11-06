@@ -363,3 +363,23 @@ pub(super) fn stage_moved_milestone_rows(
     let section = doc.section(MILESTONES_SECTION).unwrap_or("");
     stage_milestone_index_rows(dest, section, tx);
 }
+
+/// Stage the milestone and deadline index rows of the project map whose
+/// new content is `content`, written at `path` in the same transaction:
+/// the rename's restaging (RFC 0007 §6.2), for the moved map, whose old
+/// rows go with `remove_note(old)`, and for every map it rewrites, whose
+/// rows may hold the old slug in a milestone's text. Read as reconcile
+/// reads them: content that does not parse as a document stages empty
+/// rows, as an absent section does.
+pub(in crate::vault) fn stage_project_index_rows(
+    path: &VaultPath,
+    content: &str,
+    tx: &mut VaultTransaction,
+) {
+    let doc = MarkdownDocument::parse(content).ok();
+    let section = doc
+        .as_ref()
+        .and_then(|doc| doc.section(MILESTONES_SECTION).ok())
+        .unwrap_or("");
+    stage_milestone_index_rows(path, section, tx);
+}

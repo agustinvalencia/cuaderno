@@ -997,7 +997,7 @@ compare `hash` with `expected_plan` (`DomainError::StalePlan { expected, actual 
 difference; `None` skips the check), then stage, in this order: for the move,
 `write_file(new, after)` + `delete_file(old)` — **never `move_file` for markdown**, because an
 `UpsertNote` after a pure `Move` leaves the destination's links, tags and FTS stale
-(`transaction.rs:469`, `latest_write_content` matches only `Write`); the `upsert_note(new)` and
+(`transaction.rs:563`, `latest_write_content` matches only `Write`); the `upsert_note(new)` and
 `remove_note(old)`; for every other edit `write_file` + `upsert_note`; `replace_milestones` for
 the moved project **and for every project in the plan** (RFC 0004 found moves dropping them;
 §6.2); `replace_deadlines` likewise; the archived referrers' snapshots are untouched (their
@@ -1007,6 +1007,37 @@ non-empty, else to the ordinary store error; `IndexStale` after a good file comm
 `Ok` with `index_stale: true`. `at.date()` is part of the hash's inputs only through the daily
 note's path, so a rollover between preview and write is `StalePlan` (§6.2). A no-op plan writes
 nothing and returns `written: []`.
+
+*Amended in the T20 PR:* the D5 ruling on #869 holds the RFC's reading of §5.2: the new slug must
+not be an alias **of another note**. A rename back to one of the note's own aliases is allowed and
+moves no referent (`[[old]]` resolved to the note through the alias and resolves to it through the
+stem afterwards): the planner's taken check skips the target's own alias rows, and the target's own
+edit drops the re-taken alias from `aliases:` (a slug is never its own alias) as it adds the slug
+being left, through a new core `remove_frontmatter_list_value` beside
+`append_frontmatter_list_value`. A link that already reads the new slug is not rewritten. The
+probe `renaming_back_to_an_alias_is_refused_as_taken` becomes the two below. `RenameIncomplete`'s
+paths are read from the rollback's `StoreError`s, which each name their path. `RacingStore` writes
+behind the lock's back, so it cannot tell a snapshot under the lock from one before it; the
+concurrency probe uses a second vault over the same directory whose write honours the lock instead.
+
+*Amended after the T20 review (rounds 1 and 2):* the write never asked the disk, so a case variant, an
+ignored file or a file the snapshot did not list at the new path was overwritten with `Ok`. Both
+verbs now refuse a move destination the store reports as existing (`slug_taken { kind: stem }`,
+the holder named as the store lists it), `rename_note` under the lock after planning and before
+staging. That store check is the only guard carrying the filesystem's case rule: a case variant at
+the destination, or a rename that only changes case, is refused exactly where the filesystem cannot
+tell the names apart, and allowed where it can. The snapshot also records the ignored markdown
+files (`VaultSnapshot::ignored`; planning of referrers is unchanged), and the taken check counts
+them. Both the taken and the shared-stem checks compare names exactly, as link resolution and
+`unique_slug` do; the shared-stem check stays over the indexed paths only, since resolution sees no
+ignored file (round 2). `RenameIncomplete` carries the write's `source`, and a rollback failure
+that names no path is the transaction error. Probes added: `an_ignored_file_at_the_destination_is_taken`,
+`a_case_variant_at_the_destination_is_taken` and `a_case_only_rename_is_refused` (a case-insensitive
+store double), `a_case_variant_elsewhere_is_not_a_shared_stem`,
+`a_case_variant_in_another_folder_is_not_taken`,
+`a_case_only_rename_works_where_the_filesystem_tells_the_names_apart`,
+`a_file_appearing_at_the_destination_is_taken` and
+`a_leftover_link_already_reading_the_new_slug_is_not_an_edit`.
 
 **Deliverable.** The two verbs, the outcome, the error variants, tests.
 
@@ -1026,18 +1057,20 @@ index-op subtlety all live here.
   `current_focus` are unchanged in substance), `a_stale_plan_is_refused_and_writes_nothing`
   (preview, change a referrer, write with the old hash: `StalePlan`, vault byte-identical),
   `a_rollover_is_a_stale_plan`, `a_failed_write_rolls_back_byte_identical` (`FailingStore` from
-  `tests/unit/support.rs:18` failing on the third write), `a_failed_rollback_is_reported_per_path`
+  `tests/unit/support.rs:22` failing on the third write), `a_failed_rollback_is_reported_per_path`
   (a store that fails the restore too: `RenameIncomplete { failed }` names it),
   `index_stale_is_success` (an index that fails one op), `a_second_rename_extends_aliases`
-  (`aliases: [old, older]`, both resolve), `renaming_back_to_an_alias_is_refused_as_taken`
-  (D5: the alias is reserved while listed),
+  (`aliases: [old, older]`, both resolve), `renaming_back_to_an_own_alias_drops_it_from_the_list`
+  (after `old` → `new` → `old` the note has no `old` alias and has `new` as one, and `[[old]]` and
+  `[[new]]` both resolve to it), `another_notes_alias_is_still_taken` (D5: `slug_taken { kind:
+  alias }`, even when the note lists the same alias),
   `a_rename_stages_remove_note_of_the_source_in_the_same_transaction` (no ghost holder:
   `alias_of` is unique right after commit; T12's `a_moved_note_leaves_the_alias_unique` shows
   what breaks without it).
 - `cargo test -p cdno-domain --test unit -- unit::concurrency_tests`:
-  `a_rename_holds_the_lock_for_the_whole_plan` (`RacingStore`, `support.rs:97`: a write slipped
-  in between snapshot and commit is seen because the snapshot is taken under the lock — the
-  stale-plan path, not a lost update).
+  `a_rename_holds_the_lock_for_the_whole_plan` (a second writer that honours the lock, started
+  while the rename reads the vault, waits for the commit: its line lands after the rename's, not
+  a lost update).
 - Mutation: use `move_file` for the markdown move; `references_resolve_after_the_rename` fails
   on FTS or links. Mutation: snapshot before taking the lock; the concurrency test fails.
 

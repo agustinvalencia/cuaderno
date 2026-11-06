@@ -2,7 +2,7 @@ use cdno_core::extractors::differs_only_by;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::frontmatter_edit::{
     DriftSide, FrontmatterDrift, append_frontmatter_list_value, frontmatter_changed_only_at,
-    frontmatter_scalar_spans, rewrite_frontmatter_scalar,
+    frontmatter_scalar_spans, remove_frontmatter_list_value, rewrite_frontmatter_scalar,
 };
 use proptest::prelude::*;
 
@@ -96,6 +96,62 @@ fn list_append_is_idempotent() {
     }
     let once = append("a: 1\n", "aliases", "z");
     assert_eq!(append(&once, "aliases", "z"), once);
+}
+
+/// Remove, and check the returned edit explains the whole change.
+fn remove(fm: &str, key: &str, value: &str) -> String {
+    let (after, edits) = remove_frontmatter_list_value(fm, key, value);
+    assert!(differs_only_by(fm, &after, &edits), "{fm:?} -> {after:?}");
+    assert_eq!(edits.is_empty(), after == fm);
+    after
+}
+
+#[test]
+fn list_remove_takes_the_item_and_one_separator() {
+    let head = "type: project\n";
+    let tail = "# kept\ncreated: 2026-05-01\n";
+    for (list, want) in [
+        ("aliases: [new]", "aliases: []"),
+        ("aliases: [new, older]", "aliases: [older]"),
+        ("aliases: [older, new]", "aliases: [older]"),
+        ("aliases: [a, \"new\", b]", "aliases: [a, b]"),
+        ("aliases: ['new', b] # former", "aliases: [b] # former"),
+        ("aliases:\n  - older\n  - new", "aliases:\n  - older"),
+        ("aliases:\n  - new\n  - older", "aliases:\n  - older"),
+        ("aliases:\n- new", "aliases:"),
+    ] {
+        let before = format!("{head}{list}\n{tail}");
+        assert_eq!(
+            remove(&before, "aliases", "new"),
+            format!("{head}{want}\n{tail}"),
+            "{list:?}"
+        );
+    }
+    // The block's last line, with no line break after it.
+    assert_eq!(
+        remove("aliases:\n  - older\n  - new", "aliases", "new"),
+        "aliases:\n  - older"
+    );
+}
+
+#[test]
+fn list_remove_leaves_everything_else_alone() {
+    for fm in [
+        "aliases: [older]\n",
+        "aliases: new\n",
+        "aliases: null\n",
+        "title: x\n",
+        "outer:\n  aliases: [new]\n",
+        "aliases: [newer, renew]\n",
+    ] {
+        assert_eq!(remove(fm, "aliases", "new"), fm, "{fm:?}");
+    }
+    // The list still parses, and only the item went.
+    let before = "type: project\naliases: [old, new]\n";
+    let after = remove(before, "aliases", "new");
+    frontmatter_changed_only_at(before, &after, &["aliases"]).unwrap();
+    let (fm, _) = Frontmatter::parse(&format!("---\n{after}---\n")).unwrap();
+    assert_eq!(fm.as_json()["aliases"], serde_json::json!(["old"]));
 }
 
 #[test]

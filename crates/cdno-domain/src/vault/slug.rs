@@ -198,9 +198,11 @@ impl Vault {
     /// ([`TakenBy::Alias`], RFC 0007 §5.5 and D5): a former name keeps
     /// pointing at its note, so no new note may take it and no old link can
     /// change referent. That is what refuses an explicit slug equal to
-    /// another note's alias, makes [`unique_slug`](Self::unique_slug) step
-    /// past one, and, for the rename verb (T20), refuses a rename back to a
-    /// name still listed as an alias.
+    /// another note's alias and makes [`unique_slug`](Self::unique_slug) step
+    /// past one. The rename planner checks a store snapshot through
+    /// [`taken_names_in`] with the renamed note's own aliases left out: a
+    /// note may take a former name of its own back (D5's reason, an old
+    /// link changing referent, does not apply), never another note's.
     ///
     /// Precedence is first-holder-wins, with stems and folders ahead of
     /// aliases whatever the paths' order: a name that is some note's stem or

@@ -6,8 +6,12 @@
 
 use std::sync::{Arc, Mutex};
 
-use cdno_core::error::StoreError;
+use cdno_core::error::{IndexError, StoreError};
 use cdno_core::file_meta::FileMeta;
+use cdno_core::index::{
+    ArchivalSnapshot, DeadlineEntry, LinkEntry, LinkResolution, LinkResolutionUpdate, MemoryIndex,
+    MilestoneEntry, NoteCandidate, NoteEntry, SearchHit, VaultIndex,
+};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 
@@ -19,6 +23,9 @@ pub struct FailingStore {
     inner: Arc<MemoryVaultStore>,
     fail_on: usize,
     count: Mutex<usize>,
+    /// A path whose writes and deletes keep failing once the Nth op has
+    /// failed, so the rollback's restore of it fails too.
+    stuck: Option<VaultPath>,
 }
 
 impl FailingStore {
@@ -27,7 +34,15 @@ impl FailingStore {
             inner,
             fail_on,
             count: Mutex::new(0),
+            stuck: None,
         }
+    }
+
+    /// Also fail every write and delete of `path` after the Nth op failed:
+    /// the rollback cannot restore it.
+    pub fn with_stuck_path(mut self, path: VaultPath) -> Self {
+        self.stuck = Some(path);
+        self
     }
 
     /// Increment the write counter; return true exactly when this is
@@ -36,6 +51,14 @@ impl FailingStore {
         let mut c = self.count.lock().unwrap();
         *c += 1;
         *c == self.fail_on
+    }
+
+    /// Whether this op on `path` fails: the Nth op, or one on the stuck
+    /// path after it.
+    fn fails(&self, path: &VaultPath) -> bool {
+        let nth = self.tick();
+        let past = *self.count.lock().unwrap() > self.fail_on;
+        nth || (past && self.stuck.as_ref() == Some(path))
     }
 }
 
@@ -47,7 +70,7 @@ impl VaultStore for FailingStore {
         self.inner.read_bytes(path)
     }
     fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
-        if self.tick() {
+        if self.fails(path) {
             return Err(StoreError::PermissionDenied(path.to_string()));
         }
         self.inner.write_file(path, content)
@@ -65,7 +88,7 @@ impl VaultStore for FailingStore {
         self.inner.move_file(src, dest)
     }
     fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
-        if self.tick() {
+        if self.fails(path) {
             return Err(StoreError::PermissionDenied(path.to_string()));
         }
         self.inner.delete_file(path)
@@ -87,6 +110,203 @@ impl VaultStore for FailingStore {
             return Err(StoreError::PermissionDenied(dest.to_string()));
         }
         self.inner.import_external(src, dest)
+    }
+}
+
+/// A `MemoryVaultStore` that does not tell names apart by case, as the
+/// default filesystems on macOS and Windows do: a path names the stored
+/// file whose path equals it ignoring case, and a write keeps the stored
+/// file's case (case-preserving). Walks list the names as stored.
+#[derive(Default)]
+pub struct CaseInsensitiveStore {
+    inner: MemoryVaultStore,
+}
+
+impl CaseInsensitiveStore {
+    pub fn new() -> Self {
+        Self {
+            inner: MemoryVaultStore::new(),
+        }
+    }
+
+    /// The stored path `path` names, or `path` itself when none does.
+    fn stored(&self, path: &VaultPath) -> VaultPath {
+        let wanted = path.to_string().to_lowercase();
+        self.inner
+            .walk_dir(&VaultPath::root())
+            .unwrap_or_default()
+            .into_iter()
+            .find(|p| p.to_string().to_lowercase() == wanted)
+            .unwrap_or_else(|| path.clone())
+    }
+}
+
+impl VaultStore for CaseInsensitiveStore {
+    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        self.inner.read_file(&self.stored(path))
+    }
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.inner.read_bytes(&self.stored(path))
+    }
+    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.write_file(&self.stored(path), content)
+    }
+    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.append_to_file(&self.stored(path), content)
+    }
+    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.move_file(&self.stored(src), &self.stored(dest))
+    }
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        self.inner.delete_file(&self.stored(path))
+    }
+    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
+        self.inner.exists(&self.stored(path))
+    }
+    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.list_dir(path)
+    }
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.walk_dir(path)
+    }
+    fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
+        self.inner.metadata(&self.stored(path))
+    }
+    fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.import_external(src, &self.stored(dest))
+    }
+}
+
+/// Wraps a `MemoryIndex` and, once armed, fails the next
+/// `replace_milestones` (and only that one): an index update failing after
+/// every file of a commit landed, which the commit reports as
+/// `IndexStale`. Every other call delegates.
+pub struct FlakyIndex {
+    inner: Arc<MemoryIndex>,
+    armed: Mutex<bool>,
+}
+
+impl FlakyIndex {
+    pub fn new(inner: Arc<MemoryIndex>) -> Self {
+        Self {
+            inner,
+            armed: Mutex::new(false),
+        }
+    }
+
+    pub fn arm(&self) {
+        *self.armed.lock().unwrap() = true;
+    }
+}
+
+impl VaultIndex for FlakyIndex {
+    fn upsert_note(&self, entry: &NoteEntry) -> Result<(), IndexError> {
+        self.inner.upsert_note(entry)
+    }
+    fn remove_note(&self, path: &VaultPath) -> Result<(), IndexError> {
+        self.inner.remove_note(path)
+    }
+    fn find_by_path(&self, path: &VaultPath) -> Result<Option<NoteEntry>, IndexError> {
+        self.inner.find_by_path(path)
+    }
+    fn list_by_type(&self, note_type: &str) -> Result<Vec<NoteEntry>, IndexError> {
+        self.inner.list_by_type(note_type)
+    }
+    fn list_all_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
+        self.inner.list_all_paths()
+    }
+    fn list_aliases(&self) -> Result<Vec<(String, VaultPath)>, IndexError> {
+        self.inner.list_aliases()
+    }
+    fn list_candidates(&self) -> Result<Vec<NoteCandidate>, IndexError> {
+        self.inner.list_candidates()
+    }
+    fn replace_deadlines(
+        &self,
+        path: &VaultPath,
+        deadlines: &[DeadlineEntry],
+    ) -> Result<(), IndexError> {
+        self.inner.replace_deadlines(path, deadlines)
+    }
+    fn deadlines_between(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<(VaultPath, DeadlineEntry)>, IndexError> {
+        self.inner.deadlines_between(from, to)
+    }
+    fn replace_links(&self, path: &VaultPath, links: &[LinkEntry]) -> Result<(), IndexError> {
+        self.inner.replace_links(path, links)
+    }
+    fn find_backlinks(&self, path: &VaultPath) -> Result<Vec<VaultPath>, IndexError> {
+        self.inner.find_backlinks(path)
+    }
+    fn find_outgoing_links(&self, path: &VaultPath) -> Result<Vec<LinkEntry>, IndexError> {
+        self.inner.find_outgoing_links(path)
+    }
+    fn link_resolutions(&self) -> Result<Vec<LinkResolution>, IndexError> {
+        self.inner.link_resolutions()
+    }
+    fn set_link_resolutions(&self, updates: &[LinkResolutionUpdate]) -> Result<usize, IndexError> {
+        self.inner.set_link_resolutions(updates)
+    }
+    fn replace_tags(&self, path: &VaultPath, tags: &[String]) -> Result<(), IndexError> {
+        self.inner.replace_tags(path, tags)
+    }
+    fn find_by_tag(&self, tag: &str) -> Result<Vec<VaultPath>, IndexError> {
+        self.inner.find_by_tag(tag)
+    }
+    fn replace_milestones(
+        &self,
+        path: &VaultPath,
+        milestones: &[MilestoneEntry],
+    ) -> Result<(), IndexError> {
+        let mut armed = self.armed.lock().unwrap();
+        if *armed {
+            *armed = false;
+            return Err(IndexError::Update("forced test failure".to_owned()));
+        }
+        self.inner.replace_milestones(path, milestones)
+    }
+    fn milestones_for_project(&self, path: &VaultPath) -> Result<Vec<MilestoneEntry>, IndexError> {
+        self.inner.milestones_for_project(path)
+    }
+    fn milestones_between(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<(VaultPath, MilestoneEntry)>, IndexError> {
+        self.inner.milestones_between(from, to)
+    }
+    fn replace_fts(
+        &self,
+        path: &VaultPath,
+        title: Option<&str>,
+        body: &str,
+    ) -> Result<(), IndexError> {
+        self.inner.replace_fts(path, title, body)
+    }
+    fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, IndexError> {
+        self.inner.search(query, limit)
+    }
+    fn fts_indexed_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
+        self.inner.fts_indexed_paths()
+    }
+    fn record_archival_snapshot(
+        &self,
+        path: &VaultPath,
+        snapshot: &ArchivalSnapshot,
+    ) -> Result<(), IndexError> {
+        self.inner.record_archival_snapshot(path, snapshot)
+    }
+    fn find_archival_snapshot(
+        &self,
+        path: &VaultPath,
+    ) -> Result<Option<ArchivalSnapshot>, IndexError> {
+        self.inner.find_archival_snapshot(path)
+    }
+    fn list_archival_snapshots(&self) -> Result<Vec<(VaultPath, ArchivalSnapshot)>, IndexError> {
+        self.inner.list_archival_snapshots()
     }
 }
 

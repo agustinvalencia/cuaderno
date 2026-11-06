@@ -145,7 +145,7 @@ pub use projects::{
     ResumedKind, SlotUsage, SwitchOutcome, TopAction,
 };
 pub use questions::QuestionSummary;
-pub use rename::{Change, PlannedEdit, RenamePlan, RenameWarning, VaultSnapshot};
+pub use rename::{Change, PlannedEdit, RenameOutcome, RenamePlan, RenameWarning, VaultSnapshot};
 pub use revise::{ReviseOutcome, Revision};
 pub use search::{SearchFilters, SearchResultEntry};
 pub use stewardships::{StewardshipSummary, StewardshipVariant};
