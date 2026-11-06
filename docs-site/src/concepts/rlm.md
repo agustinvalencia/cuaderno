@@ -17,7 +17,9 @@ the weekly review, and one set of projects that bridges the two.
 
 1. **A chronological log** (Faraday). A single append-only stream of what you did, observed and
    thought, in the order it happened. Past entries are never edited; a change of mind is a new entry
-   referencing the old one. It removes the "where do I put this?" decision, preserves the *reasoning*
+   referencing the old one. The one exception is an address: when a page is renamed, every
+   reference to it is corrected to the new name, the old name is kept on the page, and the rename is
+   itself an entry. It removes the "where do I put this?" decision, preserves the *reasoning*
    and not just the result, and keeps you honest against hindsight. Unified across contexts — the
    regularisation weight and the plumber go in the same day.
 2. **Evidence portfolios** (Darwin). One folder per active question, accumulating whatever is
@@ -191,6 +193,9 @@ to a newer one; the published method keeps a changelog of practices.
 - **1.1** — parking clarified (under practice 4), practice 8 (handing off), and the monthly loop
   in the rhythm. Additive: every 1.0 logbook is a valid 1.1 logbook. On adopting 1.1 a paper user
   does two things: a dated line on the first page, and one pass over the parked pages' dates.
+- **1.2** — practice 1 gains its one exception: a renamed page's references are corrected, the old
+  name is kept on the page, and the rename is itself an entry. Additive: every 1.1 logbook is a
+  valid 1.2 logbook. On adopting 1.2 a paper user does one thing: notes the rule.
 
 ## How it maps to the tool
 

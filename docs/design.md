@@ -850,7 +850,7 @@ and `cdno migrate` writes `vault migrated`, which carries no wikilink, with `was
 
 This ensures no information is lost while keeping the project map clean and focused on the present.
 
-**Exceptions to the `was:`/`now:` shape.** Five further line families record changes without copying the old text:
+**Exceptions to the `was:`/`now:` shape.** Six further line families record changes without copying the old text:
 
 - **Revisions of mutable custom notes** such as concepts (§5.12). `revise_note` and `cdno note revise` write, in the same transaction as the note, `revised [[<path>]] — <reason>` for a whole-body revision or `revised [[<path>#<Heading>]] — <reason>` for a one-section upsert; the path has no `.md`, the anchor is the raw heading text, and the reason is required and flattened to one line. A revision that leaves the text unchanged writes and logs nothing.
 
@@ -885,6 +885,16 @@ This ensures no information is lost while keeping the project map clean and focu
   ```
 
   The reader holds one slot: a newer open marker displaces an older one for good, a close empties the slot only when its `(project, text)` is the slot's, and `[focus] carry_over_days` (default 1) sets how many days back it reads. The parser requires the `- **HH:MM**: ` stamp and the em dash, and `cdno lint` reports a near-miss `started`, `paused`, `resumed` or `promoted` line it would skip. `next:` and `reason:` read back, trimmed, as `last_paused` (`paused_lookback_days`, default 14) on the orientation and project-context reads.
+
+- **Renames.** `cdno note rename` and `rename_note` (RFC 0007) write `renamed [[<new>]] — <title>`, then an indented `was: <old-slug>` line and, when a reason is given, an indented `reason: <reason>` line. `<new>` takes the link form the type's other lines use (a bare slug for a project, `actions/<slug>` for an action note, `portfolios/<slug>` for a portfolio). `was:` is a copied value, never a link: as a link it would dangle or be rewritten by the very operation it records, and no enrichment pass may linkify it, nor does a later rename rewrite it. A question renamed together with its same-slug portfolio adds a third continuation, `portfolio: [[portfolios/<new>]]`, which *is* a link, so a later rename of the portfolio corrects it. `renamed` is not a focus marker.
+
+  ```markdown
+  - **11:20**: renamed [[surrogate-calibration]] — Surrogate calibration
+    was: calibrate-the-surrogate-model-against-the
+    reason: the slug had been cut mid-phrase
+  ```
+
+  This is the one exception to the append-only rule: a reference is an address, so a rename corrects every reference to the old slug in every note, the journal included, to the new one. Everything else in a past entry stays as it was written; the `renamed` line records that the correction happened and what the old name was.
 
 - **The `during:` tag.** While a focus is open (a carried one included), a log line written by `cdno log`, `cdno log note`, `append_to_log` and `note_to_daily` gets an indented `during: [[<project-slug>]]` continuation, and `cdno capture` / `capture` writes `captured_during: <project-slug>` into the new inbox item's frontmatter. Triage (`cdno triage`, `discard_inbox_item`) copies the item's tag onto its own log line, so the tag outlives the file. The continuation sits below the line's head, so no reader of the heads sees it; it is how a later review can tell where a captured thought came from.
 
