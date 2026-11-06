@@ -417,7 +417,7 @@ fn rename(
     let target = match args.note {
         Some(reference) => {
             let reference = crate::commands::open::strip_vault_root(&reference, root);
-            let (path, _) = crate::commands::open::resolve_with_alias(
+            let (path, via_alias) = crate::commands::open::resolve_with_alias(
                 vault,
                 &reference,
                 at.date(),
@@ -425,10 +425,13 @@ fn rename(
                 &mut prompted,
                 &renamable,
             )?;
-            if prompted {
-                path.to_string()
-            } else {
+            // The typed name goes through only when it carried a former name
+            // to report; otherwise the resolved path does, so a hit taken
+            // from an ambiguity is the note the domain plans for.
+            if via_alias.is_some() {
                 reference
+            } else {
+                path.to_string()
             }
         }
         None if interactive => {

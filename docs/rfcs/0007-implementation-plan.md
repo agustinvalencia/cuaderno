@@ -1243,7 +1243,7 @@ per line and exits non-zero. `docs/cli-ergonomics.md`'s exception table gains th
   the confirm aborts, vault byte-identical; the confirm defaults to yes, the family's convention, so Enter would proceed), `json_carries_the_plan_and_written`,
   `a_taken_slug_is_a_json_rejection`, `an_incomplete_rename_lists_its_paths` (the rollback failure
   cannot be provoked against real files from the CLI: the test renders a constructed
-  `RenameIncomplete` through the handler's refusal path), and `a_former_name_is_reported_on_the_preview`.
+  `RenameIncomplete` through the handler's refusal path), `a_former_name_is_reported_on_the_preview`, and `a_change_during_the_confirm_prompt_is_a_stale_plan` (pty: the vault changes while the confirm waits; `y` is refused as `stale_plan`, nothing moved).
 - `grep -n "note rename" docs/cli-ergonomics.md` finds the row.
 
 **Correct means.** The preview is the contract, and the verb never writes a plan the person did
@@ -1293,7 +1293,7 @@ mid-operation, and a person who knows better can override exactly one of those.
 through `resolve_note_reference` (`context.rs:519`) and running through `verified_write_with`
 (`verify.rs:117`) so a successful write fires the sync nudge (§5.8 (3)); a dry run does not go
 through the write path and does not nudge. `RenamePlanDto { target, from, new_slug, found_by_former_name, moves: [{from, to}], edits: [{path, changes: [{kind: links|field|alias|log_line, count|key}]}], references, notes, log_line, warnings, plan_hash }`
-(the shape `cdno note rename --json` prints, T24; `edits[].changes[]` replaces the planned `referrers`)
+(the shape `cdno note rename --json` prints, T24; a `warnings` entry is `{kind, message, …}` with `kind: frozen_prefix_already_diverged` + `path`, or `old_slug_already_an_alias` + `holder`; `log_line` is `null` on a no-op; `edits[].changes[]` replaces the planned `referrers`)
 in `dto.rs`, returned whether or not it wrote, plus `written: bool` and `index_stale: bool`
 (§6.4). Codes in `rejection.rs`: `stem_shared`, `note_not_renamable { reason }`,
 `reference_drift { path, drift }`, `reference_unaddressable { path, key }` (added in the T18

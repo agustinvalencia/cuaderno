@@ -1904,3 +1904,33 @@ fn a_question_and_its_portfolio_resolve_to_the_question() {
             "move     questions/research/surrogate-accuracy.md -> questions/research/surrogate-error.md",
         ));
 }
+
+#[test]
+fn an_auto_taken_single_hit_passes_its_path() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    // An archived action with the project's stem: the bare slug is ambiguous
+    // to the resolver, but only the project is renamable, so it is taken.
+    let archived = dir.path().join("actions/_done/2026");
+    fs::create_dir_all(&archived).unwrap();
+    fs::write(
+        archived.join("old.md"),
+        "---\ntype: action\nstatus: done\nproject: taken\nenergy: deep\ncreated: 2026-05-01\n---\n\n# Old step\n",
+    )
+    .unwrap();
+    let before = vault_bytes(dir.path());
+
+    // The domain then refuses the shared stem, with its own code.
+    let out = rename_cmd(dir.path())
+        .args(["old", "--to", "surrogate-model", "--json"])
+        .assert()
+        .code(1);
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(v["code"], "stem_shared");
+    rename_cmd(dir.path())
+        .args(["old", "--to", "surrogate-model"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is shared with"));
+    assert_eq!(vault_bytes(dir.path()), before);
+}

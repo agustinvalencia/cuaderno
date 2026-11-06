@@ -107,7 +107,7 @@ Nothing is written on a refusal. Do not retry with a `-2` of your own; ask for a
 }
 ```
 
-`written` is whether anything was written (`false` on `--dry-run` and for a rename to the current slug); `log_line` is the unstamped `renamed` entry appended to today's daily note. The MCP `rename_note` tool returns the same plan fields. A `changes` entry is `links` (with `count`), `field` (with `key`), `alias` or `log_line`. A refusal
+`written` is whether anything was written (`false` on `--dry-run` and for a rename to the current slug); `log_line` is the unstamped `renamed` entry appended to today's daily note. The MCP `rename_note` tool returns the same plan fields. `log_line` is `null` for a rename to the current slug. A `warnings` entry is `{kind, message, …}`: `frozen_prefix_already_diverged` adds `path` (an archived referrer that already failed its archival check, rewritten anyway), `old_slug_already_an_alias` adds `holder` (the old slug is already another note's alias, so it will resolve to nothing once shared). A `changes` entry is `links` (with `count`), `field` (with `key`), `alias` or `log_line`. A refusal
 prints the usual `{code, message, details}` object and exits `1`, writing nothing:
 
 | `code` | `details` | When |

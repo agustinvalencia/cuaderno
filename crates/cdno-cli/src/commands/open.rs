@@ -374,6 +374,11 @@ fn resolve_with_via(
             let kept: Vec<NoteCandidate> = hits.iter().filter(|c| keep(c)).cloned().collect();
             let hits = if kept.is_empty() { hits } else { kept };
             if let [only] = hits.as_slice() {
+                // Taking the one hit is a choice made for the person, as a
+                // picker's would be: an interactive caller confirms it.
+                if interactive {
+                    *prompted = true;
+                }
                 return Ok((only.path.clone(), None));
             }
             // In a terminal, an ambiguity is a question rather than a dead
