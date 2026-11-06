@@ -689,6 +689,13 @@ fn focus_pointers_are_in_the_tool_descriptions() {
         lint_len <= CLIENT_CUT,
         "lint description is {lint_len} chars, past the {CLIENT_CUT}-char client cut"
     );
+    assert!(
+        lint.description
+            .as_deref()
+            .unwrap_or_default()
+            .contains("names a renamed note"),
+        "lint must warn that an alias-resolved link names a renamed note"
+    );
 
     // Every description fits the client's cut, except these, which were
     // over it before RFC 0005 and are not its to shorten.
@@ -1169,24 +1176,46 @@ fn rename_note_description_states_the_contract() {
 /// RFC 0007 §5.1, T27: an agent that reads only the instructions must not
 /// take a rename for a breach of the append-only journal, nor learn from the
 /// rule alone that the journal is editable. The exception sits in the bullet
-/// that states the rule, inside the client cut.
+/// that states the rule, inside the client cut: the phrases are asserted in
+/// that bullet's own slice, not anywhere in the window.
 #[test]
 fn instructions_state_the_reference_exception() {
     let info = empty_server().get_info();
     let full = info.instructions.as_deref().unwrap_or_default();
     let seen: String = full.chars().take(CLIENT_CUT).collect();
+    let start = seen
+        .find("APPEND-ONLY")
+        .expect("the journal bullet is inside the cut");
+    let rest = &seen[start..];
+    let bullet = &rest[..rest.find("\n- ").unwrap_or(rest.len())];
     for phrase in [
-        "APPEND-ONLY",
         "A reference is an address",
-        "rename_note rewrites addresses in every note",
-        "changes no other byte",
+        "rename_note rewrites addresses",
+        "changes no other byte but its own log line and alias",
         "the one exception",
     ] {
         assert!(
-            seen.contains(phrase),
-            "the first {CLIENT_CUT} chars of the instructions must carry {phrase:?} (RFC 0007 §5.1)"
+            bullet.contains(phrase),
+            "the journal bullet must carry {phrase:?} inside the first {CLIENT_CUT} chars (RFC 0007 §5.1)"
         );
     }
+}
+
+/// The first 2048 characters are a spent budget: the headline that
+/// separates projects from stewardships must stay inside the cut with at
+/// least 30 characters to spare, so a small edit above it cannot push it out.
+#[test]
+fn the_projects_end_headline_is_inside_the_cut() {
+    let info = empty_server().get_info();
+    let full = info.instructions.as_deref().unwrap_or_default();
+    let headline = "PROJECTS END, STEWARDSHIPS DO NOT";
+    let at = full.find(headline).expect("the headline is present");
+    let end = full[..at].chars().count() + headline.chars().count();
+    assert!(
+        end <= CLIENT_CUT - 30,
+        "the headline ends at char {end}; it must end by {}",
+        CLIENT_CUT - 30
+    );
 }
 
 /// A fresh empty directory as the server's vault root: the in-memory vault
