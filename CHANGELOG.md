@@ -8,6 +8,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Lint reads the `renamed` log line** (RFC 0007 T19, closes #868). The near-miss check now covers
+  `renamed [[new]] — Title` lines (a malformed stamp or an ASCII hyphen for the em dash), and a `was:`
+  continuation under one that contains a `[[` link is a warning. `renamed` is not a focus marker:
+  `current_focus` ignores it.
 - **Naming a note at creation** (RFC 0007 stage S1, closes #579). The create operations for a project,
   question, action note, custom note, commitment, portfolio and stewardship accept an explicit slug,
   validated and refused on collision rather than suffixed (#881, #882). When a portfolio's `question`

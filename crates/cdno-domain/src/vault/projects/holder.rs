@@ -7,7 +7,7 @@
 //! `holder on [[<slug>]]` entry with indented `was:` / `now:` lines to
 //! today's daily log, in the mutable-field family `set_core_question`
 //! belongs to. The entry is not a focus marker, so the lint prefix list
-//! (`FOCUS_MARKER_PREFIXES`) does not name it.
+//! (`MARKER_PREFIXES`) does not name it.
 //!
 //! The three guards the verb carries:
 //!

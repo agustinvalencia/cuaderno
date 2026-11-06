@@ -26,12 +26,13 @@ use super::context::{
     RECORD_TIME_FORMATS, RecordTime, parse_focus_marker, parse_log_entry_heads,
     parse_promotion_marker, record_time, records_of, str_field,
 };
+use super::log::LOG_RENAMED_PREFIX;
 use super::method_status::MethodStatus;
 use super::note_ref::candidate_slug;
 use super::orient::{ACTIVE_HABITS_SECTION, parse_habit_line};
 use super::projects::actions::{
     LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_ACTION_PAUSED_PREFIX,
-    LOG_ACTION_PROMOTED_PREFIX, LOG_RESUMED_PREFIX, LOG_STARTED_PREFIX,
+    LOG_ACTION_PROMOTED_PREFIX, LOG_RESUMED_PREFIX, LOG_STARTED_PREFIX, LOG_WAS_KEY,
 };
 use super::stewardships::PERIODIC_COMMITMENTS_SECTION;
 use super::{DAILY_LOGS_SECTION, Vault};
@@ -464,16 +465,27 @@ impl Vault {
                 if read_back {
                     continue;
                 }
-                issues.push(LintIssue::warning(
-                    entry.path.clone(),
+                let message = if claim.is_focus {
                     format!(
                         "log line `{}` reads as a `{}` marker but `cdno now` will not see it -- {}",
                         line.trim(),
                         claim.prefix.trim(),
                         focus_marker_hint(&claim)
-                    ),
-                ));
+                    )
+                } else {
+                    format!(
+                        "log line `{}` reads as a `{}` log line but is not read back as one -- {}",
+                        line.trim(),
+                        claim.prefix.trim(),
+                        focus_marker_hint(&claim)
+                    )
+                };
+                issues.push(LintIssue::warning(entry.path.clone(), message));
             }
+            issues.extend(linked_was_issues(
+                &entry.path,
+                &section.lines().collect::<Vec<_>>(),
+            ));
         }
         Ok(issues)
     }
@@ -755,12 +767,46 @@ fn habit_line_hint(line: &str) -> &'static str {
     }
 }
 
+/// Warn on a `was:` continuation under a `renamed` head whose value holds a
+/// link. The value is a copied slug; a link there would be rewritten by the
+/// next rename and the record would stop saying what the note was called.
+fn linked_was_issues(path: &VaultPath, lines: &[&str]) -> Vec<LintIssue> {
+    let mut issues = Vec::new();
+    let mut under_rename = false;
+    for line in lines {
+        if line.starts_with(char::is_whitespace) {
+            if under_rename
+                && line
+                    .trim_start()
+                    .strip_prefix(LOG_WAS_KEY)
+                    .is_some_and(|v| v.contains("[["))
+            {
+                issues.push(LintIssue::warning(
+                    path.clone(),
+                    format!(
+                        "`was:` under a rename is a copied value; a link here is rewritten by the next rename -- `{}`",
+                        line.trim()
+                    ),
+                ));
+            }
+            continue;
+        }
+        under_rename = parse_log_entry_heads(line)
+            .first()
+            .is_some_and(|(_, text)| text.starts_with(LOG_RENAMED_PREFIX));
+    }
+    issues
+}
+
 /// A `## Logs` line that reached for a focus marker, as
 /// [`focus_marker_claim`] read it. Carries only what the hint needs; the
 /// accept/reject verdict is the canonical parsers'.
 struct FocusClaim<'a> {
     /// Which marker the writer reached for.
     prefix: &'static str,
+    /// Whether that marker feeds the focus fold. `renamed` does not: it is
+    /// checked for its shape, but `cdno now` never reads it.
+    is_focus: bool,
     /// Whether a well-formed `**HH:MM**: ` stamp preceded it.
     stamped: bool,
     /// Whether a `- ` bullet opened the line. `parse_log_entry_heads`
@@ -771,14 +817,18 @@ struct FocusClaim<'a> {
     text: &'a str,
 }
 
-/// The six markers [`Vault::current_focus`] is built from.
-const FOCUS_MARKER_PREFIXES: [&str; 6] = [
-    LOG_STARTED_PREFIX,
-    LOG_RESUMED_PREFIX,
-    LOG_ACTION_DONE_PREFIX,
-    LOG_ACTION_DROPPED_PREFIX,
-    LOG_ACTION_PAUSED_PREFIX,
-    LOG_ACTION_PROMOTED_PREFIX,
+/// The fixed-prefix log lines the near-miss check covers, as
+/// `(prefix, is_focus)`. The six `is_focus` entries are the markers
+/// [`Vault::current_focus`] is built from; `renamed` (RFC 0007 §5.6) is
+/// checked for its shape only and the focus fold never sees it.
+const MARKER_PREFIXES: &[(&str, bool)] = &[
+    (LOG_STARTED_PREFIX, true),
+    (LOG_RESUMED_PREFIX, true),
+    (LOG_ACTION_DONE_PREFIX, true),
+    (LOG_ACTION_DROPPED_PREFIX, true),
+    (LOG_ACTION_PAUSED_PREFIX, true),
+    (LOG_ACTION_PROMOTED_PREFIX, true),
+    (LOG_RENAMED_PREFIX, false),
 ];
 
 /// Did this line reach for a focus marker?
@@ -823,12 +873,13 @@ fn focus_marker_claim(line: &str) -> Option<FocusClaim<'_>> {
             }),
         ),
     };
-    let prefix = FOCUS_MARKER_PREFIXES
+    let (prefix, is_focus) = MARKER_PREFIXES
         .iter()
         .copied()
-        .find(|p| text.strip_prefix(p).is_some_and(|r| r.starts_with("[[")))?;
+        .find(|(p, _)| text.strip_prefix(p).is_some_and(|r| r.starts_with("[[")))?;
     Some(FocusClaim {
         prefix,
+        is_focus,
         stamped,
         bulleted,
         text,
