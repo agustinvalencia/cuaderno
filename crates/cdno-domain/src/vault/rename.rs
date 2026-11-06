@@ -23,8 +23,8 @@
 //!
 //! **A relink is the same planner in a mode where the note does not move**
 //! (RFC 0007 §8 S8, T30): [`Vault::plan_relink`] rewrites every reference
-//! that reaches the note only through one of its `aliases:` (a straggler,
-//! as `cdno lint` reports one) to the current slug, with no move, no alias
+//! that reaches the note only through a former name (one of its
+//! `aliases:`), links and §3.5 fields alike, to the current slug, with no move, no alias
 //! edit and a `relinked` line instead of a `renamed` one. One planner, one
 //! hash, one preview and one write path serve both.
 
@@ -322,7 +322,7 @@ impl Vault {
                 }
             }
         }
-        renamable_type(self, path, Some(note_type), &snapshot).is_ok()
+        renamable_type(self, path, Some(note_type), &snapshot, false).is_ok()
     }
 
     /// Read the vault into a [`VaultSnapshot`] for [`plan_rename`](Self::plan_rename):
@@ -472,9 +472,11 @@ impl Vault {
     /// not move. Writes nothing.
     ///
     /// The plan is built from the note's **aliases** instead of its old
-    /// slug: every wikilink that resolves to the note **only through one of
-    /// its aliases** (by the index's own resolver, so exactly the stragglers
-    /// `cdno lint` warns about) has its address's last segment rewritten to
+    /// slug: it rewrites every reference that reaches the note only through
+    /// a former name, links and §3.5 fields alike. Every wikilink that
+    /// resolves to the note **only through one of its aliases** (by the
+    /// index's own resolver, the stragglers `cdno lint` warns about) has its
+    /// address's last segment rewritten to
     /// the current slug (a portfolio's to its folder form,
     /// `portfolios/<slug>`), and only when the rewritten address resolves to
     /// the note too, so a reference can only ever move to where it already
@@ -484,8 +486,9 @@ impl Vault {
     /// folders, #913).
     ///
     /// A §3.5 field of the note's own type whose value is one of the note's
-    /// aliases, and that alias resolves to the note, is rewritten to the
-    /// current slug. This is the one mode where that is right: a rename
+    /// aliases (never one of its current names), and that alias resolves to
+    /// the note, is rewritten to the current slug; lint does not report
+    /// these, since a field is not a link. This is the one mode where that is right: a rename
     /// leaves such a field alone, since a field is read by its bare value
     /// and a value equal to an alias was already detached from the note
     /// before the rename; a relink is the repair that reattaches it.
@@ -495,7 +498,9 @@ impl Vault {
     /// line with an indented `references: <n>` continuation and no `was:`.
     /// With no straggler the plan is empty and logs nothing. The refusals
     /// are the rename's that apply to a note that keeps its slug, in its
-    /// order: [`DomainError::NoteNotRenamable`] (the same types),
+    /// order: [`DomainError::NoteNotRenamable`] (the same types and the same
+    /// reasons but `archived`: an archived action note may be relinked,
+    /// since nothing on it changes),
     /// [`DomainError::StemShared`] (a bare `[[<slug>]]` would resolve to
     /// neither note), then the referrers' own.
     pub fn plan_relink(
@@ -535,8 +540,9 @@ impl Vault {
         let target_type = note_type_name(target_before);
 
         // 1. Not renamable. A relink edits no alias, so it cannot be
-        // refused for its `aliases:` shape.
-        let builtin = renamable_type(self, &target_path, target_type.as_deref(), snapshot)?;
+        // refused for its `aliases:` shape, and it changes nothing on the
+        // target, so an archived action note may be relinked.
+        let builtin = renamable_type(self, &target_path, target_type.as_deref(), snapshot, relink)?;
         let alias_edit = if relink {
             None
         } else {
@@ -723,14 +729,22 @@ impl Vault {
             .filter(|(_, holder)| holder == &target_path)
             .map(|(alias, _)| alias.as_str())
             .collect();
-        let mut names: HashSet<&str> = note_link_names(&target_path).into_iter().collect();
+        let own_names = note_link_names(&target_path);
+        let mut names: HashSet<&str> = own_names.iter().copied().collect();
         names.extend(own_aliases.iter().copied());
         // The aliases a relink follows: the note's own that the resolver
         // reaches it through (no stem shadows it, no other note shares it).
+        // Links are judged by the resolver alone, so a bare `[[new]]` to a
+        // portfolio listing its own folder name `new` (lint's straggler, the
+        // stem being `_index`) is rewritten to its folder form, a real
+        // change. A field is read by its text, so the note's current names
+        // are never field values to rewrite: `portfolio: new` already names
+        // the portfolio, and rewriting `new` to `new` is no change.
         let alias_names: HashSet<&str> = own_aliases.iter().copied().collect();
         let effective_aliases: Vec<&str> = own_aliases
             .iter()
             .copied()
+            .filter(|alias| *alias != new_slug && !own_names.contains(alias))
             .filter(|alias| {
                 resolve_with_alias(alias, snapshot, &alias_map) == Some((target_path.clone(), true))
             })
@@ -820,14 +834,14 @@ impl Vault {
             }
 
             let (_, mut link_edits) = rewrite_wikilink_addresses(before, names_target, rewrite);
-            // A link that already reads the new slug (a straggler through
-            // an own alias the note now takes back) is not a change. A
-            // relink rewrites only addresses the alias rule resolves, and
-            // that rule never answers for the current slug (a stem always
-            // wins over an alias), so it has no such edit to drop.
-            if !relink {
-                link_edits.retain(|e| before[e.range.clone()] != e.replacement);
-            }
+            // A rewrite whose bytes do not change is not a change, in either
+            // mode: in a rename, a straggler through an own alias the note
+            // now takes back; in a relink, a link the alias rule answers for
+            // that already reads the current address (a hand-listed own
+            // name). A stem always wins over an alias only for a flat note:
+            // a folder note's stem is `_index`, so its own folder name can
+            // reach it through the alias rule.
+            link_edits.retain(|e| before[e.range.clone()] != e.replacement);
             let after_links = apply(before, &link_edits);
             let mut all = link_edits.clone();
             let mut changes = Vec::new();
@@ -1541,11 +1555,18 @@ fn prune_folder_tree(store: &dyn cdno_core::store::VaultStore, root: &VaultPath)
 
 /// The §5.2 check. Returns the target's built-in type (`None` for a custom
 /// note) when it is renamable now.
+///
+/// `relink` skips the one refusal that protects the target's own bytes:
+/// an archived action note is refused a rename because its frozen prefix
+/// would change, and a relink changes nothing on the target (no move, no
+/// alias edit; a self-link through a former name is the masked address
+/// rewrite any archived referrer gets). Every other refusal applies.
 fn renamable_type(
     vault: &Vault,
     path: &VaultPath,
     type_name: Option<&str>,
     snapshot: &VaultSnapshot,
+    relink: bool,
 ) -> Result<Option<NoteType>, DomainError> {
     let Some(name) = type_name else {
         return Err(not_renamable(path, "type none".to_owned()));
@@ -1564,7 +1585,7 @@ fn renamable_type(
     if !renamable {
         return Err(not_renamable(path, format!("type {name}")));
     }
-    if path.as_path().starts_with(paths::ACTIONS_DONE) {
+    if !relink && path.as_path().starts_with(paths::ACTIONS_DONE) {
         return Err(not_renamable(path, "archived".to_owned()));
     }
     // A folder note moves its whole folder (§5.3). Only a portfolio's, at

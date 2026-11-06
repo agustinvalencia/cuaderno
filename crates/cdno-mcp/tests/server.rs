@@ -1166,6 +1166,7 @@ fn rename_note_description_states_the_contract() {
         "`relink: true` in place of `to` keeps the slug",
         "only by a former name",
         "nothing moves",
+        "it takes no `reason`",
     ] {
         assert!(desc.contains(phrase), "missing {phrase:?}: {desc}");
     }

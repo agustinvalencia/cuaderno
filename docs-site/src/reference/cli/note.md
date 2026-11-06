@@ -96,7 +96,8 @@ tracking, inbox items, archived action notes, stewardships, commitments, a custo
 folder and a note with no `type` are refused (`note_not_renamable`).
 
 With [`--relink`](#relinking-the-stragglers---relink) the note keeps its slug, and the links that
-still reach it through a former name are rewritten to the current one.
+still reach it through a former name are rewritten to the current one. An archived action note can
+be relinked, though not renamed.
 
 ### Arguments
 
@@ -212,7 +213,7 @@ printed, only the message (``note '…' cannot be renamed: <reason>``); `--json`
 | `reason` | Meaning | What to do |
 |----------|---------|------------|
 | `type <name>` (`type none` for a note with no `type:`) | The kind never renames: daily, weekly, monthly, commitment, stewardship, evidence, tracking, inbox; or a note without a `type`. | Nothing: the note keeps its name. For a note with no `type`, add one first. |
-| `archived` | An archived action note, whose frozen prefix would change. | Nothing: the note keeps its name. |
+| `archived` | An archived action note, whose frozen prefix would change. A `--relink` is not refused: it changes nothing on the note. | Nothing: the note keeps its name. `--relink` still repairs the links to it. |
 | `folder` | A folder note other than a portfolio's `portfolios/<slug>/_index.md`, of any type (a custom note kept as a folder, `projects/<slug>/_index.md`); or a portfolio kept as a single file. A portfolio on its own, in its folder, renames fine. | Nothing: the note keeps its name. |
 | `rename the question` | A portfolio whose slug a question shares (the portfolio alone is refused). | Rename the question: the pair moves together. |
 | `it has no frontmatter to record its old slug in` | The note has no frontmatter block. | Repair the note (add frontmatter), then rename. |
@@ -250,8 +251,8 @@ A link written with a former name after the rename is a straggler: cdno still re
 the alias, and [`cdno lint`](lint.md) reports it, but an editor cannot follow it. The usual way one
 appears is a vault synced between two machines with a journal merged line by line (`merge=union`):
 the rename rewrote a log line on one machine, the other appended a line beside it, and the merge kept
-both versions, so the old line comes back holding the old name. `--relink` rewrites every straggler
-in one go:
+both versions, so the old line comes back holding the old name (the merge keeps the whole hunk, so
+usually several lines come back, not one). `--relink` rewrites every straggler in one go:
 
 ```text
 $ cdno lint
@@ -269,16 +270,23 @@ $ cdno note rename surrogate-calibration --relink
 ```
 
 The last command prints the same preview and ``Relinked 1 reference to `surrogate-calibration`.``
-It goes through the same preview, plan hash, sync check and refusals as a rename, with three
+It goes through the same preview, plan hash, sync check and refusals as a rename, with these
 differences:
 
-- **Only a straggler is rewritten.** A link is rewritten when it resolves to the note through one of
-  its aliases, exactly the links `cdno lint` warns about, and only to an address that resolves to
+- **Only a reference through a former name is rewritten,** links and fields alike. A link is rewritten when it resolves to the note through one of
+  its aliases (the links `cdno lint` warns about), and only to an address that resolves to
   the same note. A link that already names the note by its slug or path is left alone, and so is a
   link a former name no longer reaches (another note took that file name since). A reference can
   only ever move to where it already points. A field such as `project:` that holds one of the note's
-  former names is rewritten too: a field is read by its value alone, so until the relink it named no
-  note at all.
+  former names is rewritten too (lint does not report these, since a field is not a link): a field
+  is read by its value alone, so until the relink it named no note at all.
+- **It corrects addresses; it does not tidy the merge.** The lines the union merge duplicated stay
+  after the relink, now with identical text twice. They are the merge's, not journal entries, so
+  deleting the extra copy by hand is yours to do if you want it.
+- **An archived action note can be relinked.** A rename refuses it (`archived`, its frozen prefix
+  would change), but a relink changes nothing on the target, so the links to a completed action
+  that was renamed before it was archived can be repaired. Every other refusal of a rename applies:
+  `note_not_renamable` for the other reasons, `stem_shared`, the referrers' own and the sync check.
 - **Nothing moves and no alias changes.** The note stays where it is, byte for byte unless it links
   to itself by a former name, and its `aliases:` stay listed, so an old link anywhere else (a file
   `ignore` hides, the other machine) keeps working.

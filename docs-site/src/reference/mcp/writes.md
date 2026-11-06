@@ -281,12 +281,13 @@ The preview is the contract. The sequence an agent follows:
 rename to the note's current slug is an empty plan: `written: false`, `log_line: null`.
 
 **Relinking.** `relink: true` in place of `to` keeps the note's slug and rewrites every link that
-reaches it only through a former name (the stragglers [`lint`](reads.md) reports, which a sync
-merge can bring back) to the current slug, along with a reference field holding a former name. The
+reaches it only through a former name, links and reference fields alike (the links are the
+stragglers [`lint`](reads.md) reports, which a sync merge can bring back), to the current slug. The
 same preview-then-write sequence applies, with `relink: true` on both calls. Nothing moves and the
 aliases stay listed: the result has `moves: []` and `new_slug` equal to `from`, and the `log_line`
 is `relinked [[<slug>]] — <title>` with an indented `references: <n>` line. With no straggler the
-plan is empty and nothing is logged. `relink` with `to`, either with `reason`, or neither `to` nor
+plan is empty and nothing is logged. An archived action note can be relinked, though not renamed.
+A blank `to` beside `relink: true` reads as omitted. `relink` with `to`, either with `reason`, or neither `to` nor
 `relink`, is refused as an invalid argument naming the field
 ([`cdno note rename --relink`](../cli/note.md#relinking-the-stragglers---relink)).
 

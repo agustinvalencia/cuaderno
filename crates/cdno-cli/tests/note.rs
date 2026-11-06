@@ -1391,14 +1391,28 @@ fn relink_previews_and_writes_like_a_rename() {
         .success()
         .stdout(predicate::str::contains("Nothing to relink"));
 
-    // `--relink` with `--to` is a usage error, and writes nothing.
+    // `--relink` with `--to` or `--reason` is a usage error, and writes
+    // nothing.
     let before = vault_bytes(dir.path());
-    rename_cmd(dir.path())
-        .args(["surrogate-model", "--relink", "--to", "emulator"])
-        .assert()
-        .code(2)
-        .stderr(predicate::str::contains("cannot be used with"));
+    for extra in [["--to", "emulator"], ["--reason", "tidy"]] {
+        rename_cmd(dir.path())
+            .args(["surrogate-model", "--relink"])
+            .args(extra)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("cannot be used with"));
+    }
     assert_eq!(vault_bytes(dir.path()), before);
+
+    // Neither `--to` nor `--relink`, non-interactively: the message names
+    // both.
+    rename_cmd(dir.path())
+        .arg("surrogate-model")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "missing required flag: --to or --relink",
+        ));
 }
 
 #[test]

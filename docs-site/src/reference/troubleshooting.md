@@ -188,8 +188,10 @@ or Neovim follows the file name, not the alias, and cannot open it.
 since they still work in cdno. To rewrite every one to the current name in one go, run
 [`cdno note rename new --relink`](cli/note.md#relinking-the-stragglers---relink) (`--dry-run` first
 to see them; over MCP, `rename_note` with `relink: true`): nothing moves, the old name stays listed,
-and a `relinked` line is logged. Changing one link by hand is fine too, even in a past log entry: it
-is the same address correction.
+and a `relinked` line is logged. This works for an archived action note too, which cannot be renamed.
+A union merge brings back the whole hunk, so the lines it duplicated stay after the relink, as
+identical text twice: the relink corrects addresses, it does not tidy the merge. Changing one link
+by hand is fine too, even in a past log entry: it is the same address correction.
 
 ## Rename refused: behind upstream
 

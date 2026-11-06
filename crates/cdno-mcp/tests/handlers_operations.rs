@@ -5407,6 +5407,19 @@ mod rename {
                 err.message
             );
         }
+
+        // A blank `to` beside `relink: true` reads as omitted.
+        let blank = decode_json(
+            &server
+                .rename_note(Parameters(RenameNoteInput {
+                    to: Some("  ".to_owned()),
+                    ..relink()
+                }))
+                .await
+                .expect("a blank `to` with `relink` is a relink"),
+        );
+        assert_eq!(blank["moves"], json!([]));
+        assert_eq!(blank["new_slug"], "emulator-study");
     }
 
     #[tokio::test]

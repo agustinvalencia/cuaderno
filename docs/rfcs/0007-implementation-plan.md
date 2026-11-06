@@ -1572,19 +1572,35 @@ the tool reports it as `INVALID_PARAMS` naming `to`. Plan amendments:
 - **Names.** `plan_rename` with `new_slug` = the current slug is `plan_relink`, a mode of the same
   planner, so the rename's API is unchanged. `RenamePlan` gains `relink: bool`; the JSON and the
   DTO do not, since the caller knows what it asked (`moves` is empty and `new_slug` equals `from`).
-- **The predicate is stricter than "resolves via an alias".** A link is rewritten when its last
-  segment is one of the note's aliases, it resolves to the note with the alias rule (the index's
-  `via_alias`, so exactly lint's straggler set, #913 included), **and** its rewritten address
-  resolves to the note too. The third clause leaves the #913 shape alone (`[[portfolios/old]]`
+- **The predicate is stricter than "resolves via an alias", and wider than lint's set.** The
+  relink rewrites every reference that reaches the note only through a former name, links and §3.5
+  fields alike; fields are outside lint's straggler set, since a field is not a link. A link is
+  rewritten when its last segment is one of the note's aliases, it resolves to the note with the
+  alias rule (the index's `via_alias`, #913 included), **and** its rewritten address resolves to
+  the note too. A field is rewritten when it holds an alias that is not one of the note's current
+  names (its slug, a folder note's folder name) and resolves to the note. The third clause leaves the #913 shape alone (`[[portfolios/old]]`
   reaching a question through its alias would become `[[portfolios/new]]`, the portfolio): it
   still resolves and warns, and the resolver fix will change it. A portfolio's straggler is
   rewritten to its folder form.
 - **`--reason` is refused with `--relink`** (and `reason` with `relink`): the `relinked` line has no
   `reason:` continuation, so a reason would be dropped silently otherwise.
-- **The no-op `retain` is the rename's only.** A rename drops an address rewrite whose text does not
-  change (a former name taken back); a relink never produces one, so it keeps every edit, which is
-  what makes the plan's mutation observable (`[[new]]` counted as a second address).
-- **More probes**: `relink_leaves_a_link_the_stem_sends_elsewhere_alone`,
+- **Refusals.** A relink applies every rename refusal that concerns a note keeping its slug, in the
+  same order: `note_not_renamable` for `type <name>`, `folder` and `rename the question` (not
+  `archived`: an archived action note may be relinked, since nothing on it changes, and the
+  two-clone sequence for a completed action lands there), then `stem_shared`, then the referrers'
+  own (`reference_drift`, `reference_unaddressable`), then the write's (`stale_plan`, the sync
+  check). Not `invalid_slug` or `slug_taken`: the slug is the note's own and nothing moves.
+- **The no-op `retain` applies in both modes** (review of #921). A folder note's stem is `_index`,
+  so its own folder name listed as an alias reaches it through the alias rule; the note's current
+  names are never field values to rewrite, and a link rewrite that does not change bytes is
+  dropped. With the retain on, the plan's mutation (`names_target` = "resolves to the target") is
+  killed by `relink_rewrites_a_portfolio_straggler_to_its_folder_form` (a direct
+  `[[portfolios/new/_index]]` becomes `[[portfolios/new]]`), not by the union test: for a flat
+  note every directly-resolving link already ends on the slug, so its rewrite is a no-op.
+- **More probes**: `a_folder_note_listing_its_own_name_relinks_to_an_empty_plan`,
+  `a_bare_link_to_a_folder_notes_own_name_is_relinked_to_its_folder_form`,
+  `an_archived_action_can_be_the_target_of_a_relink`,
+  `relink_leaves_a_link_the_stem_sends_elsewhere_alone`,
   `relink_leaves_a_link_that_resolves_by_stem_even_when_listed_as_an_alias`,
   `relink_rewrites_a_portfolio_straggler_to_its_folder_form`,
   `relink_leaves_a_folder_straggler_whose_folder_form_points_elsewhere`,

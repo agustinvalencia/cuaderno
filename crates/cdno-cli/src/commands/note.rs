@@ -480,13 +480,16 @@ fn rename(
     // the MCP tool shares.
     let request = match RenameRequest::from_args(args.to, args.relink)? {
         Some(request) => request,
-        None => RenameRequest::To(prompt::gather_or_error(
-            None,
-            "to",
-            interactive,
-            &mut prompted,
-            || prompt::prompt_text("New slug"),
-        )?),
+        None if interactive => {
+            prompted = true;
+            RenameRequest::To(prompt::prompt_text("New slug")?)
+        }
+        // The missing flag has an alternative here: name it.
+        None => {
+            return Err(anyhow::anyhow!(
+                "missing required flag: --to or --relink (provide one explicitly or run interactively in a TTY)"
+            ));
+        }
     };
     let reason = args.reason.as_deref();
 
