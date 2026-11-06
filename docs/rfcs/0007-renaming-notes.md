@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted — 2026-11-05 (four-seat review, three rounds, on PR #846; no seat holds a blocking point; §9 D3 and D7 settled by the maintainer). Implementation plan to follow, as RFC 0004 and 0005 had. |
+| **Status** | Accepted — 2026-11-05 (four-seat review, three rounds, on PR #846; no seat holds a blocking point; §9 D3 and D7 settled by the maintainer). Implementation plan to follow, as RFC 0004 and 0005 had. RLM 1.2 (T28). |
 | **Tracked by** | PR #846; #579 (created notes cannot be given an explicit slug, so a truncated one is permanent) |
 | **Affects** | `cdno-core` (`extractors.rs`, a new `git.rs`, `store.rs`, `index.rs`, one migration), `cdno-domain` (a new `vault/rename.rs`, `vault/slug.rs`, `note_type.rs`, `vault/note_ref.rs`, the create paths, `vault/lint.rs`), `cdno-cli` (`cdno note rename`, `--slug` on the create verbs), `cdno-mcp` (one tool, one field on the create tools, rejection codes, server instructions), `docs/design.md`, `CLAUDE.md`, `docs-site` (including the method page) |
 | **Related** | #529 (slug collisions from the word-boundary retreat), #524 (mid-word cut, closed), #225 (globally unique stems), #215 (last-segment resolution), #111 (append-only lint for archived actions), #211 (`cdno lint --fix`), #540 (the post-write sync nudge), RFC 0004 (one locator, every move restages), RFC 0005 (the focus fold) |

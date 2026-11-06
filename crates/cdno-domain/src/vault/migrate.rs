@@ -10,7 +10,10 @@
 //! migrates to and nothing finer: under the method's own test (§7.4) a minor
 //! version leaves every existing page readable as it is, so a minor has no
 //! file step, and a non-empty step means a major. The list is empty for RLM
-//! 1.1, whose only file change is the stamp.
+//! 1.2, whose only file change is the stamp. Nor does 1.2 add a read-through:
+//! the one read-through, the parked dates of 1.1, ends at
+//! [`READ_THROUGH_BELOW`], and the rename rule of 1.2 (RFC 0007 D7) asks a
+//! paper user to note a rule, not to reread a page.
 //!
 //! # The rules every step obeys
 //!
@@ -111,7 +114,7 @@ pub struct FileMigration {
 }
 
 /// Every file migration, in order. Append-only: a shipped entry is never
-/// edited, as with the index's `MIGRATIONS`. Empty for RLM 1.1.
+/// edited, as with the index's `MIGRATIONS`. Empty for RLM 1.2: a minor leaves every page readable as it is.
 pub const FILE_MIGRATIONS: &[FileMigration] = &[];
 
 /// The writes the file migrations of one run plan, kept apart from the

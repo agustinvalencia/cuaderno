@@ -79,7 +79,7 @@ one: upgrade cdno), while reads keep working; a minor difference only prints a n
 ## Append-only notes
 
 `daily`, `weekly`, `evidence`, and `tracking` notes are **append-only** — Cuaderno only ever grows
-them, never overwrites. They are the historical record. (Projects are the deliberate exception; see
+them, never overwrites, with one exception: when a note is renamed, references to it are corrected to the new name, even here. They are the historical record. (Projects are the deliberate exception; see
 next.)
 
 ## Project state history is preserved

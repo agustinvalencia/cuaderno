@@ -202,34 +202,34 @@ fn assert_prints_the_migrate_notice(dir: &Path, notice: &str) {
 }
 
 #[test]
-fn an_unstamped_vault_prints_the_notice_naming_1_1() {
+fn an_unstamped_vault_prints_the_notice_naming_1_2() {
     // From RLM 1.1 on, an unstamped vault (read as 1.0) is below the binary,
     // so it gets the notice; it is never said to follow 1.0.
     assert_eq!(
         cdno_domain::METHOD_VERSION,
-        cdno_core::config::MethodVersion { major: 1, minor: 1 }
+        cdno_core::config::MethodVersion { major: 1, minor: 2 }
     );
     let dir = inited_vault_with_method_line(None);
 
     assert_prints_the_migrate_notice(
         dir.path(),
-        "notice: this vault is unstamped (read as 1.0); this cdno implements RLM 1.1 \u{2014} \
+        "notice: this vault is unstamped (read as 1.0); this cdno implements RLM 1.2 \u{2014} \
          `cdno migrate --dry-run` shows what changes\n",
     );
 }
 
 #[test]
 fn a_1_0_vault_prints_the_notice() {
-    // A vault stamped "1.0" by an earlier cdno is an older minor than 1.1.
+    // A vault stamped "1.0" by an earlier cdno is an older minor than 1.2.
     assert_eq!(
         cdno_domain::METHOD_VERSION,
-        cdno_core::config::MethodVersion { major: 1, minor: 1 }
+        cdno_core::config::MethodVersion { major: 1, minor: 2 }
     );
     let dir = inited_vault_with_method_line(Some("method_version = \"1.0\""));
 
     assert_prints_the_migrate_notice(
         dir.path(),
-        "notice: this vault follows RLM 1.0; this cdno implements RLM 1.1 \u{2014} \
+        "notice: this vault follows RLM 1.0; this cdno implements RLM 1.2 \u{2014} \
          `cdno migrate --dry-run` shows what changes\n",
     );
 
@@ -295,7 +295,7 @@ fn an_older_vault_prints_the_migrate_notice_and_migrate_itself_does_not() {
 fn now_line_in_a_skewed_vault_prints_nothing_on_stderr() {
     // `cdno now --line` is a shell-prompt segment, run on every prompt: like
     // completion, it never carries the notice. Both skews that have one.
-    for line in ["method_version = \"0.9\"", "method_version = \"1.2\""] {
+    for line in ["method_version = \"0.9\"", "method_version = \"1.3\""] {
         let dir = inited_vault_with_method_line(Some(line));
         // The vault does print a notice after an ordinary command.
         assert!(!orient_json_stderr(dir.path()).is_empty(), "{line}");

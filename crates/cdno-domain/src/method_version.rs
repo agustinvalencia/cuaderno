@@ -8,11 +8,14 @@
 //! maps accepted writes and handing off was in place, and is 1.1 since
 //! (RFC 0006 plan, T23; decision D4): parking clarified, practice 8 handing
 //! off, and the monthly loop.
+//! It is 1.2 since RFC 0007 (plan T28): a reference is an address, so a
+//! rename corrects every reference, and is the one exception to the log
+//! never being edited.
 
 use cdno_core::config::MethodVersion;
 
 /// The Research Logbook Method version this binary implements.
-pub const METHOD_VERSION: MethodVersion = MethodVersion { major: 1, minor: 1 };
+pub const METHOD_VERSION: MethodVersion = MethodVersion { major: 1, minor: 2 };
 
 /// The version an unstamped vault (no config file, or no
 /// `[vault] method_version` key) is read as when it is compared with a

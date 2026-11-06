@@ -1460,8 +1460,12 @@ practice 1's sentence (`:19`) gains the exception — *past entries are never ed
 exception is an address: when a page is renamed, every reference to it is corrected to the new
 name, the old name is kept on the page, and the rename is itself an entry* — and the changelog
 of practices (`:190`) gains **1.2** in the 1.1 entry's shape (additive; a paper user does one
-thing: notes the rule). `vault/migrate.rs`'s step table gains 1.2 with an empty read-through
-(`:114`, `:188`). `docs/design.md` §7 (`:854`, the line families) gains `renamed` with its
+thing: a dated line on the first page; there is nothing to read through). `vault/migrate.rs` gains no step: a minor has no file step by design (the
+module doc, `:114`), and the one read-through, 1.1's parked dates, is bounded by
+`READ_THROUGH_BELOW` (`parked_dates.rs`), which stays 1.1; the module doc says 1.2 adds none, and
+`migrating_to_1_2_stamps_and_reads_nothing_through` is the guard. The `default_config.toml`
+template's `method_version` literal moves to 1.2 with the constant (`init_writes_the_binarys_method_version`
+is the guard). `docs/design.md` §7 (`:854`, the line families) gains `renamed` with its
 `was:` continuation and the exception stated once; `CLAUDE.md`'s invariants (`:98`) and
 history-preservation paragraph (`:187`) each gain one sentence; the `docs/rfcs/0007` status line
 records the version.
@@ -1479,7 +1483,7 @@ deciding whether their logbook is still valid.
   the new binary version (an unstamped vault still reads as 1.0; a 1.1 vault is a
   `newer_minor`-free older minor).
 - `cargo test -p cdno-cli --test migrate`: `cdno migrate --dry-run` on a 1.1 vault shows only
-  the stamp.
+  the stamp (`a_1_1_vault_migrates_to_1_2_with_only_the_stamp`).
 - `mdbook build docs-site` clean; `grep -n "1.2" docs-site/src/concepts/rlm.md` hits the
   changelog of practices.
 

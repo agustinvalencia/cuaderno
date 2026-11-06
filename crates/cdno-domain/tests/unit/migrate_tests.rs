@@ -124,10 +124,10 @@ fn read(store: &dyn VaultStore, raw: &str) -> String {
 fn an_unstamped_vault_is_stamped_with_an_empty_list_and_logs_one_line() {
     assert_eq!(
         METHOD_VERSION,
-        version(1, 1),
-        "the probe assumes a 1.1 binary"
+        version(1, 2),
+        "the probe assumes a 1.2 binary"
     );
-    assert!(FILE_MIGRATIONS.is_empty(), "the list is empty for RLM 1.1");
+    assert!(FILE_MIGRATIONS.is_empty(), "the list is empty for RLM 1.2");
     let store = seeded(&[(CONFIG, UNSTAMPED_CONFIG)]);
     let (vault, _index) = open(store.clone());
 
@@ -145,15 +145,68 @@ fn an_unstamped_vault_is_stamped_with_an_empty_list_and_logs_one_line() {
         read(&*store, CONFIG),
         UNSTAMPED_CONFIG.replace(
             "ignore = [\"drafts/**\"]\n",
-            "ignore = [\"drafts/**\"]\nmethod_version = \"1.1\"\n"
+            "ignore = [\"drafts/**\"]\nmethod_version = \"1.2\"\n"
         )
     );
-    assert_eq!(vault.method_status().unwrap().vault, Some(version(1, 1)));
+    assert_eq!(vault.method_status().unwrap().vault, Some(version(1, 2)));
 
     let daily = read(&*store, DAILY);
-    let line = "- **14:30**: vault migrated\n  was: unstamped (read as 1.0)\n  now: 1.1\n";
+    let line = "- **14:30**: vault migrated\n  was: unstamped (read as 1.0)\n  now: 1.2\n";
     assert_eq!(daily.matches(line).count(), 1, "daily note:\n{daily}");
     assert_eq!(daily.matches("vault migrated").count(), 1);
+}
+
+#[test]
+fn migrating_to_1_2_stamps_and_reads_nothing_through() {
+    // A vault on 1.1 has had its one read-through (the parked dates) and
+    // 1.2 adds none: the run stamps, logs one line, plans no file write and
+    // carries no read-through, even with an overdue parked date on disk.
+    assert_eq!(METHOD_VERSION, version(1, 2));
+    let parked = "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-01-05\ncore_question: null\nclosed: null\n---\n\n# Beta\n\n## Milestones\n- [ ] Grant report \u{2014} hard: 2026-03-01\n\n## Next Actions\n";
+    let before_config = stamped_config(version(1, 1));
+    let store = seeded(&[
+        (CONFIG, &before_config),
+        (PROJECT, PROJECT_OLD),
+        ("projects/_parked/beta.md", parked),
+    ]);
+    let (vault, _index) = open(store.clone());
+    let before = snapshot(&*store);
+
+    let planned = vault
+        .plan_migration(at().date(), METHOD_VERSION, FILE_MIGRATIONS)
+        .unwrap();
+    assert_eq!(snapshot(&*store), before, "the dry run wrote something");
+    assert_eq!(planned.from, Some(version(1, 1)));
+    assert_eq!(planned.to, version(1, 2));
+    assert!(planned.steps.is_empty());
+    assert!(
+        planned.read_through.is_empty(),
+        "{:?}",
+        planned.read_through
+    );
+    assert!(planned.stamps());
+
+    let report = vault
+        .migrate(at(), METHOD_VERSION, FILE_MIGRATIONS)
+        .expect("a 1.1 vault migrates");
+    assert_eq!(report, planned);
+
+    // Only the config (the stamp) and today's daily note changed.
+    let after = snapshot(&*store);
+    let changed: Vec<&String> = after
+        .keys()
+        .filter(|k| before.get(*k) != after.get(*k))
+        .collect();
+    assert_eq!(changed, [&CONFIG.to_owned(), &DAILY.to_owned()]);
+    assert_eq!(read(&*store, CONFIG), stamped_config(version(1, 2)));
+    let daily = read(&*store, DAILY);
+    assert_eq!(
+        daily
+            .matches("- **14:30**: vault migrated\n  was: 1.1\n  now: 1.2\n")
+            .count(),
+        1,
+        "daily note:\n{daily}"
+    );
 }
 
 #[test]
@@ -629,7 +682,7 @@ fn a_config_edited_between_plan_and_stamp_is_refused() {
 
 #[test]
 fn the_runner_is_not_blocked_by_the_gate_on_an_older_major() {
-    // A vault on 0.9 against the 1.1 binary: the gate refuses every write,
+    // A vault on 0.9 against the 1.2 binary: the gate refuses every write,
     // and `cdno migrate` is the one way across.
     let store = seeded(&[
         (CONFIG, &stamped_config(version(0, 9))),
@@ -646,7 +699,7 @@ fn the_runner_is_not_blocked_by_the_gate_on_an_older_major() {
         .expect("the runner is not gated");
     assert_eq!(report.from, Some(version(0, 9)));
     assert_eq!(read(&*store, CONFIG), stamped_config(METHOD_VERSION));
-    assert!(read(&*store, DAILY).contains("vault migrated\n  was: 0.9\n  now: 1.1\n"));
+    assert!(read(&*store, DAILY).contains("vault migrated\n  was: 0.9\n  now: 1.2\n"));
 
     // And now the gate lets writes through.
     vault
@@ -656,7 +709,7 @@ fn the_runner_is_not_blocked_by_the_gate_on_an_older_major() {
 
 #[test]
 fn a_newer_vault_is_refused() {
-    for ahead in [version(1, 2), version(2, 0)] {
+    for ahead in [version(1, 3), version(2, 0)] {
         let store = seeded(&[(CONFIG, &stamped_config(ahead)), (PROJECT, PROJECT_OLD)]);
         let (vault, _index) = open(store.clone());
         let before = snapshot(&*store);

@@ -8,6 +8,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **RLM 1.2: a reference is an address** (RFC 0007 T28, closes #877). The method gains a minor
+  version: practice 1 keeps its rule that past entries are never edited, with one exception, an
+  address: when a page is renamed, every reference to it is corrected, the old name is kept on the
+  page, and the rename is itself an entry. `METHOD_VERSION` is 1.2 and `cdno init` stamps it; the
+  method page's changelog of practices, `docs/design.md` §7 and `CLAUDE.md` state the rule. A 1.1
+  vault migrates with only the stamp (no file step, no read-through), and an unstamped vault still
+  reads as 1.0.
 - **The `rename_note` tool** (RFC 0007 T26, closes #875). `rename_note { note, to, reason?,
   dry_run?, expected_plan?, skip_sync_check? }` previews and writes a rename over MCP; the catalogue
   goes 65 to 66. `dry_run: true` returns the plan and writes nothing; a write given the previewed
