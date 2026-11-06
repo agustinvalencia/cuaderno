@@ -828,6 +828,12 @@ impl Vault {
     /// write's error; when no failure names a path, the transaction error;
     /// with a clean rollback, the store error. An index failure after every file landed is not a
     /// failure of the rename: `Ok` with `index_stale: true`.
+    ///
+    /// `guard` runs once the write lock is held and before the vault is
+    /// read or planned (RFC 0007 §5.8): an interface's re-check that no git
+    /// operation was left paused between its own check and the lock. Its
+    /// error is returned as it is, with nothing staged. A caller with
+    /// nothing to re-check passes `|| Ok(())`.
     pub fn rename_note(
         &self,
         target: &str,
@@ -835,8 +841,10 @@ impl Vault {
         reason: Option<&str>,
         expected_plan: Option<&str>,
         at: NaiveDateTime,
+        guard: impl FnOnce() -> Result<(), DomainError>,
     ) -> Result<RenameOutcome, DomainError> {
         let mut tx = self.transaction()?; // lock held from here to the commit (#196)
+        guard()?;
         let snapshot = self.rename_snapshot()?;
         let plan = self.plan_rename(&snapshot, target, new_slug, reason, at)?;
         ensure_destinations_free(&*self.store, &plan, true)?;

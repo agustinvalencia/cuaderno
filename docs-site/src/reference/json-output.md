@@ -119,6 +119,8 @@ prints the usual `{code, message, details}` object and exits `1`, writing nothin
 | `reference_drift` | `path`, `drift` | Rewriting the references in `path` would change more than them. |
 | `reference_unaddressable` | `path`, `key` | A reference field names the note in a form the rewrite cannot address. |
 | `rename_incomplete` | `paths`, `source` | A write failed and the rollback could not restore the paths in `paths`; check them by hand. |
+| `behind_upstream` | `behind`, `remedy` | The vault is `behind` commits behind its upstream (after a fetch). `remedy` says what to do: sync first, or pass `--skip-sync-check`. |
+| `git_operation_in_progress` | `reason` | A git operation is paused mid-way (`reason` names it, e.g. `.git/MERGE_HEAD present`). Not overridable: finish or abort it first. |
 
 ## `search --json` → an array of hits
 

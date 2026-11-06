@@ -763,6 +763,7 @@ fn rename_portfolio(root: &Path) {
             None,
             None,
             moment(2026, 10, 14, 9, 0),
+            || Ok(()),
         )
         .expect("rename");
 }
@@ -920,6 +921,7 @@ fn a_folder_with_a_stray_file_is_left() {
             None,
             None,
             moment(2026, 10, 14, 9, 0),
+            || Ok(()),
         )
         .expect("the rename succeeds");
 
@@ -956,6 +958,7 @@ fn a_failed_portfolio_rename_leaves_no_new_folder_behind() {
             None,
             None,
             moment(2026, 10, 14, 9, 0),
+            || Ok(()),
         )
         .expect_err("the artefact's move fails, so the commit rolls back");
     drop(vault);
@@ -1007,6 +1010,7 @@ fn an_empty_destination_folder_is_free() {
             None,
             None,
             moment(2026, 10, 14, 9, 0),
+            || Ok(()),
         )
         .expect_err("a folder holding a file is taken");
     assert!(
@@ -1041,6 +1045,7 @@ fn an_empty_case_variant_destination_is_pruned_or_refused() {
             None,
             None,
             moment(2026, 10, 14, 9, 0),
+            || Ok(()),
         )
         .expect("the empty variant is pruned, or is another folder");
     drop(opened);
@@ -1125,6 +1130,7 @@ fn a_dangling_symlinked_artefact_is_refused_before_the_write() {
                 None,
                 None,
                 moment(2026, 10, 14, 9, 0),
+                || Ok(()),
             )
             .map(|o| o.plan),
     ] {

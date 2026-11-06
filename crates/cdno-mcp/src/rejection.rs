@@ -591,14 +591,18 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         // The rename's refusals (RFC 0007 §5.2, §5.4, §6.2). No MCP tool
         // reaches the planner or the write yet; the `rename_note` tool (T26)
         // gives them their codes: `note_not_renamable`, `stem_shared`,
-        // `reference_drift`, `reference_unaddressable`, `stale_plan` and
-        // `rename_incomplete`.
+        // `reference_drift`, `reference_unaddressable`, `stale_plan`,
+        // `rename_incomplete`, and the freshness refusals of
+        // `crate::freshness` (T25), `behind_upstream` and
+        // `git_operation_in_progress`.
         DomainError::NoteNotRenamable { .. }
         | DomainError::StemShared { .. }
         | DomainError::ReferenceDrift { .. }
         | DomainError::ReferenceUnaddressable { .. }
         | DomainError::StalePlan { .. }
-        | DomainError::RenameIncomplete { .. } => return None,
+        | DomainError::RenameIncomplete { .. }
+        | DomainError::BehindUpstream { .. }
+        | DomainError::GitOperationInProgress { .. } => return None,
         // An internal invariant of the planner: overlapping edits for one
         // path. Nothing the caller passes differently changes it, so it never
         // gets a code.

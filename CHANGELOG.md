@@ -8,6 +8,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **The rename's sync check** (RFC 0007 T25, closes #874). In a vault that is a git repository,
+  `cdno note rename` fetches the upstream first (at most 5 s, no prompt; a failed fetch warns and
+  proceeds; `--dry-run` never fetches) and then refuses only when the vault is behind its upstream
+  (`behind_upstream`, overridable with `--skip-sync-check`) or a git operation is paused mid-way
+  (`git_operation_in_progress`, never overridable). An unreadable state or a missing upstream warns
+  and proceeds; a dirty tree is never consulted; a vault outside git is not checked. The paused
+  check runs again under the write lock: `Vault::rename_note` takes a `guard` called under the lock
+  before planning. A dry run reports what would refuse the write as a warning and exits 0. Both
+  codes are `--json` rejection objects. `cdno_mcp::freshness` carries the same policy for the
+  `rename_note` tool, with no fetch and `skip_sync_check` as the only override.
 - **`cdno note rename`** (RFC 0007 T24, closes #873). `cdno note rename [<note>] --to <slug>
   [--reason <text>] [--dry-run]` renames a project, question (with its same-slug portfolio), active
   action note, portfolio or custom note and follows every reference. It prints the preview (`move`,

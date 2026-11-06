@@ -122,7 +122,8 @@ pub enum NoteCommands {
         /// Print the preview and exit 0, writing nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Accepted; takes effect with the freshness check.
+        /// Rename even when the vault is behind its upstream. A git
+        /// operation left paused mid-way (a merge, a rebase) still refuses.
         #[arg(long)]
         skip_sync_check: bool,
     },
@@ -221,7 +222,7 @@ pub fn run(
             to,
             reason,
             dry_run,
-            skip_sync_check: _,
+            skip_sync_check,
         } => rename(
             root,
             &vault,
@@ -231,6 +232,7 @@ pub fn run(
                 to,
                 reason,
                 dry_run,
+                skip_sync_check,
             },
             interactive,
             json,
@@ -392,6 +394,7 @@ struct RenameArgs {
     to: Option<String>,
     reason: Option<String>,
     dry_run: bool,
+    skip_sync_check: bool,
 }
 
 /// `cdno note rename`: resolve, gather, preview, confirm, rename.
@@ -400,6 +403,12 @@ struct RenameArgs {
 /// preview's hash as `expected_plan`, so what is written is what was shown,
 /// whether or not anything was prompted, and a vault that changed in between
 /// is refused (`stale_plan`) rather than rewritten differently.
+///
+/// Before the preview, the freshness check ([`crate::freshness::check`]):
+/// a fetch unless `--dry-run`, then a refusal when the vault is behind its
+/// upstream (unless `--skip-sync-check`) or git is paused mid-operation, its
+/// warnings on stderr. The paused check runs again under the write lock, as
+/// the guard `rename_note` is given.
 fn rename(
     root: &Path,
     vault: &Vault,
@@ -449,6 +458,12 @@ fn rename(
     })?;
     let reason = args.reason.as_deref();
 
+    let cleared = crate::freshness::check(root, args.skip_sync_check, args.dry_run)
+        .map_err(|e| rename_refusal(e, json))?;
+    for warning in &cleared.warnings {
+        eprintln!("warning: {warning}");
+    }
+
     let plan = vault
         .rename_preview(&target, &to, reason, at)
         .map_err(|e| rename_refusal(e, json))?;
@@ -465,7 +480,14 @@ fn rename(
         return Ok(());
     }
     let outcome = vault
-        .rename_note(&target, &to, reason, Some(plan.hash.as_str()), at)
+        .rename_note(
+            &target,
+            &to,
+            reason,
+            Some(plan.hash.as_str()),
+            at,
+            crate::freshness::paused_guard(root, cleared.recheck_paused),
+        )
         .map_err(|e| rename_refusal(e, json))?;
     if json {
         return emit_rename_json(

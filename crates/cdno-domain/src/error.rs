@@ -162,6 +162,25 @@ pub enum DomainError {
     /// the renamed content (or none) while the rest of the vault does not.
     /// Check them by hand (version control has the previous content);
     /// reconciliation heals the index at the next open.
+    /// A git operation (a merge, a rebase, a cherry-pick, ...) is paused
+    /// mid-way in the vault's repository (RFC 0007 §5.8): renaming now would
+    /// write through a half-finished merge. Never overridable; finish or
+    /// abort the operation, then rename. The domain never raises it itself:
+    /// an interface's freshness check does, before the lock and again as the
+    /// [`rename_note`](crate::Vault::rename_note) guard under it.
+    #[error(
+        "a git operation is in progress in the vault ({reason}); finish or abort it, then rename"
+    )]
+    GitOperationInProgress { reason: String },
+
+    /// The vault's branch is `behind` commits behind its upstream as of the
+    /// last fetch (RFC 0007 §5.8): renaming now would rewrite notes the
+    /// other clone has already changed. `remedy` is the interface's own
+    /// wording of what to do (sync first, or the override that skips the
+    /// check). Raised by an interface's freshness check, never by the domain.
+    #[error("the vault is {behind} commit{} behind its upstream; {remedy}", if *.behind == 1 { "" } else { "s" })]
+    BehindUpstream { behind: u32, remedy: String },
+
     #[error(
         "the rename failed part-way ({source}) and could not restore {}; check them by hand",
         .failed.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")

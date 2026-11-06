@@ -107,7 +107,7 @@ notes, stewardships and commitments are refused (`note_not_renamable`).
 | `--to <SLUG>` | The new slug. Prompted in an interactive session; required under `--no-interactive`. |
 | `--reason <STRING>` | Why, in a short clause; it becomes the `reason:` line of the log entry. Never prompted. |
 | `--dry-run` | Print the preview and exit 0, writing nothing. |
-| `--skip-sync-check` | Accepted; takes effect with the freshness check. |
+| `--skip-sync-check` | Rename even when the vault is behind its upstream. A git operation paused mid-way still refuses. See [the sync check](#the-sync-check). |
 
 ### The preview
 
@@ -133,6 +133,28 @@ With `--json`: the plan (`target`, `from`, `new_slug`, `moves`, `edits` with the
 `notes`, `log_line`, `warnings`, `plan_hash`) plus `written` (a bool), `index_stale`
 and `dry_run`. Refusals are [rejection objects](../json-output.md#rename-refusals) and exit `1`; a
 rollback that itself failed (`rename_incomplete`) lists the paths to check by hand, one per line in text.
+
+### The sync check
+
+A rename rewrites many notes at once, so in a vault that is a git repository synced with another
+clone it first checks that it is not about to rewrite notes the other clone has already changed.
+Unless `--dry-run`, it fetches the upstream (no credential prompt, at most 5 seconds; a fetch that
+fails or times out prints one `warning:` line and the check reads the upstream as last fetched).
+Then:
+
+| The vault | The rename |
+|---|---|
+| is not a git repository | goes ahead; no check |
+| is a repository git cannot read (a timeout, a refused `safe.directory`) | warns and goes ahead |
+| has a git operation paused mid-way (a conflicted merge, a rebase, a cherry-pick) | refuses with `git_operation_in_progress`; `--skip-sync-check` does not override it: finish or abort the operation first |
+| is behind its upstream | refuses with `behind_upstream`, naming the remedy: sync first (`git pull`, or your sync), or pass `--skip-sync-check` |
+| has no upstream, or it cannot be read | warns and goes ahead |
+| has uncommitted changes | goes ahead: a dirty tree is never a reason to refuse |
+
+The paused check runs again once the rename holds the vault's write lock, so a merge started while
+the confirm prompt waits is still refused, and nothing is written. Warnings go to stderr. A dry run
+never fetches and is never refused: what would refuse the write is printed as a warning instead,
+and it exits 0.
 
 ## Examples
 

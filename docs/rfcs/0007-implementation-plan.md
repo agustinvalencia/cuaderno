@@ -1265,7 +1265,9 @@ after `rename_note` takes the lock, which means `rename_note` takes
 that parameter here, defaulting to a no-op in T20's callers. The servers never fetch and use
 the upstream as last fetched; `skip_sync_check: true` is the only override.
 
-**Deliverable.** The helper in both binaries, the guard parameter, tests on real repositories.
+**Deliverable.** The helper in both binaries, the guard parameter, tests on real repositories
+for the CLI; the MCP helper tested on `GitState` values (the e2e probe is T26's, since it needs
+the tool).
 
 **Depends on.** T8, T24.
 
@@ -1278,10 +1280,28 @@ be written through.
   `behind_upstream_refuses_and_names_the_override`, `skip_sync_check_proceeds_when_behind`,
   `a_paused_merge_refuses_even_with_skip` , `no_upstream_warns_and_proceeds`,
   `a_dirty_tree_does_not_refuse`, `dry_run_never_fetches` (the remote is unreachable; no warning
-  is printed), `a_failed_fetch_warns_and_proceeds`.
-- `cargo test -p cdno-mcp --test e2e_git_checkpoint`: `rename_note_never_fetches` (an
-  unreachable upstream recorded as ahead: the tool neither warns about a fetch nor blocks).
-- Mutation: honour `skip_sync_check` for a paused operation; the third test fails.
+  is printed), `a_failed_fetch_warns_and_proceeds`, `a_dry_run_reports_what_would_refuse_and_exits_zero`
+  and `the_paused_check_runs_again_under_the_lock` (pty), all in its `freshness` module.
+- `cargo test -p cdno-mcp --test handlers_operations`: the `freshness` module, the helper
+  (`cdno_mcp::freshness::assess`, `recheck`, `paused_guard`) over constructed `GitState` values,
+  one test per branch. The e2e probe `rename_note_never_fetches` moved to T26: it needs the tool.
+- `cargo test -p cdno-domain --test unit`: `the_guard_runs_under_the_lock_before_planning` (the
+  guard sees `.cuaderno/.lock` held, and its error beats the planner's).
+- Mutation: honour `skip_sync_check` for a paused operation; the third test fails (its dry-run
+  half, which never reaches the guard; the guard takes no override at all). Fetch on `--dry-run`;
+  `dry_run_never_fetches` fails. Make the guard a no-op; `the_paused_check_runs_again_under_the_lock`
+  (pty: the merge starts while the confirm waits) fails.
+
+**As built.** The helper is `crates/cdno-cli/src/freshness.rs` and `crates/cdno-mcp/src/freshness.rs`
+(`assess` over one `GitState`, `check`, `paused_guard`). The CLI probes `git_state` first and
+fetches only a repository, then probes again, so a vault outside git never warns about a fetch.
+The check runs after the slug is gathered and before the preview, so a refusal comes before the
+confirm. A dry run is never refused: what would refuse the write is one `warning:` line, exit 0.
+The two refusals are `DomainError::BehindUpstream { behind, remedy }` (the interface writes the
+remedy) and `DomainError::GitOperationInProgress { reason }`, the type the guard returns; the CLI
+renders them as `behind_upstream` / `git_operation_in_progress`, and the MCP classifier leaves them
+uncoded for T26. The MCP server holds no vault root yet: T26 gives the handler one to pass to
+`check` and `paused_guard`.
 
 **Correct means.** A rename refuses only when the vault is known to be behind or git is
 mid-operation, and a person who knows better can override exactly one of those.
@@ -1317,6 +1337,9 @@ says 65 (`docs-site/src/getting-started/connect-to-claude.md:35`, `reference/mcp
   (the envelope carries both hashes), `rename_note_index_stale_is_success`, and one classify
   test per new code.
 - `cargo test -p cdno-mcp --test sync_nudge`: `a_written_rename_nudges_and_a_dry_run_does_not`.
+- `cargo test -p cdno-mcp --test e2e_git_checkpoint`: `rename_note_never_fetches` (an
+  unreachable upstream recorded as ahead: the tool neither warns about a fetch nor blocks; moved
+  here from T25, whose helper it exercises through the tool).
 - `cargo test -p cdno-mcp --test e2e_stdio`: the pin, and `rename_note_over_stdio` (preview,
   then write with `expected_plan`, then `read_note` by the old name resolves).
 - Differential: `tools/list` on the branch minus `main` is exactly `{rename_note}`.

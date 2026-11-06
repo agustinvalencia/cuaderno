@@ -91,6 +91,14 @@ pub fn rename_rejection(err: &cdno_domain::error::DomainError) -> Option<serde_j
                 "source": source.to_string(),
             }),
         ),
+        DomainError::BehindUpstream { behind, remedy } => (
+            "behind_upstream",
+            serde_json::json!({ "behind": behind, "remedy": remedy }),
+        ),
+        DomainError::GitOperationInProgress { reason } => (
+            "git_operation_in_progress",
+            serde_json::json!({ "reason": reason }),
+        ),
         other => return slug_rejection(other),
     };
     Some(serde_json::json!({
