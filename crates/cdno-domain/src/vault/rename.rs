@@ -21,7 +21,7 @@
 //! `after` is `before` with [`PlannedEdit::edits`] applied
 //! ([`differs_only_by`](cdno_core::extractors::differs_only_by) holds).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ffi::OsStr;
 use std::ops::Range;
 
@@ -73,11 +73,15 @@ const ALIASES_KEY: &str = "aliases";
 /// snapshot of every archived note in `paths` that has one. `ignored`
 /// holds the markdown files the walk saw that the config `ignore` globs
 /// exclude: no link resolves to them and none is planned, but they are
-/// files on disk, so the names they hold are taken.
+/// files on disk, so the names they hold are taken. `files` holds every
+/// file the walk saw outside `.cuaderno/`, of any kind, by path only: a
+/// folder note's rename (a portfolio, §5.3) moves every one of them under
+/// its folder, and the non-note ones are moved, never read.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct VaultSnapshot {
     pub paths: HashSet<VaultPath>,
     pub ignored: HashSet<VaultPath>,
+    pub files: BTreeSet<VaultPath>,
     pub aliases: Vec<(String, VaultPath)>,
     pub contents: BTreeMap<VaultPath, String>,
     pub frozen: BTreeMap<VaultPath, ArchivalSnapshot>,
@@ -146,8 +150,10 @@ pub struct RenameOutcome {
     /// the `expected_plan` the write was given.
     pub plan: RenamePlan,
     /// Every path written, the moved note's at its new path first, then
-    /// the plan's other edits in path order. The old path, deleted, is the
-    /// `from` of `plan.moves`. Empty for a no-op plan.
+    /// (for a portfolio) every other file of its folder at its new path in
+    /// path order, then the plan's other edits in path order. The old
+    /// paths, deleted or moved away from, are the `from`s of `plan.moves`.
+    /// Empty for a no-op plan.
     pub written: Vec<VaultPath>,
     /// The files are written but an index update failed: the index is
     /// stale for some of them until the next open reconciles it. The
@@ -192,10 +198,14 @@ impl Vault {
             .flat_map(|p| p.as_path().ancestors().skip(1))
             .filter_map(|d| VaultPath::new(d).ok())
             .collect();
-        let md: HashSet<VaultPath> = walked
+        let files: BTreeSet<VaultPath> = walked
             .into_iter()
-            .filter(|p| p.as_path().extension() == Some(OsStr::new("md")))
             .filter(|p| !p.as_path().starts_with(paths::CUADERNO_DIR))
+            .collect();
+        let md: HashSet<VaultPath> = files
+            .iter()
+            .filter(|p| p.as_path().extension() == Some(OsStr::new("md")))
+            .cloned()
             .collect();
         let stubs = cdno_core::artefacts::attachment_stubs(&self.store, &md, &dirs);
         let (mut notes, ignored): (Vec<VaultPath>, Vec<VaultPath>) = md
@@ -209,6 +219,7 @@ impl Vault {
 
         let mut snapshot = VaultSnapshot {
             ignored: ignored.into_iter().collect(),
+            files,
             ..VaultSnapshot::default()
         };
         for path in notes {
@@ -240,15 +251,19 @@ impl Vault {
     ///
     /// 1. [`DomainError::NoteNotRenamable`] — a type outside the v1 set of
     ///    §5.2 (`type <name>`), an archived action note (`archived`), a
-    ///    folder note or a question whose portfolio shares its slug
-    ///    (`folder`; folder renames are T22/T23), or an `aliases:` value the
-    ///    old slug cannot be appended to;
+    ///    folder note other than a portfolio's `portfolios/<slug>/_index.md`
+    ///    or a question whose portfolio shares its slug (`folder`; the pair
+    ///    is T23), a portfolio whose slug a question shares (`rename the
+    ///    question`), or an `aliases:` value the old slug cannot be appended
+    ///    to;
     /// 2. [`DomainError::InvalidSlug`] — `new_slug` breaks the slug rule;
     /// 3. [`DomainError::SlugTaken`] — another note's stem, folder or
     ///    alias, in the snapshot (one of the note's own aliases is not
     ///    taken: the rename takes it back and drops it from the list);
     /// 4. [`DomainError::StemShared`] — another note has the same file stem
     ///    (a folder note named like it does not: it is addressed by path);
+    ///    for a portfolio, another folder note has the same folder name (a
+    ///    flat note named like the folder does not);
     /// 5. then a rename to the current slug is `Ok` with an empty plan.
     ///
     /// Two refusals come from the referrers themselves, while planning and
@@ -268,6 +283,22 @@ impl Vault {
     /// keys ([`DomainError::ReferenceDrift`] otherwise). The note gains the
     /// old slug in `aliases:`, and today's daily note the `renamed` line
     /// (last in its log, `reason` on a continuation when given).
+    ///
+    /// **A portfolio moves its whole folder** (§5.3). `moves` holds the
+    /// `_index.md` first and then every other file under `portfolios/<old>/`
+    /// in path order, each to the same place under `portfolios/<new>/`,
+    /// except a hidden file at the folder's top level (Finder's `.DS_Store`),
+    /// which is the folder's own metadata and stays with it. Every wikilink
+    /// whose address is `portfolios/<old>` or begins `portfolios/<old>/` has
+    /// that folder segment rewritten, whether it names a note or an
+    /// attachment, wherever it sits (inside the folder too); a link that
+    /// reaches the `_index.md` some other way (an alias) is rewritten to
+    /// `portfolios/<new>`, the address a folder note answers to. The
+    /// evidence notes' `portfolio:` fields are §3.5 fields of the
+    /// portfolio's own type and follow as for any other rename. The hash
+    /// covers each move by its paths and by whether it is a note's (written
+    /// and deleted) or a file's (moved): a non-note file's bytes are never
+    /// read.
     pub fn plan_rename(
         &self,
         snapshot: &VaultSnapshot,
@@ -345,10 +376,21 @@ impl Vault {
         // indexed paths only. Resolution neither folds case nor sees an
         // ignored file, so a case variant or an ignored file elsewhere
         // cannot make a link to the note resolve to neither.
+        //
+        // A folder note's file stem is `_index`, which every folder note
+        // shares, and its name is its folder's: so for a portfolio the
+        // comparison is among folder notes, by folder name, and a flat note
+        // named like the folder is the taken check's business. For a flat
+        // note it is among flat notes, by file stem. The two never mix.
+        let old_folder = portfolio_folder(&target_path);
         let target_stem = target_path.as_path().file_stem();
         let others: Vec<VaultPath> = sorted
             .iter()
-            .filter(|p| **p != target_path && p.as_path().file_stem() == target_stem)
+            .filter(|p| **p != target_path)
+            .filter(|p| match &old_folder {
+                Some(_) => is_folder_note(p) && candidate_slug(p).as_deref() == Some(&old_slug),
+                None => !is_folder_note(p) && p.as_path().file_stem() == target_stem,
+            })
             .cloned()
             .collect();
         if !others.is_empty() {
@@ -371,8 +413,31 @@ impl Vault {
             });
         }
 
-        let new_path = sibling_path(&target_path, new_slug)?;
-        let moves = vec![(target_path.clone(), new_path.clone())];
+        // The folder segment a portfolio's links carry, before and after.
+        let folder_segments: Option<(String, String)> = old_folder
+            .as_ref()
+            .map(|old| (old.to_string(), format!("{}/{new_slug}", paths::PORTFOLIOS)));
+        let (new_path, moves) = match (&old_folder, &folder_segments) {
+            (Some(old_dir), Some((_, new_dir))) => {
+                let new_dir = VaultPath::new(new_dir.as_str())?;
+                let new_path = rebase(&target_path, old_dir, &new_dir)?;
+                let mut moves = vec![(target_path.clone(), new_path.clone())];
+                for file in &snapshot.files {
+                    if *file == target_path
+                        || !file.as_path().starts_with(old_dir.as_path())
+                        || is_folder_metadata(file, old_dir)
+                    {
+                        continue;
+                    }
+                    moves.push((file.clone(), rebase(file, old_dir, &new_dir)?));
+                }
+                (new_path, moves)
+            }
+            _ => {
+                let new_path = sibling_path(&target_path, new_slug)?;
+                (new_path.clone(), vec![(target_path.clone(), new_path)])
+            }
+        };
 
         // The old slug already an alias of another note: once the note lists
         // it too, the alias is shared and resolves to nothing, so it rescues
@@ -402,13 +467,35 @@ impl Vault {
             .collect();
         let mut names: HashSet<&str> = note_link_names(&target_path).into_iter().collect();
         names.extend(own_aliases.iter().copied());
-        let names_target = |raw: &str| {
-            target_may_name(raw, &names)
-                && resolve_in(raw, snapshot, &alias_map).as_ref() == Some(&target_path)
+        // For a portfolio, an address under its folder (`portfolios/old`,
+        // `portfolios/old/2026-10-12-baseline`, an attachment's
+        // `portfolios/old/<stem>/<file>`) with only that segment moved. None
+        // for any other address, and for every address of a flat rename.
+        let under_folder = |address: &str| -> Option<String> {
+            let (old, new) = folder_segments.as_ref()?;
+            let rest = address.strip_prefix(old.as_str())?;
+            (rest.is_empty() || rest.starts_with('/')).then(|| format!("{new}{rest}"))
         };
-        let rewrite = |address: &str| match address.rsplit_once('/') {
-            Some((folder, _)) => format!("{folder}/{new_slug}"),
-            None => new_slug.to_owned(),
+        let names_target = |raw: &str| {
+            let address = raw.split_once('#').map_or(raw, |(address, _)| address);
+            under_folder(address.trim_end()).is_some()
+                || (target_may_name(raw, &names)
+                    && resolve_in(raw, snapshot, &alias_map).as_ref() == Some(&target_path))
+        };
+        let rewrite = |address: &str| {
+            if let Some(moved) = under_folder(address) {
+                return moved;
+            }
+            // A link reaching the portfolio another way (through an alias):
+            // a folder note answers to its folder path, never to a bare
+            // name, so `[[new]]` would dangle.
+            if let Some((_, new)) = &folder_segments {
+                return new.clone();
+            }
+            match address.rsplit_once('/') {
+                Some((folder, _)) => format!("{folder}/{new_slug}"),
+                None => new_slug.to_owned(),
+            }
         };
         let field_keys = field_keys_for(builtin);
 
@@ -578,9 +665,18 @@ impl Vault {
             );
         }
 
+        // A move is hashed by its paths and its kind, never by a non-note
+        // file's bytes, which the planner does not read: a note's content
+        // enters through its edit below (or is moved as the snapshot holds
+        // it), and an artefact carries no reference to rewrite.
         let mut input = String::new();
         for (from, to) in &moves {
-            input.push_str(&format!("move\u{0}{from}\u{0}{to}\u{0}"));
+            let kind = if snapshot.contents.contains_key(from) {
+                "move"
+            } else {
+                "move-file"
+            };
+            input.push_str(&format!("{kind}\u{0}{from}\u{0}{to}\u{0}"));
         }
         for (path, text) in &hashed {
             input.push_str(&format!("edit\u{0}{path}\u{0}{text}\u{0}"));
@@ -640,10 +736,22 @@ impl Vault {
     /// path does not change, `upsert_note` does not cascade, and the
     /// masked hash still verifies.
     ///
+    /// A portfolio's folder moves as one (§5.3): each of its notes as above
+    /// (`write_file` + `delete_file`, `upsert_note` + `remove_note`), and
+    /// every other file under it (an attachment artefact, a filed document,
+    /// an ignored file) with the transaction's `Move` op, which keeps its
+    /// bytes and needs no index row, since none of them has one. After a
+    /// commit whose files landed, the folders the move emptied are pruned
+    /// bottom-up with [`remove_dir_if_empty`](cdno_core::store::VaultStore::remove_dir_if_empty),
+    /// at or below `portfolios/<old>/` and never above it, best-effort: a
+    /// folder something still holds stays, and a failure is logged at
+    /// `debug` and never surfaced.
+    ///
     /// A move destination the store already holds is refused, here and in
     /// [`rename_preview`](Self::rename_preview), as
     /// [`DomainError::SlugTaken`] (`kind: stem`, the file as holder), before
-    /// anything is staged.
+    /// anything is staged; for a portfolio, so is a `portfolios/<new>/`
+    /// folder that exists at all (`kind: folder`, the folder as holder).
     ///
     /// A failed file write rolls the written files back. When the rollback
     /// itself fails for some path, the result is
@@ -703,6 +811,10 @@ impl Vault {
                 return Err(DomainError::RenameIncomplete { failed, source });
             }
         };
+        // Every file landed: prune what the folder move emptied.
+        if let Some(old_folder) = portfolio_folder(&plan.target.path) {
+            prune_emptied_folders(&*self.store, &old_folder, &plan.moves);
+        }
         Ok(RenameOutcome {
             plan,
             written,
@@ -834,17 +946,20 @@ fn stage_rename(
             .find(|e| e.path == *path)
             .map(|e| e.after.as_str())
     };
-    let mut written = Vec::with_capacity(plan.edits.len());
+    let mut written = Vec::with_capacity(plan.edits.len() + plan.moves.len());
     for (from, to) in &plan.moves {
-        // The target's own edit (its alias) is keyed by `from`; a target
-        // with nothing to edit moves as it is.
-        let content = match after_of(from) {
-            Some(after) => after,
-            None => snapshot
-                .contents
-                .get(from)
-                .ok_or_else(|| cdno_core::error::StoreError::NotFound(from.to_string()))?,
+        // A file the snapshot holds no note for (a portfolio's attachment
+        // artefact, a filed document, an ignored file) has no index row to
+        // carry: it moves as bytes, which never pass through here.
+        let Some(held) = snapshot.contents.get(from) else {
+            tx.move_file(from.clone(), to.clone());
+            written.push(to.clone());
+            continue;
         };
+        // A note's own edits (the target's alias, an evidence note's
+        // `portfolio:` and links) are keyed by `from`; a note with nothing
+        // to edit moves as it is.
+        let content = after_of(from).unwrap_or(held);
         tx.write_file(to.clone(), content);
         tx.delete_file(from.clone());
         stage_index_rows(to, content, tx)?;
@@ -910,14 +1025,16 @@ fn failed_path(error: &cdno_core::error::StoreError) -> Option<VaultPath> {
 /// the filesystem cannot tell the names apart. The holder is named as the
 /// store lists it: the entry of the destination's folder whose name equals
 /// the destination's ignoring case, else the destination itself.
+///
+/// A portfolio's folder moves as one, so a `portfolios/<new>/` the store
+/// holds at all (a folder of non-notes the snapshot's names cannot show, a
+/// case variant) is refused the same way, with `kind: folder`: the move
+/// never merges into a folder that is already there.
 fn ensure_destinations_free(
     store: &dyn cdno_core::store::VaultStore,
     plan: &RenamePlan,
 ) -> Result<(), DomainError> {
-    for (_, to) in &plan.moves {
-        if !store.exists(to)? {
-            continue;
-        }
+    let taken = |to: &VaultPath, kind: TakenBy| -> Result<DomainError, DomainError> {
         let wanted = to.to_string().to_lowercase();
         let parent = to
             .as_path()
@@ -930,13 +1047,59 @@ fn ensure_destinations_free(
             .into_iter()
             .find(|p| p.to_string().to_lowercase() == wanted)
             .unwrap_or_else(|| to.clone());
-        return Err(DomainError::SlugTaken {
+        Ok(DomainError::SlugTaken {
             slug: plan.new_slug.clone(),
             holder,
-            kind: TakenBy::Stem,
-        });
+            kind,
+        })
+    };
+    if portfolio_folder(&plan.target.path).is_some()
+        && let Some(new_dir) = plan.moves.first().and_then(|(_, to)| portfolio_folder(to))
+        && store.exists(&new_dir)?
+    {
+        return Err(taken(&new_dir, TakenBy::Folder)?);
+    }
+    for (_, to) in &plan.moves {
+        if store.exists(to)? {
+            return Err(taken(to, TakenBy::Stem)?);
+        }
     }
     Ok(())
+}
+
+/// Prune the folders a portfolio's move emptied: every folder at or below
+/// `old_folder` that held a moved file, deepest first, then `old_folder`
+/// itself, each through [`remove_dir_if_empty`](cdno_core::store::VaultStore::remove_dir_if_empty),
+/// which leaves a folder that still holds anything (a hidden file, a file
+/// that arrived since). Nothing above `old_folder` is ever passed: the
+/// store's prune does not refuse the vault root or `.cuaderno/`, so this is
+/// the guard. Best-effort: a failure is logged at `debug`, and the rename,
+/// already committed, stands.
+fn prune_emptied_folders(
+    store: &dyn cdno_core::store::VaultStore,
+    old_folder: &VaultPath,
+    moves: &[(VaultPath, VaultPath)],
+) {
+    let mut folders: BTreeSet<VaultPath> = BTreeSet::new();
+    for (from, _) in moves {
+        for dir in from.as_path().ancestors().skip(1) {
+            if !dir.starts_with(old_folder.as_path()) {
+                break;
+            }
+            if let Ok(dir) = VaultPath::new(dir) {
+                folders.insert(dir);
+            }
+        }
+    }
+    folders.insert(old_folder.clone());
+    // Deepest first, so a folder is tried only after everything below it.
+    let mut ordered: Vec<VaultPath> = folders.into_iter().collect();
+    ordered.sort_by_key(|dir| std::cmp::Reverse(dir.as_path().components().count()));
+    for dir in ordered {
+        if let Err(error) = store.remove_dir_if_empty(&dir) {
+            tracing::debug!(folder = %dir, %error, "rename: could not prune an emptied folder");
+        }
+    }
 }
 
 /// The §5.2 check. Returns the target's built-in type (`None` for a custom
@@ -967,15 +1130,30 @@ fn renamable_type(
     if path.as_path().starts_with(paths::ACTIONS_DONE) {
         return Err(not_renamable(path, "archived".to_owned()));
     }
-    // Folder notes move their whole folder (§5.3), which is T22; a question
-    // whose portfolio shares its slug moves that folder with it (T23).
-    let is_folder_note = path.as_path().file_stem() == Some(OsStr::new("_index"));
+    // A folder note moves its whole folder (§5.3). Only a portfolio's, at
+    // `portfolios/<slug>/_index.md`, does so far; a question whose
+    // portfolio shares its slug moves that folder with it, and the
+    // portfolio alone is refused until then (T23), since the pair's
+    // correlation (`find_question_path`) is by slug.
     let question_with_portfolio = builtin == Some(NoteType::Question)
         && candidate_slug(path)
             .and_then(|slug| VaultPath::new(format!("{}/{slug}/_index.md", paths::PORTFOLIOS)).ok())
             .is_some_and(|portfolio| snapshot.paths.contains(&portfolio));
-    if is_folder_note || builtin == Some(NoteType::Portfolio) || question_with_portfolio {
+    let a_portfolio_folder =
+        builtin == Some(NoteType::Portfolio) && portfolio_folder(path).is_some();
+    if ((is_folder_note(path) || builtin == Some(NoteType::Portfolio)) && !a_portfolio_folder)
+        || question_with_portfolio
+    {
         return Err(not_renamable(path, "folder".to_owned()));
+    }
+    if a_portfolio_folder
+        && let Some(slug) = candidate_slug(path)
+        && [paths::QUESTIONS_RESEARCH, paths::QUESTIONS_LIFE]
+            .iter()
+            .filter_map(|dir| VaultPath::new(format!("{dir}/{slug}.md")).ok())
+            .any(|question| snapshot.files.contains(&question))
+    {
+        return Err(not_renamable(path, "rename the question".to_owned()));
     }
     Ok(builtin)
 }
@@ -1067,6 +1245,52 @@ fn sibling_path(path: &VaultPath, slug: &str) -> Result<VaultPath, DomainError> 
         _ => std::path::PathBuf::from(file),
     };
     Ok(VaultPath::new(joined)?)
+}
+
+/// Whether `path` is a folder note (`<dir>/_index.md`).
+fn is_folder_note(path: &VaultPath) -> bool {
+    path.as_path().file_stem() == Some(OsStr::new("_index"))
+}
+
+/// The folder `portfolios/<slug>` when `path` is exactly a portfolio's
+/// folder note, `portfolios/<slug>/_index.md`.
+fn portfolio_folder(path: &VaultPath) -> Option<VaultPath> {
+    let p = path.as_path();
+    if p.file_name() != Some(OsStr::new("_index.md")) {
+        return None;
+    }
+    let dir = p.parent()?;
+    let mut components = dir.components();
+    let (Some(root), Some(_), None) = (components.next(), components.next(), components.next())
+    else {
+        return None;
+    };
+    (root.as_os_str() == OsStr::new(paths::PORTFOLIOS))
+        .then(|| VaultPath::new(dir).ok())
+        .flatten()
+}
+
+/// `path`, under `from`, at the same place under `to`.
+fn rebase(path: &VaultPath, from: &VaultPath, to: &VaultPath) -> Result<VaultPath, DomainError> {
+    let rest = path
+        .as_path()
+        .strip_prefix(from.as_path())
+        .map_err(|_| cdno_core::error::StoreError::NotFound(path.to_string()))?;
+    Ok(VaultPath::new(to.as_path().join(rest))?)
+}
+
+/// A hidden file at the top level of `folder` (Finder's `.DS_Store`):
+/// metadata about the folder itself, not part of the portfolio, so a
+/// portfolio's move leaves it, and the folder it keeps, where they are. A
+/// hidden file deeper down moves with the folder it sits in, so no
+/// artefact folder is left behind holding only it.
+fn is_folder_metadata(path: &VaultPath, folder: &VaultPath) -> bool {
+    path.as_path().parent() == Some(folder.as_path())
+        && path
+            .as_path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with('.'))
 }
 
 /// Where `raw` resolves in the snapshot, by the index's own resolver.

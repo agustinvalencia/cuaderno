@@ -682,3 +682,159 @@ fn a_mismatched_slug_is_refused_as_json() {
     assert_eq!(v["details"]["slug"], "surrogate-calibration", "{v}");
     assert!(!dir.path().join("portfolios/surrogate-calibration").exists());
 }
+
+// ---------------------------------------------------------------------
+// Renaming a portfolio (RFC 0007 T22), on real files. The CLI verb is
+// T24, so the domain verb is driven through the composition root.
+// ---------------------------------------------------------------------
+
+/// Bytes no UTF-8 read would survive, so a move that read the artefact as
+/// text could not keep them.
+const SCAN_BYTES: &[u8] = b"%PDF-1.4\n\xff\xfe\x00\x01 the residuals";
+
+/// Portfolio `old` with an evidence note and an attached PDF, beside a
+/// sibling portfolio `surrogate-emulator` holding an empty `figures/`.
+fn seed_renamable_portfolio(root: &Path) {
+    for (question, slug) in [
+        ("How large is the error?", "old"),
+        ("Is the emulator faster?", "surrogate-emulator"),
+    ] {
+        portfolio::run(
+            root,
+            moment(2026, 10, 1, 9, 0),
+            PortfolioCommands::Create {
+                question: Some(question.to_owned()),
+                project: None,
+                var: vec![],
+                slug: Some(slug.to_owned()),
+            },
+            true,
+            false,
+        )
+        .expect("create portfolio");
+    }
+    fs::create_dir_all(root.join("portfolios/surrogate-emulator/figures")).unwrap();
+    file::run(
+        root,
+        moment(2026, 10, 12, 10, 0),
+        Some("old".to_owned()),
+        Some("Baseline".to_owned()),
+        Some("portfolios/old".to_owned()),
+        "The baseline sweep.\n".to_owned(),
+        None,
+        false,
+        vec![],
+        true,
+        false,
+    )
+    .expect("file evidence");
+    let artefact = root.join("scan.pdf");
+    fs::write(&artefact, SCAN_BYTES).unwrap();
+    file::run(
+        root,
+        moment(2026, 10, 13, 10, 0),
+        Some("old".to_owned()),
+        Some("Scan".to_owned()),
+        Some("portfolios/old".to_owned()),
+        "The residuals, scanned.".to_owned(),
+        Some(artefact),
+        true,
+        vec![],
+        true,
+        false,
+    )
+    .expect("attach");
+    assert!(
+        root.join("portfolios/old/2026-10-13-scan/scan.pdf")
+            .is_file()
+    );
+}
+
+fn rename_portfolio(root: &Path) {
+    let opened = cdno_domain::bootstrap::open_vault(root).expect("open");
+    opened
+        .vault
+        .rename_note(
+            "portfolio:old",
+            "new",
+            None,
+            None,
+            moment(2026, 10, 14, 9, 0),
+        )
+        .expect("rename");
+}
+
+fn assert_lint_clean(root: &Path) {
+    use predicates::prelude::*;
+    cdno_in(root)
+        .arg("lint")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[error]").not())
+        .stdout(predicate::str::contains("[warning]").not());
+}
+
+#[test]
+fn an_emptied_folder_is_pruned() {
+    let dir = vault();
+    let root = dir.path();
+    seed_renamable_portfolio(root);
+    assert_lint_clean(root);
+
+    rename_portfolio(root);
+
+    assert!(
+        !root.join("portfolios/old").exists(),
+        "the old folder and its emptied subfolder are pruned"
+    );
+    for moved in [
+        "portfolios/new/_index.md",
+        "portfolios/new/2026-10-12-baseline.md",
+        "portfolios/new/2026-10-13-scan.md",
+    ] {
+        assert!(root.join(moved).is_file(), "{moved}");
+    }
+    assert_eq!(
+        fs::read(root.join("portfolios/new/2026-10-13-scan/scan.pdf")).unwrap(),
+        SCAN_BYTES,
+        "the artefact's bytes are the ones filed"
+    );
+    let baseline = fs::read_to_string(root.join("portfolios/new/2026-10-12-baseline.md")).unwrap();
+    assert!(baseline.contains("\nportfolio: new\n"), "{baseline}");
+    assert!(
+        baseline.contains("origin: \"[[portfolios/new]]\""),
+        "{baseline}"
+    );
+    // Nothing above the renamed folder is pruned: the sibling portfolio's
+    // empty folder is where it was.
+    assert!(root.join("portfolios/surrogate-emulator/figures").is_dir());
+    assert_lint_clean(root);
+}
+
+#[test]
+fn a_folder_with_a_stray_file_is_left() {
+    let dir = vault();
+    let root = dir.path();
+    seed_renamable_portfolio(root);
+    fs::write(
+        root.join("portfolios/old/.DS_Store"),
+        b"\x00\x00\x00\x01Bud1",
+    )
+    .unwrap();
+
+    rename_portfolio(root);
+
+    // The rename succeeded; the folder the stray file keeps stays, holding
+    // only it, and the subfolder the move emptied is pruned.
+    assert!(root.join("portfolios/new/_index.md").is_file());
+    assert!(
+        root.join("portfolios/new/2026-10-13-scan/scan.pdf")
+            .is_file()
+    );
+    let left: Vec<String> = fs::read_dir(root.join("portfolios/old"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(left, vec![".DS_Store".to_owned()]);
+    assert_lint_clean(root);
+}
