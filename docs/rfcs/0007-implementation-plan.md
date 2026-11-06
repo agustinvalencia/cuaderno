@@ -1420,8 +1420,10 @@ why it could not.
 `expected_plan`; and the §5.1 sentence — *a reference is an address, not content: `rename_note`
 rewrites addresses in every note, the journal included, and changes no other byte; this is the
 one exception to the append-only rule.* The server instructions' append-only bullet
-(`server.rs:290–293`) gains the same sentence in fewer words, within the 2 048-character client
-cut (`tests/server.rs:582`; move or trim another bullet if needed and say which in the PR). The
+(the `APPEND-ONLY` bullet in `server.rs`, at character 2 940 of the instructions, past the cut)
+gains the same sentence in fewer words, moved up to the top of the distinctions list and inside the
+2 048-character client cut (`CLIENT_CUT` in `tests/server.rs`); two other bullets were trimmed to fit
+(see the PR). The
 `lint` description lists the straggler warning. The eight create descriptions already carry the
 slug hint (T4).
 
@@ -1433,8 +1435,8 @@ slug hint (T4).
 
 **Probes.**
 - `cargo test -p cdno-mcp --test server` passes with
-  `instructions_state_the_reference_exception` (the string contains "address" and "every
-  other byte" or the chosen wording) and the existing `CLIENT_CUT` pin still holds with the
+  `instructions_state_the_reference_exception` (the string contains "address" and "changes no
+  other byte", the chosen wording) and the existing `CLIENT_CUT` pin still holds with the
   exception inside the first 2 048 characters.
 - `grep -n "append-only\|APPEND-ONLY" crates/cdno-mcp/src/server.rs` shows the bullet and the
   exception on adjacent lines.

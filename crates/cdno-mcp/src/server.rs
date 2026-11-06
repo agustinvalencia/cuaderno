@@ -274,35 +274,31 @@ impl ServerHandler for CuadernoServer {
                 overdue or due today (get_orientation.commitments): \"Heads up: X is \
                 due today.\" No elapsed-time nudges.\n\n\
                 Cuaderno is a vault manager for the Research Logbook Method (RLM). \
-                Choosing the right note type matters more than calling the tool \
-                correctly, so read this before creating anything.\n\n\
+                Pick the note type with care; read this first.\n\n\
                 The method runs two tracks over one vault. INQUIRY is open-ended: a \
                 chronological log feeds evidence portfolios, which answer important \
-                questions. OPERATIONS is delivery: project maps carry next actions, \
-                stewardships hold perpetual responsibilities, and a commitments \
-                register holds dated promises. The daily log feeds both.\n\n\
+                questions. OPERATIONS is delivery: project maps, stewardships and a \
+                commitments register.\n\n\
                 The distinctions that are easy to get wrong:\n\
+                - The journal is APPEND-ONLY and the source of truth: never rewrite \
+                a past entry, add a new one. A reference is an address: rename_note \
+                rewrites addresses in every note, the journal included, and changes \
+                no other byte; that is the one exception.\n\
                 - PROJECTS END, STEWARDSHIPS DO NOT. Health, finances, household, a \
                 recurring service are stewardships. A perpetual responsibility filed \
                 as a project is a map that can never be finished.\n\
                 - A QUESTION is open-ended and sits above projects — one question may \
                 spawn several over time and outlives them. A PROJECT is bounded, with \
-                a deliverable and usually a deadline. Either can exist without the \
-                other.\n\
+                a deliverable and usually a deadline.\n\
                 - A PORTFOLIO is a dossier accumulating evidence for one question over \
-                months. Do not organise inside it; file evidence as it arises. If you \
-                are delivering a result rather than accumulating evidence, that is a \
-                project.\n\
+                months. Do not organise inside it; file evidence as it arises. \
+                Delivering a result, not accumulating evidence, is a project.\n\
                 - An ACTION is a bullet on a project map by default (add_action). \
-                Promote it to its own note (promote_action) only once it becomes a \
-                multi-day investigation with its own evidence. Three next actions per \
+                Promote it (promote_action) only once it is a multi-day investigation \
+                with its own evidence. Three next actions per \
                 project is a ceiling, not a backlog.\n\
                 - A COMMITMENT is something someone else is counting on, with a date. \
                 It is not a to-do list.\n\
-                - The journal is APPEND-ONLY and is the source of truth. Never rewrite \
-                a past entry; add a new one. When a mutable section changes, its \
-                previous value is logged for you — that history is how a project's \
-                evolution is traced.\n\
                 - CONCEPTS, if the vault declares a `concept` type (list_note_types \
                 shows whether there is a concept type). File by what the thing is: a \
                 dated observation bearing on a question is evidence; the answer to a \

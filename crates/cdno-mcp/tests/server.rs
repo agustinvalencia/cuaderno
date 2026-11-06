@@ -1151,6 +1151,10 @@ fn rename_note_description_states_the_contract() {
         // The current slug is reported when a former name was typed.
         "`found_by_former_name`",
         "`from` is the current slug",
+        // RFC 0007 §5.1: a reference is an address, the one exception.
+        "A reference is an address, not content",
+        "changes no other byte",
+        "the one exception to the append-only rule",
     ] {
         assert!(desc.contains(phrase), "missing {phrase:?}: {desc}");
     }
@@ -1160,6 +1164,29 @@ fn rename_note_description_states_the_contract() {
         "{} chars is past the {CLIENT_CUT}-char client cut",
         desc.chars().count()
     );
+}
+
+/// RFC 0007 §5.1, T27: an agent that reads only the instructions must not
+/// take a rename for a breach of the append-only journal, nor learn from the
+/// rule alone that the journal is editable. The exception sits in the bullet
+/// that states the rule, inside the client cut.
+#[test]
+fn instructions_state_the_reference_exception() {
+    let info = empty_server().get_info();
+    let full = info.instructions.as_deref().unwrap_or_default();
+    let seen: String = full.chars().take(CLIENT_CUT).collect();
+    for phrase in [
+        "APPEND-ONLY",
+        "A reference is an address",
+        "rename_note rewrites addresses in every note",
+        "changes no other byte",
+        "the one exception",
+    ] {
+        assert!(
+            seen.contains(phrase),
+            "the first {CLIENT_CUT} chars of the instructions must carry {phrase:?} (RFC 0007 §5.1)"
+        );
+    }
 }
 
 /// A fresh empty directory as the server's vault root: the in-memory vault
