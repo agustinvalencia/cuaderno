@@ -2504,3 +2504,110 @@ fn a_pair_rename_prunes_the_old_folder_and_a_failed_one_the_new() {
     );
     assert!(p.store.exists(&vp("questions/research/old.md")).unwrap());
 }
+
+// ---------------------------------------------------------------------
+// What a surface shows: the plan's log entry, and which notes it offers.
+// ---------------------------------------------------------------------
+
+#[test]
+fn the_plan_carries_its_log_line() {
+    let f = fixture();
+    let plan = f
+        .vault
+        .plan_rename(&f.snapshot(), "old", "new", Some("a clearer name"), at())
+        .expect("plan");
+    // The entry the planner appended, without the `- **HH:MM**:` stamp.
+    assert_eq!(
+        plan.log_line.as_deref(),
+        Some(
+            format_renamed_log_entry("new", "Surrogate model", "old", Some("a clearer name"))
+                .as_str()
+        )
+    );
+    let daily = plan
+        .edits
+        .iter()
+        .find(|e| e.path == vp(DAILY_TODAY))
+        .expect("today's note");
+    assert!(
+        daily
+            .after
+            .contains(&format!("**10:30**: {}", plan.log_line.as_ref().unwrap())),
+        "the entry is what lands in the daily note"
+    );
+    assert!(!plan.log_line.as_ref().unwrap().contains("**"));
+
+    // Nothing is appended for a rename to the current slug.
+    assert_eq!(f.plan("old", "old").unwrap().log_line, None);
+}
+
+#[test]
+fn is_renamable_matches_the_planners_refusals() {
+    let f = fixture();
+    f.write(
+        "questions/research/how-large-is-the-error.md",
+        "---\ntype: question\nstatus: open\ncreated: 2026-05-01\n---\n\n# How large is the error?\n",
+    );
+    for (path, note_type) in [
+        ("projects/old.md", "project"),
+        ("actions/fit-the-baseline.md", "action"),
+        ("questions/research/how-large-is-the-error.md", "question"),
+        ("portfolios/surrogate-error-budget/_index.md", "portfolio"),
+    ] {
+        assert!(f.vault.is_renamable(&vp(path), note_type), "{path}");
+        f.plan(path.trim_end_matches(".md"), "brand-new")
+            .unwrap_or_else(|e| panic!("the planner refuses {path}: {e:?}"));
+    }
+    for (path, note_type, reason) in [
+        (DAILY_TODAY, "daily", "type daily"),
+        (ARCHIVED, "action", "archived"),
+    ] {
+        assert!(!f.vault.is_renamable(&vp(path), note_type), "{path}");
+        let err = f
+            .plan(path.trim_end_matches(".md"), "brand-new")
+            .unwrap_err();
+        assert!(
+            matches!(&err, DomainError::NoteNotRenamable { reason: r, .. } if r == reason),
+            "{err:?}"
+        );
+    }
+
+    // A portfolio whose slug a question shares is renamed through the question.
+    let p = pair_vault();
+    assert!(
+        !p.vault
+            .is_renamable(&vp("portfolios/old/_index.md"), "portfolio")
+    );
+    assert!(
+        p.vault
+            .is_renamable(&vp("questions/research/old.md"), "question")
+    );
+}
+
+#[test]
+fn is_renamable_refuses_a_custom_types_folder_note() {
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "concept".to_owned(),
+        cdno_core::config::CustomNoteType {
+            folder: "concepts".to_owned(),
+            required: vec!["created".to_owned()],
+            optional: vec![],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let body = "---\ntype: concept\ncreated: 2026-05-01\n---\n\n# Surrogate model\n";
+    store
+        .write_file(&vp("concepts/old/_index.md"), body)
+        .unwrap();
+    store.write_file(&vp("concepts/flat.md"), body).unwrap();
+    let vault = Vault::new(store, Arc::new(MemoryIndex::new()), config)
+        .expect("vault opens")
+        .0;
+    assert!(vault.is_renamable(&vp("concepts/flat.md"), "concept"));
+    assert!(!vault.is_renamable(&vp("concepts/old/_index.md"), "concept"));
+}

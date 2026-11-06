@@ -72,7 +72,8 @@ struct Cli {
     /// the create/update verbs of `project`, `action`, `portfolio`,
     /// `stewardship`, `question`, `commit`) emit a `{path, message}`
     /// result (`note revise` and `log note` add their outcome fields) and run
-    /// non-interactively. Ignored by maintenance/
+    /// non-interactively; `note rename` emits its plan with `written`,
+    /// `index_stale` and `dry_run`. Ignored by maintenance/
     /// interactive/bootstrap commands (`init`, `lint`, `reindex`,
     /// `normalise`, `triage`, `review`, `weekly`, `monthly`).
     ///

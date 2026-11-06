@@ -102,6 +102,12 @@ pub struct RenamePlan {
     /// One per touched path, in path order.
     pub edits: Vec<PlannedEdit>,
     pub warnings: Vec<RenameWarning>,
+    /// The `renamed` entry the plan appends to today's daily note, without
+    /// its `- **HH:MM**:` stamp: the head line, then the indented `was:`,
+    /// `reason:` and `portfolio:` continuation lines. `None` on an empty
+    /// plan. What a preview shows for the log, instead of the daily note's
+    /// byte edit, which may be the whole scaffolded note.
+    pub log_line: Option<String>,
     /// [`content_hash`] over the moves and every edit's `after`, in path
     /// order, with the log line's time stamp left out (§6.2). The write
     /// refuses a plan whose hash moved.
@@ -179,6 +185,29 @@ pub enum RenameWarning {
 }
 
 impl Vault {
+    /// Whether the note at `path`, of index type `note_type`, is one the
+    /// rename verb accepts (RFC 0007 §5.2): the same check the planner makes
+    /// first, so an interface offering notes to rename (a picker) offers
+    /// exactly the ones [`plan_rename`](Self::plan_rename) does not refuse
+    /// as [`DomainError::NoteNotRenamable`]. A portfolio is renamable only
+    /// when no question shares its slug (it is renamed through the
+    /// question), which this checks against the store.
+    pub fn is_renamable(&self, path: &VaultPath, note_type: &str) -> bool {
+        let mut snapshot = VaultSnapshot::default();
+        if note_type == "portfolio"
+            && let Some(slug) = candidate_slug(path)
+        {
+            for dir in [paths::QUESTIONS_RESEARCH, paths::QUESTIONS_LIFE] {
+                if let Ok(question) = VaultPath::new(format!("{dir}/{slug}.md"))
+                    && self.store.exists(&question).unwrap_or(false)
+                {
+                    snapshot.files.insert(question);
+                }
+            }
+        }
+        renamable_type(self, path, Some(note_type), &snapshot).is_ok()
+    }
+
     /// Read the vault into a [`VaultSnapshot`] for [`plan_rename`](Self::plan_rename):
     /// every note file from the store (§5.4: the index is not trusted for
     /// planning), the aliases they declare, and the archival snapshots of
@@ -420,6 +449,7 @@ impl Vault {
                 moves: Vec::new(),
                 edits: Vec::new(),
                 warnings: Vec::new(),
+                log_line: None,
                 hash: content_hash(""),
             });
         }
@@ -719,6 +749,7 @@ impl Vault {
             moves,
             edits: edits.into_values().collect(),
             warnings,
+            log_line: Some(entry.clone()),
             hash: content_hash(&input),
         })
     }

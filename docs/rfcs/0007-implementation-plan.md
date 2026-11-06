@@ -1216,9 +1216,9 @@ head and `was:` warns only on a link, and a test pins that the continuation is c
 ### T24 — `cdno note rename`
 
 **What.** `NoteCommands::Rename { note: Option<String>, to: Option<String>, reason: Option<String>, dry_run: bool, skip_sync_check: bool }`
-in `crates/cdno-cli/src/commands/note.rs:22` (§6.3). The positional resolves as `note revise`
-does (`open::resolve_reporting`, `note.rs:227`), and the omitted-and-interactive picker
-(`pick_from_all`, `open.rs:159`) is given a filter so it lists only renamable notes; `--to` goes
+in `crates/cdno-cli/src/commands/note.rs` (the `NoteCommands` enum; §6.3). The positional resolves as `note revise`
+does (`open::resolve_reporting` in `commands/open.rs`), and the omitted-and-interactive picker
+(`pick_from_filtered`, beside `pick_from_all` in `open.rs`) is given `Vault::is_renamable` so every picker the verb opens lists only renamable notes; `--to` goes
 through `gather_or_error` (`prompt.rs:286`); `--reason` is never prompted; `--skip-sync-check`
 is wired in T25 and accepted here. Rendering: the §1.1 preview shape (`move`, `rewrite … N links
 / fields`, the totals line with the plan hash's first four characters, warnings) from
@@ -1239,9 +1239,11 @@ per line and exits non-zero. `docs/cli-ergonomics.md`'s exception table gains th
 **Probes.**
 - `cargo test -p cdno-cli --test note` passes with `dry_run_prints_the_plan_and_writes_nothing`
   (byte-identical vault), `a_rename_writes_the_previewed_plan`, `the_picker_lists_only_renamable_notes`
-  (pty: a daily note is not offered), `to_is_prompted_and_the_preview_confirms` (pty: Enter on
-  the confirm aborts, vault byte-identical), `json_carries_the_plan_and_written`,
-  `a_taken_slug_is_a_json_rejection`, `an_incomplete_rename_lists_its_paths`.
+  (pty: a daily note is not offered), `to_is_prompted_and_the_preview_confirms` (pty: `n` on
+  the confirm aborts, vault byte-identical; the confirm defaults to yes, the family's convention, so Enter would proceed), `json_carries_the_plan_and_written`,
+  `a_taken_slug_is_a_json_rejection`, `an_incomplete_rename_lists_its_paths` (the rollback failure
+  cannot be provoked against real files from the CLI: the test renders a constructed
+  `RenameIncomplete` through the handler's refusal path), `a_former_name_is_reported_on_the_preview`, and `a_change_during_the_confirm_prompt_is_a_stale_plan` (pty: the vault changes while the confirm waits; `y` is refused as `stale_plan`, nothing moved).
 - `grep -n "note rename" docs/cli-ergonomics.md` finds the row.
 
 **Correct means.** The preview is the contract, and the verb never writes a plan the person did
@@ -1290,13 +1292,14 @@ mid-operation, and a person who knows better can override exactly one of those.
 `crates/cdno-mcp/src/operations.rs` beside `revise_note` (`:373`, its model), resolving `note`
 through `resolve_note_reference` (`context.rs:519`) and running through `verified_write_with`
 (`verify.rs:117`) so a successful write fires the sync nudge (§5.8 (3)); a dry run does not go
-through the write path and does not nudge. `RenamePlanDto { target, new_slug, moves, referrers: [{path, addresses, fields: [{key}], log_line, alias}], warnings, plan_hash }`
+through the write path and does not nudge. `RenamePlanDto { target, from, new_slug, found_by_former_name, moves: [{from, to}], edits: [{path, changes: [{kind: links|field|alias|log_line, count|key}]}], references, notes, log_line, warnings, plan_hash }`
+(the shape `cdno note rename --json` prints, T24; a `warnings` entry is `{kind, message, …}` with `kind: frozen_prefix_already_diverged` + `path`, or `old_slug_already_an_alias` + `holder`; `log_line` is `null` on a no-op; `edits[].changes[]` replaces the planned `referrers`)
 in `dto.rs`, returned whether or not it wrote, plus `written: bool` and `index_stale: bool`
 (§6.4). Codes in `rejection.rs`: `stem_shared`, `note_not_renamable { reason }`,
 `reference_drift { path, drift }`, `reference_unaddressable { path, key }` (added in the T18
 review),
 `behind_upstream { remedy }`, `git_operation_in_progress`, `stale_plan { expected, actual }`,
-`rename_incomplete { paths }` (`invalid_slug` and `slug_taken` exist from T4). The catalogue pins
+`rename_incomplete { paths, source }` (`invalid_slug` and `slug_taken` exist from T4). The catalogue pins
 move 65 → 66 (`tests/server.rs:148`, `e2e_stdio.rs:227`, `e2e_http.rs:178`) and the prose that
 says 65 (`docs-site/src/getting-started/connect-to-claude.md:35`, `reference/mcp/overview.md:20`,
 `README.md:113`, `:196`, `STATUS.md:149`).

@@ -285,6 +285,7 @@ are worth migrating.
 | `cdno orient` (`--energy` already optional) | covered ad-hoc |
 | `cdno project show` (slug now an optional positional) | rule 5 exception |
 | `cdno note revise` (note reference is a trailing optional positional; a picker sets `prompted`) | rule 5 exception |
+| `cdno note rename` (note reference is a trailing optional positional; a picker over the renamable notes sets `prompted`; `--to` through `gather_or_error`; `--reason` never prompted; the confirm shows the preview, and `rename_note` is given the preview's hash so what is written is what was shown) | rule 5 exception, RFC 0007 T24 |
 | `cdno config note-type install` (`--name` through `gather_or_error`; the bundled-type picker sets `prompted`, so the write confirms) | RFC 0003, #662 |
 | `cdno log` / `cdno log note` (`log` keeps its positional message and gains a `note` subcommand via `args_conflicts_with_subcommands`, `subcommand_negates_reqs`, `disable_help_subcommand`; a message equal to a subcommand name is written after `--`; `log note` itself follows flags-and-prompts) | #625 |
 

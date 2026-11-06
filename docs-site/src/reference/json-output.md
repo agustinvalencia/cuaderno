@@ -81,6 +81,45 @@ cdno portfolio create --question "Sparse vs dense attention OOD" --slug surrogat
 
 Nothing is written on a refusal. Do not retry with a `-2` of your own; ask for another name.
 
+## Rename refusals
+
+`cdno note rename --json` prints the plan on success (see [`note rename`](cli/note.md#cdno-note-rename-note)):
+
+```json
+{
+  "dry_run": false,
+  "target": "projects/old.md",
+  "from": "old",
+  "new_slug": "surrogate-model",
+  "found_by_former_name": null,
+  "moves": [{ "from": "projects/old.md", "to": "projects/surrogate-model.md" }],
+  "edits": [
+    { "path": "journal/2026/daily/2026-11-06.md", "changes": [{ "kind": "links", "count": 2 }, { "kind": "log_line" }] },
+    { "path": "projects/old.md", "changes": [{ "kind": "alias" }] }
+  ],
+  "references": 2,
+  "notes": 1,
+  "log_line": "renamed [[surrogate-model]] — Old\n  was: old",
+  "warnings": [],
+  "plan_hash": "5c380833154ebb71",
+  "written": true,
+  "index_stale": false
+}
+```
+
+`written` is whether anything was written (`false` on `--dry-run` and for a rename to the current slug); `log_line` is the unstamped `renamed` entry appended to today's daily note. The MCP `rename_note` tool returns the same plan fields. `log_line` is `null` for a rename to the current slug. A `warnings` entry is `{kind, message, …}`: `frozen_prefix_already_diverged` adds `path` (an archived referrer that already failed its archival check, rewritten anyway), `old_slug_already_an_alias` adds `holder` (the old slug is already another note's alias, so it will resolve to nothing once shared). A `changes` entry is `links` (with `count`), `field` (with `key`), `alias` or `log_line`. A refusal
+prints the usual `{code, message, details}` object and exits `1`, writing nothing:
+
+| `code` | `details` | When |
+|---|---|---|
+| `invalid_slug`, `slug_taken` | as [above](#slug-refusals) | The new slug breaks the rule, or another note holds it. |
+| `note_not_renamable` | `path`, `reason` | `reason` is `type <name>`, `archived`, `folder`, `rename the question`, or what stops the alias being recorded. |
+| `stem_shared` | `slug`, `path`, `others` | Another note has the same file stem, so links to it cannot be told apart. |
+| `stale_plan` | `expected`, `actual` | The vault changed between the preview and the write. Preview again. |
+| `reference_drift` | `path`, `drift` | Rewriting the references in `path` would change more than them. |
+| `reference_unaddressable` | `path`, `key` | A reference field names the note in a form the rewrite cannot address. |
+| `rename_incomplete` | `paths`, `source` | A write failed and the rollback could not restore the paths in `paths`; check them by hand. |
+
 ## `search --json` → an array of hits
 
 Ranked best-first; each hit:
