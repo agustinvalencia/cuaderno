@@ -3899,19 +3899,28 @@ fn a_well_formed_renamed_line_is_clean() {
 #[test]
 fn a_renamed_line_with_the_portfolio_continuation_is_clean() {
     let body = daily_log(
-        "- **10:00**: renamed [[questions/research/alpha]] \u{2014} Surrogate model\n  was: beta\n  reason: clearer\n  portfolio: portfolios/alpha\n",
+        "- **10:00**: renamed [[questions/research/alpha]] \u{2014} Surrogate model\n  was: beta\n  reason: clearer\n  portfolio: [[portfolios/alpha]]\n",
     );
     let vault = vault_with_notes(
-        &[("journal/2026/daily/2026-09-15.md", &body)],
+        &[
+            ("journal/2026/daily/2026-09-15.md", &body),
+            (
+                "questions/research/alpha.md",
+                "---\ntype: question\nstatus: open\ncreated: 2026-05-01\n---\n\n# Alpha\n",
+            ),
+            (
+                "portfolios/alpha/_index.md",
+                "---\ntype: portfolio\nquestion: \"Alpha?\"\ncreated: 2026-05-01\n---\n\n# Alpha?\n",
+            ),
+        ],
         VaultConfig::default(),
     );
 
     let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
-        !report
-            .issues
-            .iter()
-            .any(|i| i.message.contains("renamed") || i.message.contains("`was:`")),
+        !report.issues.iter().any(|i| i.message.contains("renamed")
+            || i.message.contains("`was:`")
+            || i.message.contains("portfolio")),
         "issues: {:?}",
         report.issues
     );

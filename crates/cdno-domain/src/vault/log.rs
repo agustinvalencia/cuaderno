@@ -291,9 +291,11 @@ pub fn format_renamed_log_entry(
 
 /// [`format_renamed_log_entry`] for a question renamed together with its
 /// same-slug portfolio (RFC 0007 §5.3): the same entry, with an indented
-/// `portfolio: portfolios/<new>` continuation after `was:` and `reason:`.
-/// Like `was:`, the value is copied text, never a link. `portfolio` is the
-/// portfolio's new folder path; `None` writes the plain entry.
+/// `portfolio: [[portfolios/<new>]]` continuation after `was:` and `reason:`.
+/// Unlike `was:`, the value is a link: it names the portfolio's current
+/// name, so a later rename rewrites it and the portfolio's history carries
+/// the event. `portfolio` is the portfolio's new folder path (no brackets);
+/// `None` writes the plain entry.
 pub fn format_renamed_pair_log_entry(
     new_link: &str,
     title: &str,
@@ -309,7 +311,7 @@ pub fn format_renamed_pair_log_entry(
         entry.push_str(&format!("\n  {LOG_REASON_KEY}{reason}"));
     }
     if let Some(portfolio) = portfolio {
-        entry.push_str(&format!("\n  {LOG_PORTFOLIO_KEY}{portfolio}"));
+        entry.push_str(&format!("\n  {LOG_PORTFOLIO_KEY}[[{portfolio}]]"));
     }
     entry
 }

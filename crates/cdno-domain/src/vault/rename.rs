@@ -305,7 +305,7 @@ impl Vault {
     /// whose folder note `portfolios/<slug>/_index.md` shares its slug exists:
     /// `moves` holds the question's flat move, then the portfolio's as above,
     /// all under the one `hash`, and the `renamed` line gains an indented
-    /// `portfolio: portfolios/<new>` continuation after `was:` and `reason:`.
+    /// `portfolio: [[portfolios/<new>]]` continuation after `was:` and `reason:`.
     /// The evidence notes' `portfolio:` fields follow; without the pair a
     /// `portfolio:` value equal to the question's slug names nothing that
     /// moves and is left alone.
@@ -936,6 +936,26 @@ impl Vault {
             .filter(|p| candidate_slug(p).as_deref() == Some(slug) && of_type_ok(p))
             .collect();
         hits.sort();
+        // A question and its same-slug portfolio's folder note answer to the
+        // one bare slug (§5.3): the pair renames from the question, so that
+        // is the hit. Every other multi-hit shape stays ambiguous.
+        if let [a, b] = hits.as_slice() {
+            let is_question = |p: &VaultPath| {
+                [paths::QUESTIONS_RESEARCH, paths::QUESTIONS_LIFE]
+                    .iter()
+                    .any(|dir| p.as_path() == std::path::Path::new(&format!("{dir}/{slug}.md")))
+            };
+            let is_index = |p: &VaultPath| {
+                p.as_path()
+                    == std::path::Path::new(&format!("{}/{slug}/_index.md", paths::PORTFOLIOS))
+            };
+            if is_question(a) && is_index(b) {
+                return Ok(ResolvedNote::direct((*a).clone()));
+            }
+            if is_question(b) && is_index(a) {
+                return Ok(ResolvedNote::direct((*b).clone()));
+            }
+        }
         match hits.as_slice() {
             [one] => return Ok(ResolvedNote::direct((*one).clone())),
             [] => {}

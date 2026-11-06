@@ -1921,6 +1921,7 @@ struct HookStore {
     pruned: std::sync::Mutex<Vec<VaultPath>>,
     dirs: Vec<VaultPath>,
     no_artefact_reads: bool,
+    fail_moves: bool,
 }
 
 impl HookStore {
@@ -1930,6 +1931,7 @@ impl HookStore {
             pruned: std::sync::Mutex::new(Vec::new()),
             dirs: Vec::new(),
             no_artefact_reads: false,
+            fail_moves: false,
         }
     }
 
@@ -1959,6 +1961,9 @@ impl VaultStore for HookStore {
         self.inner.append_to_file(path, content)
     }
     fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        if self.fail_moves {
+            return Err(StoreError::PermissionDenied(dest.to_string()));
+        }
         self.inner.move_file(src, dest)
     }
     fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
@@ -2255,7 +2260,7 @@ fn a_question_rename_carries_its_portfolio() {
     assert_eq!(day.matches("renamed [[").count(), 1, "{day}");
     assert!(
         day.contains(
-            "renamed [[questions/research/new]] \u{2014} How large is the error?\n  was: old\n  reason: a clearer name\n  portfolio: portfolios/new\n"
+            "renamed [[questions/research/new]] \u{2014} How large is the error?\n  was: old\n  reason: a clearer name\n  portfolio: [[portfolios/new]]\n"
         ),
         "{day}"
     );
@@ -2373,4 +2378,133 @@ fn the_pair_checks_both_destinations() {
         .unwrap();
     let err = p.plan("questions/research/old", "new").unwrap_err();
     assert!(matches!(err, DomainError::SlugTaken { .. }), "{err:?}");
+}
+
+#[test]
+fn renamed_pair_entry_places_portfolio_after_was_with_a_blank_reason() {
+    use cdno_domain::vault::format_renamed_pair_log_entry;
+    let head = "renamed [[questions/research/new]] \u{2014} How large is the error?";
+    assert_eq!(
+        format_renamed_pair_log_entry(
+            "questions/research/new",
+            "How large is the error?",
+            "old",
+            Some(" \n "),
+            Some("portfolios/new"),
+        ),
+        format!("{head}\n  was: old\n  portfolio: [[portfolios/new]]")
+    );
+    assert_eq!(
+        format_renamed_pair_log_entry(
+            "questions/research/new",
+            "How large is the error?",
+            "old",
+            Some("clearer"),
+            Some("portfolios/new"),
+        ),
+        format!("{head}\n  was: old\n  reason: clearer\n  portfolio: [[portfolios/new]]")
+    );
+    assert_eq!(
+        format_renamed_pair_log_entry(
+            "questions/research/new",
+            "How large is the error?",
+            "old",
+            None,
+            None,
+        ),
+        format!("{head}\n  was: old")
+    );
+}
+
+#[test]
+fn a_bare_slug_names_the_pairs_question() {
+    let p = pair_vault();
+    let plan = p.plan("old", "new").expect("the pair, by its bare slug");
+    assert_eq!(plan.target.path, vp("questions/research/old.md"));
+    assert!(
+        plan.moves
+            .iter()
+            .any(|(from, _)| *from == vp("portfolios/old/_index.md"))
+    );
+    // Any other multi-hit shape stays ambiguous: two questions, one in each
+    // domain, answer to the same slug.
+    let p = pair_vault();
+    p.store
+        .write_file(
+            &vp("questions/life/old.md"),
+            "---\ntype: question\nstatus: open\ncreated: 2026-05-01\n---\n\n# Another\n",
+        )
+        .unwrap();
+    let err = p.plan("old", "new").unwrap_err();
+    assert!(matches!(err, DomainError::AmbiguousSlug(_)), "{err:?}");
+}
+
+#[test]
+fn a_straggler_folder_link_resolves_through_the_question_until_913() {
+    // Pins today's resolver (#913): the alias rule ignores the folder
+    // segment, so a `[[portfolios/old]]` the rename never saw resolves to
+    // the question, and lint names the question. A resolver fix flips this.
+    let p = pair_vault();
+    p.vault
+        .rename_note("questions/research/old", "new", None, None, at())
+        .expect("rename");
+    p.store
+        .write_file(
+            &vp("journal/2026/daily/2026-05-11.md"),
+            "---\ntype: daily\ndate: 2026-05-11\n---\n\n# Monday, 11 May 2026\n\n## Logs\n- **09:00**: filed in [[portfolios/old]]\n",
+        )
+        .unwrap();
+    let index = Arc::new(MemoryIndex::new());
+    let vault = open(Arc::clone(&p.store), index.clone());
+    assert!(
+        index
+            .find_backlinks(&vp("questions/research/new.md"))
+            .unwrap()
+            .contains(&vp("journal/2026/daily/2026-05-11.md"))
+    );
+    let report = vault.lint_all_notes(super::support::lint_day()).unwrap();
+    assert!(
+        report.issues.iter().any(|i| i
+            .message
+            .contains("`[[portfolios/old]]` names a renamed note \u{2014} now `new`")),
+        "{:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn a_pair_rename_prunes_the_old_folder_and_a_failed_one_the_new() {
+    let dirs = |roots: &[&str]| -> Vec<VaultPath> { roots.iter().map(|d| vp(d)).collect() };
+    let hooks = Arc::new(HookStore {
+        dirs: dirs(&["portfolios/old/2026-10-13-scan"]),
+        ..HookStore::new()
+    });
+    let store: Arc<dyn VaultStore> = hooks.clone();
+    let p = pair_vault_over(store);
+    p.vault
+        .rename_note("questions/research/old", "new", None, None, at())
+        .expect("a failed prune does not fail the rename");
+    assert_eq!(
+        *hooks.pruned.lock().unwrap(),
+        vec![vp("portfolios/old/2026-10-13-scan"), vp("portfolios/old")],
+        "the old portfolio's folders, deepest first, and nothing else"
+    );
+
+    // A failing `Move` rolls back, then prunes what the attempt created
+    // under the new folder.
+    let hooks = Arc::new(HookStore {
+        dirs: dirs(&["portfolios/new/2026-10-13-scan"]),
+        fail_moves: true,
+        ..HookStore::new()
+    });
+    let store: Arc<dyn VaultStore> = hooks.clone();
+    let p = pair_vault_over(store);
+    p.vault
+        .rename_note("questions/research/old", "new", None, None, at())
+        .unwrap_err();
+    assert_eq!(
+        *hooks.pruned.lock().unwrap(),
+        vec![vp("portfolios/new/2026-10-13-scan"), vp("portfolios/new")],
+    );
+    assert!(p.store.exists(&vp("questions/research/old.md")).unwrap());
 }

@@ -1160,8 +1160,8 @@ pub(in crate::vault) const LOG_REASON_KEY: &str = "reason: ";
 pub(in crate::vault) const LOG_WAS_KEY: &str = "was: ";
 
 /// Key introducing the portfolio that moved with a question on a `renamed`
-/// entry's continuation line (RFC 0007 §5.3): `  portfolio: portfolios/<new>`,
-/// a copied path, never a link, written after `was:` and `reason:`.
+/// entry's continuation line (RFC 0007 §5.3): `  portfolio: [[portfolios/<new>]]`,
+/// a link (a later rename rewrites it), written after `was:` and `reason:`.
 pub(in crate::vault) const LOG_PORTFOLIO_KEY: &str = "portfolio: ";
 
 /// Key introducing the focus tag on a log entry's continuation line

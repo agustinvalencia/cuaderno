@@ -13,8 +13,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   the one transaction: the question's flat note, then the portfolio's folder moves as in T22, under
   one plan hash. The evidence notes' `portfolio:` fields and every link into the folder follow; a
   `portfolio:` value with no folder note behind it is never rewritten. The `renamed` log line gains a
-  `portfolio: portfolios/<new>` continuation after `was:` and `reason:`
-  (`format_renamed_pair_log_entry`). The destination checks cover both `questions/<kind>/<new>.md`
+  `portfolio: [[portfolios/<new>]]` continuation (a link) after `was:` and `reason:`
+  (`format_renamed_pair_log_entry`). A bare slug naming a question and its same-slug portfolio
+  resolves to the question. The destination checks cover both `questions/<kind>/<new>.md`
   and `portfolios/<new>/`. The `folder` refusal of such a question is lifted; renaming the portfolio
   alone stays refused (`rename the question`). No CLI or MCP surface yet.
 - **Renaming a portfolio** (RFC 0007 T22, closes #871). `Vault::rename_note` and `plan_rename` now

@@ -1195,10 +1195,16 @@ stem, both resolve, `get_portfolio_contents(new)` lists the evidence). The pair 
 `portfolios/<slug>/_index.md` is in the snapshot: a folder holding evidence notes but no folder
 note is a dangling `portfolio:` value, never rewritten. The plan's `moves` list the question's flat
 move first, then the portfolio's `_index.md`, then the folder's other files in path order, so
-`written[0]` is the question. The portfolio gains no alias (a folder note is addressed by path, and
-every link under `portfolios/<old>/` is rewritten). The log line is built by
-`format_renamed_pair_log_entry` (`format_renamed_log_entry` delegates to it): continuations run
-`was:`, `reason:`, `portfolio: portfolios/<new>`, the last a copied path, never a link. The refusal of
+`written[0]` is the question. The portfolio gains no alias: the question holds the alias, since
+two holders would make `[[old]]` dangle. Links the rename saw are rewritten; a straggler
+`[[portfolios/old]]` written later (another clone, say) resolves through the question's alias until
+#913 fixes the resolver's alias rule, which ignores the folder segment, and lint then names the
+question (`a_straggler_folder_link_resolves_through_the_question_until_913` pins it). A bare slug
+whose only hits are a question and its same-slug `_index.md` resolves to the question; every other
+multi-hit shape stays `AmbiguousSlug` (`a_bare_slug_names_the_pairs_question`). The log line is built
+by `format_renamed_pair_log_entry` (`format_renamed_log_entry` delegates to it): continuations run
+`was:` (a copied value), `reason:`, `portfolio: [[portfolios/<new>]]`, the last a link, so a later
+rename rewrites it and the portfolio's history carries the event. The refusal of
 a portfolio whose slug a question shares is permanent (`rename the question`), not "until T23"; T22's
 sentence above is corrected to say so. Lint needed no change: the `renamed` near-miss check reads the
 head and `was:` warns only on a link, and a test pins that the continuation is clean.
