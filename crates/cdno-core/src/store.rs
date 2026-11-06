@@ -140,6 +140,19 @@ pub trait VaultStore: Send + Sync {
     /// Recursively enumerate all files beneath `path`.
     fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError>;
 
+    /// Recursively enumerate every directory beneath `path`, at any depth,
+    /// `path` itself excluded, sorted. Read-only. A symlink is never
+    /// followed and never listed, whatever it points at. An absent `path`
+    /// lists nothing. [`walk_dir`](Self::walk_dir) lists files only, so this
+    /// is how a caller finds the empty folders it may prune with
+    /// [`remove_dir_if_empty`](Self::remove_dir_if_empty).
+    ///
+    /// The default lists nothing, which suits stores with no directories of
+    /// their own.
+    fn walk_dirs(&self, _path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        Ok(Vec::new())
+    }
+
     /// Return the modification time and size of a file.
     fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError>;
 
@@ -368,6 +381,28 @@ impl VaultStore for MemoryVaultStore {
             .collect();
         descendants.sort_by(|a, b| a.as_path().cmp(b.as_path()));
         Ok(descendants)
+    }
+
+    fn walk_dirs(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        // Directories are implicit: every proper ancestor of a stored file
+        // that lies strictly beneath `path`.
+        let files = self.files.lock().expect("poisoned mutex");
+        let prefix = path.as_path();
+        let mut dirs: HashSet<PathBuf> = HashSet::new();
+        for key in files.keys() {
+            for dir in key.as_path().ancestors().skip(1) {
+                if dir == prefix || !dir.starts_with(prefix) || dir.as_os_str().is_empty() {
+                    break;
+                }
+                dirs.insert(dir.to_path_buf());
+            }
+        }
+        let mut result: Vec<VaultPath> = dirs
+            .into_iter()
+            .map(|p| VaultPath::new(p).expect("derived from validated VaultPaths"))
+            .collect();
+        result.sort_by(|a, b| a.as_path().cmp(b.as_path()));
+        Ok(result)
     }
 
     fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
@@ -745,6 +780,42 @@ impl VaultStore for FsVaultStore {
                         .expect("rel is relative and free of traversal by construction");
                     out.push(vp);
                 }
+            }
+        }
+        out.sort_by(|a, b| a.as_path().cmp(b.as_path()));
+        Ok(out)
+    }
+
+    fn walk_dirs(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        let full = self.resolve(path)?;
+        // symlink_metadata: a symlink to a directory is not one here.
+        match fs::symlink_metadata(&full) {
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => return Ok(Vec::new()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(io_to_store_error(e, path)),
+        }
+        // Iterative DFS, as `walk_dir`, yielding the directories instead.
+        // `DirEntry::file_type` does not follow symlinks.
+        let mut stack: Vec<PathBuf> = vec![full];
+        let mut out: Vec<VaultPath> = Vec::new();
+        while let Some(dir) = stack.pop() {
+            let entries = fs::read_dir(&dir).map_err(|e| io_to_store_error(e, path))?;
+            for entry in entries {
+                let entry = entry.map_err(|e| io_to_store_error(e, path))?;
+                let file_type = entry.file_type().map_err(|e| io_to_store_error(e, path))?;
+                if !file_type.is_dir() {
+                    continue;
+                }
+                let entry_path = entry.path();
+                let rel = entry_path
+                    .strip_prefix(&self.root)
+                    .expect("entry is under vault root by construction");
+                out.push(
+                    VaultPath::new(rel)
+                        .expect("rel is relative and free of traversal by construction"),
+                );
+                stack.push(entry_path);
             }
         }
         out.sort_by(|a, b| a.as_path().cmp(b.as_path()));

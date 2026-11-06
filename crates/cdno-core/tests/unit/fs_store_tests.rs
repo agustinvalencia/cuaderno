@@ -564,3 +564,36 @@ fn a_symlink_pointing_outside_the_vault_is_an_error() {
     );
     assert!(outside.path().join("empty").is_dir());
 }
+
+#[test]
+fn walk_dirs_lists_every_directory_beneath_and_follows_no_symlink() {
+    let (dir, store) = store();
+    fs::create_dir_all(dir.path().join("portfolios/old/empty")).unwrap();
+    fs::create_dir_all(dir.path().join("portfolios/old/scan/deep")).unwrap();
+    fs::write(dir.path().join("portfolios/old/_index.md"), "x").unwrap();
+    fs::create_dir_all(dir.path().join("portfolios/new")).unwrap();
+    let outside = TempDir::new().unwrap();
+    fs::create_dir_all(outside.path().join("inside")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), dir.path().join("portfolios/old/link")).unwrap();
+
+    assert_eq!(
+        store.walk_dirs(&vp("portfolios/old")).unwrap(),
+        vec![
+            vp("portfolios/old/empty"),
+            vp("portfolios/old/scan"),
+            vp("portfolios/old/scan/deep"),
+        ]
+    );
+    assert!(
+        store
+            .walk_dirs(&vp("portfolios/absent"))
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .walk_dirs(&vp("portfolios/old/_index.md"))
+            .unwrap()
+            .is_empty()
+    );
+}

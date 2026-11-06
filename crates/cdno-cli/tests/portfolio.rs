@@ -8,6 +8,9 @@ use std::path::Path;
 use cdno_cli::commands::portfolio::{self, PortfolioCommands};
 use cdno_cli::commands::question::{self, QuestionCommands};
 use cdno_cli::commands::{file, init};
+use cdno_core::error::StoreError;
+use cdno_core::path::VaultPath;
+use cdno_core::store::VaultStore;
 use cdno_domain::frontmatter::QuestionDomain;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use tempfile::TempDir;
@@ -811,21 +814,114 @@ fn an_emptied_folder_is_pruned() {
     assert_lint_clean(root);
 }
 
+/// An `FsVaultStore` with two hooks: once armed, the next walk of the
+/// vault root writes `stray` into the old folder on its way out, so the file
+/// arrives after the rename's snapshot was taken; and with `fail_moves`
+/// every `move_file` fails, so the commit rolls back.
+struct HookedFs {
+    inner: cdno_core::store::FsVaultStore,
+    root: std::path::PathBuf,
+    stray: std::sync::Mutex<Option<&'static str>>,
+    fail_moves: bool,
+}
+
+impl HookedFs {
+    fn new(root: &Path) -> Self {
+        Self {
+            inner: cdno_core::store::FsVaultStore::new(root),
+            root: root.to_path_buf(),
+            stray: std::sync::Mutex::new(None),
+            fail_moves: false,
+        }
+    }
+}
+
+impl VaultStore for HookedFs {
+    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        self.inner.read_file(path)
+    }
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.inner.read_bytes(path)
+    }
+    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.write_file(path, content)
+    }
+    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.append_to_file(path, content)
+    }
+    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        if self.fail_moves {
+            return Err(StoreError::PermissionDenied(dest.to_string()));
+        }
+        self.inner.move_file(src, dest)
+    }
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        self.inner.delete_file(path)
+    }
+    fn remove_dir_if_empty(&self, dir: &VaultPath) -> Result<bool, StoreError> {
+        self.inner.remove_dir_if_empty(dir)
+    }
+    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
+        self.inner.exists(path)
+    }
+    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.list_dir(path)
+    }
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        let walked = self.inner.walk_dir(path);
+        if path.as_path().as_os_str().is_empty()
+            && let Some(stray) = self.stray.lock().unwrap().take()
+        {
+            fs::write(self.root.join(stray), b"arrived late").unwrap();
+        }
+        walked
+    }
+    fn walk_dirs(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.walk_dirs(path)
+    }
+    fn metadata(&self, path: &VaultPath) -> Result<cdno_core::file_meta::FileMeta, StoreError> {
+        self.inner.metadata(path)
+    }
+    fn import_external(&self, src: &Path, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.import_external(src, dest)
+    }
+    fn acquire_write_lock(&self) -> Result<cdno_core::store::VaultWriteLock, StoreError> {
+        self.inner.acquire_write_lock()
+    }
+}
+
+/// A vault at `root` over `store` and the real SQLite index.
+fn vault_over(root: &Path, store: std::sync::Arc<HookedFs>) -> cdno_domain::Vault {
+    let config = cdno_core::config::VaultConfig::load(root).unwrap();
+    let index = cdno_core::index::SqliteIndex::open(root.join(cdno_core::paths::INDEX_DB)).unwrap();
+    cdno_domain::Vault::new(store, std::sync::Arc::new(index), config)
+        .expect("vault opens")
+        .0
+}
+
 #[test]
 fn a_folder_with_a_stray_file_is_left() {
     let dir = vault();
     let root = dir.path();
     seed_renamable_portfolio(root);
-    fs::write(
-        root.join("portfolios/old/.DS_Store"),
-        b"\x00\x00\x00\x01Bud1",
-    )
-    .unwrap();
+    let store = std::sync::Arc::new(HookedFs::new(root));
+    let vault = vault_over(root, store.clone());
+    // Armed after the open, so the rename's own snapshot is the walk that
+    // misses it: `.DS_Store` arrives in the old folder once the plan is
+    // taken, as Finder writes it into a folder it is showing.
+    *store.stray.lock().unwrap() = Some("portfolios/old/.DS_Store");
+    vault
+        .rename_note(
+            "portfolio:old",
+            "new",
+            None,
+            None,
+            moment(2026, 10, 14, 9, 0),
+        )
+        .expect("the rename succeeds");
 
-    rename_portfolio(root);
-
-    // The rename succeeded; the folder the stray file keeps stays, holding
-    // only it, and the subfolder the move emptied is pruned.
+    // Everything the plan listed moved; the folder the late file keeps
+    // stays, holding only it, and the subfolder the move emptied is pruned.
     assert!(root.join("portfolios/new/_index.md").is_file());
     assert!(
         root.join("portfolios/new/2026-10-13-scan/scan.pdf")
@@ -836,5 +932,82 @@ fn a_folder_with_a_stray_file_is_left() {
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
     assert_eq!(left, vec![".DS_Store".to_owned()]);
+    drop(vault);
     assert_lint_clean(root);
+}
+
+#[test]
+fn a_failed_portfolio_rename_leaves_no_new_folder_behind() {
+    let dir = vault();
+    let root = dir.path();
+    seed_renamable_portfolio(root);
+    let store = std::sync::Arc::new(HookedFs {
+        fail_moves: true,
+        ..HookedFs::new(root)
+    });
+    let vault = vault_over(root, store);
+    vault
+        .rename_note(
+            "portfolio:old",
+            "new",
+            None,
+            None,
+            moment(2026, 10, 14, 9, 0),
+        )
+        .expect_err("the artefact's move fails, so the commit rolls back");
+    drop(vault);
+
+    // The note written into the new folder before the move failed was taken
+    // back out, and the folders its write created went with it.
+    assert!(!root.join("portfolios/new").exists());
+    assert_eq!(
+        fs::read(root.join("portfolios/old/2026-10-13-scan/scan.pdf")).unwrap(),
+        SCAN_BYTES
+    );
+    assert!(root.join("portfolios/old/_index.md").is_file());
+
+    // A second attempt proceeds.
+    rename_portfolio(root);
+    assert!(
+        root.join("portfolios/new/2026-10-13-scan/scan.pdf")
+            .is_file()
+    );
+    assert!(!root.join("portfolios/old").exists());
+    assert_lint_clean(root);
+}
+
+#[test]
+fn an_empty_destination_folder_is_free() {
+    // A `portfolios/new/` holding no file at any depth (made by hand, or
+    // left by an attempt whose prune could not run) holds nothing to merge
+    // with: the rename moves into it.
+    let dir = vault();
+    let root = dir.path();
+    seed_renamable_portfolio(root);
+    fs::create_dir_all(root.join("portfolios/new/figures")).unwrap();
+    rename_portfolio(root);
+    assert!(root.join("portfolios/new/_index.md").is_file());
+    assert!(!root.join("portfolios/old").exists());
+
+    // One holding a file is still taken.
+    let dir = vault();
+    let root = dir.path();
+    seed_renamable_portfolio(root);
+    fs::create_dir_all(root.join("portfolios/new")).unwrap();
+    fs::write(root.join("portfolios/new/notes.txt"), b"mine").unwrap();
+    let opened = cdno_domain::bootstrap::open_vault(root).expect("open");
+    let err = opened
+        .vault
+        .rename_note(
+            "portfolio:old",
+            "new",
+            None,
+            None,
+            moment(2026, 10, 14, 9, 0),
+        )
+        .expect_err("a folder holding a file is taken");
+    assert!(
+        matches!(err, cdno_domain::error::DomainError::SlugTaken { .. }),
+        "{err:?}"
+    );
 }

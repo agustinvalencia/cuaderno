@@ -214,3 +214,27 @@ fn remove_dir_if_empty_is_false_on_the_memory_store() {
     assert!(!store.remove_dir_if_empty(&vp("missing")).unwrap());
     assert!(store.exists(&vp("folder/note.md")).unwrap());
 }
+
+#[test]
+fn walk_dirs_lists_the_implicit_directories_beneath() {
+    let store = MemoryVaultStore::new();
+    store
+        .write_file(&vp("portfolios/old/_index.md"), "x")
+        .unwrap();
+    store
+        .write_file(&vp("portfolios/old/scan/deep/page.pdf"), "x")
+        .unwrap();
+    store
+        .write_file(&vp("portfolios/new/_index.md"), "x")
+        .unwrap();
+    assert_eq!(
+        store.walk_dirs(&vp("portfolios/old")).unwrap(),
+        vec![vp("portfolios/old/scan"), vp("portfolios/old/scan/deep")]
+    );
+    assert!(
+        store
+            .walk_dirs(&vp("portfolios/absent"))
+            .unwrap()
+            .is_empty()
+    );
+}

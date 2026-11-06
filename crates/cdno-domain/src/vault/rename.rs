@@ -287,8 +287,8 @@ impl Vault {
     /// **A portfolio moves its whole folder** (§5.3). `moves` holds the
     /// `_index.md` first and then every other file under `portfolios/<old>/`
     /// in path order, each to the same place under `portfolios/<new>/`,
-    /// except a hidden file at the folder's top level (Finder's `.DS_Store`),
-    /// which is the folder's own metadata and stays with it. Every wikilink
+    /// hidden files included (a hidden note is a note; Finder's `.DS_Store`
+    /// describes the folder that is moving). Every wikilink
     /// whose address is `portfolios/<old>` or begins `portfolios/<old>/` has
     /// that folder segment rewritten, whether it names a note or an
     /// attachment, wherever it sits (inside the folder too); a link that
@@ -423,10 +423,7 @@ impl Vault {
                 let new_path = rebase(&target_path, old_dir, &new_dir)?;
                 let mut moves = vec![(target_path.clone(), new_path.clone())];
                 for file in &snapshot.files {
-                    if *file == target_path
-                        || !file.as_path().starts_with(old_dir.as_path())
-                        || is_folder_metadata(file, old_dir)
-                    {
+                    if *file == target_path || !file.as_path().starts_with(old_dir.as_path()) {
                         continue;
                     }
                     moves.push((file.clone(), rebase(file, old_dir, &new_dir)?));
@@ -741,17 +738,20 @@ impl Vault {
     /// every other file under it (an attachment artefact, a filed document,
     /// an ignored file) with the transaction's `Move` op, which keeps its
     /// bytes and needs no index row, since none of them has one. After a
-    /// commit whose files landed, the folders the move emptied are pruned
-    /// bottom-up with [`remove_dir_if_empty`](cdno_core::store::VaultStore::remove_dir_if_empty),
-    /// at or below `portfolios/<old>/` and never above it, best-effort: a
-    /// folder something still holds stays, and a failure is logged at
-    /// `debug` and never surfaced.
+    /// commit whose files landed, every folder under `portfolios/<old>/`
+    /// (an empty one the move never saw too) and then the folder itself is
+    /// pruned, deepest first, with [`remove_dir_if_empty`](cdno_core::store::VaultStore::remove_dir_if_empty),
+    /// never above it, best-effort: a folder something still holds stays,
+    /// and a failure is logged at `debug` and never surfaced. After a
+    /// failed commit the same prune runs on `portfolios/<new>/`, so the
+    /// folders the attempt created do not outlive the files the rollback
+    /// took back.
     ///
     /// A move destination the store already holds is refused, here and in
     /// [`rename_preview`](Self::rename_preview), as
     /// [`DomainError::SlugTaken`] (`kind: stem`, the file as holder), before
     /// anything is staged; for a portfolio, so is a `portfolios/<new>/`
-    /// folder that exists at all (`kind: folder`, the folder as holder).
+    /// folder holding any file (`kind: folder`, the folder as holder).
     ///
     /// A failed file write rolls the written files back. When the rollback
     /// itself fails for some path, the result is
@@ -788,6 +788,11 @@ impl Vault {
         }
 
         let written = stage_rename(&plan, &snapshot, &mut tx)?;
+        // A portfolio's folders, before and after: the old one is pruned
+        // once every file has left it, the new one when the commit failed
+        // and the rollback took the files back out of it.
+        let folders = portfolio_folder(&plan.target.path)
+            .zip(plan.moves.first().and_then(|(_, to)| portfolio_folder(to)));
         let index_stale = match tx.commit() {
             Ok(_) => false,
             Err(TransactionError::IndexStale(_)) => true,
@@ -795,6 +800,12 @@ impl Vault {
                 source,
                 rollback_failures,
             }) => {
+                // The store's write and move create the destination's
+                // folders and the rollback restores files only: leave no
+                // empty `portfolios/<new>/` behind to hold the name.
+                if let Some((_, new_folder)) = &folders {
+                    prune_folder_tree(&*self.store, new_folder);
+                }
                 if rollback_failures.is_empty() {
                     return Err(DomainError::Store(source));
                 }
@@ -812,8 +823,8 @@ impl Vault {
             }
         };
         // Every file landed: prune what the folder move emptied.
-        if let Some(old_folder) = portfolio_folder(&plan.target.path) {
-            prune_emptied_folders(&*self.store, &old_folder, &plan.moves);
+        if let Some((old_folder, _)) = &folders {
+            prune_folder_tree(&*self.store, old_folder);
         }
         Ok(RenameOutcome {
             plan,
@@ -1026,10 +1037,12 @@ fn failed_path(error: &cdno_core::error::StoreError) -> Option<VaultPath> {
 /// store lists it: the entry of the destination's folder whose name equals
 /// the destination's ignoring case, else the destination itself.
 ///
-/// A portfolio's folder moves as one, so a `portfolios/<new>/` the store
-/// holds at all (a folder of non-notes the snapshot's names cannot show, a
-/// case variant) is refused the same way, with `kind: folder`: the move
-/// never merges into a folder that is already there.
+/// A portfolio's folder moves as one, so a `portfolios/<new>/` holding any
+/// file (a folder of non-notes the snapshot's names cannot show, a case
+/// variant) is refused the same way, with `kind: folder`: the move never
+/// merges into a folder's contents. One holding no file at any depth (left
+/// by hand, or by an attempt whose rollback could not prune it) holds
+/// nothing to merge with, and is free.
 fn ensure_destinations_free(
     store: &dyn cdno_core::store::VaultStore,
     plan: &RenamePlan,
@@ -1056,6 +1069,7 @@ fn ensure_destinations_free(
     if portfolio_folder(&plan.target.path).is_some()
         && let Some(new_dir) = plan.moves.first().and_then(|(_, to)| portfolio_folder(to))
         && store.exists(&new_dir)?
+        && !store.walk_dir(&new_dir)?.is_empty()
     {
         return Err(taken(&new_dir, TakenBy::Folder)?);
     }
@@ -1067,35 +1081,30 @@ fn ensure_destinations_free(
     Ok(())
 }
 
-/// Prune the folders a portfolio's move emptied: every folder at or below
-/// `old_folder` that held a moved file, deepest first, then `old_folder`
-/// itself, each through [`remove_dir_if_empty`](cdno_core::store::VaultStore::remove_dir_if_empty),
-/// which leaves a folder that still holds anything (a hidden file, a file
-/// that arrived since). Nothing above `old_folder` is ever passed: the
-/// store's prune does not refuse the vault root or `.cuaderno/`, so this is
-/// the guard. Best-effort: a failure is logged at `debug`, and the rename,
-/// already committed, stands.
-fn prune_emptied_folders(
-    store: &dyn cdno_core::store::VaultStore,
-    old_folder: &VaultPath,
-    moves: &[(VaultPath, VaultPath)],
-) {
-    let mut folders: BTreeSet<VaultPath> = BTreeSet::new();
-    for (from, _) in moves {
-        for dir in from.as_path().ancestors().skip(1) {
-            if !dir.starts_with(old_folder.as_path()) {
-                break;
-            }
-            if let Ok(dir) = VaultPath::new(dir) {
-                folders.insert(dir);
-            }
+/// Prune `root` and every folder beneath it that holds nothing: each folder
+/// [`walk_dirs`](cdno_core::store::VaultStore::walk_dirs) lists under `root`,
+/// deepest first, then `root` itself, each through
+/// [`remove_dir_if_empty`](cdno_core::store::VaultStore::remove_dir_if_empty),
+/// which leaves a folder that still holds anything (a file that arrived
+/// since, or a folder holding one). The listing never reaches above
+/// `root`, and nothing else is passed: the store's prune does not refuse
+/// the vault root or `.cuaderno/`, so this is the guard. Best-effort: a
+/// failure is logged at `debug`, and the rename's outcome stands.
+fn prune_folder_tree(store: &dyn cdno_core::store::VaultStore, root: &VaultPath) {
+    let mut folders: Vec<VaultPath> = match store.walk_dirs(root) {
+        Ok(dirs) => dirs
+            .into_iter()
+            .filter(|dir| dir.as_path().starts_with(root.as_path()) && dir != root)
+            .collect(),
+        Err(error) => {
+            tracing::debug!(folder = %root, %error, "rename: could not list folders to prune");
+            Vec::new()
         }
-    }
-    folders.insert(old_folder.clone());
+    };
     // Deepest first, so a folder is tried only after everything below it.
-    let mut ordered: Vec<VaultPath> = folders.into_iter().collect();
-    ordered.sort_by_key(|dir| std::cmp::Reverse(dir.as_path().components().count()));
-    for dir in ordered {
+    folders.sort_by_key(|dir| std::cmp::Reverse(dir.as_path().components().count()));
+    folders.push(root.clone());
+    for dir in folders {
         if let Err(error) = store.remove_dir_if_empty(&dir) {
             tracing::debug!(folder = %dir, %error, "rename: could not prune an emptied folder");
         }
@@ -1277,20 +1286,6 @@ fn rebase(path: &VaultPath, from: &VaultPath, to: &VaultPath) -> Result<VaultPat
         .strip_prefix(from.as_path())
         .map_err(|_| cdno_core::error::StoreError::NotFound(path.to_string()))?;
     Ok(VaultPath::new(to.as_path().join(rest))?)
-}
-
-/// A hidden file at the top level of `folder` (Finder's `.DS_Store`):
-/// metadata about the folder itself, not part of the portfolio, so a
-/// portfolio's move leaves it, and the folder it keeps, where they are. A
-/// hidden file deeper down moves with the folder it sits in, so no
-/// artefact folder is left behind holding only it.
-fn is_folder_metadata(path: &VaultPath, folder: &VaultPath) -> bool {
-    path.as_path().parent() == Some(folder.as_path())
-        && path
-            .as_path()
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.starts_with('.'))
 }
 
 /// Where `raw` resolves in the snapshot, by the index's own resolver.

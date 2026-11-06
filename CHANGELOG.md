@@ -14,11 +14,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   with its index row moved, and every attachment artefact moved as it is (its bytes are never read,
   and the plan hash covers each artefact move by its paths). The evidence notes' `portfolio:` field
   follows, and every link whose address runs through `portfolios/<old>/` (a note, an attachment
-  embed, a link inside the folder itself) has that folder segment rewritten. After the commit the
-  folders the move emptied are pruned, never above `portfolios/<old>/`; a hidden file at the
-  folder's top level (Finder's `.DS_Store`) stays, and so does the folder it keeps. A destination
-  folder that already exists is refused, and so is a portfolio whose slug a question shares, until
-  the pair can be renamed together. No CLI or MCP surface yet.
+  embed, a link inside the folder itself) has that folder segment rewritten. Hidden files move too.
+  After the commit every folder under `portfolios/<old>/` that holds nothing is pruned, and then the
+  folder itself, never above it; after a failed commit the folders the attempt created under
+  `portfolios/<new>/` are pruned the same way, so a retry is not blocked. A destination folder
+  holding any file is refused, and so is a portfolio whose slug a question shares, until the pair
+  can be renamed together. `VaultStore::walk_dirs` lists the directories beneath a path. No CLI or
+  MCP surface yet.
 - **The rename against the real stores** (RFC 0007 T21, closes #870). Three tests the memory
   implementations cannot give: `rename_index_ops_land_in_order_on_sqlite` (old path gone, new path
   and its links present, the archived referrer's snapshot row unchanged, no link left resolved to the

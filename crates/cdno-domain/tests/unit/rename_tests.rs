@@ -1778,14 +1778,20 @@ fn a_portfolio_rename_is_refused_while_a_question_shares_its_slug() {
 
 #[test]
 fn a_portfolio_rename_hash_covers_artefact_moves_without_their_bytes() {
+    // A store that panics on any read of a non-markdown file under
+    // `portfolios/`: neither the plan, the preview nor the write reads one.
+    let guarded = || {
+        let store: Arc<dyn VaultStore> = Arc::new(HookStore {
+            no_artefact_reads: true,
+            ..HookStore::new()
+        });
+        store
+    };
     let hash = |pdf: &str, name: &str| {
-        portfolio_vault_over(
-            Arc::new(MemoryVaultStore::new()),
-            &portfolio_files(pdf, name),
-        )
-        .plan("portfolios/old", "new")
-        .expect("plan")
-        .hash
+        portfolio_vault_over(guarded(), &portfolio_files(pdf, name))
+            .plan("portfolios/old", "new")
+            .expect("plan")
+            .hash
     };
     let base = hash(P_PDF, "scan.pdf");
     assert_eq!(
@@ -1801,7 +1807,7 @@ fn a_portfolio_rename_hash_covers_artefact_moves_without_their_bytes() {
             format!("portfolios/old/2026-10-13-scan/{name}"),
             "%PDF-1.4 a second page".into(),
         ));
-        portfolio_vault_over(Arc::new(MemoryVaultStore::new()), &files)
+        portfolio_vault_over(guarded(), &files)
             .plan("portfolios/old", "new")
             .expect("plan")
             .hash
@@ -1815,6 +1821,19 @@ fn a_portfolio_rename_hash_covers_artefact_moves_without_their_bytes() {
         with_extra("page-2.pdf"),
         with_extra("page-3.pdf"),
         "an artefact's name is hashed"
+    );
+    let p = portfolio_vault_over(guarded(), &portfolio_files(P_PDF, "scan.pdf"));
+    let preview = p
+        .vault
+        .rename_preview("portfolios/old", "new", None, at())
+        .expect("preview reads no artefact");
+    p.vault
+        .rename_note("portfolios/old", "new", None, Some(&preview.hash), at())
+        .expect("the write reads no artefact");
+    assert!(
+        p.store
+            .exists(&vp("portfolios/new/2026-10-13-scan/scan.pdf"))
+            .unwrap()
     );
 }
 
@@ -1891,18 +1910,45 @@ fn a_portfolio_destination_folder_that_exists_is_taken() {
     assert!(p.store.exists(&vp("portfolios/old/_index.md")).unwrap());
 }
 
-/// A store that records every folder the rename asks it to prune, and
-/// fails each one, over a `MemoryVaultStore`.
-struct PruneRecorder {
+/// A `MemoryVaultStore` with test hooks: it records every folder the
+/// rename asks it to prune (and fails each one), lists `dirs` as its
+/// folders (the memory store's are implicit, so an empty one cannot exist),
+/// and with `no_artefact_reads` panics on any read of a non-markdown file
+/// under `portfolios/`.
+struct HookStore {
     inner: Arc<MemoryVaultStore>,
     pruned: std::sync::Mutex<Vec<VaultPath>>,
+    dirs: Vec<VaultPath>,
+    no_artefact_reads: bool,
 }
 
-impl VaultStore for PruneRecorder {
+impl HookStore {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(MemoryVaultStore::new()),
+            pruned: std::sync::Mutex::new(Vec::new()),
+            dirs: Vec::new(),
+            no_artefact_reads: false,
+        }
+    }
+
+    fn guard_read(&self, path: &VaultPath) {
+        let artefact = path.as_path().starts_with("portfolios")
+            && path.as_path().extension() != Some(std::ffi::OsStr::new("md"));
+        assert!(
+            !(self.no_artefact_reads && artefact),
+            "an artefact's bytes were read: {path}"
+        );
+    }
+}
+
+impl VaultStore for HookStore {
     fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        self.guard_read(path);
         self.inner.read_file(path)
     }
     fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.guard_read(path);
         self.inner.read_bytes(path)
     }
     fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
@@ -1930,6 +1976,14 @@ impl VaultStore for PruneRecorder {
     fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
         self.inner.walk_dir(path)
     }
+    fn walk_dirs(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        Ok(self
+            .dirs
+            .iter()
+            .filter(|d| d.as_path().starts_with(path.as_path()) && *d != path)
+            .cloned()
+            .collect())
+    }
     fn metadata(&self, path: &VaultPath) -> Result<cdno_core::file_meta::FileMeta, StoreError> {
         self.inner.metadata(path)
     }
@@ -1940,25 +1994,148 @@ impl VaultStore for PruneRecorder {
 
 #[test]
 fn a_portfolio_rename_prunes_only_at_or_below_its_folder_and_never_fails_on_it() {
-    let recorder = Arc::new(PruneRecorder {
-        inner: Arc::new(MemoryVaultStore::new()),
-        pruned: std::sync::Mutex::new(Vec::new()),
+    let hooks = Arc::new(HookStore {
+        dirs: [
+            "portfolios/old/2026-10-13-scan",
+            "portfolios/old/scratch",
+            "portfolios/old/scratch/deeper",
+            "portfolios/surrogate-emulator/figures",
+        ]
+        .into_iter()
+        .map(vp)
+        .collect(),
+        ..HookStore::new()
     });
-    let store: Arc<dyn VaultStore> = recorder.clone();
+    let store: Arc<dyn VaultStore> = hooks.clone();
     let p = portfolio_vault_over(store, &portfolio_files(P_PDF, "scan.pdf"));
     p.vault
         .rename_note("portfolios/old", "new", None, None, at())
         .expect("a failed prune does not fail the rename");
     assert_eq!(
-        *recorder.pruned.lock().unwrap(),
-        vec![vp("portfolios/old/2026-10-13-scan"), vp("portfolios/old")],
-        "the emptied subfolder, then the folder, and nothing above it"
+        *hooks.pruned.lock().unwrap(),
+        vec![
+            vp("portfolios/old/scratch/deeper"),
+            vp("portfolios/old/2026-10-13-scan"),
+            vp("portfolios/old/scratch"),
+            vp("portfolios/old"),
+        ],
+        "every folder under the old one, deepest first, an empty one the \
+         move never saw included, then the folder, and nothing above it"
     );
 
     // A flat rename prunes nothing.
-    recorder.pruned.lock().unwrap().clear();
+    hooks.pruned.lock().unwrap().clear();
     p.vault
         .rename_note("projects/surrogate-model", "surrogate", None, None, at())
         .expect("flat rename");
-    assert!(recorder.pruned.lock().unwrap().is_empty());
+    assert!(hooks.pruned.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_hidden_note_at_the_top_level_moves_with_its_field_rewritten() {
+    let mut files = portfolio_files(P_PDF, "scan.pdf");
+    files.push((
+        "portfolios/old/.draft.md".into(),
+        "---\ntype: evidence\ncreated: 2026-05-04\nsource: \"Draft\"\nportfolio: old\norigin: \"[[projects/surrogate-model]]\"\n---\n\n# Draft\n".into(),
+    ));
+    files.push(("portfolios/old/.DS_Store".into(), "Bud1".into()));
+    let p = portfolio_vault_over(Arc::new(MemoryVaultStore::new()), &files);
+    p.vault
+        .rename_note("portfolios/old", "new", None, None, at())
+        .expect("rename");
+    assert!(
+        !p.store.exists(&vp("portfolios/old")).unwrap(),
+        "nothing left"
+    );
+    assert!(
+        p.read("portfolios/new/.draft.md")
+            .contains("\nportfolio: new\n")
+    );
+    assert!(
+        p.index
+            .find_by_path(&vp("portfolios/new/.draft.md"))
+            .unwrap()
+            .is_some(),
+        "a hidden note is a note: its index row moves"
+    );
+    assert!(
+        p.index
+            .find_by_path(&vp("portfolios/old/.draft.md"))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(p.read("portfolios/new/.DS_Store"), "Bud1");
+}
+
+#[test]
+fn an_alias_reached_link_is_rewritten_to_the_folder_form() {
+    let mut files = portfolio_files(P_PDF, "scan.pdf");
+    files[0].1 = P_INDEX.replace(
+        "project: \"[[projects/surrogate-model]]\"\n",
+        "project: \"[[projects/surrogate-model]]\"\naliases: [error-budget]\n",
+    );
+    files.push((
+        "journal/2026/daily/2026-05-08.md".into(),
+        "---\ntype: daily\ndate: 2026-05-08\n---\n\n# Friday, 8 May 2026\n\n## Logs\n- **09:00**: opened [[error-budget|the budget]]\n".into(),
+    ));
+    let p = portfolio_vault_over(Arc::new(MemoryVaultStore::new()), &files);
+    p.vault
+        .rename_note("portfolios/old", "new", None, None, at())
+        .expect("rename");
+    let day = p.read("journal/2026/daily/2026-05-08.md");
+    assert!(
+        day.contains("opened [[portfolios/new|the budget]]\n"),
+        "a folder note answers to its folder path, never a bare name: {day}"
+    );
+    let mut backlinks = p
+        .index
+        .find_backlinks(&vp("portfolios/new/_index.md"))
+        .unwrap();
+    backlinks.sort();
+    assert!(backlinks.contains(&vp("journal/2026/daily/2026-05-08.md")));
+}
+
+#[test]
+fn a_custom_type_folder_note_is_refused_as_folder() {
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "concept".to_owned(),
+        cdno_core::config::CustomNoteType {
+            folder: "concepts".to_owned(),
+            required: vec!["created".to_owned()],
+            optional: vec![],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    store
+        .write_file(
+            &vp("concepts/old/_index.md"),
+            "---\ntype: concept\ncreated: 2026-05-01\n---\n\n# Surrogate model\n",
+        )
+        .unwrap();
+    store
+        .write_file(
+            &vp("concepts/flat.md"),
+            "---\ntype: concept\ncreated: 2026-05-01\n---\n\n# Surrogate model\n",
+        )
+        .unwrap();
+    let vault = Vault::new(store, Arc::new(MemoryIndex::new()), config)
+        .expect("vault opens")
+        .0;
+    let snapshot = vault.rename_snapshot().unwrap();
+    // The type is renamable: a flat note of it is.
+    vault
+        .plan_rename(&snapshot, "concepts/flat", "new", None, at())
+        .expect("a flat custom note is renamable");
+    let err = vault
+        .plan_rename(&snapshot, "concepts/old", "new", None, at())
+        .unwrap_err();
+    assert!(
+        matches!(&err, DomainError::NoteNotRenamable { reason, .. } if reason == "folder"),
+        "{err:?}"
+    );
 }

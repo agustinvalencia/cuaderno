@@ -1144,6 +1144,18 @@ must cover the artefact moves without reading their bytes.
 
 **Correct means.** A portfolio is one note to the person and moves as one.
 
+*Amended in the T22 PR:* every file under the folder moves, hidden files included: a note (a
+file the snapshot holds as one) through `write_file` + `delete_file` with its index rows, and any
+other file through the `Move` op, markdown among them (a document filed in an artefact folder, an
+ignored file), since none of them has an index row. A link that reaches the `_index.md` other than
+through its folder path (an alias) is rewritten to the folder form `portfolios/<new>`, never to a
+bare `[[<new>]]`, which would dangle. A destination `portfolios/<new>/` holding any file is
+refused as `slug_taken { kind: folder }`; one holding no file at any depth is free. After a good
+commit the prune lists every directory under `portfolios/<old>/` (`VaultStore::walk_dirs`, so an
+empty subfolder no file passed through goes too), tries them deepest first and then the folder,
+never above it. After a failed commit the same prune runs on `portfolios/<new>/`, so the folders
+the attempt created do not outlive the rollback and a retry is not refused by them.
+
 ### T23 — The question–portfolio pair
 
 **What.** Renaming a question whose slug a portfolio shares (`find_question_path`'s
