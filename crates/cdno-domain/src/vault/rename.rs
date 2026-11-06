@@ -786,7 +786,11 @@ impl Vault {
                 // aliases (the index's rule, so lint's straggler set), and
                 // its rewrite resolves to the note too. A link that reaches
                 // the note by path or stem is not one, and neither is a
-                // link the stem rule sends elsewhere.
+                // link the stem rule sends elsewhere. Load-bearing: the
+                // resolution to the target (without it `[[older]]`, another
+                // note's stem, would move onto this note) and the rewrite
+                // check (#913). `via_alias` adds little beside the alias-name
+                // gate, but it is lint's definition, so it stays.
                 return target_may_name(raw, &alias_names)
                     && resolve_with_alias(raw, snapshot, &alias_map)
                         == Some((target_path.clone(), true))
@@ -834,14 +838,18 @@ impl Vault {
             }
 
             let (_, mut link_edits) = rewrite_wikilink_addresses(before, names_target, rewrite);
-            // A rewrite whose bytes do not change is not a change, in either
-            // mode: in a rename, a straggler through an own alias the note
-            // now takes back; in a relink, a link the alias rule answers for
-            // that already reads the current address (a hand-listed own
-            // name). A stem always wins over an alias only for a flat note:
-            // a folder note's stem is `_index`, so its own folder name can
-            // reach it through the alias rule.
-            link_edits.retain(|e| before[e.range.clone()] != e.replacement);
+            // A link that already reads the new slug (a straggler through
+            // an own alias the note now takes back) is not a change. Rename
+            // only: a relink's predicate never yields a byte-identical link
+            // edit (a flat note's own slug resolves by stem, never through
+            // the alias rule; a folder note's own name rewrites to its folder
+            // form, a real change), and its own names are kept out of the
+            // field values by `effective_aliases`. Keeping the relink's edits
+            // unfiltered is what lets a test see a predicate that rewrites a
+            // link reaching the note directly.
+            if !relink {
+                link_edits.retain(|e| before[e.range.clone()] != e.replacement);
+            }
             let after_links = apply(before, &link_edits);
             let mut all = link_edits.clone();
             let mut changes = Vec::new();

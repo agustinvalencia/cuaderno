@@ -1590,13 +1590,13 @@ the tool reports it as `INVALID_PARAMS` naming `to`. Plan amendments:
   two-clone sequence for a completed action lands there), then `stem_shared`, then the referrers'
   own (`reference_drift`, `reference_unaddressable`), then the write's (`stale_plan`, the sync
   check). Not `invalid_slug` or `slug_taken`: the slug is the note's own and nothing moves.
-- **The no-op `retain` applies in both modes** (review of #921). A folder note's stem is `_index`,
-  so its own folder name listed as an alias reaches it through the alias rule; the note's current
-  names are never field values to rewrite, and a link rewrite that does not change bytes is
-  dropped. With the retain on, the plan's mutation (`names_target` = "resolves to the target") is
-  killed by `relink_rewrites_a_portfolio_straggler_to_its_folder_form` (a direct
-  `[[portfolios/new/_index]]` becomes `[[portfolios/new]]`), not by the union test: for a flat
-  note every directly-resolving link already ends on the slug, so its rewrite is a no-op.
+- **The note's current names are never former ones** (review of #921). A folder note's stem is
+  `_index`, so its own folder name listed as an alias reaches it through the alias rule; the
+  note's slug and folder name are kept out of the field values a relink rewrites
+  (`effective_aliases`), so such a portfolio relinks to an empty plan. The no-op `retain` stays
+  rename-only: the relink's predicate never yields a byte-identical edit, which
+  `relink_rewrites_only_alias_resolved_references` asserts, and keeping its edits unfiltered is
+  what lets that test catch the plan's mutation (`[[new]]` counted as a second address).
 - **More probes**: `a_folder_note_listing_its_own_name_relinks_to_an_empty_plan`,
   `a_bare_link_to_a_folder_notes_own_name_is_relinked_to_its_folder_form`,
   `an_archived_action_can_be_the_target_of_a_relink`,

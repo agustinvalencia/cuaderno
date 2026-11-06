@@ -2785,6 +2785,19 @@ fn relink_rewrites_only_alias_resolved_references() {
         day.after
             .contains("- **08:00**: back on [[new]]\n- **08:00**: back on [[new]]\n")
     );
+    // A relink never plans a no-op: no edit leaves its bytes as they were,
+    // so nothing needs filtering out.
+    for edit in &plan.edits {
+        assert_ne!(edit.before, edit.after, "{}", edit.path);
+        for e in &edit.edits {
+            assert_ne!(
+                &edit.before[e.range.clone()],
+                e.replacement,
+                "{}",
+                edit.path
+            );
+        }
+    }
 }
 
 #[test]
