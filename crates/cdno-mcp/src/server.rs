@@ -247,6 +247,12 @@ impl ServerHandler for CuadernoServer {
                 // (`CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH`), and the whole text is
                 // past that, so whatever must reach every agent sits at the top.
                 // `instructions_carry_the_focus_protocol` pins it inside the cut.
+                //
+                // The first 2048 characters are a spent budget. Three things must
+                // stay inside it, in this order: the FOCUS protocol, the journal
+                // bullet with its rename_note exception, and the "PROJECTS END,
+                // STEWARDSHIPS DO NOT" headline (30+ characters of margin). Text
+                // added above them needs an equal trim; text past them is free.
                 "FOCUS\n\
                 One action can be in focus (current_focus). The server never refuses a \
                 write for being outside it; capture, note_to_daily and append_to_log \
@@ -274,14 +280,16 @@ impl ServerHandler for CuadernoServer {
                 overdue or due today (get_orientation.commitments): \"Heads up: X is \
                 due today.\" No elapsed-time nudges.\n\n\
                 Cuaderno is a vault manager for the Research Logbook Method (RLM). \
-                Choosing the right note type matters more than calling the tool \
-                correctly, so read this before creating anything.\n\n\
-                The method runs two tracks over one vault. INQUIRY is open-ended: a \
-                chronological log feeds evidence portfolios, which answer important \
-                questions. OPERATIONS is delivery: project maps carry next actions, \
-                stewardships hold perpetual responsibilities, and a commitments \
-                register holds dated promises. The daily log feeds both.\n\n\
-                The distinctions that are easy to get wrong:\n\
+                Pick note types with care.\n\n\
+                Two tracks, one vault. INQUIRY is open-ended: the \
+                daily log feeds evidence portfolios, which answer important \
+                questions. OPERATIONS is delivery: project maps, stewardships and a \
+                commitments register.\n\n\
+                Easy to get wrong:\n\
+                - The journal is APPEND-ONLY and the source of truth: add, never \
+                rewrite. A reference is an address: rename_note rewrites addresses \
+                everywhere, the journal included, and changes no other byte but its \
+                own log line and alias; that is the one exception.\n\
                 - PROJECTS END, STEWARDSHIPS DO NOT. Health, finances, household, a \
                 recurring service are stewardships. A perpetual responsibility filed \
                 as a project is a map that can never be finished.\n\
@@ -299,10 +307,8 @@ impl ServerHandler for CuadernoServer {
                 project is a ceiling, not a backlog.\n\
                 - A COMMITMENT is something someone else is counting on, with a date. \
                 It is not a to-do list.\n\
-                - The journal is APPEND-ONLY and is the source of truth. Never rewrite \
-                a past entry; add a new one. When a mutable section changes, its \
-                previous value is logged for you — that history is how a project's \
-                evolution is traced.\n\
+                - When a mutable section changes, its previous value is logged for you — \
+                that history is how a project's evolution is traced.\n\
                 - CONCEPTS, if the vault declares a `concept` type (list_note_types \
                 shows whether there is a concept type). File by what the thing is: a \
                 dated observation bearing on a question is evidence; the answer to a \

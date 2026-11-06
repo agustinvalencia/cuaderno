@@ -1420,9 +1420,18 @@ why it could not.
 `expected_plan`; and the §5.1 sentence — *a reference is an address, not content: `rename_note`
 rewrites addresses in every note, the journal included, and changes no other byte; this is the
 one exception to the append-only rule.* The server instructions' append-only bullet
-(`server.rs:290–293`) gains the same sentence in fewer words, within the 2 048-character client
-cut (`tests/server.rs:582`; move or trim another bullet if needed and say which in the PR). The
-`lint` description lists the straggler warning. The eight create descriptions already carry the
+(the `APPEND-ONLY` bullet in `server.rs`, at character 2 940 of the instructions, past the cut)
+gains the same sentence in fewer words, now with "but its own log line and alias" because a rename
+appends a log line and an alias, moved up to the top of the distinctions list and inside the
+2 048-character client cut (`CLIENT_CUT` in `tests/server.rs`). Inside the cut, in order: the
+FOCUS protocol, that bullet, then the "PROJECTS END, STEWARDSHIPS DO NOT" headline with at least
+30 characters of margin. The trims that made room: the header sentence ("Pick note types with
+care."), the lead-in ("Easy to get wrong:"), the journal bullet itself (shortened to the rule and
+the exception), the INQUIRY/OPERATIONS paragraph ("Two tracks, one vault.", "chronological" and
+the daily-log sentence dropped). The history
+sentence ("its previous value is logged for you") became a bullet of its own past the cut. The
+`lint` description lists the straggler warning, pinned beside its length. The eight create
+descriptions already carry the
 slug hint (T4).
 
 **Deliverable.** The text, a test.
@@ -1433,11 +1442,11 @@ slug hint (T4).
 
 **Probes.**
 - `cargo test -p cdno-mcp --test server` passes with
-  `instructions_state_the_reference_exception` (the string contains "address" and "every
-  other byte" or the chosen wording) and the existing `CLIENT_CUT` pin still holds with the
+  `instructions_state_the_reference_exception` (the string contains "address" and "changes no
+  other byte", the chosen wording) and the existing `CLIENT_CUT` pin still holds with the
   exception inside the first 2 048 characters.
-- `grep -n "append-only\|APPEND-ONLY" crates/cdno-mcp/src/server.rs` shows the bullet and the
-  exception on adjacent lines.
+- `grep -n -A3 "APPEND-ONLY" crates/cdno-mcp/src/server.rs` shows the bullet and the exception
+  on the lines that follow it.
 
 **Correct means.** An agent that reads only the instructions does not refuse a rename as a
 breach of the journal, and does not learn from them that the journal is editable.
