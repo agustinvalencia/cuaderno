@@ -1159,6 +1159,11 @@ pub(in crate::vault) const LOG_REASON_KEY: &str = "reason: ";
 /// (RFC 0007 §5.6): `  was: <old-slug>`, a copied value, never a link.
 pub(in crate::vault) const LOG_WAS_KEY: &str = "was: ";
 
+/// Key introducing the portfolio that moved with a question on a `renamed`
+/// entry's continuation line (RFC 0007 §5.3): `  portfolio: portfolios/<new>`,
+/// a copied path, never a link, written after `was:` and `reason:`.
+pub(in crate::vault) const LOG_PORTFOLIO_KEY: &str = "portfolio: ";
+
 /// Key introducing the focus tag on a log entry's continuation line
 /// (RFC 0005 §5.6): `  during: [[<project-slug>]]`, written when a focus
 /// is open at write time (and copied from `captured_during` when a triaged

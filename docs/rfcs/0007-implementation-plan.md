@@ -1117,7 +1117,8 @@ outside the folder rewrite their folder segment (`[[portfolios/old/2026-10-12-ba
 `[[portfolios/new/2026-10-12-baseline]]`, attachment embeds likewise). After commit,
 `remove_dir_if_empty` (T9) on the old folder and its emptied subfolders, best-effort, with a
 failure logged at `debug` and never surfaced as an error. Renaming a portfolio whose slug a
-question shares is refused with `note_not_renamable { reason: "rename the question" }` until T23.
+question shares is refused with `note_not_renamable { reason: "rename the question" }`; the pair
+renames from the question (T23).
 
 **Deliverable.** The folder branch of the planner and the writer, pruning, tests.
 
@@ -1164,7 +1165,7 @@ the attempt created do not outlive the rollback and a retry is not refused by th
 ### T23 — The question–portfolio pair
 
 **What.** Renaming a question whose slug a portfolio shares (`find_question_path`'s
-correlation, `questions.rs:264`) renames both in the one transaction and the one plan (§5.3):
+correlation, `questions.rs:294`) renames both in the one transaction and the one plan (§5.3):
 two `moves`, one `hash`, one log line naming the question with an indented
 `portfolio: portfolios/<new>` continuation. Renaming the portfolio alone is the T22 refusal.
 The evidence notes' `portfolio:` rows join the question's field keys here (T18 leaves them out
@@ -1186,6 +1187,21 @@ is lifted.
   but the portfolio's backlink assertion fails.
 
 **Correct means.** The correlation the portfolio depends on survives the rename.
+
+*Amended in the T23 PR:* `find_question_path` is at `questions.rs:294`, not 264, and is
+`pub(in crate::vault)`, so the probe cannot call it: `a_question_rename_carries_its_portfolio`
+asserts the correlation it keys on (the question and the portfolio's folder note share the new
+stem, both resolve, `get_portfolio_contents(new)` lists the evidence). The pair exists only when
+`portfolios/<slug>/_index.md` is in the snapshot: a folder holding evidence notes but no folder
+note is a dangling `portfolio:` value, never rewritten. The plan's `moves` list the question's flat
+move first, then the portfolio's `_index.md`, then the folder's other files in path order, so
+`written[0]` is the question. The portfolio gains no alias (a folder note is addressed by path, and
+every link under `portfolios/<old>/` is rewritten). The log line is built by
+`format_renamed_pair_log_entry` (`format_renamed_log_entry` delegates to it): continuations run
+`was:`, `reason:`, `portfolio: portfolios/<new>`, the last a copied path, never a link. The refusal of
+a portfolio whose slug a question shares is permanent (`rename the question`), not "until T23"; T22's
+sentence above is corrected to say so. Lint needed no change: the `renamed` near-miss check reads the
+head and `was:` warns only on a link, and a test pins that the continuation is clean.
 
 ---
 

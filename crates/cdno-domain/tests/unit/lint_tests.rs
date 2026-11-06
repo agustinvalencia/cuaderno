@@ -3897,6 +3897,27 @@ fn a_well_formed_renamed_line_is_clean() {
 }
 
 #[test]
+fn a_renamed_line_with_the_portfolio_continuation_is_clean() {
+    let body = daily_log(
+        "- **10:00**: renamed [[questions/research/alpha]] \u{2014} Surrogate model\n  was: beta\n  reason: clearer\n  portfolio: portfolios/alpha\n",
+    );
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+    assert!(
+        !report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("renamed") || i.message.contains("`was:`")),
+        "issues: {:?}",
+        report.issues
+    );
+}
+
+#[test]
 fn a_linked_was_is_a_warning() {
     let body =
         daily_log("- **10:00**: renamed [[alpha]] \u{2014} Surrogate model\n  was: [[beta]]\n");
