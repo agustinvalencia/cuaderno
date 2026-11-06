@@ -899,7 +899,11 @@ the same-slug pair is refused as `folder` until T23, which adds the rows togethe
 move. `RenameWarning::OldSlugAlreadyAnAlias { holder }` reports an old slug that another note
 already lists as an alias (the appended alias would be shared and resolve to nothing). Overlapping
 edits for one path are `DomainError::RenameEditOverlap { path }`, an internal invariant with no
-agent-facing code.
+agent-facing code. On a day the daily note's log anchor section is re-pinned (a hand-written
+section after `## Logs`), that note's log edit absorbs the day's address edits into one edit (a single replacement region
+that is not an address span),
+so the property "every edit is an address span, a field value or an insertion" holds for every
+other path and every other day (`the_span_property_yields_to_a_hand_written_section_after_the_log_anchor`).
 
 **Deliverable.** The module, the types, the planner, tests on `MemoryVaultStore`.
 
@@ -1214,7 +1218,7 @@ move 65 → 66 (`tests/server.rs:148`, `e2e_stdio.rs:227`, `e2e_http.rs:178`) an
 says 65 (`docs-site/src/getting-started/connect-to-claude.md:35`, `reference/mcp/overview.md:20`,
 `README.md:113`, `:196`, `STATUS.md:149`).
 
-**Deliverable.** The tool, the DTO, six codes, the pins, tests.
+**Deliverable.** The tool, the DTO, eight codes, the pins, tests.
 
 **Depends on.** T4, T20, T25.
 

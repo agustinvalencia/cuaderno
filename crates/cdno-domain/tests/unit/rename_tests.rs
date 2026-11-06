@@ -508,18 +508,25 @@ fn a_field_rewrite_that_changes_more_than_the_field_is_refused() {
 #[test]
 fn a_field_the_rewrite_cannot_address_is_refused() {
     let f = fixture();
-    // The parser reads `project` as `old`, but the value is not on the key's
-    // line, so the text rewrite finds nothing to rewrite.
-    f.write(
-        "actions/fit-the-baseline.md",
-        &ACTION.replace("project: old\n", "project:\n  old\n"),
-    );
-    let err = f.plan("old", "new").unwrap_err();
-    assert!(
-        matches!(&err, DomainError::ReferenceUnaddressable { path, key }
-            if *path == vp("actions/fit-the-baseline.md") && key == "project"),
-        "{err:?}"
-    );
+    // The parser reads `project` as `old` in each form, but the text rewrite
+    // finds no value on the key's line equal to it: a plain scalar on the
+    // next line, a folded block scalar, a tagged scalar.
+    for form in [
+        "project:\n  old\n",
+        "project: >-\n  old\n",
+        "project: !!str old\n",
+    ] {
+        f.write(
+            "actions/fit-the-baseline.md",
+            &ACTION.replace("project: old\n", form),
+        );
+        let err = f.plan("old", "new").unwrap_err();
+        assert!(
+            matches!(&err, DomainError::ReferenceUnaddressable { path, key }
+                if *path == vp("actions/fit-the-baseline.md") && key == "project"),
+            "{form:?}: {err:?}"
+        );
+    }
 }
 
 #[test]
@@ -645,6 +652,18 @@ fn the_span_property_yields_to_a_hand_written_section_after_the_log_anchor() {
         "the merged edit is not an address span"
     );
     assert!(today.after.contains("back on [[new]]"));
+    // The log line is the last line, and the hand-written section now sits
+    // before `## Logs`.
+    assert!(
+        today
+            .after
+            .ends_with("- **10:30**: renamed [[new]] \u{2014} Surrogate model\n  was: old\n"),
+        "{}",
+        today.after
+    );
+    let scratch = today.after.find("## Scratch").expect("section kept");
+    let logs = today.after.find("## Logs").expect("logs kept");
+    assert!(scratch < logs, "{}", today.after);
 }
 
 // ---------------------------------------------------------------------
