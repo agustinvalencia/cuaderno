@@ -4971,30 +4971,60 @@ mod freshness {
 
     #[test]
     fn the_guard_refuses_a_paused_operation_under_the_lock() {
-        let dir = tempfile::tempdir().unwrap();
-        if !git_init(dir.path()) {
+        // The guard's git inherits `HOME` / `XDG_CONFIG_HOME` (cdno's git
+        // clears every other variable), so the body runs in a re-exec of
+        // this test with both pointed at a temp dir: the developer's git
+        // config never reaches it, and no other test's environment changes.
+        const REPO: &str = "CDNO_FRESHNESS_GUARD_REPO";
+        if let Some(repo) = std::env::var_os(REPO) {
+            return guard_on_a_paused_repository(Path::new(&repo));
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("vault");
+        std::fs::create_dir_all(&repo).unwrap();
+        if !git_init(&repo) {
             eprintln!("skipped: `git` is not on PATH");
             return;
         }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "freshness::the_guard_refuses_a_paused_operation_under_the_lock",
+                "--exact",
+                "--test-threads=1",
+            ])
+            .env(REPO, &repo)
+            .env("HOME", tmp.path())
+            .env("XDG_CONFIG_HOME", tmp.path())
+            .output()
+            .expect("re-run this test");
+        assert!(
+            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn guard_on_a_paused_repository(dir: &Path) {
         // A clean repository with no upstream: the guard proceeds, and its
         // warning is reported once, not again when the first check had it.
         let fresh = RefCell::new(Vec::new());
-        assert!(guard(dir.path(), false, &[], &fresh)().is_ok());
+        assert!(guard(dir, false, &[], &fresh)().is_ok());
         let first = fresh.into_inner();
         assert_eq!(first.len(), 1, "{first:?}");
         let fresh = RefCell::new(Vec::new());
-        assert!(guard(dir.path(), false, &first, &fresh)().is_ok());
+        assert!(guard(dir, false, &first, &fresh)().is_ok());
         assert!(fresh.into_inner().is_empty());
 
         // A merge stopped mid-way: refused, with or without the override.
         std::fs::write(
-            dir.path().join(".git/MERGE_HEAD"),
+            dir.join(".git/MERGE_HEAD"),
             "0123456789012345678901234567890123456789\n",
         )
         .unwrap();
         for skip in [false, true] {
             let fresh = RefCell::new(Vec::new());
-            let got = guard(dir.path(), skip, &[], &fresh)();
+            let got = guard(dir, skip, &[], &fresh)();
             assert!(
                 matches!(&got, Err(DomainError::GitOperationInProgress { reason })
                     if reason.contains("MERGE_HEAD")),

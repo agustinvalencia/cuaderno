@@ -1316,8 +1316,16 @@ first check did not, so a failed paused probe warns once. The two refusals are
 `DomainError::BehindUpstream { behind }` and `DomainError::GitOperationInProgress { reason }`, the
 type the guard returns; the CLI renders them as `behind_upstream { behind, remedy }` /
 `git_operation_in_progress { reason }`, appending its remedy (`--skip-sync-check` and `git pull`),
-and the MCP classifier leaves them uncoded for T26. The MCP server holds no vault root yet: T26
-gives the handler one to pass to `check` and `guard`.
+and the MCP classifier leaves them uncoded for T26. The MCP remedy is a policy choice, not the
+CLI's: `cdno_mcp::freshness::BEHIND_REMEDY` does not name `skip_sync_check`, it tells the agent to
+retry in a few seconds and, if still behind, to tell the person that the sync is stalled rather
+than skip the check (an agent does not grant itself the override); T26's description and server
+instructions match it. The MCP warnings are worded as facts (`git state unknown: …`,
+`paused-operation check failed: …`, `no upstream …`, `behind its upstream by N commits as last
+fetched (skip_sync_check)`), since they go out on dry runs and beside a refusal. On a CLI refusal
+under `--json` the sync warnings stay on stderr (the code is the result); an MCP client has no
+stderr, so T26's rejection `details` carries `warnings` when the assessment had any. The MCP
+server holds no vault root yet: T26 gives the handler one to pass to `check` and `guard`.
 
 **Correct means.** A rename refuses only when the vault is known to be behind or git is
 mid-operation, and a person who knows better can override exactly one of those.
@@ -1337,7 +1345,8 @@ review),
 `behind_upstream { behind }` (the handler appends the remedy, `cdno_mcp::freshness::BEHIND_REMEDY`:
 "retry in a few seconds; if still behind, the sync is stalled: tell the person rather than skip the
 check"; behind a sync actor a lasting `behind` is a stalled actor, and skipping writes into what it
-was about to merge), `git_operation_in_progress { reason }`, `stale_plan { expected, actual }`,
+was about to merge), `git_operation_in_progress { reason }` (both also carry the assessment's
+`warnings` in `details` when it had any: an MCP client has no stderr, T25), `stale_plan { expected, actual }`,
 `rename_incomplete { paths, source }` (`invalid_slug` and `slug_taken` exist from T4). The catalogue pins
 move 65 → 66 (`tests/server.rs:148`, `e2e_stdio.rs:227`, `e2e_http.rs:178`) and the prose that
 says 65 (`docs-site/src/getting-started/connect-to-claude.md:35`, `reference/mcp/overview.md:20`,

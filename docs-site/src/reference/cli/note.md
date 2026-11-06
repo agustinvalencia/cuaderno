@@ -106,7 +106,7 @@ notes, stewardships and commitments are refused (`note_not_renamable`).
 |------|-------------|
 | `--to <SLUG>` | The new slug. Prompted in an interactive session; required under `--no-interactive`. |
 | `--reason <STRING>` | Why, in a short clause; it becomes the `reason:` line of the log entry. Never prompted. |
-| `--dry-run` | Print the preview and exit 0, writing nothing. |
+| `--dry-run` | Print the preview, writing nothing. Refused exactly as the write would be (see [the sync check](#the-sync-check)); exits 0 only when the write would proceed. |
 | `--skip-sync-check` | Rename even when the vault is behind its upstream. A git operation paused mid-way still refuses. See [the sync check](#the-sync-check). |
 
 ### The preview

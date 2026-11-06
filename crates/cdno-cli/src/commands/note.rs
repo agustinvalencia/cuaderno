@@ -119,7 +119,9 @@ pub enum NoteCommands {
         /// `reason:` line under the log entry. Never prompted.
         #[arg(long, value_name = "STRING")]
         reason: Option<String>,
-        /// Print the preview and exit 0, writing nothing.
+        /// Print the preview, writing nothing. Refused exactly as the write
+        /// would be (the sync check, against the last fetch); exits 0 only
+        /// when the write would proceed.
         #[arg(long)]
         dry_run: bool,
         /// Rename even when the vault is behind its upstream. A git

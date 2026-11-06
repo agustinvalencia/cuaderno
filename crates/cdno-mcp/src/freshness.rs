@@ -51,10 +51,7 @@ pub fn assess(state: &GitState, skip_sync_check: bool) -> Assessment {
         GitState::NotARepository => return Assessment::default(),
         GitState::Unknown(e) => {
             return Assessment {
-                warnings: vec![format!(
-                    "could not tell whether the vault is a git repository ({}); renamed without the sync check",
-                    one_line(e)
-                )],
+                warnings: vec![format!("git state unknown: {}", one_line(e))],
                 refusal: None,
             };
         }
@@ -71,17 +68,14 @@ pub fn assess(state: &GitState, skip_sync_check: bool) -> Assessment {
             };
         }
         Ok(None) => {}
-        Err(e) => warnings.push(format!(
-            "could not tell whether a git operation is paused ({}); renamed anyway",
-            one_line(e)
-        )),
+        Err(e) => warnings.push(format!("paused-operation check failed: {}", one_line(e))),
     }
     let mut refusal = None;
     match upstream {
         Some(u) if u.behind > 0 => {
             if skip_sync_check {
                 warnings.push(format!(
-                    "the vault is {} commit{} behind its upstream as last fetched; renamed anyway (skip_sync_check)",
+                    "behind its upstream by {} commit{} as last fetched (skip_sync_check)",
                     u.behind,
                     if u.behind == 1 { "" } else { "s" }
                 ));
@@ -90,10 +84,7 @@ pub fn assess(state: &GitState, skip_sync_check: bool) -> Assessment {
             }
         }
         Some(_) => {}
-        None => warnings.push(
-            "the vault's branch has no upstream to compare with (or it could not be read); renamed without the sync check"
-                .to_owned(),
-        ),
+        None => warnings.push("no upstream (none set, or it could not be read)".to_owned()),
     }
     Assessment { warnings, refusal }
 }
