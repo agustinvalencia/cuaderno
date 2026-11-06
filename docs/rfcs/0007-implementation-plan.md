@@ -1460,7 +1460,7 @@ practice 1's sentence (`:19`) gains the exception — *past entries are never ed
 exception is an address: when a page is renamed, every reference to it is corrected to the new
 name, the old name is kept on the page, and the rename is itself an entry* — and the changelog
 of practices (`:190`) gains **1.2** in the 1.1 entry's shape (additive; a paper user does one
-thing: notes the rule). `vault/migrate.rs` gains no step: a minor has no file step by design (the
+thing: a dated line on the first page; there is nothing to read through). `vault/migrate.rs` gains no step: a minor has no file step by design (the
 module doc, `:114`), and the one read-through, 1.1's parked dates, is bounded by
 `READ_THROUGH_BELOW` (`parked_dates.rs`), which stays 1.1; the module doc says 1.2 adds none, and
 `migrating_to_1_2_stamps_and_reads_nothing_through` is the guard. The `default_config.toml`

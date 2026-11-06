@@ -125,7 +125,7 @@ reports, on `.cuaderno/config.toml`, a vault this cdno would not write to as an 
 proceed:
 
 ```text
-[warning] .cuaderno/config.toml: this vault follows RLM 1.2, a newer minor version than the RLM 1.1 this cdno implements — writes proceed; upgrade cdno for the practices it adds
+[warning] .cuaderno/config.toml: this vault follows RLM 1.3, a newer minor version than the RLM 1.2 this cdno implements — writes proceed; upgrade cdno for the practices it adds
 ```
 
 A vault on this cdno's version, or on an older minor one (an unstamped vault included), gets no

@@ -126,9 +126,11 @@ third lookup.
   **never** through `hard_reserved_fields` (`type_registry.rs`): `validate_reserved_schema_fields`
   refuses to open a vault whose config declares a hard-reserved key, and the zero-code trial
   declares `[schemas.project.fields.held_by]` (RFC 0006 §8.2, §10).
-- **A reference is an address, so a rename rewrites addresses.** `cdno note rename` corrects every
-  reference to the old slug in every note, the journal included, and is the one exception to
-  append-only; nothing else in a past entry changes, and the rename is itself logged.
+- **A reference is an address, so a rename rewrites addresses.** A rename (`cdno note rename`,
+  `rename_note`, and the straggler repair to come) corrects every reference to the note, through its
+  slug or any of its earlier aliases, in every indexed note (files under the `ignore` globs
+  excepted), the journal included, and is the one exception to append-only; nothing else in a past
+  entry changes, and the rename is itself logged.
 - **Errors are values**: library crates use `thiserror` with layer-specific enums
   (`StoreError`/`IndexError` → `DomainError` → interface error), binaries use `anyhow`. Translate at
   the boundary; don't leak `anyhow` into a library.
@@ -212,14 +214,16 @@ a `log`, `log note`, `append_to_log` or `note_to_daily` line while a focus is op
 focus at discard time), names the project the thought arose during; it lives below the head, so the readers of heads never see it.
 RFC 0006 adds `vault migrated` with indented `was:` / `now:` lines (`was: unstamped (read as 1.0)`
 for a vault that recorded no version), written by the method-migration runner (`vault/migrate.rs`);
-it carries no wikilink and is not a focus marker, so it is not in `FOCUS_MARKER_PREFIXES`.
+it carries no wikilink and is not a focus marker, so it is not in `MARKER_PREFIXES`.
 RFC 0006 also adds `holder on [[<slug>]]` with indented `was:` / `now:` lines (`(mine)` for no
 holder), written by the hand-off verb (`vault/projects/holder.rs`, `LOG_HOLDER_PREFIX`) when a
 project is handed off or taken back; it is a mutable-field entry like `state on`, not a focus
-marker, so it is not in `FOCUS_MARKER_PREFIXES` either.
+marker, so it is not in `MARKER_PREFIXES` either.
 A rename writes `renamed [[<new>]] — <title>` with an indented `was: <old-slug>` continuation (and
-`reason:`), where `was:` is a copied value, never a link, so a later rename never rewrites it
-(RFC 0007, `vault/log.rs`).
+`reason:`), where `was:` is a copied value, never a link, so a later rename never rewrites it. A
+question renamed with its same-slug portfolio adds `portfolio: [[portfolios/<new>]]` after
+`reason:`, which is a link, so a later rename rewrites it, unlike `was:`. `renamed` is not a focus
+marker: lint lists it in `MARKER_PREFIXES` with `is_focus: false` (RFC 0007, `vault/log.rs`).
 Tracing a project's evolution is a search over the daily log — so never replace a mutable section
 without emitting its log entry, and never hand-write that entry in any other shape.
 

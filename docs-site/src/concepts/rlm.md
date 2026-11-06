@@ -195,7 +195,7 @@ to a newer one; the published method keeps a changelog of practices.
   does two things: a dated line on the first page, and one pass over the parked pages' dates.
 - **1.2** — practice 1 gains its one exception: a renamed page's references are corrected, the old
   name is kept on the page, and the rename is itself an entry. Additive: every 1.1 logbook is a
-  valid 1.2 logbook. On adopting 1.2 a paper user does one thing: notes the rule.
+  valid 1.2 logbook. On adopting 1.2 a paper user does one thing: a dated line on the first page; there is nothing to read through.
 
 ## How it maps to the tool
 
