@@ -896,7 +896,7 @@ This ensures no information is lost while keeping the project map clean and focu
 
   A rename changes the slug only; `<title>` is the note's unchanged title.
 
-  This is the one exception to the append-only rule: a reference is an address, so a rename corrects every reference to the old slug in every note, the journal included, to the new one. Everything else in a past entry stays as it was written; the `renamed` line records that the correction happened and what the old name was.
+  This is the one exception to the append-only rule: a reference is an address, so a rename corrects every reference to the note, through its slug or any of its earlier aliases, in every indexed note, the journal included, to the new name. Everything else in a past entry stays as it was written; the `renamed` line records that the correction happened and what the old name was.
 
 - **The `during:` tag.** While a focus is open (a carried one included), a log line written by `cdno log`, `cdno log note`, `append_to_log` and `note_to_daily` gets an indented `during: [[<project-slug>]]` continuation, and `cdno capture` / `capture` writes `captured_during: <project-slug>` into the new inbox item's frontmatter. Triage (`cdno triage`, `discard_inbox_item`) copies the item's tag onto its own log line, so the tag outlives the file. The continuation sits below the line's head, so no reader of the heads sees it; it is how a later review can tell where a captured thought came from.
 
