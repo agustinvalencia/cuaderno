@@ -61,7 +61,7 @@ fn daily(date: NaiveDate, body: &str) -> String {
 
 #[test]
 /// The budget (preview under 1 s, write under 3 s) is for the Linux CI runner
-/// class; the manual `bench.yml` workflow runs it there in release. Numbers
+/// class, measured by hand there in release (no Linux number recorded yet). Numbers
 /// from macOS are informative only: each atomic file write fsyncs the file and
 /// its directory, which is slow there (a directory fsync per commit is #908).
 #[ignore = "run by hand; the 1 s / 3 s budget is for the Linux CI runner class, macOS numbers are informative"]
