@@ -86,3 +86,21 @@ a technique, a procedure. It is an ordinary custom type you may delete. See
 
 For the exact frontmatter fields of each type, see [Frontmatter fields](../reference/frontmatter.md).
 Next: [The concept library](concept-library.md).
+
+## Which notes can be renamed
+
+[`cdno note rename`](../reference/cli/note.md#cdno-note-rename-note) takes:
+
+| Renamable | How |
+|-----------|-----|
+| `project` | Yes. |
+| `action` notes | Active ones only; an archived action note (`actions/_done/`) is refused. |
+| `question` | A portfolio with the same slug moves with it, as a pair. |
+| `portfolio` | Directly, and its folder moves with it. A portfolio that shares a question's slug is renamed through the question instead. |
+| custom types | Any type declared in `[note_types.<type>]`. |
+
+Not renamable: `daily`, `weekly` and `monthly` (the journal is addressed by date), archived action
+notes, `commitment`, `stewardship`, `evidence`, `tracking` and inbox items. They are refused with
+`note_not_renamable`, and nothing is written. A rename corrects references, which is the one
+exception to the append-only rule; see [the method page](rlm.md).
+

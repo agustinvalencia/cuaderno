@@ -176,6 +176,34 @@ A **minor** difference never refuses a write; it prints a one-line notice on std
 edit `method_version` by hand to silence either error: the stamp goes with the migration's log
 entry and any file steps.
 
+## A link to an old name still works in cdno but not in my editor
+
+After [`cdno note rename`](cli/note.md#cdno-note-rename-note) every link in the vault is rewritten to
+the new name, and the old name is kept on the note as an alias so cdno keeps resolving it. A link
+that was written with the old name afterwards (typed from memory, or brought back by a sync merge
+from a machine that had not seen the rename) still works in cdno, but an editor such as Obsidian
+or Neovim follows the file name, not the alias, and cannot open it.
+
+`cdno lint` finds them: ``[[old]] names a renamed note — now `new` ``. Change the link to the new
+name by hand. A sweep that rewrites every such link in one go (`--relink`) is the next piece of
+work and is not available yet.
+
+## Rename refused: behind upstream
+
+```text
+Error: the vault is 2 commits behind its upstream
+```
+
+`cdno note rename` will not rewrite many notes in a vault whose other clone has already changed them.
+Sync the vault (`git pull`, or your sync tool) and run the rename again. If you are sure nothing
+unpushed on the other side touches these notes, pass `--skip-sync-check` (over MCP, `skip_sync_check`
+is for the person to decide, not the agent). `cdno note rename --dry-run --skip-sync-check` shows the
+plan of a vault that is behind without writing.
+
+If the message is `git_operation_in_progress` instead, a merge, rebase or cherry-pick was left
+paused in the vault. Finish or abort it (`git status` says which); `--skip-sync-check` does not
+override this one.
+
 ## `--json` output won't parse
 
 `--json` is only honoured by read verbs and the write verbs that emit a result; maintenance and

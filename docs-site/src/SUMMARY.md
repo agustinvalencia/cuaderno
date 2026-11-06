@@ -26,6 +26,7 @@
 - [Research and evidence](tutorials/research-and-evidence.md)
 - [Building a concept library](tutorials/concept-library.md)
 - [Actions](tutorials/actions.md)
+- [Renaming a note](tutorials/renaming-a-note.md)
 - [Commitments and deadlines](tutorials/commitments.md)
 - [Stewardships and tracking](tutorials/stewardships-and-tracking.md)
 - [Weekly review](tutorials/weekly-review.md)
