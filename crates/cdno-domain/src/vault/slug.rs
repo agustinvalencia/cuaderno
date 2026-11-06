@@ -156,6 +156,36 @@ pub(in crate::vault) fn disambiguate_slug(base: &str, taken: &HashSet<String>) -
         .find(|candidate| !taken.contains(candidate))
 }
 
+/// [`Vault::taken_names`] over any note set: `paths` in path order and the
+/// `(alias, holder)` rows in the order
+/// [`list_aliases`](cdno_core::index::VaultIndex::list_aliases) gives them.
+/// Shared with the rename planner, which checks a store snapshot rather
+/// than the index (RFC 0007 §5.4), so the two can never disagree about what
+/// is taken.
+pub(in crate::vault) fn taken_names_in(
+    paths: impl IntoIterator<Item = VaultPath>,
+    aliases: impl IntoIterator<Item = (String, VaultPath)>,
+) -> HashMap<String, (VaultPath, TakenBy)> {
+    let mut taken: HashMap<String, (VaultPath, TakenBy)> = HashMap::new();
+    for path in paths {
+        if let Some(stem) = path.as_path().file_stem().and_then(|s| s.to_str()) {
+            taken
+                .entry(stem.to_owned())
+                .or_insert_with(|| (path.clone(), TakenBy::Stem));
+        }
+        if let Some(name) = candidate_slug(&path) {
+            taken
+                .entry(name)
+                .or_insert_with(|| (path.clone(), TakenBy::Folder));
+        }
+    }
+    // Aliases after every stem and folder, so those outrank them.
+    for (alias, holder) in aliases {
+        taken.entry(alias).or_insert((holder, TakenBy::Alias));
+    }
+    taken
+}
+
 impl Vault {
     /// Every name a new note's slug must not take, with its holder and why.
     ///
@@ -181,24 +211,10 @@ impl Vault {
     pub(in crate::vault) fn taken_names(
         &self,
     ) -> Result<HashMap<String, (VaultPath, TakenBy)>, DomainError> {
-        let mut taken: HashMap<String, (VaultPath, TakenBy)> = HashMap::new();
-        for path in self.index.list_all_paths()? {
-            if let Some(stem) = path.as_path().file_stem().and_then(|s| s.to_str()) {
-                taken
-                    .entry(stem.to_owned())
-                    .or_insert_with(|| (path.clone(), TakenBy::Stem));
-            }
-            if let Some(name) = candidate_slug(&path) {
-                taken
-                    .entry(name)
-                    .or_insert_with(|| (path.clone(), TakenBy::Folder));
-            }
-        }
-        // Aliases after every stem and folder, so those outrank them.
-        for (alias, holder) in self.index.list_aliases()? {
-            taken.entry(alias).or_insert((holder, TakenBy::Alias));
-        }
-        Ok(taken)
+        Ok(taken_names_in(
+            self.index.list_all_paths()?,
+            self.index.list_aliases()?,
+        ))
     }
 
     /// The slug a create operation names its note by. With `explicit`, the

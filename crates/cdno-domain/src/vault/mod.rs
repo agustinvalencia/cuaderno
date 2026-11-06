@@ -58,6 +58,7 @@ mod portfolios;
 mod projects;
 mod questions;
 mod reconcile;
+mod rename;
 mod revise;
 mod search;
 mod set_frontmatter;
@@ -134,6 +135,9 @@ pub use portfolios::PortfolioSummary;
 // Exported for the unit suite, which pins the paused entry's exact shape.
 #[doc(hidden)]
 pub use projects::actions::format_action_paused_log_entry;
+// Exported for the unit suite, which pins the renamed entry's exact shape.
+#[doc(hidden)]
+pub use log::format_renamed_log_entry;
 pub use projects::{
     ActionListEntry, AttachedAction, ClosedProjectEntry, HolderChange, LOG_HOLDER_PREFIX,
     LinkedCommitment, NO_HOLDER, OpenAction, OpenItems, OpenItemsHash, OpenItemsReport,
@@ -141,6 +145,7 @@ pub use projects::{
     ResumedKind, SlotUsage, SwitchOutcome, TopAction,
 };
 pub use questions::QuestionSummary;
+pub use rename::{Change, PlannedEdit, RenamePlan, RenameWarning, VaultSnapshot};
 pub use revise::{ReviseOutcome, Revision};
 pub use search::{SearchFilters, SearchResultEntry};
 pub use stewardships::{StewardshipSummary, StewardshipVariant};

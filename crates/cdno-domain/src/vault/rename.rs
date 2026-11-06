@@ -1,0 +1,901 @@
+//! `Vault::plan_rename` — the pure rename planner (RFC 0007 §5.2–§5.4, §6.2).
+//!
+//! A rename changes a note's slug and follows every reference to it: the
+//! wikilink addresses that resolve to the note, the §3.5 frontmatter fields
+//! that name it by bare slug, an `aliases:` entry on the note itself and one
+//! `renamed` line in today's daily log. This module plans that change and
+//! writes nothing: [`Vault::plan_rename`] turns a [`VaultSnapshot`] into a
+//! [`RenamePlan`] that can be shown to the person before anything is
+//! written (the write itself is `rename_note`, T20).
+//!
+//! **The snapshot comes from the store, not the index** (§5.4): the
+//! long-running server does not reconcile between requests, and the index
+//! has no edge for a bare-field reference or an ambiguous stem. Resolution
+//! and referrers come from the one snapshot, so the plan cannot resolve
+//! against one vault and rewrite another.
+//!
+//! **Exactly one [`PlannedEdit`] per path**, whatever touches it: the
+//! address rewrites, the field rewrites, the alias and the log line are all
+//! expressed in `before`'s byte positions and merged in ascending order, so
+//! `after` is `before` with [`PlannedEdit::edits`] applied
+//! ([`differs_only_by`](cdno_core::extractors::differs_only_by) holds).
+
+use std::collections::{BTreeMap, HashSet};
+use std::ffi::OsStr;
+use std::ops::Range;
+
+use chrono::NaiveDateTime;
+
+use cdno_core::extractors::{
+    AddressEdit, AliasMap, WikilinkRaw, first_h1, note_link_names, resolve_wikilinks,
+    rewrite_wikilink_addresses, target_may_name,
+};
+use cdno_core::frontmatter::{Frontmatter, split_frontmatter};
+use cdno_core::frontmatter_edit::{
+    append_frontmatter_list_value, frontmatter_changed_only_at, frontmatter_scalar_spans,
+    rewrite_frontmatter_scalar,
+};
+use cdno_core::hash::content_hash;
+use cdno_core::index::{ArchivalSnapshot, frontmatter_aliases};
+use cdno_core::path::VaultPath;
+use cdno_core::paths;
+
+use crate::error::DomainError;
+use crate::note_type::NoteType;
+
+use super::Vault;
+use super::lint::frozen_prefix_verifies;
+use super::log::{append_log_line, daily_note_path, format_log_line, format_renamed_log_entry};
+use super::note_ref::{NoteRef, PeriodRef, ResolvedNote, candidate_slug};
+use super::slug::{taken_names_in, validate_explicit_slug};
+
+/// The frontmatter key the renamed note records its former slugs under
+/// (RFC 0007 §5.5).
+const ALIASES_KEY: &str = "aliases";
+
+/// The vault as one rename plans against, read from the store
+/// ([`Vault::rename_snapshot`]).
+///
+/// `paths` is the note set reconciliation would index (every `.md` outside
+/// `.cuaderno/`, attachment artefacts and the config `ignore` globs), and
+/// what wikilinks resolve against. `aliases` holds the slug-shaped
+/// `aliases:` entries those notes declare, one row per occurrence in path
+/// order, as [`list_aliases`](cdno_core::index::VaultIndex::list_aliases)
+/// returns them (rows rather than a map, so a shared alias stays visible to
+/// the taken check while resolving to nothing). `contents` holds every
+/// note's text; [`Vault::plan_rename`] parses only those that contain the
+/// old slug or one of the note's aliases. `frozen` holds the archival
+/// snapshot of every archived note in `paths` that has one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VaultSnapshot {
+    pub paths: HashSet<VaultPath>,
+    pub aliases: Vec<(String, VaultPath)>,
+    pub contents: BTreeMap<VaultPath, String>,
+    pub frozen: BTreeMap<VaultPath, ArchivalSnapshot>,
+}
+
+/// What a rename would do, before it does it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenamePlan {
+    /// The note being renamed, as resolved in the snapshot. `slug` is its
+    /// current (old) slug.
+    pub target: ResolvedNote,
+    pub new_slug: String,
+    /// The target's own move(s): `(from, to)`. The target's
+    /// [`PlannedEdit`] is keyed by `from`; its `after` is written at `to`.
+    pub moves: Vec<(VaultPath, VaultPath)>,
+    /// One per touched path, in path order.
+    pub edits: Vec<PlannedEdit>,
+    pub warnings: Vec<RenameWarning>,
+    /// [`content_hash`] over the moves and every edit's `after`, in path
+    /// order, with the log line's time stamp left out (§6.2). The write
+    /// refuses a plan whose hash moved.
+    pub hash: String,
+}
+
+impl RenamePlan {
+    /// Whether the plan writes nothing (a rename to the current slug).
+    pub fn is_empty(&self) -> bool {
+        self.moves.is_empty() && self.edits.is_empty()
+    }
+}
+
+/// The one rewrite of one path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedEdit {
+    pub path: VaultPath,
+    /// The file as the snapshot holds it; empty for today's daily note when
+    /// it does not exist yet.
+    pub before: String,
+    pub after: String,
+    /// What kinds of reference this edit touches, in the order address,
+    /// field, alias, log line.
+    pub changes: Vec<Change>,
+    /// Every byte edit, ranges into `before`, ascending and non-overlapping:
+    /// `after` is exactly `before` with these applied.
+    pub edits: Vec<AddressEdit>,
+}
+
+/// One kind of change in a [`PlannedEdit`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Change {
+    /// `count` wikilink addresses rewritten.
+    Address { count: usize },
+    /// A §3.5 field under `key` rewritten.
+    Field { key: String },
+    /// The old slug appended to the target's `aliases:`.
+    Alias,
+    /// The `renamed` line appended to today's daily log.
+    LogLine,
+}
+
+/// Something the person should know before writing the plan, that does not
+/// stop it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenameWarning {
+    /// An archived referrer's frozen prefix already failed its archival
+    /// snapshot (neither hash verifies) before this rename: it is still
+    /// rewritten, and the rename neither repairs nor hides it (§5.4).
+    FrozenPrefixAlreadyDiverged { path: VaultPath },
+    /// The old slug is already an alias of `holder`, another note: once the
+    /// renamed note lists it too, the alias is shared and resolves to
+    /// nothing, so the old links it was meant to keep working (in an ignored
+    /// file, on another clone, typed later) dangle.
+    OldSlugAlreadyAnAlias { holder: VaultPath },
+}
+
+impl Vault {
+    /// Read the vault into a [`VaultSnapshot`] for [`plan_rename`](Self::plan_rename):
+    /// every note file from the store (§5.4: the index is not trusted for
+    /// planning), the aliases they declare, and the archival snapshots of
+    /// the archived ones.
+    ///
+    /// The note set is reconciliation's: `.md` files outside `.cuaderno/`,
+    /// minus attachment artefacts and the config `ignore` globs, so a link
+    /// resolves here exactly as the index would resolve it. Every note is
+    /// read (the substring prefilter needs the text); only notes whose text
+    /// mentions `aliases` have their frontmatter parsed here.
+    ///
+    /// The caller decides when: the preview takes it without the lock, the
+    /// write under it (T20).
+    pub fn rename_snapshot(&self) -> Result<VaultSnapshot, DomainError> {
+        let ignore = self.config.ignore_set()?;
+        let walked = self.store.walk_dir(&VaultPath::root())?;
+        let dirs: HashSet<VaultPath> = walked
+            .iter()
+            .flat_map(|p| p.as_path().ancestors().skip(1))
+            .filter_map(|d| VaultPath::new(d).ok())
+            .collect();
+        let md: HashSet<VaultPath> = walked
+            .into_iter()
+            .filter(|p| p.as_path().extension() == Some(OsStr::new("md")))
+            .filter(|p| !p.as_path().starts_with(paths::CUADERNO_DIR))
+            .collect();
+        let stubs = cdno_core::artefacts::attachment_stubs(&self.store, &md, &dirs);
+        let mut notes: Vec<VaultPath> = md
+            .iter()
+            .filter(|p| {
+                cdno_core::artefacts::owning_artefact_stub(p, |stub| stubs.contains(stub)).is_none()
+            })
+            .filter(|p| !ignore.is_match(p.as_path()))
+            .cloned()
+            .collect();
+        notes.sort();
+
+        let mut snapshot = VaultSnapshot::default();
+        for path in notes {
+            let content = self.store.read_file(&path)?;
+            if content.contains(ALIASES_KEY)
+                && let Some(frontmatter) = frontmatter_json(&content)
+            {
+                for alias in frontmatter_aliases(&frontmatter) {
+                    snapshot.aliases.push((alias, path.clone()));
+                }
+            }
+            snapshot.paths.insert(path.clone());
+            snapshot.contents.insert(path, content);
+        }
+        for (path, row) in self.index.list_archival_snapshots()? {
+            if snapshot.paths.contains(&path) {
+                snapshot.frozen.insert(path, row);
+            }
+        }
+        Ok(snapshot)
+    }
+
+    /// Plan renaming the note `target` names to `new_slug`, against
+    /// `snapshot` (RFC 0007 §5.2–§5.4). Writes nothing.
+    ///
+    /// `target` is a note reference as `cdno open` takes one (a path, a
+    /// bare slug, `type:slug`, a former slug), resolved in the snapshot.
+    /// Refusals come in this order, each before any content is planned:
+    ///
+    /// 1. [`DomainError::NoteNotRenamable`] — a type outside the v1 set of
+    ///    §5.2 (`type <name>`), an archived action note (`archived`), a
+    ///    folder note or a question whose portfolio shares its slug
+    ///    (`folder`; folder renames are T22/T23), or an `aliases:` value the
+    ///    old slug cannot be appended to;
+    /// 2. [`DomainError::InvalidSlug`] — `new_slug` breaks the slug rule;
+    /// 3. [`DomainError::SlugTaken`] — another note's stem or folder, or
+    ///    any note's alias, in the snapshot;
+    /// 4. [`DomainError::StemShared`] — another note has the same file stem
+    ///    (a folder note named like it does not: it is addressed by path);
+    /// 5. then a rename to the current slug is `Ok` with an empty plan.
+    ///
+    /// Two refusals come from the referrers themselves, while planning and
+    /// before any plan is returned: [`DomainError::ReferenceUnaddressable`]
+    /// and [`DomainError::ReferenceDrift`]. [`DomainError::RenameEditOverlap`]
+    /// is an internal invariant, not a refusal.
+    ///
+    /// Then every note mentioning the old slug (or one of the note's
+    /// aliases) is planned: each wikilink whose full target (anchor
+    /// included) resolves to the note in this snapshot has its address's
+    /// last segment rewritten; each §3.5 field whose target type is the
+    /// note's has a value equal to the old slug rewritten, in its own
+    /// quoting ([`DomainError::ReferenceUnaddressable`] when the parser
+    /// reads the old slug under such a key but the text rewrite finds no
+    /// value to rewrite); and the frontmatter after the field rewrite must
+    /// differ from the frontmatter after the address rewrite only at those
+    /// keys ([`DomainError::ReferenceDrift`] otherwise). The note gains the
+    /// old slug in `aliases:`, and today's daily note the `renamed` line
+    /// (last in its log, `reason` on a continuation when given).
+    pub fn plan_rename(
+        &self,
+        snapshot: &VaultSnapshot,
+        target: &str,
+        new_slug: &str,
+        reason: Option<&str>,
+        at: NaiveDateTime,
+    ) -> Result<RenamePlan, DomainError> {
+        let alias_map = AliasMap::from_rows(snapshot.aliases.iter().cloned());
+        let resolved = self.resolve_in_snapshot(snapshot, target, at)?;
+        let target_path = resolved.path.clone();
+        let old_slug = resolved.slug.clone();
+        let target_before = snapshot
+            .contents
+            .get(&target_path)
+            .ok_or_else(|| cdno_core::error::StoreError::NotFound(target_path.to_string()))?;
+        let target_type = note_type_name(target_before);
+
+        // 1. Not renamable.
+        let builtin = renamable_type(self, &target_path, target_type.as_deref(), snapshot)?;
+        let alias_edit = alias_insertion(target_before, &old_slug)
+            .map_err(|reason| not_renamable(&target_path, reason))?;
+
+        // 2. Invalid slug.
+        validate_explicit_slug(new_slug).map_err(|why| DomainError::InvalidSlug {
+            slug: new_slug.to_owned(),
+            why,
+        })?;
+
+        // 3. Taken: against the snapshot's stems, folder names and aliases,
+        // the note's own aliases included (D5: a name is reserved while it is
+        // listed). The current slug is the note's own name, not a taken one:
+        // a rename to it is the shared-stem check and then the no-op below.
+        let mut sorted: Vec<VaultPath> = snapshot.paths.iter().cloned().collect();
+        sorted.sort();
+        let taken = taken_names_in(sorted.iter().cloned(), snapshot.aliases.iter().cloned());
+        if new_slug != old_slug
+            && let Some((holder, kind)) = taken.get(new_slug)
+        {
+            return Err(DomainError::SlugTaken {
+                slug: new_slug.to_owned(),
+                holder: holder.clone(),
+                kind: *kind,
+            });
+        }
+
+        // 4. Shared stem: another note with the same **file stem**, the only
+        // name the bare-link rule matches on, so the only way a link to the
+        // note can resolve to neither. A folder note named like it is
+        // addressed by its folder path and is not a shared stem.
+        let target_stem = target_path.as_path().file_stem();
+        let others: Vec<VaultPath> = sorted
+            .iter()
+            .filter(|p| **p != target_path && p.as_path().file_stem() == target_stem)
+            .cloned()
+            .collect();
+        if !others.is_empty() {
+            return Err(DomainError::StemShared {
+                slug: old_slug,
+                path: target_path,
+                others,
+            });
+        }
+
+        // 5. No-op.
+        if new_slug == old_slug {
+            return Ok(RenamePlan {
+                target: resolved,
+                new_slug: new_slug.to_owned(),
+                moves: Vec::new(),
+                edits: Vec::new(),
+                warnings: Vec::new(),
+                hash: content_hash(""),
+            });
+        }
+
+        let new_path = sibling_path(&target_path, new_slug)?;
+        let moves = vec![(target_path.clone(), new_path.clone())];
+
+        // The old slug already an alias of another note: once the note lists
+        // it too, the alias is shared and resolves to nothing, so it rescues
+        // no straggler. Worth saying; not worth refusing (lint reports the
+        // shared alias).
+        let mut warnings = Vec::new();
+        let mut alias_holders: Vec<&VaultPath> = Vec::new();
+        for (alias, holder) in &snapshot.aliases {
+            if *alias == old_slug && *holder != target_path && !alias_holders.contains(&holder) {
+                alias_holders.push(holder);
+            }
+        }
+        warnings.extend(alias_holders.into_iter().map(|holder| {
+            RenameWarning::OldSlugAlreadyAnAlias {
+                holder: holder.clone(),
+            }
+        }));
+
+        // The names a link to the note can end on: its stem, its folder,
+        // and every alias it declares. A cheap gate before resolution, and
+        // the prefilter's needles.
+        let own_aliases: Vec<&str> = snapshot
+            .aliases
+            .iter()
+            .filter(|(_, holder)| holder == &target_path)
+            .map(|(alias, _)| alias.as_str())
+            .collect();
+        let mut names: HashSet<&str> = note_link_names(&target_path).into_iter().collect();
+        names.extend(own_aliases.iter().copied());
+        let names_target = |raw: &str| {
+            target_may_name(raw, &names)
+                && resolve_in(raw, snapshot, &alias_map).as_ref() == Some(&target_path)
+        };
+        let rewrite = |address: &str| match address.rsplit_once('/') {
+            Some((folder, _)) => format!("{folder}/{new_slug}"),
+            None => new_slug.to_owned(),
+        };
+        let field_keys = field_keys_for(builtin);
+
+        let daily_path = daily_note_path(at.date())?;
+        let mut edits: BTreeMap<VaultPath, PlannedEdit> = BTreeMap::new();
+        let mut hashed: BTreeMap<VaultPath, String> = BTreeMap::new();
+
+        for (path, before) in &snapshot.contents {
+            let is_target = *path == target_path;
+            let is_daily = *path == daily_path;
+            let mentions = before.contains(old_slug.as_str())
+                || own_aliases.iter().any(|alias| before.contains(alias));
+            if !(mentions || is_target || is_daily) {
+                continue;
+            }
+
+            let (after_links, link_edits) =
+                rewrite_wikilink_addresses(before, names_target, rewrite);
+            let mut all = link_edits.clone();
+            let mut changes = Vec::new();
+            if !link_edits.is_empty() {
+                changes.push(Change::Address {
+                    count: link_edits.len(),
+                });
+            }
+
+            // §3.5 fields, found in `before`'s frontmatter block (a field
+            // value equal to the old slug holds no wikilink, so the address
+            // rewrite left it where it was) and shifted to `before`'s bytes.
+            let mut guarded: Vec<&str> = Vec::new();
+            let block =
+                split_frontmatter(before).map(|(block, _)| (offset_in(before, block), block));
+            if let Some((base, block)) = block {
+                let referrer = note_type_name(before).and_then(|t| t.parse::<NoteType>().ok());
+                for key in referrer
+                    .map(NoteType::reference_fields)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter(|(_, ty)| field_keys.contains(ty))
+                    .map(|(key, _)| *key)
+                {
+                    let (_, field_edits) =
+                        rewrite_frontmatter_scalar(block, key, &old_slug, new_slug);
+                    if field_edits.is_empty() {
+                        // No scalar site, but the parser (which every reader
+                        // goes through) may still read the old slug there:
+                        // a block or folded scalar, a value on the next line,
+                        // a tag. Refuse rather than leave the note attached
+                        // to a name that no longer exists.
+                        if frontmatter_json(before).is_some_and(|fm| {
+                            fm.get(key).and_then(|v| v.as_str()) == Some(&old_slug)
+                        }) {
+                            return Err(DomainError::ReferenceUnaddressable {
+                                path: path.clone(),
+                                key: key.to_owned(),
+                            });
+                        }
+                        continue;
+                    }
+                    all.extend(field_edits.into_iter().map(|e| shift(e, base)));
+                    changes.push(Change::Field {
+                        key: key.to_owned(),
+                    });
+                    guarded.push(key);
+                }
+                if is_target && let Some(edit) = &alias_edit {
+                    all.push(shift(edit.clone(), base));
+                    changes.push(Change::Alias);
+                    guarded.push(ALIASES_KEY);
+                }
+            }
+            all.sort_by_key(|e| (e.range.start, e.range.end));
+            if all.windows(2).any(|w| w[1].range.start < w[0].range.end) {
+                return Err(DomainError::RenameEditOverlap { path: path.clone() });
+            }
+            let mut after = apply(before, &all);
+
+            // The drift guard: past the address rewrite, only the fields
+            // just rewritten (and the alias) may differ.
+            if !guarded.is_empty() {
+                let links_block = split_frontmatter(&after_links).map_or("", |(b, _)| b);
+                let after_block = split_frontmatter(&after).map_or("", |(b, _)| b);
+                frontmatter_changed_only_at(links_block, after_block, &guarded).map_err(
+                    |drift| DomainError::ReferenceDrift {
+                        path: path.clone(),
+                        drift,
+                    },
+                )?;
+            }
+
+            let mut hash_input = after.clone();
+            if is_daily {
+                let entry = self.renamed_entry(
+                    &old_slug,
+                    new_slug,
+                    builtin,
+                    &new_path,
+                    target_before,
+                    reason,
+                );
+                let logged = append_log_line(
+                    after.clone(),
+                    &format_log_line(at.time(), &entry),
+                    &self.daily_anchor_section()?,
+                )?;
+                all = fold_in(&all, &after, &logged);
+                hash_input = format!("{after}\u{0}{entry}");
+                after = logged;
+                changes.push(Change::LogLine);
+            }
+
+            if changes.is_empty() {
+                continue;
+            }
+            if path.as_path().starts_with(paths::ACTIONS_DONE)
+                && let Some(row) = snapshot.frozen.get(path)
+                && !frozen_prefix_verifies(before, row)
+            {
+                warnings.push(RenameWarning::FrozenPrefixAlreadyDiverged { path: path.clone() });
+            }
+            hashed.insert(path.clone(), hash_input);
+            edits.insert(
+                path.clone(),
+                PlannedEdit {
+                    path: path.clone(),
+                    before: before.clone(),
+                    after,
+                    changes,
+                    edits: all,
+                },
+            );
+        }
+
+        // Today's daily note does not exist yet: it is scaffolded, and the
+        // whole of it is the one insertion.
+        if !snapshot.contents.contains_key(&daily_path) {
+            let entry = self.renamed_entry(
+                &old_slug,
+                new_slug,
+                builtin,
+                &new_path,
+                target_before,
+                reason,
+            );
+            let scaffold = self.scaffold_daily_base(at.date())?;
+            let after = append_log_line(
+                scaffold.clone(),
+                &format_log_line(at.time(), &entry),
+                &self.daily_anchor_section()?,
+            )?;
+            hashed.insert(daily_path.clone(), format!("{scaffold}\u{0}{entry}"));
+            edits.insert(
+                daily_path.clone(),
+                PlannedEdit {
+                    path: daily_path.clone(),
+                    before: String::new(),
+                    after: after.clone(),
+                    changes: vec![Change::LogLine],
+                    edits: vec![AddressEdit {
+                        range: 0..0,
+                        replacement: after,
+                    }],
+                },
+            );
+        }
+
+        let mut input = String::new();
+        for (from, to) in &moves {
+            input.push_str(&format!("move\u{0}{from}\u{0}{to}\u{0}"));
+        }
+        for (path, text) in &hashed {
+            input.push_str(&format!("edit\u{0}{path}\u{0}{text}\u{0}"));
+        }
+
+        Ok(RenamePlan {
+            target: resolved,
+            new_slug: new_slug.to_owned(),
+            moves,
+            edits: edits.into_values().collect(),
+            warnings,
+            hash: content_hash(&input),
+        })
+    }
+
+    /// The `renamed` entry for this rename (T19's formatter), linked in the
+    /// form the type's other log lines use.
+    fn renamed_entry(
+        &self,
+        old_slug: &str,
+        new_slug: &str,
+        note_type: Option<NoteType>,
+        new_path: &VaultPath,
+        target_content: &str,
+        reason: Option<&str>,
+    ) -> String {
+        let rendered = new_path.to_string();
+        let path_link = rendered.strip_suffix(".md").unwrap_or(&rendered);
+        let link = match note_type {
+            Some(NoteType::Project) => new_slug.to_owned(),
+            Some(NoteType::Action) => format!("{}/{new_slug}", paths::ACTIONS),
+            Some(NoteType::Portfolio) => format!("{}/{new_slug}", paths::PORTFOLIOS),
+            _ => path_link.to_owned(),
+        };
+        let title = note_title(target_content).unwrap_or_else(|| old_slug.to_owned());
+        format_renamed_log_entry(&link, &title, old_slug, reason)
+    }
+
+    /// Resolve the rename's `target` in the snapshot, with the grammar of
+    /// [`NoteRef::parse`]: a path (with or without `.md`, or a folder for
+    /// its `_index.md`), a journal reference, `type:slug`, or a bare slug,
+    /// which matches a stem or folder name and, on no match, the one note
+    /// declaring it as an alias.
+    fn resolve_in_snapshot(
+        &self,
+        snapshot: &VaultSnapshot,
+        target: &str,
+        at: NaiveDateTime,
+    ) -> Result<ResolvedNote, DomainError> {
+        let registry = self.type_registry();
+        let known = registry.all_names();
+        let not_found =
+            || DomainError::Store(cdno_core::error::StoreError::NotFound(target.to_owned()));
+        let journal = |relpath: String| -> Result<ResolvedNote, DomainError> {
+            let path = VaultPath::new(relpath)?;
+            if snapshot.paths.contains(&path) {
+                Ok(ResolvedNote::direct(path))
+            } else {
+                Err(not_found())
+            }
+        };
+        let today = at.date();
+        let (slug, of_type) = match NoteRef::parse(target, &known) {
+            NoteRef::Relative(day) => {
+                return journal(paths::daily_note_relpath(day.resolve(today)));
+            }
+            NoteRef::Date(date) => return journal(paths::daily_note_relpath(date)),
+            NoteRef::Period(PeriodRef::Week(date)) => {
+                return journal(paths::weekly_note_relpath(date));
+            }
+            NoteRef::Period(PeriodRef::Month(date)) => {
+                return journal(paths::monthly_note_relpath(date));
+            }
+            NoteRef::Path(raw) => {
+                let raw = raw.strip_suffix(".md").unwrap_or(raw).trim_end_matches('/');
+                for candidate in [format!("{raw}.md"), format!("{raw}/_index.md")] {
+                    if let Ok(path) = VaultPath::new(candidate)
+                        && snapshot.paths.contains(&path)
+                    {
+                        return Ok(ResolvedNote::direct(path));
+                    }
+                }
+                return Err(not_found());
+            }
+            NoteRef::Typed { note_type, slug } => (slug, Some(note_type)),
+            NoteRef::Bare(slug) => (slug, None),
+        };
+        let of_type_ok = |path: &VaultPath| match of_type {
+            None => true,
+            Some(t) => {
+                snapshot
+                    .contents
+                    .get(path)
+                    .and_then(|c| note_type_name(c))
+                    .as_deref()
+                    == Some(t)
+            }
+        };
+        let mut hits: Vec<&VaultPath> = snapshot
+            .paths
+            .iter()
+            .filter(|p| candidate_slug(p).as_deref() == Some(slug) && of_type_ok(p))
+            .collect();
+        hits.sort();
+        match hits.as_slice() {
+            [one] => return Ok(ResolvedNote::direct((*one).clone())),
+            [] => {}
+            _ => return Err(DomainError::AmbiguousSlug(slug.to_owned())),
+        }
+        let mut holders: Vec<&VaultPath> = Vec::new();
+        for (alias, holder) in &snapshot.aliases {
+            if alias == slug && !holders.contains(&holder) && of_type_ok(holder) {
+                holders.push(holder);
+            }
+        }
+        match holders.as_slice() {
+            [holder] => {
+                let note = ResolvedNote::direct((*holder).clone());
+                Ok(ResolvedNote::via_alias(note.path, note.slug, slug))
+            }
+            [] => Err(not_found()),
+            _ => Err(DomainError::AmbiguousSlug(slug.to_owned())),
+        }
+    }
+}
+
+/// The §5.2 check. Returns the target's built-in type (`None` for a custom
+/// note) when it is renamable now.
+fn renamable_type(
+    vault: &Vault,
+    path: &VaultPath,
+    type_name: Option<&str>,
+    snapshot: &VaultSnapshot,
+) -> Result<Option<NoteType>, DomainError> {
+    let Some(name) = type_name else {
+        return Err(not_renamable(path, "type none".to_owned()));
+    };
+    let builtin = name.parse::<NoteType>().ok();
+    let renamable = match builtin {
+        Some(NoteType::Project | NoteType::Question | NoteType::Action | NoteType::Portfolio) => {
+            true
+        }
+        Some(_) => false,
+        None => vault
+            .type_registry()
+            .resolve(name)
+            .is_some_and(|descriptor| descriptor.is_custom()),
+    };
+    if !renamable {
+        return Err(not_renamable(path, format!("type {name}")));
+    }
+    if path.as_path().starts_with(paths::ACTIONS_DONE) {
+        return Err(not_renamable(path, "archived".to_owned()));
+    }
+    // Folder notes move their whole folder (§5.3), which is T22; a question
+    // whose portfolio shares its slug moves that folder with it (T23).
+    let is_folder_note = path.as_path().file_stem() == Some(OsStr::new("_index"));
+    let question_with_portfolio = builtin == Some(NoteType::Question)
+        && candidate_slug(path)
+            .and_then(|slug| VaultPath::new(format!("{}/{slug}/_index.md", paths::PORTFOLIOS)).ok())
+            .is_some_and(|portfolio| snapshot.paths.contains(&portfolio));
+    if is_folder_note || builtin == Some(NoteType::Portfolio) || question_with_portfolio {
+        return Err(not_renamable(path, "folder".to_owned()));
+    }
+    Ok(builtin)
+}
+
+/// The target types whose §3.5 fields follow a rename of a note of type
+/// `builtin`: its own. A question's same-slug portfolio (the evidence
+/// `portfolio:` rows) joins when the pair is renamed together (T23); until
+/// then the pair is refused, and a `portfolio:` value equal to a lone
+/// question's slug names no note that moves, so it is left alone.
+fn field_keys_for(builtin: Option<NoteType>) -> Vec<NoteType> {
+    match builtin {
+        Some(t) => vec![t],
+        None => Vec::new(),
+    }
+}
+
+/// The insertion that appends `old_slug` to the note's `aliases:`, relative
+/// to its frontmatter block; `None` when it is already listed. An `Err`
+/// carries the reason the alias cannot be recorded, which refuses the
+/// rename: without it every old link would dangle.
+fn alias_insertion(content: &str, old_slug: &str) -> Result<Option<AddressEdit>, String> {
+    let Some((block, _)) = split_frontmatter(content) else {
+        return Err("it has no frontmatter to record its old slug in".to_owned());
+    };
+    let (_, mut edits) = append_frontmatter_list_value(block, ALIASES_KEY, old_slug);
+    if let Some(edit) = edits.pop() {
+        return Ok(Some(edit));
+    }
+    let listed = frontmatter_json(content)
+        .map(|fm| frontmatter_aliases(&fm).iter().any(|a| a == old_slug))
+        .unwrap_or(false);
+    if listed {
+        Ok(None)
+    } else {
+        Err("its `aliases:` is not a list the old slug can be added to".to_owned())
+    }
+}
+
+fn not_renamable(path: &VaultPath, reason: String) -> DomainError {
+    DomainError::NoteNotRenamable {
+        path: path.to_string(),
+        reason,
+    }
+}
+
+/// `path` with its file stem replaced by `slug`, in the same folder.
+fn sibling_path(path: &VaultPath, slug: &str) -> Result<VaultPath, DomainError> {
+    let file = format!("{slug}.md");
+    let joined = match path.as_path().parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join(file),
+        _ => std::path::PathBuf::from(file),
+    };
+    Ok(VaultPath::new(joined)?)
+}
+
+/// Where `raw` resolves in the snapshot, by the index's own resolver.
+fn resolve_in(raw: &str, snapshot: &VaultSnapshot, aliases: &AliasMap) -> Option<VaultPath> {
+    let link = WikilinkRaw {
+        target: raw.to_owned(),
+        label: None,
+        is_embed: false,
+    };
+    resolve_wikilinks(vec![link], &snapshot.paths, aliases)
+        .into_iter()
+        .next()
+        .and_then(|entry| entry.resolved_path)
+}
+
+fn frontmatter_json(content: &str) -> Option<serde_json::Value> {
+    Frontmatter::parse(content).ok().map(|(fm, _)| fm.as_json())
+}
+
+/// The `type:` a note's frontmatter declares, read as text (the first
+/// top-level `type:` scalar) rather than through the parser, so a referrer
+/// whose frontmatter no longer parses still has its §3.5 fields found, and
+/// the drift guard refuses it, instead of the rename skipping them.
+fn note_type_name(content: &str) -> Option<String> {
+    let (block, _) = split_frontmatter(content)?;
+    let range = frontmatter_scalar_spans(block, "type").into_iter().next()?;
+    Some(block[range].to_owned())
+}
+
+/// The note's title: its `title:` field, else its first H1.
+fn note_title(content: &str) -> Option<String> {
+    let parsed = Frontmatter::parse(content).ok();
+    if let Some((fm, _)) = &parsed
+        && let Some(title) = fm.as_json().get("title").and_then(|t| t.as_str())
+        && !title.trim().is_empty()
+    {
+        return Some(title.to_owned());
+    }
+    let body = parsed.map_or(content, |(_, body)| body);
+    first_h1(body)
+}
+
+/// Byte offset of `inner`, a subslice of `outer`, within it.
+fn offset_in(outer: &str, inner: &str) -> usize {
+    let (o, i) = (outer.as_ptr() as usize, inner.as_ptr() as usize);
+    debug_assert!(
+        i >= o && i + inner.len() <= o + outer.len(),
+        "offset_in: inner is not a subslice of outer"
+    );
+    i - o
+}
+
+fn shift(edit: AddressEdit, base: usize) -> AddressEdit {
+    AddressEdit {
+        range: edit.range.start + base..edit.range.end + base,
+        replacement: edit.replacement,
+    }
+}
+
+fn apply(text: &str, edits: &[AddressEdit]) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut at = 0;
+    for edit in edits {
+        out.push_str(&text[at..edit.range.start]);
+        out.push_str(&edit.replacement);
+        at = edit.range.end;
+    }
+    out.push_str(&text[at..]);
+    out
+}
+
+/// Fold the change from `mid` (`before` with `edits` applied) to `after`
+/// into `edits`, so they stay in `before`'s byte positions.
+///
+/// The change is taken as the one region where `mid` and `after` differ
+/// (for a log line, an insertion at the end of the log). A region that
+/// meets one of `edits` in `mid` absorbs it, so the edits stay
+/// non-overlapping; when placing the line also re-pins the anchor section
+/// to the bottom, that region is larger, and is still exact.
+fn fold_in(edits: &[AddressEdit], mid: &str, after: &str) -> Vec<AddressEdit> {
+    let (region, _) = diff_region(mid, after);
+    let (mut start, mut end) = (region.start, region.end);
+
+    // Each edit's range in `mid`, and how much it moved the text after it.
+    let mut placed: Vec<(usize, usize, isize)> = Vec::with_capacity(edits.len());
+    let mut delta: isize = 0;
+    for edit in edits {
+        let at = edit.range.start.checked_add_signed(delta).unwrap_or(0);
+        let moved = edit.replacement.len() as isize - edit.range.len() as isize;
+        placed.push((at, at + edit.replacement.len(), moved));
+        delta += moved;
+    }
+    // Whether the window meets an edit: overlaps it, or (empty) sits
+    // strictly inside it.
+    let meets = |start: usize, end: usize, a: usize, b: usize| {
+        if start == end {
+            a < start && start < b
+        } else {
+            a < end && start < b
+        }
+    };
+    // Grow the window over every edit it meets, until none straddles it.
+    loop {
+        let mut grew = false;
+        for &(a, b, _) in &placed {
+            if meets(start, end, a, b) && (a < start || b > end) {
+                start = start.min(a);
+                end = end.max(b);
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    // A `mid` position no edit straddles, in `before`'s bytes.
+    let to_before = |pos: usize| -> usize {
+        let shift: isize = placed
+            .iter()
+            .filter(|&&(_, b, _)| b <= pos)
+            .map(|&(_, _, moved)| moved)
+            .sum();
+        pos.checked_add_signed(-shift).unwrap_or(0)
+    };
+    let mut out: Vec<AddressEdit> = edits
+        .iter()
+        .zip(&placed)
+        .filter(|(_, (a, b, _))| !meets(start, end, *a, *b))
+        .map(|(edit, _)| edit.clone())
+        .collect();
+    let tail = mid.len() - end;
+    out.push(AddressEdit {
+        range: to_before(start)..to_before(end),
+        replacement: after[start..after.len() - tail].to_owned(),
+    });
+    out.sort_by_key(|e| (e.range.start, e.range.end));
+    out
+}
+
+/// The one region where `a` and `b` differ, as a range of `a` (and the
+/// length of the common suffix): the longest common prefix, then the
+/// longest common suffix of what remains, both on char boundaries.
+fn diff_region(a: &str, b: &str) -> (Range<usize>, usize) {
+    let (ab, bb) = (a.as_bytes(), b.as_bytes());
+    let mut prefix = ab.iter().zip(bb).take_while(|(x, y)| x == y).count();
+    while !(a.is_char_boundary(prefix) && b.is_char_boundary(prefix)) {
+        prefix -= 1;
+    }
+    let room = a.len().min(b.len()) - prefix;
+    let mut suffix = ab
+        .iter()
+        .rev()
+        .zip(bb.iter().rev())
+        .take(room)
+        .take_while(|(x, y)| x == y)
+        .count();
+    while !(a.is_char_boundary(a.len() - suffix) && b.is_char_boundary(b.len() - suffix)) {
+        suffix -= 1;
+    }
+    (prefix..a.len() - suffix, suffix)
+}

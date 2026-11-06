@@ -1155,6 +1155,10 @@ pub(in crate::vault) fn format_action_dropped_log_entry(
 /// than a fresh literal.
 pub(in crate::vault) const LOG_REASON_KEY: &str = "reason: ";
 
+/// Key introducing the former slug on a `renamed` entry's continuation line
+/// (RFC 0007 §5.6): `  was: <old-slug>`, a copied value, never a link.
+pub(in crate::vault) const LOG_WAS_KEY: &str = "was: ";
+
 /// Key introducing the focus tag on a log entry's continuation line
 /// (RFC 0005 §5.6): `  during: [[<project-slug>]]`, written when a focus
 /// is open at write time (and copied from `captured_during` when a triaged

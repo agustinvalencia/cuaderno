@@ -9,7 +9,10 @@ use crate::error::PathError;
 /// prefixes and `..` components. The root of the vault is represented
 /// by an empty inner `PathBuf` and is constructed via [`VaultPath::root`]
 /// or by passing `"."` to [`VaultPath::new`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+///
+/// Ordered as its [`Path`] is (component-wise), the order every
+/// `walk_dir` already sorts by.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VaultPath(PathBuf);
 
 // Serialize via `Display`, not the derived transparent `PathBuf` impl, so

@@ -102,6 +102,52 @@ pub enum DomainError {
     )]
     PortfolioSlugMismatch { question_slug: String, slug: String },
 
+    /// A note the rename verb does not rename (RFC 0007 §5.2). `reason` is
+    /// `archived` (an archived action note, whose own frozen prefix would
+    /// change), `folder` (a folder note, or a question whose portfolio
+    /// shares its slug, until folder renames land), `type <name>` (a type
+    /// outside the renamable set), or what stops the alias being recorded.
+    #[error("note '{path}' cannot be renamed: {reason}")]
+    NoteNotRenamable { path: String, reason: String },
+
+    /// Another note shares the renamed note's slug (RFC 0007 §5.2): a link
+    /// naming it resolves to neither, so the links meant for this note
+    /// cannot be told apart and would change referent.
+    #[error(
+        "cannot rename '{path}': its slug '{slug}' is shared with {}",
+        .others.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+    )]
+    StemShared {
+        slug: String,
+        path: VaultPath,
+        others: Vec<VaultPath>,
+    },
+
+    /// Rewriting a referrer's reference fields would change its frontmatter
+    /// somewhere else too (RFC 0007 §5.4): the rename is refused rather than
+    /// write a value the person did not ask to change.
+    #[error("rewriting the references in '{path}' would change more than them: {drift}")]
+    ReferenceDrift {
+        path: VaultPath,
+        drift: cdno_core::frontmatter_edit::FrontmatterDrift,
+    },
+
+    /// A referrer's reference field holds the old slug in a form the text
+    /// rewrite cannot address (a block or folded scalar, a value on the next
+    /// line, a tag): every reader sees the slug there, so renaming without it
+    /// would leave the note attached to a name that no longer exists
+    /// (RFC 0007 §5.4).
+    #[error(
+        "the '{key}' field in '{path}' names the note in a form the rename cannot rewrite; write it as `{key}: <slug>` on one line by hand first, then rename"
+    )]
+    ReferenceUnaddressable { path: VaultPath, key: String },
+
+    /// The rename planner computed two overlapping edits for one path. An
+    /// internal invariant of the planner, not a refusal the caller can act on
+    /// differently; nothing is written.
+    #[error("internal error: the rename planned overlapping edits in '{path}'")]
+    RenameEditOverlap { path: VaultPath },
+
     #[error("project cap reached ({current}/{max}), counted: {active_projects:?}")]
     ProjectCapReached {
         current: usize,
