@@ -266,11 +266,19 @@ the field.
 |------|--------|--------|
 | `rename_note` | `note`, `to`, `reason?`, `dry_run?`, `expected_plan?`, `skip_sync_check?` | Rename a note's slug and follow every reference to it in one transaction, logging a `renamed` line to today's daily note. ([`cdno note rename`](../cli/note.md#cdno-note-rename-note)) |
 
-The preview is the contract. Call with `dry_run: true` to get the plan and write nothing, show it to
-the person, then call again with the same `note`, `to` and `reason` (the reason is part of the plan) and `expected_plan` set to the plan's
-`plan_hash`: what is written is the plan that was shown. `note` takes the references
-[`read_note`](reads.md) takes, including a former name of the note; `reason` is a short clause for
-the log line.
+The preview is the contract. The sequence an agent follows:
+
+1. **Preview.** Call with `dry_run: true`. The result is the plan and nothing is written (`written:
+   false`); a refusal here is exactly the refusal a write would get.
+2. **Show.** Put the plan in front of the person: what moves, how many references in how many notes,
+   the `log_line`, any `warnings`. The person decides, not the agent.
+3. **Write.** Call again with the same `note`, `to` and `reason` (the reason is part of the plan) and
+   `expected_plan` set to the preview's `plan_hash`. What is written is the plan that was shown;
+   if the vault changed in between the call is refused with `stale_plan` (below) and writes nothing.
+
+`note` takes the references [`read_note`](reads.md) takes, including a former name of the note
+(`found_by_former_name` in the result says which); `reason` is a short clause for the log line. A
+rename to the note's current slug is an empty plan: `written: false`, `log_line: null`.
 
 The result is the plan, whether or not it was written: `dry_run`, `target`, `from` (the note's
 current slug), `new_slug`, `found_by_former_name` (the former name `note` matched, or `null`),
@@ -279,7 +287,7 @@ current slug), `new_slug`, `found_by_former_name` (the former name `note` matche
 and a `message`: `frozen_prefix_already_diverged`, `old_slug_already_an_alias`, or `sync_check`),
 `plan_hash`, `log_line` (`null` when the plan is empty), then `written`, `index_stale` (`true`: the
 files are written and the rename succeeded; the index catches up on the next open) and
-`verification`. A write nudges the sync agent; a preview does not.
+`verification`. A write nudges the sync agent only when the HTTP server runs with `--sync-nudge` (off by default; the stdio server never does); a preview never does.
 
 Before planning, the tool checks the vault against its upstream **as last fetched**: it never
 fetches. A preview is refused exactly as a write would be.
@@ -288,7 +296,7 @@ Refusals (a [rejection](overview.md); nothing is written):
 
 | Code | When |
 |------|------|
-| `stale_plan` | The vault changed since the preview (any log append does it, and so does a different `reason`). `details` carries `expected` and `actual`. Preview again and show the new plan; never retry the same `expected_plan`. A blank `expected_plan` is refused as an invalid argument. |
+| `stale_plan` | The vault changed since the preview (any log append does it, and so does a different `reason`). `details` carries `expected` and `actual`. Preview again and show the person the new plan; never retry the same `expected_plan`. A blank `expected_plan` is refused as an invalid argument. |
 | `behind_upstream` | The vault is `details.behind` commits behind its upstream. Retry in a few seconds; if still behind, the sync is stalled: tell the person rather than set `skip_sync_check`. |
 | `git_operation_in_progress` | A merge, rebase or similar was left paused. Never overridable. Both git codes carry the check's `warnings` in `details` when it had any. |
 | `stem_shared` | Another note shares the slug, so links to it cannot be told apart. |

@@ -1505,6 +1505,14 @@ collects the stage.
 
 **Deliverable.** The pages.
 
+**As built.** `reference/cli/note.md` also carries the refusal table, the rename-back and
+case-only rules and the two-clone note as sections ("Refusals", "Renaming back, and former names",
+"On the other machine"); the renamable list is a section of `concepts/note-types.md`
+("Which notes can be renamed"); `project show` prints the current slug in its header and the
+former-name line stays on `open`, `note revise` and the preview (#917). The `lint.md` rows
+(stragglers, shadowed aliases, the masked hash) were already in place from T14 and T16 and are
+unchanged; the straggler sweep (`--relink`) is described as coming, not documented, until T30.
+
 **Depends on.** S6, S7.
 
 **Complexity.** S.

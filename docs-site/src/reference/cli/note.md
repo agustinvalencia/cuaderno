@@ -90,9 +90,10 @@ the `project:` / `portfolio:` style fields that name it, an `aliases:` entry for
 note itself, and one `renamed` line in today's daily log. The old name keeps resolving through the alias.
 
 Renamable: projects, questions (a question whose slug a portfolio shares moves the portfolio with
-it), active action notes, portfolios and custom notes. A portfolio with a same-slug question is
-renamed through the question. Dailies, weeklies, evidence, tracking, inbox items, archived action
-notes, stewardships and commitments are refused (`note_not_renamable`).
+it), active action notes, portfolios and custom notes kept as single files. A portfolio with a
+same-slug question is renamed through the question. Dailies, weeklies, monthlies, evidence,
+tracking, inbox items, archived action notes, stewardships, commitments, a custom note kept as a
+folder and a note with no `type` are refused (`note_not_renamable`).
 
 ### Arguments
 
@@ -111,23 +112,48 @@ notes, stewardships and commitments are refused (`note_not_renamable`).
 
 ### The preview
 
+A long title makes a slug that stops mid-thought. This is a real run against a throwaway vault
+(see the [tutorial](../../tutorials/renaming-a-note.md) for the whole story):
+
 ```text
-  move     projects/calibrate-the-surrogate-model.md -> projects/surrogate-calibration.md
-  rewrite  journal/2026/daily/2026-11-06.md           2 links
-  alias    projects/surrogate-calibration.md gains `calibrate-the-surrogate-model`
+$ cdno project create --title "Calibrate the surrogate model against the high-fidelity thermal runs" --context work
+Created projects/calibrate-the-surrogate-model-against-the.md
+
+$ cdno action add --project calibrate-the-surrogate-model-against-the --title "Run the baseline sweep" --note --energy deep
+Action added to projects/calibrate-the-surrogate-model-against-the.md with note actions/run-the-baseline-sweep.md
+
+$ cdno action start --project calibrate-the-surrogate-model-against-the --query baseline
+Started on calibrate-the-surrogate-model-against-the, logged to journal/2026/daily/2026-11-06.md
+
+$ cdno note rename calibrate-the-surrogate-model-against-the --to surrogate-calibration --dry-run
+Dry run: nothing written.
+  move     projects/calibrate-the-surrogate-model-against-the.md -> projects/surrogate-calibration.md
+  rewrite  actions/run-the-baseline-sweep.md                      1 field (project:)
+  rewrite  journal/2026/daily/2026-11-06.md                       3 links
+  alias    projects/surrogate-calibration.md gains `calibrate-the-surrogate-model-against-the`
   log      journal/2026/daily/2026-11-06.md
-             renamed [[surrogate-calibration]] — Calibrate the surrogate model
-               was: calibrate-the-surrogate-model
-               reason: the derived slug was too long
-  2 references in 1 note · plan 31d6…
+             renamed [[surrogate-calibration]] — Calibrate the surrogate model against the high-fidelity thermal runs
+               was: calibrate-the-surrogate-model-against-the
+  4 references in 2 notes · plan 2109…
+
+$ cdno note rename calibrate-the-surrogate-model-against-the --to surrogate-calibration \
+    --reason "the derived slug stopped mid-title"
 ```
+
+The last command prints the same preview, with the `reason:` line (the reason is part of the plan,
+so its hash differs), and then ``Renamed `calibrate-the-surrogate-model-against-the` to
+`surrogate-calibration`.`` With the note and `--to` given on the command line the write runs straight
+away, in a terminal or not: nothing is prompted, so nothing is confirmed. Use `--dry-run` first to
+see the plan. Leave out `--to` in a terminal if you want to be asked for it, shown the preview and
+asked to confirm.
 
 A `rewrite` line reads `N links`, `M fields (project:, …)` or both (`2 links / 1 field (project:)`).
 When the reference matched a former name, the first line is ``found by its former name `old` ``.
 The `log` block is the entry as it will be appended, without its time stamp. Warnings follow the totals line. In an interactive session, anything that was prompted (the note, the
-slug) brings the preview and a confirm. The write is then given the preview's plan hash: it writes
-exactly what was shown, or, if a referrer changed in between, refuses with `stale_plan` and writes
-nothing. A rename to the note's current slug writes nothing.
+slug) brings the preview and a confirm. That confirmed write is given the preview's plan hash within
+the same command: it writes exactly what was shown, or, if a referrer changed while the confirm
+waited, refuses with `stale_plan` and writes nothing. The hash does not join a `--dry-run` to a later
+run, so a change made between the two is not caught: a dry run is a look, not a lock. A rename to the note's current slug writes nothing.
 
 With `--json`: the plan (`target`, `from`, `new_slug`, `moves`, `edits` with their `changes`, `references`,
 `notes`, `log_line`, `warnings`, `plan_hash`) plus `written` (a bool), `index_stale`
@@ -159,6 +185,83 @@ fetched (it never fetches): it refuses with the same code and exit code, so `--d
 `--json` they are `warnings` entries of kind `sync_check` in the plan instead (on stderr only before
 a refusal).
 
+### Refusals
+
+Every refusal writes nothing. With `--json` each is a [rejection object](../json-output.md#rename-refusals)
+with the `code` below; in text the message is printed and the exit status is `1`.
+
+| Code | Why | What to do |
+|------|-----|------------|
+| `invalid_slug` | `--to` breaks [the slug rule](overview.md#naming-a-note---slug) (upper case, spaces, a leading `-`, a value YAML reads as a number or boolean, too long). | Pick a slug that follows the rule. It is refused, never rewritten. |
+| `slug_taken` | Another note, a folder note's folder or another note's former name already holds the slug; the message names the holder. | Pick another name. Nothing is suffixed. |
+| `note_not_renamable` | The note is of a kind the rename does not take (see [which notes can be renamed](../../concepts/note-types.md#which-notes-can-be-renamed)). The `reason` is one of seven, below. | See below. |
+| `stem_shared` | Another note has the same file name, so a link to it cannot be told apart from a link to this one. | Rename or move the other note first (or fix the duplicate), then rename. |
+| `reference_drift`, `reference_unaddressable` | Rewriting a referrer's frontmatter would change more than the reference, or a field names the note in a form the rewrite cannot address. The message names the note and the key. | Fix that note by hand, then run the rename again. |
+| `stale_plan` | A referrer changed while a confirm waited (any log append does it), so the plan you confirmed is no longer the plan. Over MCP the same code answers a write whose `expected_plan` no longer matches. | Preview again and confirm the new plan. |
+| `behind_upstream` | The vault is behind its upstream. The text is `the vault is N commits behind its upstream; sync the vault first (pull the upstream's commits, e.g. with `git pull`), or pass `--skip-sync-check` to rename anyway`. | Sync first, or pass `--skip-sync-check`. See [the sync check](#the-sync-check). |
+| `git_operation_in_progress` | A merge, rebase or cherry-pick was left paused. Text: `a git operation is in progress in the vault (…); finish or abort it, then rename`. | Finish or abort it. `--skip-sync-check` does not override this. |
+| `rename_incomplete` | A write failed and the rollback could not restore every file; the paths are listed. | Check those paths by hand, then run the rename again. |
+
+The seven `note_not_renamable` reasons, and what to do for each. In text mode the code itself is not
+printed, only the message (``note '…' cannot be renamed: <reason>``); `--json` carries both.
+
+| `reason` | Meaning | What to do |
+|----------|---------|------------|
+| `type <name>` (`type none` for a note with no `type:`) | The kind never renames: daily, weekly, monthly, commitment, stewardship, evidence, tracking, inbox; or a note without a `type`. | Nothing: the note keeps its name. For a note with no `type`, add one first. |
+| `archived` | An archived action note, whose frozen prefix would change. | Nothing: the note keeps its name. |
+| `folder` | A folder note other than a portfolio's `portfolios/<slug>/_index.md`, of any type (a custom note kept as a folder, `projects/<slug>/_index.md`); or a portfolio kept as a single file. A portfolio on its own, in its folder, renames fine. | Nothing: the note keeps its name. |
+| `rename the question` | A portfolio whose slug a question shares (the portfolio alone is refused). | Rename the question: the pair moves together. |
+| `it has no frontmatter to record its old slug in` | The note has no frontmatter block. | Repair the note (add frontmatter), then rename. |
+| ``its `aliases:` is not a list the old slug can be added to`` | `aliases:` is a scalar or some other shape. | Make `aliases:` a list, then rename. |
+| ``its `aliases:` lists the new slug in a form it cannot be removed from`` | The note takes back a former name that `aliases:` lists twice or with a tag. | Tidy the `aliases:` list by hand, then rename. |
+
+A rename that would write over a file the vault already holds is refused as `slug_taken`. That
+includes a rename that changes only the case of a slug (`Alpha` to `alpha`): it is refused where the
+filesystem cannot tell the two names apart (macOS and Windows by default) and allowed where it can
+(a default Linux filesystem). The message names the note itself as the holder (``slug 'alpha' is taken
+by 'projects/Alpha.md' (as its stem)``), which is expected. To change only the case, rename through a
+temporary slug (`Alpha` to `alpha-tmp`, then `alpha-tmp` to `alpha`); the note ends up with both old
+names as aliases. The old spelling (`Alpha`) stays listed but nothing resolves it, because aliases
+must be slug-shaped; it can be deleted by hand.
+
+### Renaming back, and former names
+
+The old slug is kept on the note as `aliases: [<old>]`, and no other note may take it while it is
+listed. Renaming `old` to `new` and then `new` back to `old` is allowed, and leaves `aliases: [new]`.
+In the log, the first `renamed` line's head link is rewritten to `[[old]]`, like any other link to the
+note, while its `was: old` line stays as written: `was:` is a copied value, never a link, so it is the
+record of what the note was called at the time. The second line reads `renamed [[old]] — … was: new`.
+
+A command that is given a former name still finds the note. `cdno open`, `cdno note revise` and the
+rename preview say so (``found by its former name `old` ``). `cdno project show` does not: it prints the
+note's current slug in its header, which is how to learn the new name there.
+
+A link written with an old name still works in cdno, so leaving it is harmless. Editing it by hand
+to the new name is allowed too, even in a past log entry or an archived action note: it is the same
+address correction a rename makes.
+
+### On the other machine
+
+Some vaults live in a git repository with a working copy on more than one machine, synced by a tool
+that merges. Three things apply:
+
+- **Rename on a machine that is up to date.** The sync check above refuses a rename while the vault is
+  behind its upstream. Your sync tool carries the result to the other machine on its next run. Use `--skip-sync-check` only when you know the other machine has nothing unpushed that
+  touches these notes, for instance when the upstream is unreachable and you accept the risk.
+- **A conflict is the other machine's edit meeting the rename.** The sync stops rather than resolve
+  it. Resolve it as you would any merge, then run [`cdno lint`](lint.md): a link the merge brought
+  back with the old name is reported as a straggler (`[[old]]` names a renamed note — now `new`).
+  It still resolves in cdno, through the alias, but an editor cannot follow it; a command that sweeps
+  these (`--relink`) is planned and not yet available, so fix such a link by hand for now.
+- **Run any `cdno` command in the vault once on every clone, on a cdno that stamps RLM 1.2 (one that
+  has `note rename`), before renaming anything an archived action references.** (Starting the MCP
+  server on it counts too.) That records each archived action note in a form that ignores link
+  addresses, which is how `cdno lint` tells a corrected link from an edit. A clone that receives a
+  renamed archived note before it has done so reports an archived action note error from `cdno
+  lint` (`modified an existing line`, or `truncated below its frozen prefix` after a shorter slug)
+  that names [`cdno reindex`](reindex.md). `cdno reindex` clears it, at the cost of the stored
+  records: every archived action note then loses that check.
+
 ## Examples
 
 ```bash
@@ -167,12 +270,14 @@ cdno note create person --title "Ada Lovelace, programmer and mathematician" --f
 cdno note list person
 cdno note rename calibrate-the-surrogate-model --to surrogate-calibration --dry-run
 cdno note rename calibrate-the-surrogate-model --to surrogate-calibration --reason "the derived slug was too long"
+cdno note rename calibrate-the-surrogate-model --to surrogate-calibration --dry-run --skip-sync-check   # plan a vault that is behind
 cdno note revise concept:woodbury-identity --section Proof --content-file proof.md \
   --reason "shorter proof via push-through"
 ```
 
 ## Related
 
+- [Renaming a note](../../tutorials/renaming-a-note.md) — the long-title case end to end.
 - [Custom note types](../custom-note-types.md) — declaring a type and the full feature.
 - [The concept library](../../concepts/concept-library.md) and
   [Building a concept library](../../tutorials/concept-library.md) — `note create --origin` and

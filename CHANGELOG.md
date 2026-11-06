@@ -191,6 +191,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - The `--slug` flag on each create page of the CLI reference, the shared slug rule on the CLI
   overview, the four refusal objects in the JSON output reference, and the `slug` field and the four
   codes in the MCP reference; the RFC 0007 row in `STATUS.md` (#885, closes #579).
+- **Renaming a note** (RFC 0007 T29, closes #878). RFC 0007 stage S7 (the surfaces) is documented,
+  all but the straggler sweep: a tutorial, `renaming-a-note`; the `cdno note rename` reference with
+  a real transcript, a refusal table, the rename-back and case-only rules and the two-clone note;
+  "Renaming a note" in the MCP reference with the preview, show, write sequence; the complete plan
+  shape in the JSON reference; two troubleshooting entries (a straggler link, a rename refused as
+  behind upstream); and which note types can be renamed on the note-types page.
 
 ### Internal
 

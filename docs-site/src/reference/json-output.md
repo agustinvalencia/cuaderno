@@ -107,7 +107,21 @@ Nothing is written on a refusal. Do not retry with a `-2` of your own; ask for a
 }
 ```
 
-`written` is whether anything was written (`false` on `--dry-run` and for a rename to the current slug); `log_line` is the unstamped `renamed` entry appended to today's daily note. The MCP `rename_note` tool returns the same object plus `verification` (the read-back proof every MCP write carries; `null` unless a write landed). `log_line` is `null` for a rename to the current slug. A `warnings` entry is `{kind, message, …}`: `frozen_prefix_already_diverged` adds `path` (an archived referrer that already failed its archival check, rewritten anyway), `old_slug_already_an_alias` adds `holder` (the old slug is already another note's alias, so it will resolve to nothing once shared), and `sync_check` is a warning of [the sync check](cli/note.md#the-sync-check) (a failed fetch, no upstream, a state git could not report, an override that let a behind vault through), on a dry run and a write alike. A `changes` entry is `links` (with `count`), `field` (with `key`), `alias` or `log_line`. A refusal
+| Field | Meaning |
+|---|---|
+| `dry_run` | `true` for a preview. |
+| `target`, `from`, `new_slug` | The note's path and current slug before the rename, and the slug it takes. |
+| `found_by_former_name` | The former name the selector matched, or `null`. |
+| `moves` | `{from, to}` pairs; a portfolio's folder, or a question and its portfolio, move together. |
+| `edits` | One `{path, changes}` per rewritten path, in path order; see `changes` below. |
+| `references`, `notes` | References rewritten (links plus fields) and the notes holding them. |
+| `warnings` | `{kind, message, …}` entries that do not stop the plan; kinds below. |
+| `plan_hash` | An opaque digest of the plan; the MCP tool takes it back as `expected_plan`. |
+| `log_line` | The `renamed` entry without its time stamp, or `null` for an empty plan. |
+| `written`, `index_stale` | Whether anything was written; whether the index failed to follow (files are correct, the next open reconciles). |
+| `verification` | MCP only: the read-back proof, `null` unless a write landed. |
+
+`written` is whether anything was written (`false` on `--dry-run` and for a rename to the current slug); `log_line` is the unstamped `renamed` entry appended to today's daily note. The MCP `rename_note` tool returns the same object plus `verification`. A `warnings` entry is `{kind, message, …}`: `frozen_prefix_already_diverged` adds `path` (an archived referrer that already failed its archival check, rewritten anyway), `old_slug_already_an_alias` adds `holder` (the old slug is already another note's alias, so it will resolve to nothing once shared), and `sync_check` is a warning of [the sync check](cli/note.md#the-sync-check) (a failed fetch, no upstream, a state git could not report, an override that let a behind vault through), on a dry run and a write alike. A `changes` entry is `links` (with `count`), `field` (with `key`), `alias` or `log_line`. A refusal
 prints the usual `{code, message, details}` object and exits `1`, writing nothing:
 
 | `code` | `details` | When |
