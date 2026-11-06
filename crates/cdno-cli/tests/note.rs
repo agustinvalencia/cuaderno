@@ -1008,3 +1008,199 @@ fn slug_and_field_slug_together_are_refused_as_json() {
     assert_eq!(value["details"]["field"], "slug", "{value}");
     assert!(value["message"].is_string(), "{value}");
 }
+
+// ---------------------------------------------------------------------------
+// The second clone (RFC 0007 T21, §10): a rename on one clone reaches another
+// through git, and only the markdown travels.
+// ---------------------------------------------------------------------------
+
+mod two_clones {
+    use super::*;
+    use cdno_core::index::{SqliteIndex, VaultIndex};
+    use cdno_core::path::VaultPath;
+    use std::process::Command as Proc;
+
+    fn git_available() -> bool {
+        Proc::new("git").arg("--version").output().is_ok()
+    }
+
+    /// Run `git` in `dir` as a throwaway identity, never the global one.
+    fn git(dir: &Path, args: &[&str]) {
+        let out = Proc::new("git")
+            .current_dir(dir)
+            // Nothing from the developer's machine reaches these commands:
+            // no global or system config (hooks, identity, rewrites), and no
+            // identity in the environment, which would beat `-c user.*`.
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env_remove("GIT_AUTHOR_NAME")
+            .env_remove("GIT_AUTHOR_EMAIL")
+            .env_remove("GIT_COMMITTER_NAME")
+            .env_remove("GIT_COMMITTER_EMAIL")
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "init.defaultBranch=main",
+            ])
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?} in {}: {}{}",
+            dir.display(),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn cdno_at(root: &Path) -> Command {
+        let mut cmd = cdno();
+        cmd.env("NO_COLOR", "1")
+            .arg("--vault")
+            .arg(root)
+            .arg("--no-interactive");
+        cmd
+    }
+
+    fn snapshot_row(root: &Path, rel: &str) -> cdno_core::index::ArchivalSnapshot {
+        let index = SqliteIndex::open(root.join(".cuaderno/index.db")).expect("open index");
+        index
+            .find_archival_snapshot(&VaultPath::new(rel).unwrap())
+            .unwrap()
+            .expect("the archived note has a snapshot row")
+    }
+
+    #[test]
+    fn a_rename_on_one_clone_leaves_the_other_clean_and_resolving() {
+        if !git_available() {
+            eprintln!("skipped: `git` is not on PATH");
+            return;
+        }
+        let tmp = tempdir().unwrap();
+        let bare = tmp.path().join("remote.git");
+        let a = tmp.path().join("a");
+        let b = tmp.path().join("b");
+        fs::create_dir_all(&bare).unwrap();
+        git(&bare, &["init", "--bare", "-b", "main"]);
+
+        // Clone A: a vault with a project, a referrer and an action note
+        // that links the project, pushed to the remote.
+        cdno().arg("init").arg(&a).assert().success();
+        fs::write(
+            a.join(".gitignore"),
+            ".cuaderno/index.db*\n.cuaderno/.lock\n",
+        )
+        .unwrap();
+        cdno_at(&a)
+            .args(["project", "create", "--title", "Old", "--context", "work"])
+            .assert()
+            .success();
+        cdno_at(&a)
+            .args([
+                "action",
+                "add",
+                "--project",
+                "old",
+                "--title",
+                "Characterise",
+            ])
+            .args(["--energy", "deep", "--note"])
+            .assert()
+            .success();
+        let active = a.join("actions/characterise.md");
+        let raw = fs::read_to_string(&active).unwrap();
+        fs::write(&active, format!("{raw}\nCalibrated against [[old]].\n")).unwrap();
+        cdno_at(&a)
+            .args(["log", "read the notes on [[old]]"])
+            .assert()
+            .success();
+        git(&a, &["init"]);
+        git(&a, &["add", "-A"]);
+        git(&a, &["commit", "-m", "vault"]);
+        let remote = bare.to_str().unwrap();
+        git(&a, &["remote", "add", "origin", remote]);
+        git(&a, &["push", "-u", "origin", "main"]);
+
+        // Clone B archives the action, so its index holds the snapshot row,
+        // and pushes the archived note.
+        git(tmp.path(), &["clone", remote, "b"]);
+        cdno_at(&b)
+            .args([
+                "action",
+                "complete",
+                "--project",
+                "old",
+                "--query",
+                "characterise",
+            ])
+            .assert()
+            .success();
+        git(&b, &["add", "-A"]);
+        git(&b, &["commit", "-m", "archive"]);
+        git(&b, &["push"]);
+        let year = fs::read_dir(b.join("actions/_done"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .file_name()
+            .into_string()
+            .unwrap();
+        let archived = format!("actions/_done/{year}/characterise.md");
+        let before = snapshot_row(&b, &archived);
+        assert!(
+            before.masked_hash.is_some(),
+            "archival stamps the masked hash"
+        );
+
+        // Clone A takes the archived note. A holds no snapshot row (the index
+        // does not travel), so this open only reconciles the pulled note; B's
+        // row carries a masked hash from its own archival, so the backfill is
+        // not exercised here (T16's lint tests cover it). The CLI verb is T24,
+        // so the domain verb is driven directly through the composition root.
+        git(&a, &["pull", "--no-rebase"]);
+        cdno_at(&a).arg("lint").assert().success();
+        let now = chrono::Local::now().naive_local();
+        {
+            let opened = cdno_domain::bootstrap::open_vault(&a).expect("open A");
+            opened
+                .vault
+                .rename_note("old", "surrogate-model", None, None, now)
+                .expect("rename on A");
+        }
+        assert!(a.join("projects/surrogate-model.md").exists());
+        git(&a, &["add", "-A"]);
+        git(&a, &["commit", "-m", "rename"]);
+        git(&a, &["push"]);
+
+        // Clone B receives it. Its index still holds the pre-rename row.
+        git(&b, &["pull", "--no-rebase"]);
+        assert!(
+            fs::read_to_string(b.join(&archived))
+                .unwrap()
+                .contains("[[surrogate-model]]"),
+            "the rename rewrote the archived note's frozen prefix"
+        );
+        cdno_at(&b)
+            .arg("lint")
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("[error]").not());
+        cdno_at(&b)
+            .args(["open", "old", "--path"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("projects/surrogate-model.md"));
+        assert_eq!(
+            snapshot_row(&b, &archived),
+            before,
+            "the snapshot row on B is unchanged"
+        );
+    }
+}

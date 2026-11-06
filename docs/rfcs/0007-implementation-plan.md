@@ -1087,7 +1087,7 @@ the PR records the numbers (§8 S5). (2) `rename_index_ops_land_in_order_on_sqli
 rename on the SQLite index, `find_by_path(old)` is `None`, `find_by_path(new)` is `Some`,
 `find_archival_snapshot` of an archived referrer is unchanged, and `links` has no row resolved
 to `old`. (3) **Two clones** (`cdno-cli --test note`, real files, `git` on `PATH` or skipped):
-clone A renames; clone B pulls (a bare remote between them) and opens; on B `cdno lint` is
+clone B archives the action (only an archival on a clone stamps its snapshot row, and the index does not travel), clone A pulls and renames (the domain verb, driven through `open_vault`: the CLI verb is T24); clone B pulls (a bare remote between them) and opens; on B `cdno lint` is
 clean, `cdno open old` finds the note through the alias, and B's archived referrer's masked
 hash verifies (§10, first bullet).
 
