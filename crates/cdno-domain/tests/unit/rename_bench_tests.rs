@@ -9,6 +9,7 @@ use std::time::Instant;
 use cdno_core::config::VaultConfig;
 use cdno_core::index::{SqliteIndex, VaultIndex};
 use cdno_core::path::VaultPath;
+use cdno_core::reconcile::ReconciliationReport;
 use cdno_core::store::{FsVaultStore, VaultStore};
 use cdno_domain::Vault;
 use cdno_domain::frontmatter::{Context, EnergyLevel};
@@ -19,13 +20,13 @@ fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
 }
 
-fn build_fs_vault(root: &Path) -> (Vault, Arc<dyn VaultIndex>) {
+fn build_fs_vault(root: &Path) -> (Vault, Arc<dyn VaultIndex>, ReconciliationReport) {
     let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(root));
     let index: Arc<dyn VaultIndex> =
         Arc::new(SqliteIndex::open(root.join(".cuaderno/index.db")).expect("open index"));
-    let (vault, _report) =
+    let (vault, report) =
         Vault::new(store, Arc::clone(&index), VaultConfig::default()).expect("construct vault");
-    (vault, index)
+    (vault, index, report)
 }
 
 fn at() -> NaiveDateTime {
@@ -59,7 +60,11 @@ fn daily(date: NaiveDate, body: &str) -> String {
 }
 
 #[test]
-#[ignore = "a timing budget: run by hand with --ignored --nocapture"]
+/// The budget (preview under 1 s, write under 3 s) is for the Linux CI runner
+/// class; the manual `bench.yml` workflow runs it there in release. Numbers
+/// from macOS are informative only: each atomic file write fsyncs the file and
+/// its directory, which is slow there (a directory fsync per commit is #908).
+#[ignore = "run by hand; the 1 s / 3 s budget is for the Linux CI runner class, macOS numbers are informative"]
 fn rename_on_two_thousand_notes_stays_under_budget() {
     const NOTES: usize = 2000;
     const REFERRERS: usize = 300;
@@ -119,7 +124,12 @@ fn rename_on_two_thousand_notes_stays_under_budget() {
         }
     }
 
-    let (vault, index) = build_fs_vault(root);
+    let (vault, index, report) = build_fs_vault(root);
+    assert!(
+        report.errors.is_empty(),
+        "the generated notes reconcile cleanly: {:?}",
+        report.errors
+    );
     assert_eq!(
         index.list_all_paths().unwrap().len(),
         NOTES,
@@ -131,11 +141,6 @@ fn rename_on_two_thousand_notes_stays_under_budget() {
         .rename_preview("old", "surrogate-model", None, at())
         .expect("preview");
     let preview = t.elapsed();
-    assert!(
-        plan.edits.len() > REFERRERS,
-        "the target and its {REFERRERS} referrers are edited, got {}",
-        plan.edits.len()
-    );
 
     let t = Instant::now();
     let outcome = vault
@@ -143,6 +148,8 @@ fn rename_on_two_thousand_notes_stays_under_budget() {
         .expect("rename");
     let write = t.elapsed();
     assert!(!outcome.index_stale);
+    // The target, its 300 referrers and today's daily note.
+    assert_eq!(outcome.written.len(), REFERRERS + 2);
 
     println!(
         "rename bench, {NOTES} notes, {REFERRERS} referrers: preview {preview:?}, write {write:?}"
@@ -156,7 +163,7 @@ fn rename_index_ops_land_in_order_on_sqlite() {
     let dir = tempdir().unwrap();
     let root = dir.path();
     std::fs::create_dir_all(root.join(".cuaderno")).unwrap();
-    let (vault, index) = build_fs_vault(root);
+    let (vault, index, _) = build_fs_vault(root);
 
     vault
         .create_project(at(), "Old", Context::Work, None)
@@ -176,7 +183,7 @@ fn rename_index_ops_land_in_order_on_sqlite() {
     .unwrap();
     // Reconciliation takes the hand edits in before the archival.
     drop(vault);
-    let (vault, index2) = build_fs_vault(root);
+    let (vault, index2, _) = build_fs_vault(root);
     drop(index);
     let index = index2;
     vault
@@ -211,6 +218,8 @@ fn rename_index_ops_land_in_order_on_sqlite() {
         .rename_note("old", "surrogate-model", None, None, at())
         .expect("rename");
 
+    // This is the assertion that catches the pure-move mutation (`move_file`
+    // for the markdown): nothing else here is blind to it. Do not trim it.
     // The moved note's own facets are derived from its paired write; a pure
     // move followed by an upsert would leave the new path without them.
     assert_eq!(
@@ -246,6 +255,14 @@ fn rename_index_ops_land_in_order_on_sqlite() {
         .unwrap()
         .expect("the snapshot row survives");
     assert_eq!(after, before, "the archived referrer's snapshot row");
+    // The referrer was rewritten, so an unchanged row is not unchanged for
+    // want of a rename.
+    assert!(
+        std::fs::read_to_string(root.join(archived.to_string()))
+            .unwrap()
+            .contains("[[surrogate-model]]"),
+        "the archived referrer's frozen prefix names the new slug"
+    );
     let stale: Vec<_> = index
         .link_resolutions()
         .unwrap()

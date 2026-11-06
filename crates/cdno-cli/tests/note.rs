@@ -1028,6 +1028,15 @@ mod two_clones {
     fn git(dir: &Path, args: &[&str]) {
         let out = Proc::new("git")
             .current_dir(dir)
+            // Nothing from the developer's machine reaches these commands:
+            // no global or system config (hooks, identity, rewrites), and no
+            // identity in the environment, which would beat `-c user.*`.
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env_remove("GIT_AUTHOR_NAME")
+            .env_remove("GIT_AUTHOR_EMAIL")
+            .env_remove("GIT_COMMITTER_NAME")
+            .env_remove("GIT_COMMITTER_EMAIL")
             .args([
                 "-c",
                 "user.name=Test",
@@ -1150,9 +1159,11 @@ mod two_clones {
             "archival stamps the masked hash"
         );
 
-        // Clone A takes the archived note and opens on this build once (the
-        // backfill runs), then renames. The CLI verb is T24, so the domain
-        // verb is driven directly through the composition root.
+        // Clone A takes the archived note. A holds no snapshot row (the index
+        // does not travel), so this open only reconciles the pulled note; B's
+        // row carries a masked hash from its own archival, so the backfill is
+        // not exercised here (T16's lint tests cover it). The CLI verb is T24,
+        // so the domain verb is driven directly through the composition root.
         git(&a, &["pull", "--no-rebase"]);
         cdno_at(&a).arg("lint").assert().success();
         let now = chrono::Local::now().naive_local();
