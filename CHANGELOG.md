@@ -22,7 +22,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `found_by_former_name` when the reference was a former name.
 - **The server instructions say what a rename changes** (RFC 0007 T27, closes #876). The append-only
   bullet states the one exception: a reference is an address, and `rename_note` rewrites addresses in
-  every note, the journal included, and changes no other byte. The sentence sits inside the
+  every note, the journal included, and changes no other byte but its own log line and alias. The sentence sits inside the
   instructions' 2048-character client cut, and the `rename_note` description carries it too.
 - **The rename's sync check** (RFC 0007 T25, closes #874). In a vault that is a git repository,
   `cdno note rename` fetches the upstream first (at most 5 s, no prompt; a failed fetch warns and

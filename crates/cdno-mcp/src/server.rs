@@ -281,8 +281,8 @@ impl ServerHandler for CuadernoServer {
                 due today.\" No elapsed-time nudges.\n\n\
                 Cuaderno is a vault manager for the Research Logbook Method (RLM). \
                 Pick note types with care.\n\n\
-                Two tracks, one vault. INQUIRY is open-ended: a \
-                log feeds evidence portfolios, which answer important \
+                Two tracks, one vault. INQUIRY is open-ended: the \
+                daily log feeds evidence portfolios, which answer important \
                 questions. OPERATIONS is delivery: project maps, stewardships and a \
                 commitments register.\n\n\
                 Easy to get wrong:\n\
