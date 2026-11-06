@@ -81,6 +81,44 @@ cdno portfolio create --question "Sparse vs dense attention OOD" --slug surrogat
 
 Nothing is written on a refusal. Do not retry with a `-2` of your own; ask for another name.
 
+## Rename refusals
+
+`cdno note rename --json` prints the plan on success (see [`note rename`](cli/note.md#cdno-note-rename-note)):
+
+```json
+{
+  "dry_run": false,
+  "target": "projects/old.md",
+  "from": "old",
+  "to": "surrogate-model",
+  "found_by_former_name": null,
+  "moves": [{ "from": "projects/old.md", "to": "projects/surrogate-model.md" }],
+  "edits": [
+    { "path": "journal/2026/daily/2026-11-06.md", "changes": [{ "kind": "links", "count": 2 }, { "kind": "log_line" }] },
+    { "path": "projects/old.md", "changes": [{ "kind": "alias" }] }
+  ],
+  "references": 2,
+  "notes": 1,
+  "warnings": [],
+  "plan_hash": "5c380833154ebb71",
+  "written": ["projects/surrogate-model.md", "journal/2026/daily/2026-11-06.md"],
+  "index_stale": false
+}
+```
+
+A `changes` entry is `links` (with `count`), `field` (with `key`), `alias` or `log_line`. A refusal
+prints the usual `{code, message, details}` object and exits `1`, writing nothing:
+
+| `code` | `details` | When |
+|---|---|---|
+| `invalid_slug`, `slug_taken` | as [above](#slug-refusals) | The new slug breaks the rule, or another note holds it. |
+| `note_not_renamable` | `path`, `reason` | `reason` is `type <name>`, `archived`, `folder`, `rename the question`, or what stops the alias being recorded. |
+| `stem_shared` | `slug`, `path`, `others` | Another note has the same file stem, so links to it cannot be told apart. |
+| `stale_plan` | `expected`, `actual` | The vault changed between the preview and the write. Preview again. |
+| `reference_drift` | `path`, `drift` | Rewriting the references in `path` would change more than them. |
+| `reference_unaddressable` | `path`, `key` | A reference field names the note in a form the rewrite cannot address. |
+| `rename_incomplete` | `failed`, `source` | A write failed and the rollback could not restore the paths in `failed`; check them by hand. |
+
 ## `search --json` → an array of hits
 
 Ranked best-first; each hit:

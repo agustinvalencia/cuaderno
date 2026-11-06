@@ -1162,18 +1162,13 @@ mod two_clones {
         // Clone A takes the archived note. A holds no snapshot row (the index
         // does not travel), so this open only reconciles the pulled note; B's
         // row carries a masked hash from its own archival, so the backfill is
-        // not exercised here (T16's lint tests cover it). The CLI verb is T24,
-        // so the domain verb is driven directly through the composition root.
+        // not exercised here (T16's lint tests cover it).
         git(&a, &["pull", "--no-rebase"]);
         cdno_at(&a).arg("lint").assert().success();
-        let now = chrono::Local::now().naive_local();
-        {
-            let opened = cdno_domain::bootstrap::open_vault(&a).expect("open A");
-            opened
-                .vault
-                .rename_note("old", "surrogate-model", None, None, now)
-                .expect("rename on A");
-        }
+        cdno_at(&a)
+            .args(["note", "rename", "old", "--to", "surrogate-model"])
+            .assert()
+            .success();
         assert!(a.join("projects/surrogate-model.md").exists());
         git(&a, &["add", "-A"]);
         git(&a, &["commit", "-m", "rename"]);
@@ -1203,4 +1198,445 @@ mod two_clones {
             "the snapshot row on B is unchanged"
         );
     }
+}
+
+// ---------------------------------------------------------------------
+// `cdno note rename` (RFC 0007 T24)
+// ---------------------------------------------------------------------
+
+/// A vault with one project `old` whose slug is to be changed, a daily log
+/// line linking it, and a second project `taken` holding a name.
+fn init_rename_vault(dir: &Path) {
+    cdno().arg("init").arg(dir).assert().success();
+    for title in ["Old", "Taken"] {
+        cdno()
+            .args(["--vault", &vault_arg(dir), "project", "create"])
+            .args(["--title", title, "--context", "work"])
+            .assert()
+            .success();
+    }
+    cdno()
+        .args([
+            "--vault",
+            &vault_arg(dir),
+            "log",
+            "read the notes on [[old]]",
+        ])
+        .assert()
+        .success();
+}
+
+/// Every file of the vault but the index and the lock, by path: what "the
+/// vault is byte-identical" compares.
+fn vault_bytes(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    fn walk(root: &Path, at: &Path, out: &mut std::collections::BTreeMap<String, Vec<u8>>) {
+        for entry in fs::read_dir(at).unwrap() {
+            let path = entry.unwrap().path();
+            let rel = path
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            if rel.starts_with(".cuaderno/index.db") || rel == ".cuaderno/.lock" {
+                continue;
+            }
+            if path.is_dir() {
+                walk(root, &path, out);
+            } else {
+                out.insert(rel, fs::read(&path).unwrap());
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    walk(dir, dir, &mut out);
+    out
+}
+
+fn rename_cmd(dir: &Path) -> Command {
+    let mut cmd = cdno();
+    cmd.env("NO_COLOR", "1").args([
+        "--vault",
+        &vault_arg(dir),
+        "--no-interactive",
+        "note",
+        "rename",
+    ]);
+    cmd
+}
+
+#[test]
+fn dry_run_prints_the_plan_and_writes_nothing() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    let before = vault_bytes(dir.path());
+
+    rename_cmd(dir.path())
+        .args(["old", "--to", "surrogate-model", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Dry run: nothing written."))
+        .stdout(predicate::str::contains(
+            "move     projects/old.md -> projects/surrogate-model.md",
+        ))
+        .stdout(predicate::str::contains("2 links"))
+        .stdout(predicate::str::contains(
+            "alias    projects/surrogate-model.md gains `old`",
+        ))
+        .stdout(predicate::str::contains("renamed [[surrogate-model]]"))
+        .stdout(predicate::str::contains("2 references in 1 note · plan "));
+
+    assert_eq!(vault_bytes(dir.path()), before, "a dry run writes nothing");
+}
+
+#[test]
+fn a_rename_writes_the_previewed_plan() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    let preview = rename_cmd(dir.path())
+        .args(["old", "--to", "surrogate-model", "--dry-run", "--json"])
+        .assert()
+        .success();
+    let planned: serde_json::Value = serde_json::from_slice(&preview.get_output().stdout).unwrap();
+
+    rename_cmd(dir.path())
+        .args([
+            "old",
+            "--to",
+            "surrogate-model",
+            "--reason",
+            "a shorter name",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Renamed `old` to `surrogate-model`.",
+        ));
+
+    assert!(!dir.path().join("projects/old.md").exists());
+    let map = fs::read_to_string(dir.path().join("projects/surrogate-model.md")).unwrap();
+    assert!(map.contains("aliases:") && map.contains("old"), "{map}");
+    let daily = read_today_daily(dir.path());
+    assert!(
+        daily.contains("read the notes on [[surrogate-model]]"),
+        "{daily}"
+    );
+    assert!(daily.contains("renamed [[surrogate-model]]"), "{daily}");
+    assert!(daily.contains("was: old"), "{daily}");
+    assert!(daily.contains("reason: a shorter name"), "{daily}");
+
+    // What was written is what the dry run planned: the same edits.
+    let moved: Vec<&str> = planned["moves"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["to"].as_str().unwrap())
+        .collect();
+    assert_eq!(moved, ["projects/surrogate-model.md"]);
+}
+
+#[test]
+fn json_carries_the_plan_and_written() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    let out = rename_cmd(dir.path())
+        .args(["old", "--to", "surrogate-model", "--json"])
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(v["dry_run"], false);
+    assert_eq!(v["from"], "old");
+    assert_eq!(v["to"], "surrogate-model");
+    assert_eq!(v["index_stale"], false);
+    assert_eq!(v["references"], 2);
+    assert_eq!(v["written"][0], "projects/surrogate-model.md");
+    assert!(v["plan_hash"].as_str().unwrap().len() > 4);
+    assert_eq!(v["moves"][0]["from"], "projects/old.md");
+    let kinds: Vec<&str> = v["edits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|e| e["changes"].as_array().unwrap())
+        .map(|c| c["kind"].as_str().unwrap())
+        .collect();
+    assert!(kinds.contains(&"links") && kinds.contains(&"alias") && kinds.contains(&"log_line"));
+}
+
+#[test]
+fn dry_run_json_says_so_and_writes_nothing() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    let before = vault_bytes(dir.path());
+    let out = rename_cmd(dir.path())
+        .args(["old", "--to", "surrogate-model", "--dry-run", "--json"])
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(v["dry_run"], true);
+    assert_eq!(v["written"].as_array().unwrap().len(), 0);
+    assert_eq!(vault_bytes(dir.path()), before);
+}
+
+#[test]
+fn a_taken_slug_is_a_json_rejection() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    let before = vault_bytes(dir.path());
+    let out = rename_cmd(dir.path())
+        .args(["old", "--to", "taken", "--json"])
+        .assert()
+        .code(1);
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(v["code"], "slug_taken");
+    assert_eq!(v["details"]["kind"], "stem");
+    assert_eq!(v["details"]["holder"], "projects/taken.md");
+    assert_eq!(vault_bytes(dir.path()), before);
+}
+
+#[test]
+fn a_note_that_cannot_be_renamed_is_a_json_rejection_with_its_reason() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    let today = chrono::Local::now()
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string();
+    let out = rename_cmd(dir.path())
+        .args([&today, "--to", "elsewhere", "--json"])
+        .assert()
+        .code(1);
+    let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(v["code"], "note_not_renamable");
+    assert_eq!(v["details"]["reason"], "type daily");
+}
+
+#[test]
+fn an_invalid_slug_is_refused_in_text_and_nothing_is_written() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    let before = vault_bytes(dir.path());
+    rename_cmd(dir.path())
+        .args(["old", "--to", "Not A Slug"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("slug"));
+    assert_eq!(vault_bytes(dir.path()), before);
+}
+
+#[test]
+fn to_is_required_without_a_terminal() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    rename_cmd(dir.path())
+        .args(["old"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--to"));
+}
+
+#[test]
+fn a_former_name_is_reported_on_the_preview() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    rename_cmd(dir.path())
+        .args(["old", "--to", "surrogate-model"])
+        .assert()
+        .success();
+
+    rename_cmd(dir.path())
+        .args(["old", "--to", "surrogate-calibration", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("found by its former name `old`"))
+        .stdout(predicate::str::contains(
+            "move     projects/surrogate-model.md -> projects/surrogate-calibration.md",
+        ));
+
+    // Reached by its current name, no such line.
+    rename_cmd(dir.path())
+        .args([
+            "surrogate-model",
+            "--to",
+            "surrogate-calibration",
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("former name").not());
+}
+
+#[test]
+fn an_incomplete_rename_lists_its_paths() {
+    // The CLI cannot provoke a rollback that itself fails against real
+    // files, so the domain error is built and rendered through the handler's
+    // own refusal path. The domain probe (`rename_tests`) owns the cause.
+    use cdno_core::error::StoreError;
+    use cdno_core::path::VaultPath;
+    use cdno_domain::error::DomainError;
+    let failed = vec![
+        VaultPath::new("projects/surrogate-model.md").unwrap(),
+        VaultPath::new("journal/2026/daily/2026-11-06.md").unwrap(),
+    ];
+    let err = DomainError::RenameIncomplete {
+        failed,
+        source: StoreError::NotFound("disk gone".to_owned()),
+    };
+    let text = cdno_cli::commands::note::rename_refusal(err, false).to_string();
+    assert!(
+        text.contains("\n  projects/surrogate-model.md\n  journal/2026/daily/2026-11-06.md\n"),
+        "one path per line:\n{text}"
+    );
+    let err = DomainError::RenameIncomplete {
+        failed: vec![VaultPath::new("projects/a.md").unwrap()],
+        source: StoreError::NotFound("x".to_owned()),
+    };
+    let object = cdno_cli::commands::rejection::rename_rejection(&err).unwrap();
+    assert_eq!(object["code"], "rename_incomplete");
+    assert_eq!(object["details"]["failed"][0], "projects/a.md");
+}
+
+/// `script(1)` pty driver, as `tests/project.rs` has it.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_in_pty(root: &Path, args: &[&str], keys: &[&str]) -> String {
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    let exe = assert_cmd::cargo::cargo_bin("cdno");
+    // `script(1)` gives the pty no size, and a picker refuses a zero-width
+    // terminal, so size it first.
+    let mut inner = vec![
+        "sh".to_owned(),
+        "-c".to_owned(),
+        "stty cols 120 rows 40; exec \"$@\"".to_owned(),
+        "sh".to_owned(),
+        exe.to_str().unwrap().to_owned(),
+        "--vault".to_owned(),
+        root.to_str().unwrap().to_owned(),
+    ];
+    inner.extend(args.iter().map(|a| (*a).to_owned()));
+    let mut script = Command::new("script");
+    if cfg!(target_os = "macos") {
+        script.args(["-q", "/dev/null"]).args(&inner);
+    } else {
+        let quoted: Vec<String> = inner
+            .iter()
+            .map(|w| format!("'{}'", w.replace('\'', "'\\''")))
+            .collect();
+        script.args(["-qec", &quoted.join(" "), "/dev/null"]);
+    }
+    let mut child = script
+        .env_remove("CUADERNO_VAULT_PATH")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("script(1) is available");
+    let mut stdin = child.stdin.take().unwrap();
+    let drawn = Arc::new(Mutex::new(Vec::new()));
+    let mut stdout = child.stdout.take().unwrap();
+    let sink = Arc::clone(&drawn);
+    let reader = std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = stdout.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            sink.lock().unwrap().extend_from_slice(&buf[..n]);
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    for key in keys {
+        std::thread::sleep(Duration::from_millis(700));
+        let _ = stdin.write_all(key.as_bytes()).and_then(|()| stdin.flush());
+    }
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
+            let seen = String::from_utf8_lossy(&drawn.lock().unwrap()).into_owned();
+            panic!("the command did not finish within 20s; it drew:\n{seen}");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    drop(stdin);
+    reader.join().unwrap();
+    let out = drawn.lock().unwrap().clone();
+    let raw = String::from_utf8_lossy(&out);
+    let mut text = String::new();
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            for n in chars.by_ref() {
+                if n.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else if c != '\r' {
+            text.push(c);
+        }
+    }
+    text
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn the_picker_lists_only_renamable_notes() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    let today = chrono::Local::now()
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string();
+    // Esc leaves the picker: it drew its rows and nothing was chosen.
+    let seen = run_in_pty(dir.path(), &["note", "rename"], &["\u{1b}"]);
+    assert!(seen.contains("(project)"), "projects are offered:\n{seen}");
+    assert!(
+        !seen.contains("(daily)") && !seen.contains(&today),
+        "a daily note is not offered:\n{seen}"
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn to_is_prompted_and_the_preview_confirms() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    let before = vault_bytes(dir.path());
+
+    // `--to` is asked for, the preview is shown, and declining the confirm
+    // aborts with the vault untouched.
+    let seen = run_in_pty(
+        dir.path(),
+        &["note", "rename", "old"],
+        &["surrogate-model\r", "n\r"],
+    );
+    assert!(seen.contains("New slug"), "asked for --to:\n{seen}");
+    assert!(
+        seen.contains("move     projects/old.md -> projects/surrogate-model.md"),
+        "the confirm shows the preview:\n{seen}"
+    );
+    assert!(seen.contains("Proceed?"), "{seen}");
+    assert!(seen.contains("Aborted."), "{seen}");
+    assert_eq!(
+        vault_bytes(dir.path()),
+        before,
+        "an aborted rename writes nothing"
+    );
+
+    // Accepting writes it.
+    let seen = run_in_pty(
+        dir.path(),
+        &["note", "rename", "old"],
+        &["surrogate-model\r", "y\r"],
+    );
+    assert!(
+        seen.contains("Renamed `old` to `surrogate-model`."),
+        "{seen}"
+    );
+    assert!(dir.path().join("projects/surrogate-model.md").exists());
 }

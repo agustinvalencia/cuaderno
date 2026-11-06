@@ -1216,8 +1216,8 @@ head and `was:` warns only on a link, and a test pins that the continuation is c
 ### T24 — `cdno note rename`
 
 **What.** `NoteCommands::Rename { note: Option<String>, to: Option<String>, reason: Option<String>, dry_run: bool, skip_sync_check: bool }`
-in `crates/cdno-cli/src/commands/note.rs:22` (§6.3). The positional resolves as `note revise`
-does (`open::resolve_reporting`, `note.rs:227`), and the omitted-and-interactive picker
+in `crates/cdno-cli/src/commands/note.rs` (the `NoteCommands` enum; §6.3). The positional resolves as `note revise`
+does (`open::resolve_reporting` in `commands/open.rs`), and the omitted-and-interactive picker
 (`pick_from_all`, `open.rs:159`) is given a filter so it lists only renamable notes; `--to` goes
 through `gather_or_error` (`prompt.rs:286`); `--reason` is never prompted; `--skip-sync-check`
 is wired in T25 and accepted here. Rendering: the §1.1 preview shape (`move`, `rewrite … N links
@@ -1239,9 +1239,11 @@ per line and exits non-zero. `docs/cli-ergonomics.md`'s exception table gains th
 **Probes.**
 - `cargo test -p cdno-cli --test note` passes with `dry_run_prints_the_plan_and_writes_nothing`
   (byte-identical vault), `a_rename_writes_the_previewed_plan`, `the_picker_lists_only_renamable_notes`
-  (pty: a daily note is not offered), `to_is_prompted_and_the_preview_confirms` (pty: Enter on
-  the confirm aborts, vault byte-identical), `json_carries_the_plan_and_written`,
-  `a_taken_slug_is_a_json_rejection`, `an_incomplete_rename_lists_its_paths`.
+  (pty: a daily note is not offered), `to_is_prompted_and_the_preview_confirms` (pty: `n` on
+  the confirm aborts, vault byte-identical; the confirm defaults to yes, so Enter would proceed), `json_carries_the_plan_and_written`,
+  `a_taken_slug_is_a_json_rejection`, `an_incomplete_rename_lists_its_paths` (the rollback failure
+  cannot be provoked against real files from the CLI: the test renders a constructed
+  `RenameIncomplete` through the handler's refusal path), and `a_former_name_is_reported_on_the_preview`.
 - `grep -n "note rename" docs/cli-ergonomics.md` finds the row.
 
 **Correct means.** The preview is the contract, and the verb never writes a plan the person did

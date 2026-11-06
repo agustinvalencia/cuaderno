@@ -83,12 +83,65 @@ Text identical to the note's current content writes and logs nothing and prints
 confirm are still asked for, and the result is `No change to <path>`. With `--json`, emits `{path, message, changed, new_hash, log_line,
 section_target}`.
 
+## `cdno note rename [note]`
+
+Rename a note's slug and follow every reference to it (RFC 0007): the wikilinks that resolve to it,
+the `project:` / `portfolio:` style fields that name it, an `aliases:` entry for the old slug on the
+note itself, and one `renamed` line in today's daily log. The old name keeps resolving through the alias.
+
+Renamable: projects, questions (a question whose slug a portfolio shares moves the portfolio with
+it), active action notes, portfolios and custom notes. A portfolio with a same-slug question is
+renamed through the question. Dailies, weeklies, evidence, tracking, inbox items, archived action
+notes, stewardships and commitments are refused (`note_not_renamable`).
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `[NOTE]` | The note to rename, resolved as `cdno open` resolves a reference: a path, a slug, a former slug or `type:slug`. Omitted in an interactive session, a picker offers the renamable notes only. |
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--to <SLUG>` | The new slug. Prompted in an interactive session; required under `--no-interactive`. |
+| `--reason <STRING>` | Why, in a short clause; it becomes the `reason:` line of the log entry. Never prompted. |
+| `--dry-run` | Print the preview and exit 0, writing nothing. |
+| `--skip-sync-check` | Accepted; takes effect with the freshness check. |
+
+### The preview
+
+```text
+  move     projects/calibrate-the-surrogate-model.md -> projects/surrogate-calibration.md
+  rewrite  journal/2026/daily/2026-11-06.md           2 links
+  alias    projects/surrogate-calibration.md gains `calibrate-the-surrogate-model`
+  log      journal/2026/daily/2026-11-06.md
+             - **05:27**: renamed [[surrogate-calibration]] — Calibrate the surrogate model
+               was: calibrate-the-surrogate-model
+               reason: the derived slug was too long
+  2 references in 1 note · plan 31d6…
+```
+
+A `rewrite` line reads `N links`, `M fields (project:, …)` or both (`2 links / 1 field (project:)`).
+When the reference matched a former name, the first line is ``found by its former name `old` ``.
+Warnings follow the totals line. In an interactive session, anything that was prompted (the note, the
+slug) brings the preview and a confirm. The write is then given the preview's plan hash: it writes
+exactly what was shown, or, if a referrer changed in between, refuses with `stale_plan` and writes
+nothing. A rename to the note's current slug writes nothing.
+
+With `--json`: the plan (`target`, `from`, `to`, `moves`, `edits` with their `changes`, `references`,
+`notes`, `warnings`, `plan_hash`) plus `written` (the paths written, empty on a dry run), `index_stale`
+and `dry_run`. Refusals are [rejection objects](../json-output.md#rename-refusals) and exit `1`; a
+rollback that itself failed (`rename_incomplete`) lists the paths to check by hand, one per line in text.
+
 ## Examples
 
 ```bash
 cdno note create person --title "Ada Lovelace" --field name=Ada --field role=advisor
 cdno note create person --title "Ada Lovelace, programmer and mathematician" --field name=Ada --slug ada-lovelace
 cdno note list person
+cdno note rename calibrate-the-surrogate-model --to surrogate-calibration --dry-run
+cdno note rename calibrate-the-surrogate-model --to surrogate-calibration --reason "the derived slug was too long"
 cdno note revise concept:woodbury-identity --section Proof --content-file proof.md \
   --reason "shorter proof via push-through"
 ```

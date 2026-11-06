@@ -8,6 +8,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`cdno note rename`** (RFC 0007 T24, closes #873). `cdno note rename [<note>] --to <slug>
+  [--reason <text>] [--dry-run]` renames a project, question (with its same-slug portfolio), active
+  action note, portfolio or custom note and follows every reference. It prints the preview (`move`,
+  `rewrite … N links / M fields`, the alias, the log line, a totals line with the first four
+  characters of the plan hash, then warnings); `--dry-run` writes nothing; when anything was prompted
+  the preview is confirmed; the write is given the preview's hash, so it writes exactly what was
+  shown or refuses with `stale_plan`. The omitted-note picker lists only renamable notes. `--json`
+  prints the plan with `written`, `index_stale` and `dry_run`, and refusals as rejection objects
+  (`slug_taken`, `invalid_slug`, `note_not_renamable`, `stem_shared`, `stale_plan`,
+  `reference_drift`, `reference_unaddressable`, `rename_incomplete`). A reference that matched a
+  former name says so (`found by its former name `old``), on the preview and for `cdno open` and
+  `note revise` on stderr. `--skip-sync-check` is accepted and takes effect with the freshness check.
 - **Renaming a question with its portfolio** (RFC 0007 T23, closes #872). Renaming a question whose
   slug a portfolio shares (`portfolios/<slug>/_index.md` exists) renames both in the one plan and
   the one transaction: the question's flat note, then the portfolio's folder moves as in T22, under

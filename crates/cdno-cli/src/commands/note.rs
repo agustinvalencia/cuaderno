@@ -13,7 +13,8 @@ use chrono::NaiveDateTime;
 use clap::Subcommand;
 
 use cdno_domain::Vault;
-use cdno_domain::vault::{ReviseOutcome, Revision};
+use cdno_domain::error::DomainError;
+use cdno_domain::vault::{Change, RenamePlan, RenameWarning, ReviseOutcome, Revision};
 
 use crate::bootstrap;
 use crate::prompt;
@@ -91,6 +92,39 @@ pub enum NoteCommands {
         /// daily-log line `revised [[path]] — reason`.
         #[arg(long, value_name = "STRING")]
         reason: Option<String>,
+    },
+
+    /// Rename a note's slug and follow every reference to it: the links that
+    /// resolve to it, the `project:` / `portfolio:` style fields that name it,
+    /// an `aliases:` entry for the old slug on the note itself, and one
+    /// `renamed` line in today's daily log (RFC 0007).
+    ///
+    /// Renamable: projects, questions, active action notes, portfolios and
+    /// custom notes. A portfolio whose slug a question shares is renamed
+    /// through the question, and the pair moves together. The preview (what
+    /// moves, which notes are rewritten and how many references, a plan hash)
+    /// is what gets written: confirm it, or run with `--dry-run` to see it
+    /// and write nothing.
+    Rename {
+        /// The note to rename, resolved as `cdno open` resolves a reference:
+        /// a path with or without `.md`, a slug, a former slug or `type:slug`.
+        /// Omitted in an interactive session, a picker offers the renamable
+        /// notes only.
+        note: Option<String>,
+        /// The new slug (the file name without `.md`). Prompted in an
+        /// interactive session when omitted.
+        #[arg(long, value_name = "SLUG")]
+        to: Option<String>,
+        /// Why the note is renamed, in a short clause; it becomes the
+        /// `reason:` line under the log entry. Never prompted.
+        #[arg(long, value_name = "STRING")]
+        reason: Option<String>,
+        /// Print the preview and exit 0, writing nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Accepted; takes effect with the freshness check.
+        #[arg(long)]
+        skip_sync_check: bool,
     },
 }
 
@@ -178,6 +212,25 @@ pub fn run(
                 section,
                 content_file,
                 reason,
+            },
+            interactive,
+            json,
+        ),
+        NoteCommands::Rename {
+            note,
+            to,
+            reason,
+            dry_run,
+            skip_sync_check: _,
+        } => rename(
+            root,
+            &vault,
+            at,
+            RenameArgs {
+                note,
+                to,
+                reason,
+                dry_run,
             },
             interactive,
             json,
@@ -331,4 +384,353 @@ fn emit_revise_result(json: bool, outcome: &ReviseOutcome) -> Result<()> {
         println!("{message}");
     }
     Ok(())
+}
+
+/// The flags of `cdno note rename`.
+struct RenameArgs {
+    note: Option<String>,
+    to: Option<String>,
+    reason: Option<String>,
+    dry_run: bool,
+}
+
+/// `cdno note rename`: resolve, gather, preview, confirm, rename.
+///
+/// The preview is the contract: [`Vault::rename_note`] is given the
+/// preview's hash as `expected_plan`, so what is written is what was shown,
+/// whether or not anything was prompted, and a vault that changed in between
+/// is refused (`stale_plan`) rather than rewritten differently.
+fn rename(
+    root: &Path,
+    vault: &Vault,
+    at: NaiveDateTime,
+    args: RenameArgs,
+    interactive: bool,
+    json: bool,
+) -> Result<()> {
+    let mut prompted = false;
+    // The reference goes to the domain as the person typed it, so a former
+    // name is reported as one; only a picked note is passed as its path.
+    let target = match args.note {
+        Some(reference) => {
+            let reference = crate::commands::open::strip_vault_root(&reference, root);
+            let (path, _) = crate::commands::open::resolve_with_alias(
+                vault,
+                &reference,
+                at.date(),
+                interactive,
+                &mut prompted,
+            )?;
+            if prompted {
+                path.to_string()
+            } else {
+                reference
+            }
+        }
+        None if interactive => {
+            prompted = true;
+            let renamable = renamable_filter(vault)?;
+            crate::commands::open::pick_from_filtered(vault, None, &renamable)?.to_string()
+        }
+        None => {
+            return Err(prompt::missing_positional("note").context(
+                "no note to rename — pass a reference (`cdno open --list` shows every note)",
+            ));
+        }
+    };
+    let to = prompt::gather_or_error(args.to, "to", interactive, &mut prompted, || {
+        prompt::prompt_text("New slug")
+    })?;
+    let reason = args.reason.as_deref();
+
+    let plan = vault
+        .rename_preview(&target, &to, reason, at)
+        .map_err(|e| rename_refusal(e, json))?;
+    if args.dry_run {
+        if json {
+            return emit_rename_json(&plan, &[], false, true);
+        }
+        println!("Dry run: nothing written.");
+        print!("{}", render_plan(&plan));
+        return Ok(());
+    }
+    if prompted && !plan.is_empty() && !prompt::confirm_preview(render_plan(&plan).trim_end())? {
+        println!("Aborted.");
+        return Ok(());
+    }
+    let outcome = vault
+        .rename_note(&target, &to, reason, Some(plan.hash.as_str()), at)
+        .map_err(|e| rename_refusal(e, json))?;
+    if json {
+        return emit_rename_json(&outcome.plan, &outcome.written, outcome.index_stale, false);
+    }
+    if outcome.plan.is_empty() {
+        println!(
+            "Nothing to do: `{}` already has the slug `{}`.",
+            outcome.plan.target.slug, outcome.plan.new_slug
+        );
+        return Ok(());
+    }
+    if !prompted {
+        print!("{}", render_plan(&outcome.plan));
+    }
+    println!(
+        "Renamed `{}` to `{}`.",
+        outcome.plan.target.slug, outcome.plan.new_slug
+    );
+    if outcome.index_stale {
+        println!(
+            "The files are written but the index is stale for some of them; the next command reconciles it."
+        );
+    }
+    Ok(())
+}
+
+/// Which picker rows `cdno note rename` offers: the notes the domain would
+/// not refuse as `note_not_renamable` (RFC 0007 §5.2): projects, questions,
+/// active action notes, portfolio folder notes no question shares a slug
+/// with, and custom notes. Dailies, weeklies, evidence, archived actions and
+/// the other built-ins are not offered.
+fn renamable_filter(
+    vault: &Vault,
+) -> Result<impl Fn(&cdno_core::index::NoteCandidate) -> bool + use<>> {
+    use std::collections::HashSet;
+    let candidates = vault
+        .list_note_candidates()
+        .context("listing notes in the vault")?;
+    let question_slugs: HashSet<String> = candidates
+        .iter()
+        .filter(|c| c.note_type == "question")
+        .map(|c| crate::commands::open::slug_of(&c.path))
+        .collect();
+    let custom: HashSet<String> = candidates
+        .iter()
+        .map(|c| c.note_type.clone())
+        .filter(|name| {
+            name.parse::<cdno_domain::note_type::NoteType>().is_err()
+                && vault
+                    .type_registry()
+                    .resolve(name)
+                    .is_some_and(|descriptor| descriptor.is_custom())
+        })
+        .collect();
+    Ok(move |c: &cdno_core::index::NoteCandidate| {
+        let path = c.path.as_path();
+        match c.note_type.as_str() {
+            "project" | "question" => true,
+            "action" => !path.starts_with(cdno_core::paths::ACTIONS_DONE),
+            "portfolio" => {
+                path.file_name().is_some_and(|n| n == "_index.md")
+                    && path.parent().and_then(Path::parent)
+                        == Some(Path::new(cdno_core::paths::PORTFOLIOS))
+                    && !question_slugs.contains(&crate::commands::open::slug_of(&c.path))
+            }
+            other => custom.contains(other),
+        }
+    })
+}
+
+/// A domain refusal of the rename, as the error the handler returns. Under
+/// `--json` a refusal with a code is printed as its rejection object and the
+/// process exits non-zero; in text a failed rollback lists its paths one per
+/// line, and any other error is returned for the usual `Error: …` line.
+pub fn rename_refusal(err: DomainError, json: bool) -> anyhow::Error {
+    if json
+        && let Some(object) = crate::commands::rejection::rename_rejection(&err)
+        && let Err(printing) = crate::commands::action::reject_json(object)
+    {
+        return printing;
+    }
+    if let DomainError::RenameIncomplete { failed, source } = &err {
+        let mut lines = format!("the rename failed part-way ({source}) and could not restore:");
+        for path in failed {
+            lines.push_str(&format!("\n  {path}"));
+        }
+        lines.push_str("\ncheck them by hand (version control has the previous content)");
+        return anyhow::anyhow!(lines);
+    }
+    err.into()
+}
+
+/// The `--json` shape: the plan, then `written` (the paths written, empty on
+/// a dry run and for a no-op), `index_stale` and `dry_run`.
+fn emit_rename_json(
+    plan: &RenamePlan,
+    written: &[cdno_core::path::VaultPath],
+    index_stale: bool,
+    dry_run: bool,
+) -> Result<()> {
+    let changes = |changes: &[Change]| -> Vec<serde_json::Value> {
+        changes
+            .iter()
+            .map(|c| match c {
+                Change::Address { count } => serde_json::json!({ "kind": "links", "count": count }),
+                Change::Field { key } => serde_json::json!({ "kind": "field", "key": key }),
+                Change::Alias => serde_json::json!({ "kind": "alias" }),
+                Change::LogLine => serde_json::json!({ "kind": "log_line" }),
+            })
+            .collect()
+    };
+    let warnings: Vec<serde_json::Value> = plan.warnings.iter().map(warning_json).collect();
+    let payload = serde_json::json!({
+        "dry_run": dry_run,
+        "target": plan.target.path.to_string(),
+        "from": plan.target.slug,
+        "to": plan.new_slug,
+        "found_by_former_name": plan.target.resolved_via_alias,
+        "moves": plan.moves.iter().map(|(from, to)| serde_json::json!({
+            "from": from.to_string(),
+            "to": to.to_string(),
+        })).collect::<Vec<_>>(),
+        "edits": plan.edits.iter().map(|e| serde_json::json!({
+            "path": e.path.to_string(),
+            "changes": changes(&e.changes),
+        })).collect::<Vec<_>>(),
+        "references": reference_totals(plan).0,
+        "notes": reference_totals(plan).1,
+        "warnings": warnings,
+        "plan_hash": plan.hash,
+        "written": written.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "index_stale": index_stale,
+    });
+    println!("{}", serde_json::to_string_pretty(&payload)?);
+    Ok(())
+}
+
+fn warning_json(warning: &RenameWarning) -> serde_json::Value {
+    match warning {
+        RenameWarning::FrozenPrefixAlreadyDiverged { path } => serde_json::json!({
+            "kind": "frozen_prefix_already_diverged",
+            "path": path.to_string(),
+            "message": warning_text(warning),
+        }),
+        RenameWarning::OldSlugAlreadyAnAlias { holder } => serde_json::json!({
+            "kind": "old_slug_already_an_alias",
+            "holder": holder.to_string(),
+            "message": warning_text(warning),
+        }),
+    }
+}
+
+fn warning_text(warning: &RenameWarning) -> String {
+    match warning {
+        RenameWarning::FrozenPrefixAlreadyDiverged { path } => format!(
+            "{path} already failed its archival check before this rename; it is rewritten anyway and stays flagged"
+        ),
+        RenameWarning::OldSlugAlreadyAnAlias { holder } => format!(
+            "the old slug is already an alias of {holder}; once this note lists it too the alias is shared and resolves to nothing"
+        ),
+    }
+}
+
+/// References rewritten (links plus fields) and the notes holding them.
+fn reference_totals(plan: &RenamePlan) -> (usize, usize) {
+    let mut references = 0;
+    let mut notes = 0;
+    for edit in &plan.edits {
+        let here: usize = edit
+            .changes
+            .iter()
+            .map(|c| match c {
+                Change::Address { count } => *count,
+                Change::Field { .. } => 1,
+                Change::Alias | Change::LogLine => 0,
+            })
+            .sum();
+        references += here;
+        notes += usize::from(here > 0);
+    }
+    (references, notes)
+}
+
+/// The preview, RFC 0007 §1.1: a `move` line per move, a `rewrite` line per
+/// note whose references change, the alias line, the log line, a totals line
+/// ending in the plan hash's first four characters, then the warnings.
+fn render_plan(plan: &RenamePlan) -> String {
+    let mut out = String::new();
+    if let Some(alias) = &plan.target.resolved_via_alias {
+        out.push_str(&format!("found by its former name `{alias}`\n"));
+    }
+    if plan.is_empty() {
+        out.push_str(&format!(
+            "nothing to do: `{}` already has the slug `{}`\n",
+            plan.target.slug, plan.new_slug
+        ));
+        return out;
+    }
+    for (from, to) in &plan.moves {
+        out.push_str(&format!("  move     {from} -> {to}\n"));
+    }
+    let width = plan
+        .edits
+        .iter()
+        .map(|e| e.path.to_string().len())
+        .max()
+        .unwrap_or(0);
+    for edit in &plan.edits {
+        let mut links = 0;
+        let mut keys: Vec<String> = Vec::new();
+        for change in &edit.changes {
+            match change {
+                Change::Address { count } => links += count,
+                Change::Field { key } => keys.push(format!("{key}:")),
+                Change::Alias | Change::LogLine => {}
+            }
+        }
+        let mut parts: Vec<String> = Vec::new();
+        if links > 0 {
+            parts.push(format!("{links} link{}", plural(links)));
+        }
+        if !keys.is_empty() {
+            parts.push(format!(
+                "{} field{} ({})",
+                keys.len(),
+                plural(keys.len()),
+                keys.join(", ")
+            ));
+        }
+        if !parts.is_empty() {
+            out.push_str(&format!(
+                "  rewrite  {:width$}  {}\n",
+                edit.path.to_string(),
+                parts.join(" / ")
+            ));
+        }
+    }
+    if plan
+        .edits
+        .iter()
+        .any(|e| e.changes.contains(&Change::Alias))
+    {
+        out.push_str(&format!(
+            "  alias    {} gains `{}`\n",
+            plan.moves.first().map_or(&plan.target.path, |(_, to)| to),
+            plan.target.slug
+        ));
+    }
+    for edit in &plan.edits {
+        if edit.changes.contains(&Change::LogLine)
+            && let Some(last) = edit.edits.last()
+        {
+            out.push_str(&format!("  log      {}\n", edit.path));
+            for line in last.replacement.trim().lines() {
+                out.push_str(&format!("             {line}\n"));
+            }
+        }
+    }
+    let (references, notes) = reference_totals(plan);
+    out.push_str(&format!(
+        "  {references} reference{} in {notes} note{} · plan {}…\n",
+        plural(references),
+        plural(notes),
+        plan.hash.chars().take(4).collect::<String>()
+    ));
+    for warning in &plan.warnings {
+        out.push_str(&format!("  warning: {}\n", warning_text(warning)));
+    }
+    out
+}
+
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
 }

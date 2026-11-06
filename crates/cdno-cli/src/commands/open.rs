@@ -160,6 +160,16 @@ pub fn pick_from_all(vault: &Vault, seed: Option<&str>) -> Result<cdno_core::pat
     pick_from_all_with(vault, seed, &mut real_picker)
 }
 
+/// [`pick_from_all`] over the notes `keep` accepts only: a verb that acts on
+/// one kind of note (`cdno note rename`) must not offer the rest.
+pub fn pick_from_filtered(
+    vault: &Vault,
+    seed: Option<&str>,
+    keep: &dyn Fn(&NoteCandidate) -> bool,
+) -> Result<cdno_core::path::VaultPath> {
+    pick_filtered_with(vault, seed, keep, &mut real_picker)
+}
+
 /// A note picker: offered `items`, its filter seeded with `seed`, it returns
 /// the chosen index, or `None` when the user cancelled. The real one is
 /// [`real_picker`]; tests supply a canned answer, since the real one needs a
@@ -175,17 +185,29 @@ fn pick_from_all_with(
     seed: Option<&str>,
     pick: Picker<'_>,
 ) -> Result<cdno_core::path::VaultPath> {
+    pick_filtered_with(vault, seed, &|_| true, pick)
+}
+
+fn pick_filtered_with(
+    vault: &Vault,
+    seed: Option<&str>,
+    keep: &dyn Fn(&NoteCandidate) -> bool,
+    pick: Picker<'_>,
+) -> Result<cdno_core::path::VaultPath> {
     // Unlike `drill_down`, which can silently decline on a narrow terminal
     // because its listing is already on screen, the picker *is* this command.
     // Declining would leave nothing at all, so say what to do instead.
     if !crate::prompt::picker_fits(crate::output::terminal_columns()) {
         bail!("terminal too narrow to draw the picker — pass a reference, or use `--list`");
     }
-    let candidates = vault
+    let candidates: Vec<NoteCandidate> = vault
         .list_note_candidates()
-        .context("listing notes in the vault")?;
+        .context("listing notes in the vault")?
+        .into_iter()
+        .filter(|c| keep(c))
+        .collect();
     if candidates.is_empty() {
-        bail!("this vault has no notes yet");
+        bail!("this vault has no notes to pick from");
     }
     match pick(&candidates, seed)? {
         Some(index) => Ok(candidates[index].path.clone()),
@@ -252,7 +274,25 @@ pub fn resolve_reporting(
     interactive: bool,
     prompted: &mut bool,
 ) -> Result<cdno_core::path::VaultPath> {
-    resolve_with(
+    let (path, via_alias) = resolve_with_alias(vault, reference, today, interactive, prompted)?;
+    if let Some(alias) = via_alias {
+        // stderr, so `$(cdno open --path …)` still captures only the path.
+        eprintln!("found by its former name `{alias}`");
+    }
+    Ok(path)
+}
+
+/// [`resolve_reporting`] without the former-name notice, handing the alias
+/// the reference matched (`None` for a stem or a path, or after a picker) to
+/// the caller to say in its own words.
+pub fn resolve_with_alias(
+    vault: &Vault,
+    reference: &str,
+    today: NaiveDate,
+    interactive: bool,
+    prompted: &mut bool,
+) -> Result<(cdno_core::path::VaultPath, Option<String>)> {
+    resolve_with_via(
         vault,
         reference,
         today,
@@ -285,6 +325,17 @@ fn resolve_with(
     prompted: &mut bool,
     pick: Picker<'_>,
 ) -> Result<cdno_core::path::VaultPath> {
+    resolve_with_via(vault, reference, today, interactive, prompted, pick).map(|(path, _)| path)
+}
+
+fn resolve_with_via(
+    vault: &Vault,
+    reference: &str,
+    today: NaiveDate,
+    interactive: bool,
+    prompted: &mut bool,
+    pick: Picker<'_>,
+) -> Result<(cdno_core::path::VaultPath, Option<String>)> {
     // A path outside the vault, or one containing `..`, is rejected by
     // `VaultPath` as a layer error. That is correct but unreadable — "path
     // must be relative" does not tell someone who typed a real path what to
@@ -300,14 +351,14 @@ fn resolve_with(
         .resolve_note_ref(reference, today)
         .context("resolving the note reference")?
     {
-        RefResolution::Resolved(note) => Ok(note.path),
+        RefResolution::Resolved(note) => Ok((note.path, note.resolved_via_alias)),
         RefResolution::Ambiguous(hits) => {
             // In a terminal, an ambiguity is a question rather than a dead
             // end: the candidates are already known, so offer exactly those.
             if interactive && crate::prompt::picker_fits(crate::output::terminal_columns()) {
                 *prompted = true;
                 return match pick(&hits, None)? {
-                    Some(index) => Ok(hits[index].path.clone()),
+                    Some(index) => Ok((hits[index].path.clone(), None)),
                     None => std::process::exit(0),
                 };
             }
@@ -332,7 +383,8 @@ fn resolve_with(
         } => {
             if interactive {
                 *prompted = true;
-                return pick_from_all_with(vault, Some(filter_seed(reference)), pick);
+                return pick_from_all_with(vault, Some(filter_seed(reference)), pick)
+                    .map(|path| (path, None));
             }
             let candidates = vault
                 .list_note_candidates()
