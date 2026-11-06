@@ -15,7 +15,9 @@ use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::EnergyLevel;
-use cdno_domain::vault::{Change, RenamePlan, RenameWarning, VaultSnapshot};
+use cdno_domain::vault::{
+    Change, RenamePlan, RenameWarning, VaultSnapshot, format_renamed_log_entry,
+};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
 const PROJECT: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nCalibrating.\n\n## Next Actions\n";
@@ -271,14 +273,26 @@ fn every_edit_differs_only_by_its_reference_edits() {
                     .collect()
             })
             .unwrap_or_default();
-        let inserts = edit
-            .changes
-            .iter()
-            .any(|c| matches!(c, Change::Alias | Change::LogLine));
+        let block_end = split_frontmatter(&edit.before).map(|(block, _)| {
+            block.as_ptr() as usize - edit.before.as_ptr() as usize + block.len()
+        });
+        let last = edit.edits.last().map(|e| e.range.clone());
         for e in &edit.edits {
             let address = spans.iter().any(|s| s.address == e.range);
             let field = fields.contains(&e.range);
-            let insertion = inserts && e.range.is_empty();
+            // An insertion is the alias line, at the end of the frontmatter
+            // block, or the log line, the last edit of today's note.
+            let alias = edit.changes.contains(&Change::Alias)
+                && e.range.is_empty()
+                && Some(e.range.start) == block_end
+                && e.replacement == "aliases: [old]\n";
+            let log_line = edit.changes.contains(&Change::LogLine)
+                && e.range.is_empty()
+                && Some(e.range.clone()) == last
+                && e.replacement.starts_with(
+                    "- **10:30**: renamed [[new]] \u{2014} Surrogate model\n  was: old\n",
+                );
+            let insertion = alias || log_line;
             assert!(
                 address || field || insertion,
                 "{}: edit {:?} -> {:?} is not a reference",
@@ -489,6 +503,148 @@ fn a_field_rewrite_that_changes_more_than_the_field_is_refused() {
             if *path == vp("actions/fit-the-baseline.md")),
         "{err:?}"
     );
+}
+
+#[test]
+fn a_field_the_rewrite_cannot_address_is_refused() {
+    let f = fixture();
+    // The parser reads `project` as `old`, but the value is not on the key's
+    // line, so the text rewrite finds nothing to rewrite.
+    f.write(
+        "actions/fit-the-baseline.md",
+        &ACTION.replace("project: old\n", "project:\n  old\n"),
+    );
+    let err = f.plan("old", "new").unwrap_err();
+    assert!(
+        matches!(&err, DomainError::ReferenceUnaddressable { path, key }
+            if *path == vp("actions/fit-the-baseline.md") && key == "project"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_folder_note_named_like_the_target_is_not_a_shared_stem() {
+    let f = fixture();
+    f.write(
+        "portfolios/old/_index.md",
+        "---\ntype: portfolio\nquestion: \"Is it old?\"\ncreated: 2026-05-01\n---\n\n# Is it old?\n",
+    );
+    let plan = f.plan("projects/old", "new").expect("not a shared stem");
+    // `[[old]]` still resolves to the project, so it is still rewritten.
+    assert!(
+        plan.edits
+            .iter()
+            .any(|e| e.path == vp("projects/emulator.md"))
+    );
+}
+
+#[test]
+fn a_question_rename_leaves_portfolio_rows_alone() {
+    let f = fixture();
+    f.write(
+        "questions/research/how-large-is-the-error.md",
+        "---\ntype: question\nstatus: open\ncreated: 2026-05-01\n---\n\n# How large is the error?\n",
+    );
+    // An evidence note whose `portfolio:` equals the question's slug, with
+    // no such portfolio: it names nothing that moves.
+    f.write(
+        "portfolios/how-large-is-the-error/2026-05-02-baseline.md",
+        "---\ntype: evidence\nportfolio: how-large-is-the-error\ncreated: 2026-05-02\n---\n\n# Baseline\n",
+    );
+    let plan = f
+        .plan("questions/research/how-large-is-the-error", "error-size")
+        .expect("plan");
+    assert!(
+        plan.edits
+            .iter()
+            .all(|e| !e.path.to_string().starts_with("portfolios/how-large")),
+        "{:?}",
+        plan.edits
+            .iter()
+            .map(|e| e.path.to_string())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn an_old_slug_already_another_notes_alias_is_a_warning() {
+    let f = fixture();
+    f.write(
+        "projects/emulator.md",
+        &EMULATOR.replace(
+            "created: 2026-04-02\n",
+            "created: 2026-04-02\naliases: [old]\n",
+        ),
+    );
+    let plan = f.plan("projects/old", "new").expect("still planned");
+    assert_eq!(
+        plan.warnings,
+        vec![RenameWarning::OldSlugAlreadyAnAlias {
+            holder: vp("projects/emulator.md")
+        }]
+    );
+}
+
+#[test]
+fn renamed_entry_has_was_then_reason_as_continuations() {
+    let head = "renamed [[new]] \u{2014} Surrogate model";
+    assert_eq!(
+        format_renamed_log_entry("new", "Surrogate model", "old", Some("a clearer name")),
+        format!("{head}\n  was: old\n  reason: a clearer name")
+    );
+    assert_eq!(
+        format_renamed_log_entry("new", "Surrogate model", "old", None),
+        format!("{head}\n  was: old")
+    );
+    // A reason that is blank once flattened writes no `reason:` line; an
+    // interior newline is flattened, so the entry stays one entry.
+    assert_eq!(
+        format_renamed_log_entry("new", "Surrogate model", "old", Some(" \n\t ")),
+        format!("{head}\n  was: old")
+    );
+    assert_eq!(
+        format_renamed_log_entry("new", "Surrogate\nmodel", "old", Some("a\nclearer name")),
+        format!("{head}\n  was: old\n  reason: a clearer name")
+    );
+    // `was:` is a copied value, never a link.
+    let entry = format_renamed_log_entry("projects/new", "Surrogate model", "old", None);
+    let was = entry
+        .lines()
+        .find(|l| l.trim_start().starts_with("was:"))
+        .unwrap();
+    assert!(!was.contains("[["), "{was}");
+}
+
+/// The one day the span property does not hold, recorded so a per-reference
+/// view (T24/T25) does not rely on it: when today's note has a hand-written
+/// section after `## Logs`, placing the line re-pins `## Logs` to the bottom,
+/// and the merged edit is one region that absorbs the day's address edits.
+/// `after` is still exactly `before` with the plan's edits.
+#[test]
+fn the_span_property_yields_to_a_hand_written_section_after_the_log_anchor() {
+    let f = fixture();
+    f.write(DAILY_TODAY, &format!("{DAY_10}\n## Scratch\nA thought.\n"));
+    let plan = f.plan("old", "new").expect("plan");
+    let today = plan
+        .edits
+        .iter()
+        .find(|e| e.path == vp(DAILY_TODAY))
+        .unwrap();
+    assert_eq!(
+        today.changes,
+        vec![Change::Address { count: 1 }, Change::LogLine]
+    );
+    assert!(differs_only_by(&today.before, &today.after, &today.edits));
+    assert_eq!(today.edits.len(), 1, "{:?}", today.edits);
+    let edit = &today.edits[0];
+    assert!(!edit.range.is_empty());
+    assert!(
+        wikilink_spans(&today.before)
+            .iter()
+            .all(|s| s.address != edit.range),
+        "the merged edit is not an address span"
+    );
+    assert!(today.after.contains("back on [[new]]"));
 }
 
 // ---------------------------------------------------------------------

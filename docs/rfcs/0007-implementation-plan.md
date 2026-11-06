@@ -857,7 +857,8 @@ trusted for planning) with a substring prefilter on the old slug deciding which 
 Order of refusals, each before any content is touched: `note_not_renamable { reason }` (type not
 in the v1 set of §5.2, or `archived` for `actions/_done/`), `invalid_slug`, `slug_taken` (against
 the snapshot's names, folders and aliases — not the index), `stem_shared` (another path in the
-snapshot has the same `candidate_slug`), and a no-op when `new_slug` equals the current slug
+snapshot has the same file stem — amended in review: only file stems take part in bare-link
+resolution, so a folder note named like the target is not a shared stem), and a no-op when `new_slug` equals the current slug
 (`Ok` with an empty plan). For every referrer: wikilink addresses through
 `rewrite_wikilink_addresses` with `names_target`, given the full target as `resolve_one` sees it (anchor included), = "resolves to the target in this snapshot"
 (so `[[old]]`, `[[projects/old]]`, `[[projects/_parked/old]]` and `[[old#…]]` all count, and an
@@ -870,7 +871,8 @@ through the same pure function `stage_daily_logs` uses to place a line, extracte
 note's address rewrites and its log line are one `after`. A referrer under `actions/_done/`
 whose snapshot no longer verifies (the masked hash when the row has one, the plain hash otherwise) adds `RenameWarning::FrozenPrefixAlreadyDiverged`
 and is still rewritten (§5.4). `hash` is `content_hash` over every path's `after` in path order
-with the log line's stamp and today's date excluded (§6.2).
+with the log line's stamp excluded; the date enters only through today's daily note's path, so a
+day rollover makes the plan stale by construction (§6.2, T20).
 
 *Amended in the T18 PR:* `plan_rename` is `pub` (the unit suite is an integration target and
 cannot reach `pub(in crate::vault)`), and the builder is `Vault::rename_snapshot`. The snapshot is
@@ -887,9 +889,17 @@ it through that): the anchor section comes from the daily template, and placing 
 `AmbiguousSlug` (pass a path, and `stem_shared` answers). The taken check skips the current slug,
 so a rename to it reaches `stem_shared` and then the no-op. A referrer's type is read from its
 `type:` scalar as text, so one whose frontmatter no longer parses still has its fields found and is
-refused by the drift guard instead of skipped. The date enters the hash only through today's daily
-note's path (T20's rollover rule); "today's date excluded" is read as "not hashed on its own".
-`VaultPath` derives `Ord` for the `BTreeMap` keys.
+refused by the drift guard instead of skipped. `VaultPath` derives `Ord` for the `BTreeMap` keys.
+
+*Amended in the T18 review:* a referrer whose §3.5 field the parser reads as the old slug but the
+text rewrite cannot address (a block or folded scalar, a value on the next line, a `!!str` tag) is
+refused with `DomainError::ReferenceUnaddressable { path, key }`, before any plan is returned; the
+person rewrites that field by hand first. A question rename does not rewrite `portfolio:` rows:
+the same-slug pair is refused as `folder` until T23, which adds the rows together with the folder
+move. `RenameWarning::OldSlugAlreadyAnAlias { holder }` reports an old slug that another note
+already lists as an alias (the appended alias would be shared and resolve to nothing). Overlapping
+edits for one path are `DomainError::RenameEditOverlap { path }`, an internal invariant with no
+agent-facing code.
 
 **Deliverable.** The module, the types, the planner, tests on `MemoryVaultStore`.
 
@@ -1092,6 +1102,9 @@ must cover the artefact moves without reading their bytes.
 correlation, `questions.rs:264`) renames both in the one transaction and the one plan (§5.3):
 two `moves`, one `hash`, one log line naming the question with an indented
 `portfolio: portfolios/<new>` continuation. Renaming the portfolio alone is the T22 refusal.
+The evidence notes' `portfolio:` rows join the question's field keys here (T18 leaves them out
+while the pair is refused), and T18's `folder` refusal of a question with a same-slug portfolio
+is lifted.
 
 **Deliverable.** The pairing, the continuation line, tests.
 
@@ -1193,6 +1206,8 @@ through `resolve_note_reference` (`context.rs:519`) and running through `verifie
 through the write path and does not nudge. `RenamePlanDto { target, new_slug, moves, referrers: [{path, addresses, fields: [{key}], log_line, alias}], warnings, plan_hash }`
 in `dto.rs`, returned whether or not it wrote, plus `written: bool` and `index_stale: bool`
 (§6.4). Codes in `rejection.rs`: `stem_shared`, `note_not_renamable { reason }`,
+`reference_drift { path, drift }`, `reference_unaddressable { path, key }` (added in the T18
+review),
 `behind_upstream { remedy }`, `git_operation_in_progress`, `stale_plan { expected, actual }`,
 `rename_incomplete { paths }` (`invalid_slug` and `slug_taken` exist from T4). The catalogue pins
 move 65 → 66 (`tests/server.rs:148`, `e2e_stdio.rs:227`, `e2e_http.rs:178`) and the prose that

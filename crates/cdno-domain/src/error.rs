@@ -132,6 +132,22 @@ pub enum DomainError {
         drift: cdno_core::frontmatter_edit::FrontmatterDrift,
     },
 
+    /// A referrer's reference field holds the old slug in a form the text
+    /// rewrite cannot address (a block or folded scalar, a value on the next
+    /// line, a tag): every reader sees the slug there, so renaming without it
+    /// would leave the note attached to a name that no longer exists
+    /// (RFC 0007 §5.4).
+    #[error(
+        "the '{key}' field in '{path}' names the note in a form the rename cannot rewrite; write it as `{key}: <slug>` on one line by hand first, then rename"
+    )]
+    ReferenceUnaddressable { path: VaultPath, key: String },
+
+    /// The rename planner computed two overlapping edits for one path. An
+    /// internal invariant of the planner, not a refusal the caller can act on
+    /// differently; nothing is written.
+    #[error("internal error: the rename planned overlapping edits in '{path}'")]
+    RenameEditOverlap { path: VaultPath },
+
     #[error("project cap reached ({current}/{max}), counted: {active_projects:?}")]
     ProjectCapReached {
         current: usize,

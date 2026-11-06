@@ -99,8 +99,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   (`Vault::rename_snapshot`) and writes nothing: every wikilink address that resolves to the note,
   every §3.5 field naming it, an `aliases:` entry on the note and a `renamed` line in today's daily
   log, as exactly one before/after edit per path, with the refusals `note_not_renamable`,
-  `invalid_slug`, `slug_taken` and `stem_shared` in that order, a frozen prefix that already failed
-  its snapshot reported as a warning, and a plan hash that ignores the log line's time. The
+  `invalid_slug`, `slug_taken` and `stem_shared` (by file stem) in that order, a referrer whose
+  reference field cannot be rewritten as text refused as `reference_unaddressable`, a frozen prefix
+  that already failed its snapshot or an old slug already another note's alias reported as a
+  warning, and a plan hash that ignores the log line's time. The
   `renamed` log-line formatter lands with it; folder notes are refused as `folder` for now; no
   surface calls it yet (RFC 0007 stage S5, #867).
 - `NoteType::reference_fields` and `NoteType::reference_keys` hold the RFC 0007 §3.5 reference table;

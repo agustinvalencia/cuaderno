@@ -278,7 +278,7 @@ pub(in crate::vault) const LOG_RENAMED_PREFIX: &str = "renamed ";
 /// a slug (the planner passes the note's current slug, which the slug rule
 /// keeps free of brackets). `title` goes through [`flatten_for_log`] and
 /// the reason through `flatten_reason`, so the entry stays one entry.
-pub(in crate::vault) fn format_renamed_log_entry(
+pub fn format_renamed_log_entry(
     new_link: &str,
     title: &str,
     old_slug: &str,

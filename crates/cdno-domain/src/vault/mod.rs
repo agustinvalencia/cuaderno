@@ -135,6 +135,9 @@ pub use portfolios::PortfolioSummary;
 // Exported for the unit suite, which pins the paused entry's exact shape.
 #[doc(hidden)]
 pub use projects::actions::format_action_paused_log_entry;
+// Exported for the unit suite, which pins the renamed entry's exact shape.
+#[doc(hidden)]
+pub use log::format_renamed_log_entry;
 pub use projects::{
     ActionListEntry, AttachedAction, ClosedProjectEntry, HolderChange, LOG_HOLDER_PREFIX,
     LinkedCommitment, NO_HOLDER, OpenAction, OpenItems, OpenItemsHash, OpenItemsReport,

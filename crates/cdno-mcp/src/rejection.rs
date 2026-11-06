@@ -589,11 +589,17 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         | DomainError::MigrationStampInvalid { .. } => return None,
 
         // The rename planner's refusals (RFC 0007 §5.2, §5.4). No MCP tool
-        // reaches the planner yet; the `rename_note` tool (T26) gives each
-        // its code.
+        // reaches the planner yet; the `rename_note` tool (T26) gives them
+        // their codes: `note_not_renamable`, `stem_shared`, `reference_drift`
+        // and `reference_unaddressable`.
         DomainError::NoteNotRenamable { .. }
         | DomainError::StemShared { .. }
-        | DomainError::ReferenceDrift { .. } => return None,
+        | DomainError::ReferenceDrift { .. }
+        | DomainError::ReferenceUnaddressable { .. } => return None,
+        // An internal invariant of the planner: overlapping edits for one
+        // path. Nothing the caller passes differently changes it, so it never
+        // gets a code.
+        DomainError::RenameEditOverlap { .. } => return None,
 
         // A slug the caller typed (RFC 0007 §5.7, §6.2). The keys and the
         // `why` / `holder` / `kind` rendering match the CLI's `slug_rejection`

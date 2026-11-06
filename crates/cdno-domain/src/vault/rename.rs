@@ -137,6 +137,11 @@ pub enum RenameWarning {
     /// snapshot (neither hash verifies) before this rename: it is still
     /// rewritten, and the rename neither repairs nor hides it (§5.4).
     FrozenPrefixAlreadyDiverged { path: VaultPath },
+    /// The old slug is already an alias of `holder`, another note: once the
+    /// renamed note lists it too, the alias is shared and resolves to
+    /// nothing, so the old links it was meant to keep working (in an ignored
+    /// file, on another clone, typed later) dangle.
+    OldSlugAlreadyAnAlias { holder: VaultPath },
 }
 
 impl Vault {
@@ -213,16 +218,23 @@ impl Vault {
     /// 2. [`DomainError::InvalidSlug`] — `new_slug` breaks the slug rule;
     /// 3. [`DomainError::SlugTaken`] — another note's stem or folder, or
     ///    any note's alias, in the snapshot;
-    /// 4. [`DomainError::StemShared`] — another note shares the old slug;
+    /// 4. [`DomainError::StemShared`] — another note has the same file stem
+    ///    (a folder note named like it does not: it is addressed by path);
     /// 5. then a rename to the current slug is `Ok` with an empty plan.
+    ///
+    /// Two refusals come from the referrers themselves, while planning and
+    /// before any plan is returned: [`DomainError::ReferenceUnaddressable`]
+    /// and [`DomainError::ReferenceDrift`]. [`DomainError::RenameEditOverlap`]
+    /// is an internal invariant, not a refusal.
     ///
     /// Then every note mentioning the old slug (or one of the note's
     /// aliases) is planned: each wikilink whose full target (anchor
     /// included) resolves to the note in this snapshot has its address's
     /// last segment rewritten; each §3.5 field whose target type is the
-    /// note's (and, for a question, the `portfolio:` rows of its
-    /// same-slug portfolio) has a value equal to the old slug rewritten,
-    /// in its own quoting; and the frontmatter after the field rewrite must
+    /// note's has a value equal to the old slug rewritten, in its own
+    /// quoting ([`DomainError::ReferenceUnaddressable`] when the parser
+    /// reads the old slug under such a key but the text rewrite finds no
+    /// value to rewrite); and the frontmatter after the field rewrite must
     /// differ from the frontmatter after the address rewrite only at those
     /// keys ([`DomainError::ReferenceDrift`] otherwise). The note gains the
     /// old slug in `aliases:`, and today's daily note the `renamed` line
@@ -273,10 +285,14 @@ impl Vault {
             });
         }
 
-        // 4. Shared stem.
+        // 4. Shared stem: another note with the same **file stem**, the only
+        // name the bare-link rule matches on, so the only way a link to the
+        // note can resolve to neither. A folder note named like it is
+        // addressed by its folder path and is not a shared stem.
+        let target_stem = target_path.as_path().file_stem();
         let others: Vec<VaultPath> = sorted
             .iter()
-            .filter(|p| **p != target_path && candidate_slug(p).as_deref() == Some(&old_slug))
+            .filter(|p| **p != target_path && p.as_path().file_stem() == target_stem)
             .cloned()
             .collect();
         if !others.is_empty() {
@@ -302,6 +318,23 @@ impl Vault {
         let new_path = sibling_path(&target_path, new_slug)?;
         let moves = vec![(target_path.clone(), new_path.clone())];
 
+        // The old slug already an alias of another note: once the note lists
+        // it too, the alias is shared and resolves to nothing, so it rescues
+        // no straggler. Worth saying; not worth refusing (lint reports the
+        // shared alias).
+        let mut warnings = Vec::new();
+        let mut alias_holders: Vec<&VaultPath> = Vec::new();
+        for (alias, holder) in &snapshot.aliases {
+            if *alias == old_slug && *holder != target_path && !alias_holders.contains(&holder) {
+                alias_holders.push(holder);
+            }
+        }
+        warnings.extend(alias_holders.into_iter().map(|holder| {
+            RenameWarning::OldSlugAlreadyAnAlias {
+                holder: holder.clone(),
+            }
+        }));
+
         // The names a link to the note can end on: its stem, its folder,
         // and every alias it declares. A cheap gate before resolution, and
         // the prefilter's needles.
@@ -326,7 +359,6 @@ impl Vault {
         let daily_path = daily_note_path(at.date())?;
         let mut edits: BTreeMap<VaultPath, PlannedEdit> = BTreeMap::new();
         let mut hashed: BTreeMap<VaultPath, String> = BTreeMap::new();
-        let mut warnings = Vec::new();
 
         for (path, before) in &snapshot.contents {
             let is_target = *path == target_path;
@@ -365,6 +397,19 @@ impl Vault {
                     let (_, field_edits) =
                         rewrite_frontmatter_scalar(block, key, &old_slug, new_slug);
                     if field_edits.is_empty() {
+                        // No scalar site, but the parser (which every reader
+                        // goes through) may still read the old slug there:
+                        // a block or folded scalar, a value on the next line,
+                        // a tag. Refuse rather than leave the note attached
+                        // to a name that no longer exists.
+                        if frontmatter_json(before).is_some_and(|fm| {
+                            fm.get(key).and_then(|v| v.as_str()) == Some(&old_slug)
+                        }) {
+                            return Err(DomainError::ReferenceUnaddressable {
+                                path: path.clone(),
+                                key: key.to_owned(),
+                            });
+                        }
                         continue;
                     }
                     all.extend(field_edits.into_iter().map(|e| shift(e, base)));
@@ -381,10 +426,7 @@ impl Vault {
             }
             all.sort_by_key(|e| (e.range.start, e.range.end));
             if all.windows(2).any(|w| w[1].range.start < w[0].range.end) {
-                return Err(not_renamable(
-                    path,
-                    "its references overlap in a way the rename cannot rewrite".to_owned(),
-                ));
+                return Err(DomainError::RenameEditOverlap { path: path.clone() });
             }
             let mut after = apply(before, &all);
 
@@ -648,11 +690,12 @@ fn renamable_type(
 }
 
 /// The target types whose §3.5 fields follow a rename of a note of type
-/// `builtin`: its own, and for a question its same-slug portfolio's (the
-/// evidence `portfolio:` rows), since the pair is renamed together.
+/// `builtin`: its own. A question's same-slug portfolio (the evidence
+/// `portfolio:` rows) joins when the pair is renamed together (T23); until
+/// then the pair is refused, and a `portfolio:` value equal to a lone
+/// question's slug names no note that moves, so it is left alone.
 fn field_keys_for(builtin: Option<NoteType>) -> Vec<NoteType> {
     match builtin {
-        Some(NoteType::Question) => vec![NoteType::Question, NoteType::Portfolio],
         Some(t) => vec![t],
         None => Vec::new(),
     }
@@ -739,7 +782,12 @@ fn note_title(content: &str) -> Option<String> {
 
 /// Byte offset of `inner`, a subslice of `outer`, within it.
 fn offset_in(outer: &str, inner: &str) -> usize {
-    inner.as_ptr() as usize - outer.as_ptr() as usize
+    let (o, i) = (outer.as_ptr() as usize, inner.as_ptr() as usize);
+    debug_assert!(
+        i >= o && i + inner.len() <= o + outer.len(),
+        "offset_in: inner is not a subslice of outer"
+    );
+    i - o
 }
 
 fn shift(edit: AddressEdit, base: usize) -> AddressEdit {
