@@ -306,12 +306,11 @@ impl Vault {
         // slug is the note's own name, not a taken one: a rename to it is
         // the shared-stem check and then the no-op below.
         //
-        // Ignored markdown files count too, and names are compared without
-        // case: the filesystems a vault lives on (macOS and Windows by
-        // default) may not tell `Other.md` from `other.md`, so writing
-        // either would overwrite the other, and a rename that only changes
-        // case would write the note over itself and then delete it. The
-        // note's own stem is therefore taken by a case variant of it.
+        // Ignored markdown files count too: no link reaches them, but the
+        // name is about to become a file beside them. Names compare
+        // exactly, as resolution and `unique_slug` compare them. The case
+        // risk (a filesystem that cannot tell `Other.md` from `other.md`)
+        // is the store's to answer, and `ensure_destinations_free` asks it.
         let mut sorted: Vec<VaultPath> = snapshot.paths.iter().cloned().collect();
         sorted.sort();
         let mut on_disk: Vec<VaultPath> = sorted
@@ -329,29 +328,27 @@ impl Vault {
                 .cloned(),
         );
         if new_slug != old_slug
-            && let Some((holder, kind)) = taken_ignoring_case(&taken, new_slug)
+            && let Some((holder, kind)) = taken.get(new_slug)
         {
             return Err(DomainError::SlugTaken {
                 slug: new_slug.to_owned(),
-                holder,
-                kind,
+                holder: holder.clone(),
+                kind: *kind,
             });
         }
 
         // 4. Shared stem: another note with the same **file stem**, the only
         // name the bare-link rule matches on, so the only way a link to the
         // note can resolve to neither. A folder note named like it is
-        // addressed by its folder path and is not a shared stem. Ignored
-        // files and case variants count, for the reason above.
-        let stem_of = |p: &VaultPath| {
-            p.as_path()
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_lowercase())
-        };
-        let target_stem = stem_of(&target_path);
-        let others: Vec<VaultPath> = on_disk
+        // addressed by its folder path and is not a shared stem. This check
+        // is about links, so it mirrors resolution: exact stems, over the
+        // indexed paths only. Resolution neither folds case nor sees an
+        // ignored file, so a case variant or an ignored file elsewhere
+        // cannot make a link to the note resolve to neither.
+        let target_stem = target_path.as_path().file_stem();
+        let others: Vec<VaultPath> = sorted
             .iter()
-            .filter(|p| **p != target_path && stem_of(p) == target_stem)
+            .filter(|p| **p != target_path && p.as_path().file_stem() == target_stem)
             .cloned()
             .collect();
         if !others.is_empty() {
@@ -903,46 +900,41 @@ fn failed_path(error: &cdno_core::error::StoreError) -> Option<VaultPath> {
     VaultPath::new(raw.as_str()).ok()
 }
 
-/// The holder of `name` in `taken`, compared without case (see the taken
-/// check in [`Vault::plan_rename`]): a stem or folder ahead of an alias, as
-/// in [`taken_names_in`], then the first holder in path order.
-fn taken_ignoring_case(
-    taken: &std::collections::HashMap<String, (VaultPath, TakenBy)>,
-    name: &str,
-) -> Option<(VaultPath, TakenBy)> {
-    let wanted = name.to_lowercase();
-    let rank = |kind: TakenBy| match kind {
-        TakenBy::Stem | TakenBy::Folder => 0,
-        TakenBy::Alias => 1,
-    };
-    taken
-        .iter()
-        .filter(|(key, _)| key.to_lowercase() == wanted)
-        .map(|(_, (holder, kind))| (holder.clone(), *kind))
-        .min_by(|a, b| {
-            rank(a.1)
-                .cmp(&rank(b.1))
-                .then_with(|| a.0.as_path().cmp(b.0.as_path()))
-        })
-}
-
 /// Refuse a plan whose move would write over a file the store already
-/// holds (RFC 0007 §5.2): a case variant on a filesystem that does not
-/// tell names apart, a file the snapshot did not list, one that appeared
-/// since. The planner's taken check catches what the snapshot shows; this
-/// asks the store itself, so the write never overwrites a note.
+/// holds (RFC 0007 §5.2): one the snapshot did not list, one that appeared
+/// since, and a case variant on a filesystem that cannot tell names apart
+/// (macOS and Windows by default), where writing `other.md` would land on
+/// `Other.md` and a rename that only changes case would write the note
+/// over itself and then delete it. This is the only check that carries the
+/// filesystem's case rule, so a case-only rename is refused exactly where
+/// the filesystem cannot tell the names apart. The holder is named as the
+/// store lists it: the entry of the destination's folder whose name equals
+/// the destination's ignoring case, else the destination itself.
 fn ensure_destinations_free(
     store: &dyn cdno_core::store::VaultStore,
     plan: &RenamePlan,
 ) -> Result<(), DomainError> {
     for (_, to) in &plan.moves {
-        if store.exists(to)? {
-            return Err(DomainError::SlugTaken {
-                slug: plan.new_slug.clone(),
-                holder: to.clone(),
-                kind: TakenBy::Stem,
-            });
+        if !store.exists(to)? {
+            continue;
         }
+        let wanted = to.to_string().to_lowercase();
+        let parent = to
+            .as_path()
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map_or_else(|| Ok(VaultPath::root()), VaultPath::new)?;
+        let holder = store
+            .list_dir(&parent)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|p| p.to_string().to_lowercase() == wanted)
+            .unwrap_or_else(|| to.clone());
+        return Err(DomainError::SlugTaken {
+            slug: plan.new_slug.clone(),
+            holder,
+            kind: TakenBy::Stem,
+        });
     }
     Ok(())
 }

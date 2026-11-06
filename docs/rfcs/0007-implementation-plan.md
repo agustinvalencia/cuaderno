@@ -1020,17 +1020,23 @@ paths are read from the rollback's `StoreError`s, which each name their path. `R
 behind the lock's back, so it cannot tell a snapshot under the lock from one before it; the
 concurrency probe uses a second vault over the same directory whose write honours the lock instead.
 
-*Amended after the T20 review (round 1):* the write never asked the disk, so a case variant, an
+*Amended after the T20 review (rounds 1 and 2):* the write never asked the disk, so a case variant, an
 ignored file or a file the snapshot did not list at the new path was overwritten with `Ok`. Both
 verbs now refuse a move destination the store reports as existing (`slug_taken { kind: stem }`,
-the file as holder), `rename_note` under the lock after planning and before staging. The snapshot
-also records the ignored markdown files (`VaultSnapshot::ignored`; planning of referrers is
-unchanged), and the taken and shared-stem checks count them and compare names without case, since
-the filesystems a vault lives on may not tell them apart: a rename that changes only case is
-refused. `RenameIncomplete` carries the write's `source`, and a rollback failure that names no
-path is the transaction error. Probes added: `an_ignored_file_at_the_destination_is_taken`,
-`a_case_variant_at_the_destination_is_taken`, `a_case_only_rename_is_refused` (a case-insensitive
-store double), `a_file_appearing_at_the_destination_is_taken` and
+the holder named as the store lists it), `rename_note` under the lock after planning and before
+staging. That store check is the only guard carrying the filesystem's case rule: a case variant at
+the destination, or a rename that only changes case, is refused exactly where the filesystem cannot
+tell the names apart, and allowed where it can. The snapshot also records the ignored markdown
+files (`VaultSnapshot::ignored`; planning of referrers is unchanged), and the taken check counts
+them. Both the taken and the shared-stem checks compare names exactly, as link resolution and
+`unique_slug` do; the shared-stem check stays over the indexed paths only, since resolution sees no
+ignored file (round 2). `RenameIncomplete` carries the write's `source`, and a rollback failure
+that names no path is the transaction error. Probes added: `an_ignored_file_at_the_destination_is_taken`,
+`a_case_variant_at_the_destination_is_taken` and `a_case_only_rename_is_refused` (a case-insensitive
+store double), `a_case_variant_elsewhere_is_not_a_shared_stem`,
+`a_case_variant_in_another_folder_is_not_taken`,
+`a_case_only_rename_works_where_the_filesystem_tells_the_names_apart`,
+`a_file_appearing_at_the_destination_is_taken` and
 `a_leftover_link_already_reading_the_new_slug_is_not_an_edit`.
 
 **Deliverable.** The two verbs, the outcome, the error variants, tests.

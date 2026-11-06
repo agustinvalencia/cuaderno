@@ -15,9 +15,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   note at its new path with the old slug in `aliases:`, every referrer, today's `renamed` line, and
   the index rows of the moved note and every project map it rewrites. A rollback that fails part-way
   is `RenameIncomplete` naming each path; an index failure after the files landed is success with
-  `index_stale`. A destination that already exists is refused, including an ignored file or one
-differing only in case. A note may take one of its own former names back: the alias leaves its list (a slug
-  is never its own alias), while another note's alias stays taken. No CLI or MCP surface yet.
+  `index_stale`. A destination the store already holds is refused, an ignored file included, and so
+  is a case variant of it where the filesystem cannot tell the names apart. A note may take one of
+  its own former names back: the alias leaves its list (a slug is never its own alias), while
+  another note's alias stays taken. No CLI or MCP surface yet.
 - **Lint reads the `renamed` log line** (RFC 0007 T19, closes #868). The near-miss check now covers
   `renamed [[new]] — Title` lines (a malformed stamp or an ASCII hyphen for the em dash), and a `was:`
   continuation under one that contains a `[[` link is a warning. `renamed` is not a focus marker:

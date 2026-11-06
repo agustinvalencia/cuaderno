@@ -1283,13 +1283,16 @@ fn vault_over(store: Arc<dyn VaultStore>, notes: &[(&str, &str)], ignore: &[&str
 }
 
 /// Both verbs refuse renaming `target` to `new_slug` with `slug_taken {
-/// kind: stem }` held by `holder`, and the store is left as it was.
+/// kind: stem }` held by `holder`, and the store is left as it was. The
+/// planner never asks the store: `by_snapshot` says whether its taken check
+/// refuses too, or only the store's existence check does.
 fn assert_destination_taken(
     vault: &Vault,
     store: &dyn VaultStore,
     target: &str,
     new_slug: &str,
     holder: &str,
+    by_snapshot: bool,
 ) {
     let before = files_of(store);
     let refused = |err: DomainError| {
@@ -1299,6 +1302,13 @@ fn assert_destination_taken(
             "{target} -> {new_slug}: {err:?}"
         );
     };
+    let snapshot = vault.rename_snapshot().expect("snapshot");
+    let planned = vault.plan_rename(&snapshot, target, new_slug, None, at());
+    if by_snapshot {
+        refused(planned.unwrap_err());
+    } else {
+        planned.expect("the snapshot's names compare exactly");
+    }
     refused(
         vault
             .rename_preview(target, new_slug, None, at())
@@ -1323,22 +1333,13 @@ fn an_ignored_file_at_the_destination_is_taken() {
         ],
         &["projects/scratch.md"],
     );
-    assert_destination_taken(&vault, &*store, "old", "scratch", "projects/scratch.md");
-
-    // An ignored file sharing the note's stem shares it all the same.
-    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
-    let vault = vault_over(
-        Arc::clone(&store),
-        &[
-            ("projects/old.md", PROJECT),
-            ("scratch/old.md", "Notes kept out of the vault.\n"),
-        ],
-        &["scratch/**"],
-    );
-    let err = vault.rename_preview("old", "new", None, at()).unwrap_err();
-    assert!(
-        matches!(&err, DomainError::StemShared { others, .. } if *others == vec![vp("scratch/old.md")]),
-        "{err:?}"
+    assert_destination_taken(
+        &vault,
+        &*store,
+        "old",
+        "scratch",
+        "projects/scratch.md",
+        true,
     );
 }
 
@@ -1356,36 +1357,62 @@ fn a_case_variant_at_the_destination_is_taken() {
         ],
         &[],
     );
-    assert_destination_taken(&vault, &*store, "old", "other", "projects/Other.md");
+    assert_destination_taken(&vault, &*store, "old", "other", "projects/Other.md", false);
+}
 
-    // A case variant of the note's own stem elsewhere is a shared stem.
+#[test]
+fn a_case_variant_elsewhere_is_not_a_shared_stem() {
+    // Resolution compares stems exactly, so `[[model]]` reaches only the
+    // project whatever the question's file is called: renaming the project
+    // is not refused as a shared stem, on either kind of store.
+    let question = "---\ntype: question\nstatus: open\ncreated: 2026-05-01\n---\n\n# Model\n";
+    let notes = [
+        ("projects/model.md", PROJECT),
+        ("questions/research/Model.md", question),
+    ];
+    for store in [
+        Arc::new(MemoryVaultStore::new()) as Arc<dyn VaultStore>,
+        Arc::new(CaseInsensitiveStore::new()) as Arc<dyn VaultStore>,
+    ] {
+        let vault = vault_over(Arc::clone(&store), &notes, &[]);
+        let plan = vault
+            .rename_preview("projects/model", "fresh", None, at())
+            .expect("not a shared stem");
+        assert_eq!(
+            plan.moves,
+            vec![(vp("projects/model.md"), vp("projects/fresh.md"))]
+        );
+    }
+
+    // A rename *to* the name is still refused where the filesystem cannot
+    // tell it from a case variant at the destination: the store says so.
     let store: Arc<dyn VaultStore> = Arc::new(CaseInsensitiveStore::new());
     let vault = vault_over(
         Arc::clone(&store),
         &[
             ("projects/old.md", PROJECT),
             (
-                "questions/research/Old.md",
-                "---\ntype: question\nstatus: open\ncreated: 2026-05-01\n---\n\n# Old\n",
+                "projects/Model.md",
+                &EMULATOR.replace("# Emulator", "# Model"),
             ),
         ],
         &[],
     );
-    let err = vault
-        .rename_preview("projects/old", "new", None, at())
-        .unwrap_err();
-    assert!(
-        matches!(&err, DomainError::StemShared { others, .. }
-            if *others == vec![vp("questions/research/Old.md")]),
-        "{err:?}"
-    );
+    assert_destination_taken(&vault, &*store, "old", "model", "projects/Model.md", false);
 }
 
 #[test]
 fn a_case_only_rename_is_refused() {
     let store: Arc<dyn VaultStore> = Arc::new(CaseInsensitiveStore::new());
     let vault = vault_over(Arc::clone(&store), &[("projects/Old.md", PROJECT)], &[]);
-    assert_destination_taken(&vault, &*store, "projects/Old", "old", "projects/Old.md");
+    assert_destination_taken(
+        &vault,
+        &*store,
+        "projects/Old",
+        "old",
+        "projects/Old.md",
+        false,
+    );
 }
 
 #[test]
@@ -1445,4 +1472,47 @@ fn a_leftover_link_already_reading_the_new_slug_is_not_an_edit() {
     assert_eq!(emulator.changes, vec![Change::Address { count: 1 }]);
     assert!(emulator.after.contains("Waiting on [[old]]."));
     assert!(emulator.after.contains("Hand-off from [[old]]"));
+}
+
+#[test]
+fn a_case_variant_in_another_folder_is_not_taken() {
+    // Names compare exactly, as resolution and `create_project` compare
+    // them: a stem differing only in case in another folder never shares
+    // a file with the destination.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let question =
+        "---\ntype: question\nstatus: open\ncreated: 2026-05-01\n---\n\n# Kernel trick\n";
+    let vault = vault_over(
+        Arc::clone(&store),
+        &[
+            ("projects/old.md", PROJECT),
+            ("questions/research/Kernel-Trick.md", question),
+        ],
+        &[],
+    );
+    let outcome = vault
+        .rename_note("old", "kernel-trick", None, None, at())
+        .expect("not taken");
+    assert_eq!(outcome.written[0], vp("projects/kernel-trick.md"));
+    assert_eq!(
+        store
+            .read_file(&vp("questions/research/Kernel-Trick.md"))
+            .unwrap(),
+        question
+    );
+}
+
+#[test]
+fn a_case_only_rename_works_where_the_filesystem_tells_the_names_apart() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let vault = vault_over(Arc::clone(&store), &[("projects/Old.md", PROJECT)], &[]);
+    let plan = vault
+        .rename_preview("projects/Old", "old", None, at())
+        .expect("preview");
+    vault
+        .rename_note("projects/Old", "old", None, Some(&plan.hash), at())
+        .expect("rename");
+    assert!(!store.exists(&vp("projects/Old.md")).unwrap());
+    let note = store.read_file(&vp("projects/old.md")).unwrap();
+    assert!(note.contains("aliases: [Old]\n"), "{note}");
 }
