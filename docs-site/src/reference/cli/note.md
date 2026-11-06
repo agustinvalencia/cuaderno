@@ -98,7 +98,7 @@ notes, stewardships and commitments are refused (`note_not_renamable`).
 
 | Argument | Description |
 |----------|-------------|
-| `[NOTE]` | The note to rename, resolved as `cdno open` resolves a reference: a path, a slug, a former slug or `type:slug`. Omitted in an interactive session, a picker offers the renamable notes only. |
+| `[NOTE]` | The note to rename, resolved as `cdno open` resolves a reference: a path, a slug, a former slug or `type:slug`. Omitted in an interactive session, a picker offers the renamable notes only; so does the picker an ambiguous or mistyped reference opens (a question and its same-slug portfolio resolve to the question). |
 
 ### Options
 
@@ -116,7 +116,7 @@ notes, stewardships and commitments are refused (`note_not_renamable`).
   rewrite  journal/2026/daily/2026-11-06.md           2 links
   alias    projects/surrogate-calibration.md gains `calibrate-the-surrogate-model`
   log      journal/2026/daily/2026-11-06.md
-             - **05:27**: renamed [[surrogate-calibration]] — Calibrate the surrogate model
+             renamed [[surrogate-calibration]] — Calibrate the surrogate model
                was: calibrate-the-surrogate-model
                reason: the derived slug was too long
   2 references in 1 note · plan 31d6…
@@ -124,13 +124,13 @@ notes, stewardships and commitments are refused (`note_not_renamable`).
 
 A `rewrite` line reads `N links`, `M fields (project:, …)` or both (`2 links / 1 field (project:)`).
 When the reference matched a former name, the first line is ``found by its former name `old` ``.
-Warnings follow the totals line. In an interactive session, anything that was prompted (the note, the
+The `log` block is the entry as it will be appended, without its time stamp. Warnings follow the totals line. In an interactive session, anything that was prompted (the note, the
 slug) brings the preview and a confirm. The write is then given the preview's plan hash: it writes
 exactly what was shown, or, if a referrer changed in between, refuses with `stale_plan` and writes
 nothing. A rename to the note's current slug writes nothing.
 
-With `--json`: the plan (`target`, `from`, `to`, `moves`, `edits` with their `changes`, `references`,
-`notes`, `warnings`, `plan_hash`) plus `written` (the paths written, empty on a dry run), `index_stale`
+With `--json`: the plan (`target`, `from`, `new_slug`, `moves`, `edits` with their `changes`, `references`,
+`notes`, `log_line`, `warnings`, `plan_hash`) plus `written` (a bool), `index_stale`
 and `dry_run`. Refusals are [rejection objects](../json-output.md#rename-refusals) and exit `1`; a
 rollback that itself failed (`rename_incomplete`) lists the paths to check by hand, one per line in text.
 

@@ -274,7 +274,8 @@ pub fn resolve_reporting(
     interactive: bool,
     prompted: &mut bool,
 ) -> Result<cdno_core::path::VaultPath> {
-    let (path, via_alias) = resolve_with_alias(vault, reference, today, interactive, prompted)?;
+    let (path, via_alias) =
+        resolve_with_alias(vault, reference, today, interactive, prompted, &|_| true)?;
     if let Some(alias) = via_alias {
         // stderr, so `$(cdno open --path …)` still captures only the path.
         eprintln!("found by its former name `{alias}`");
@@ -284,13 +285,15 @@ pub fn resolve_reporting(
 
 /// [`resolve_reporting`] without the former-name notice, handing the alias
 /// the reference matched (`None` for a stem or a path, or after a picker) to
-/// the caller to say in its own words.
+/// the caller to say in its own words. `keep` limits every picker and hint
+/// the resolution opens (an ambiguity, a miss) to the notes the verb acts on.
 pub fn resolve_with_alias(
     vault: &Vault,
     reference: &str,
     today: NaiveDate,
     interactive: bool,
     prompted: &mut bool,
+    keep: &dyn Fn(&NoteCandidate) -> bool,
 ) -> Result<(cdno_core::path::VaultPath, Option<String>)> {
     resolve_with_via(
         vault,
@@ -298,6 +301,7 @@ pub fn resolve_with_alias(
         today,
         interactive,
         prompted,
+        keep,
         &mut real_picker,
     )
 }
@@ -325,7 +329,16 @@ fn resolve_with(
     prompted: &mut bool,
     pick: Picker<'_>,
 ) -> Result<cdno_core::path::VaultPath> {
-    resolve_with_via(vault, reference, today, interactive, prompted, pick).map(|(path, _)| path)
+    resolve_with_via(
+        vault,
+        reference,
+        today,
+        interactive,
+        prompted,
+        &|_| true,
+        pick,
+    )
+    .map(|(path, _)| path)
 }
 
 fn resolve_with_via(
@@ -334,6 +347,7 @@ fn resolve_with_via(
     today: NaiveDate,
     interactive: bool,
     prompted: &mut bool,
+    keep: &dyn Fn(&NoteCandidate) -> bool,
     pick: Picker<'_>,
 ) -> Result<(cdno_core::path::VaultPath, Option<String>)> {
     // A path outside the vault, or one containing `..`, is rejected by
@@ -353,6 +367,15 @@ fn resolve_with_via(
     {
         RefResolution::Resolved(note) => Ok((note.path, note.resolved_via_alias)),
         RefResolution::Ambiguous(hits) => {
+            // Only the hits the verb can act on are offered; when that
+            // leaves one (a question and its same-slug portfolio), it is the
+            // answer. When it leaves none, the full list stands and the
+            // verb refuses the pick with its own reason.
+            let kept: Vec<NoteCandidate> = hits.iter().filter(|c| keep(c)).cloned().collect();
+            let hits = if kept.is_empty() { hits } else { kept };
+            if let [only] = hits.as_slice() {
+                return Ok((only.path.clone(), None));
+            }
             // In a terminal, an ambiguity is a question rather than a dead
             // end: the candidates are already known, so offer exactly those.
             if interactive && crate::prompt::picker_fits(crate::output::terminal_columns()) {
@@ -383,12 +406,15 @@ fn resolve_with_via(
         } => {
             if interactive {
                 *prompted = true;
-                return pick_from_all_with(vault, Some(filter_seed(reference)), pick)
+                return pick_filtered_with(vault, Some(filter_seed(reference)), keep, pick)
                     .map(|path| (path, None));
             }
-            let candidates = vault
+            let candidates: Vec<NoteCandidate> = vault
                 .list_note_candidates()
-                .context("listing notes in the vault")?;
+                .context("listing notes in the vault")?
+                .into_iter()
+                .filter(|c| keep(c))
+                .collect();
             bail!(not_found_message(reference, &candidates))
         }
     }

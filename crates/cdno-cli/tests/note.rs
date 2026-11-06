@@ -1292,25 +1292,32 @@ fn dry_run_prints_the_plan_and_writes_nothing() {
 fn a_rename_writes_the_previewed_plan() {
     let dir = tempdir().unwrap();
     init_rename_vault(dir.path());
-    let preview = rename_cmd(dir.path())
-        .args(["old", "--to", "surrogate-model", "--dry-run", "--json"])
-        .assert()
-        .success();
-    let planned: serde_json::Value = serde_json::from_slice(&preview.get_output().stdout).unwrap();
+    let args = [
+        "old",
+        "--to",
+        "surrogate-model",
+        "--reason",
+        "a shorter name",
+    ];
+    let json = |extra: &[&str]| -> serde_json::Value {
+        let out = rename_cmd(dir.path())
+            .args(args)
+            .args(extra)
+            .arg("--json")
+            .assert()
+            .success();
+        serde_json::from_slice(&out.get_output().stdout).unwrap()
+    };
+    let planned = json(&["--dry-run"]);
+    assert_eq!(planned["written"], false);
+    let written = json(&[]);
+    assert_eq!(written["written"], true);
 
-    rename_cmd(dir.path())
-        .args([
-            "old",
-            "--to",
-            "surrogate-model",
-            "--reason",
-            "a shorter name",
-        ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(
-            "Renamed `old` to `surrogate-model`.",
-        ));
+    // What was written is what the dry run planned: the same moves and the
+    // same edits. (Not the hashes: the log line carries a minute stamp.)
+    assert_eq!(written["moves"], planned["moves"]);
+    assert_eq!(written["edits"], planned["edits"]);
+    assert_eq!(written["log_line"], planned["log_line"]);
 
     assert!(!dir.path().join("projects/old.md").exists());
     let map = fs::read_to_string(dir.path().join("projects/surrogate-model.md")).unwrap();
@@ -1323,15 +1330,6 @@ fn a_rename_writes_the_previewed_plan() {
     assert!(daily.contains("renamed [[surrogate-model]]"), "{daily}");
     assert!(daily.contains("was: old"), "{daily}");
     assert!(daily.contains("reason: a shorter name"), "{daily}");
-
-    // What was written is what the dry run planned: the same edits.
-    let moved: Vec<&str> = planned["moves"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|m| m["to"].as_str().unwrap())
-        .collect();
-    assert_eq!(moved, ["projects/surrogate-model.md"]);
 }
 
 #[test]
@@ -1345,10 +1343,10 @@ fn json_carries_the_plan_and_written() {
     let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
     assert_eq!(v["dry_run"], false);
     assert_eq!(v["from"], "old");
-    assert_eq!(v["to"], "surrogate-model");
+    assert_eq!(v["new_slug"], "surrogate-model");
     assert_eq!(v["index_stale"], false);
     assert_eq!(v["references"], 2);
-    assert_eq!(v["written"][0], "projects/surrogate-model.md");
+    assert_eq!(v["written"], true);
     assert!(v["plan_hash"].as_str().unwrap().len() > 4);
     assert_eq!(v["moves"][0]["from"], "projects/old.md");
     let kinds: Vec<&str> = v["edits"]
@@ -1372,7 +1370,7 @@ fn dry_run_json_says_so_and_writes_nothing() {
         .success();
     let v: serde_json::Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
     assert_eq!(v["dry_run"], true);
-    assert_eq!(v["written"].as_array().unwrap().len(), 0);
+    assert_eq!(v["written"], false);
     assert_eq!(vault_bytes(dir.path()), before);
 }
 
@@ -1491,12 +1489,34 @@ fn an_incomplete_rename_lists_its_paths() {
     };
     let object = cdno_cli::commands::rejection::rename_rejection(&err).unwrap();
     assert_eq!(object["code"], "rename_incomplete");
-    assert_eq!(object["details"]["failed"][0], "projects/a.md");
+    assert_eq!(object["details"]["paths"][0], "projects/a.md");
 }
 
 /// `script(1)` pty driver, as `tests/project.rs` has it.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_in_pty(root: &Path, args: &[&str], keys: &[&str]) -> String {
+    run_in_pty_steps(
+        root,
+        args,
+        keys.iter()
+            .map(|k| PtyStep::Send((*k).to_owned()))
+            .collect(),
+    )
+}
+
+/// One step of a pty session.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+enum PtyStep {
+    /// Type these keys (after a pause).
+    Send(String),
+    /// Wait until the command has drawn this text.
+    WaitFor(&'static str),
+    /// Run a closure, e.g. to change the vault from outside.
+    Do(Box<dyn FnOnce()>),
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_in_pty_steps(root: &Path, args: &[&str], steps: Vec<PtyStep>) -> String {
     use std::io::{Read, Write};
     use std::process::{Command, Stdio};
     use std::sync::{Arc, Mutex};
@@ -1546,9 +1566,26 @@ fn run_in_pty(root: &Path, args: &[&str], keys: &[&str]) -> String {
         }
     });
     let deadline = Instant::now() + Duration::from_secs(20);
-    for key in keys {
-        std::thread::sleep(Duration::from_millis(700));
-        let _ = stdin.write_all(key.as_bytes()).and_then(|()| stdin.flush());
+    for step in steps {
+        match step {
+            PtyStep::Send(key) => {
+                std::thread::sleep(Duration::from_millis(700));
+                let _ = stdin.write_all(key.as_bytes()).and_then(|()| stdin.flush());
+            }
+            PtyStep::WaitFor(text) => loop {
+                let seen = String::from_utf8_lossy(&drawn.lock().unwrap()).into_owned();
+                if seen.contains(text) {
+                    break;
+                }
+                if Instant::now() > deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("`{text}` was not drawn within 20s; it drew:\n{seen}");
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            },
+            PtyStep::Do(action) => action(),
+        }
     }
     loop {
         if child.try_wait().unwrap().is_some() {
@@ -1588,16 +1625,75 @@ fn run_in_pty(root: &Path, args: &[&str], keys: &[&str]) -> String {
 fn the_picker_lists_only_renamable_notes() {
     let dir = tempdir().unwrap();
     init_rename_vault(dir.path());
+    let v = vault_arg(dir.path());
     let today = chrono::Local::now()
         .date_naive()
         .format("%Y-%m-%d")
         .to_string();
+    // A question with its same-slug portfolio, and an archived action.
+    cdno()
+        .args(["--vault", &v, "question", "create"])
+        .args([
+            "--domain",
+            "research",
+            "--text",
+            "Does a surrogate beat the simulator?",
+        ])
+        .args(["--slug", "surrogate-accuracy"])
+        .assert()
+        .success();
+    cdno()
+        .args(["--vault", &v, "portfolio", "create"])
+        .args(["--question", "surrogate-accuracy"])
+        .assert()
+        .success();
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "action",
+            "add",
+            "--project",
+            "old",
+            "--title",
+            "Characterise",
+            "--energy",
+            "deep",
+            "--note",
+        ])
+        .assert()
+        .success();
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "action",
+            "complete",
+            "--project",
+            "old",
+            "--query",
+            "characterise",
+        ])
+        .assert()
+        .success();
     // Esc leaves the picker: it drew its rows and nothing was chosen.
     let seen = run_in_pty(dir.path(), &["note", "rename"], &["\u{1b}"]);
     assert!(seen.contains("(project)"), "projects are offered:\n{seen}");
     assert!(
+        seen.contains("(question)"),
+        "questions are offered:\n{seen}"
+    );
+    assert!(
         !seen.contains("(daily)") && !seen.contains(&today),
         "a daily note is not offered:\n{seen}"
+    );
+    assert!(
+        !seen.contains("(portfolio)"),
+        "a portfolio a question shares is not offered:\n{seen}"
+    );
+    assert!(
+        !seen.contains("(action)"),
+        "an archived action is not offered:\n{seen}"
     );
 }
 
@@ -1639,4 +1735,172 @@ fn to_is_prompted_and_the_preview_confirms() {
         "{seen}"
     );
     assert!(dir.path().join("projects/surrogate-model.md").exists());
+}
+
+/// The text between the `log` line and the totals line of a preview.
+fn log_block(preview: &str) -> String {
+    let mut block = Vec::new();
+    let mut inside = false;
+    for line in preview.lines() {
+        if line.starts_with("  log ") {
+            inside = true;
+            continue;
+        }
+        if inside {
+            if line.starts_with("             ") {
+                block.push(line.trim_start().to_owned());
+            } else {
+                break;
+            }
+        }
+    }
+    block.join("\n")
+}
+
+#[test]
+fn the_preview_shows_the_log_line_when_no_daily_note_exists() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .args(["--vault", &vault_arg(dir.path()), "project", "create"])
+        .args(["--title", "Old", "--context", "work"])
+        .assert()
+        .success();
+    // The first command of a day: remove today's daily note.
+    let today = chrono::Local::now().date_naive();
+    let daily = dir.path().join(format!(
+        "journal/{}/daily/{}.md",
+        today.format("%Y"),
+        today.format("%Y-%m-%d")
+    ));
+    fs::remove_file(&daily).unwrap();
+    let before = vault_bytes(dir.path());
+
+    let out = rename_cmd(dir.path())
+        .args(["old", "--to", "surrogate-model", "--reason", "shorter"])
+        .arg("--dry-run")
+        .assert()
+        .success();
+    let text = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert_eq!(
+        log_block(&text),
+        "renamed [[surrogate-model]] — Old\nwas: old\nreason: shorter",
+        "{text}"
+    );
+    assert!(!text.contains("type: daily"), "no scaffold:\n{text}");
+    assert_eq!(vault_bytes(dir.path()), before);
+}
+
+#[test]
+fn the_preview_shows_the_log_line_under_a_hand_written_section() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    // A section below `## Logs` links the note, so the log entry is not the
+    // last edit of the daily note.
+    let today = chrono::Local::now().date_naive();
+    let daily = dir.path().join(format!(
+        "journal/{}/daily/{}.md",
+        today.format("%Y"),
+        today.format("%Y-%m-%d")
+    ));
+    let mut text = fs::read_to_string(&daily).unwrap();
+    text.push_str("\n## Notes\n\nSee [[old]] for the plan.\n");
+    fs::write(&daily, text).unwrap();
+
+    let out = rename_cmd(dir.path())
+        .args(["old", "--to", "surrogate-model", "--dry-run"])
+        .assert()
+        .success();
+    let text = String::from_utf8(out.get_output().stdout.clone()).unwrap();
+    assert_eq!(
+        log_block(&text),
+        "renamed [[surrogate-model]] — Old\nwas: old",
+        "{text}"
+    );
+}
+
+#[test]
+fn open_reports_a_former_name_on_stderr() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    rename_cmd(dir.path())
+        .args(["old", "--to", "surrogate-model"])
+        .assert()
+        .success();
+    let by_old = cdno()
+        .args(["--vault", &vault_arg(dir.path()), "open", "old", "--path"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("found by its former name `old`"))
+        .stdout(predicate::str::contains("projects/surrogate-model.md"));
+    drop(by_old);
+    cdno()
+        .args(["--vault", &vault_arg(dir.path()), "open"])
+        .args(["surrogate-model", "--path"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("former name").not());
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn a_change_during_the_confirm_prompt_is_a_stale_plan() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    let daily = {
+        let today = chrono::Local::now().date_naive();
+        dir.path().join(format!(
+            "journal/{}/daily/{}.md",
+            today.format("%Y"),
+            today.format("%Y-%m-%d")
+        ))
+    };
+    let seen = run_in_pty_steps(
+        dir.path(),
+        &["note", "rename", "old"],
+        vec![
+            PtyStep::WaitFor("New slug"),
+            PtyStep::Send("surrogate-model\r".to_owned()),
+            PtyStep::WaitFor("Proceed?"),
+            PtyStep::Do(Box::new(move || {
+                let mut text = fs::read_to_string(&daily).unwrap();
+                text.push_str("\nAlso [[old]].\n");
+                fs::write(&daily, text).unwrap();
+            })),
+            PtyStep::Send("y\r".to_owned()),
+        ],
+    );
+    assert!(
+        seen.contains("the vault changed since the rename was previewed"),
+        "{seen}"
+    );
+    assert!(dir.path().join("projects/old.md").exists(), "nothing moved");
+    assert!(!dir.path().join("projects/surrogate-model.md").exists());
+}
+
+#[test]
+fn a_question_and_its_portfolio_resolve_to_the_question() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    let v = vault_arg(dir.path());
+    cdno()
+        .args(["--vault", &v, "question", "create", "--domain", "research"])
+        .args(["--text", "Does a surrogate beat the simulator?"])
+        .args(["--slug", "surrogate-accuracy"])
+        .assert()
+        .success();
+    cdno()
+        .args(["--vault", &v, "portfolio", "create"])
+        .args(["--question", "surrogate-accuracy"])
+        .assert()
+        .success();
+    // The bare slug names two notes; only the question is renamable, so it
+    // is the answer rather than an ambiguity.
+    rename_cmd(dir.path())
+        .args(["surrogate-accuracy", "--to", "surrogate-error", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "move     questions/research/surrogate-accuracy.md -> questions/research/surrogate-error.md",
+        ));
 }

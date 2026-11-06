@@ -90,7 +90,7 @@ Nothing is written on a refusal. Do not retry with a `-2` of your own; ask for a
   "dry_run": false,
   "target": "projects/old.md",
   "from": "old",
-  "to": "surrogate-model",
+  "new_slug": "surrogate-model",
   "found_by_former_name": null,
   "moves": [{ "from": "projects/old.md", "to": "projects/surrogate-model.md" }],
   "edits": [
@@ -99,14 +99,15 @@ Nothing is written on a refusal. Do not retry with a `-2` of your own; ask for a
   ],
   "references": 2,
   "notes": 1,
+  "log_line": "renamed [[surrogate-model]] — Old\n  was: old",
   "warnings": [],
   "plan_hash": "5c380833154ebb71",
-  "written": ["projects/surrogate-model.md", "journal/2026/daily/2026-11-06.md"],
+  "written": true,
   "index_stale": false
 }
 ```
 
-A `changes` entry is `links` (with `count`), `field` (with `key`), `alias` or `log_line`. A refusal
+`written` is whether anything was written (`false` on `--dry-run` and for a rename to the current slug); `log_line` is the unstamped `renamed` entry appended to today's daily note. The MCP `rename_note` tool returns the same plan fields. A `changes` entry is `links` (with `count`), `field` (with `key`), `alias` or `log_line`. A refusal
 prints the usual `{code, message, details}` object and exits `1`, writing nothing:
 
 | `code` | `details` | When |
@@ -117,7 +118,7 @@ prints the usual `{code, message, details}` object and exits `1`, writing nothin
 | `stale_plan` | `expected`, `actual` | The vault changed between the preview and the write. Preview again. |
 | `reference_drift` | `path`, `drift` | Rewriting the references in `path` would change more than them. |
 | `reference_unaddressable` | `path`, `key` | A reference field names the note in a form the rewrite cannot address. |
-| `rename_incomplete` | `failed`, `source` | A write failed and the rollback could not restore the paths in `failed`; check them by hand. |
+| `rename_incomplete` | `paths`, `source` | A write failed and the rollback could not restore the paths in `paths`; check them by hand. |
 
 ## `search --json` → an array of hits
 

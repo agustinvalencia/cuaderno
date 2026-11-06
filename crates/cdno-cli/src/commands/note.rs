@@ -409,6 +409,9 @@ fn rename(
     json: bool,
 ) -> Result<()> {
     let mut prompted = false;
+    // Every picker this verb opens offers only what the domain would not
+    // refuse as `note_not_renamable`.
+    let renamable = |c: &cdno_core::index::NoteCandidate| vault.is_renamable(&c.path, &c.note_type);
     // The reference goes to the domain as the person typed it, so a former
     // name is reported as one; only a picked note is passed as its path.
     let target = match args.note {
@@ -420,6 +423,7 @@ fn rename(
                 at.date(),
                 interactive,
                 &mut prompted,
+                &renamable,
             )?;
             if prompted {
                 path.to_string()
@@ -429,7 +433,6 @@ fn rename(
         }
         None if interactive => {
             prompted = true;
-            let renamable = renamable_filter(vault)?;
             crate::commands::open::pick_from_filtered(vault, None, &renamable)?.to_string()
         }
         None => {
@@ -448,7 +451,7 @@ fn rename(
         .map_err(|e| rename_refusal(e, json))?;
     if args.dry_run {
         if json {
-            return emit_rename_json(&plan, &[], false, true);
+            return emit_rename_json(&plan, false, false, true);
         }
         println!("Dry run: nothing written.");
         print!("{}", render_plan(&plan));
@@ -462,7 +465,12 @@ fn rename(
         .rename_note(&target, &to, reason, Some(plan.hash.as_str()), at)
         .map_err(|e| rename_refusal(e, json))?;
     if json {
-        return emit_rename_json(&outcome.plan, &outcome.written, outcome.index_stale, false);
+        return emit_rename_json(
+            &outcome.plan,
+            !outcome.written.is_empty(),
+            outcome.index_stale,
+            false,
+        );
     }
     if outcome.plan.is_empty() {
         println!(
@@ -484,50 +492,6 @@ fn rename(
         );
     }
     Ok(())
-}
-
-/// Which picker rows `cdno note rename` offers: the notes the domain would
-/// not refuse as `note_not_renamable` (RFC 0007 §5.2): projects, questions,
-/// active action notes, portfolio folder notes no question shares a slug
-/// with, and custom notes. Dailies, weeklies, evidence, archived actions and
-/// the other built-ins are not offered.
-fn renamable_filter(
-    vault: &Vault,
-) -> Result<impl Fn(&cdno_core::index::NoteCandidate) -> bool + use<>> {
-    use std::collections::HashSet;
-    let candidates = vault
-        .list_note_candidates()
-        .context("listing notes in the vault")?;
-    let question_slugs: HashSet<String> = candidates
-        .iter()
-        .filter(|c| c.note_type == "question")
-        .map(|c| crate::commands::open::slug_of(&c.path))
-        .collect();
-    let custom: HashSet<String> = candidates
-        .iter()
-        .map(|c| c.note_type.clone())
-        .filter(|name| {
-            name.parse::<cdno_domain::note_type::NoteType>().is_err()
-                && vault
-                    .type_registry()
-                    .resolve(name)
-                    .is_some_and(|descriptor| descriptor.is_custom())
-        })
-        .collect();
-    Ok(move |c: &cdno_core::index::NoteCandidate| {
-        let path = c.path.as_path();
-        match c.note_type.as_str() {
-            "project" | "question" => true,
-            "action" => !path.starts_with(cdno_core::paths::ACTIONS_DONE),
-            "portfolio" => {
-                path.file_name().is_some_and(|n| n == "_index.md")
-                    && path.parent().and_then(Path::parent)
-                        == Some(Path::new(cdno_core::paths::PORTFOLIOS))
-                    && !question_slugs.contains(&crate::commands::open::slug_of(&c.path))
-            }
-            other => custom.contains(other),
-        }
-    })
 }
 
 /// A domain refusal of the rename, as the error the handler returns. Under
@@ -552,11 +516,12 @@ pub fn rename_refusal(err: DomainError, json: bool) -> anyhow::Error {
     err.into()
 }
 
-/// The `--json` shape: the plan, then `written` (the paths written, empty on
-/// a dry run and for a no-op), `index_stale` and `dry_run`.
+/// The `--json` shape: the plan, then `written` (whether anything was
+/// written: false on a dry run and for a no-op), `index_stale` and
+/// `dry_run`. The MCP tool prints the same plan fields.
 fn emit_rename_json(
     plan: &RenamePlan,
-    written: &[cdno_core::path::VaultPath],
+    written: bool,
     index_stale: bool,
     dry_run: bool,
 ) -> Result<()> {
@@ -576,7 +541,7 @@ fn emit_rename_json(
         "dry_run": dry_run,
         "target": plan.target.path.to_string(),
         "from": plan.target.slug,
-        "to": plan.new_slug,
+        "new_slug": plan.new_slug,
         "found_by_former_name": plan.target.resolved_via_alias,
         "moves": plan.moves.iter().map(|(from, to)| serde_json::json!({
             "from": from.to_string(),
@@ -590,7 +555,8 @@ fn emit_rename_json(
         "notes": reference_totals(plan).1,
         "warnings": warnings,
         "plan_hash": plan.hash,
-        "written": written.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "log_line": plan.log_line,
+        "written": written,
         "index_stale": index_stale,
     });
     println!("{}", serde_json::to_string_pretty(&payload)?);
@@ -708,14 +674,17 @@ fn render_plan(plan: &RenamePlan) -> String {
             plan.target.slug
         ));
     }
-    for edit in &plan.edits {
-        if edit.changes.contains(&Change::LogLine)
-            && let Some(last) = edit.edits.last()
-        {
-            out.push_str(&format!("  log      {}\n", edit.path));
-            for line in last.replacement.trim().lines() {
-                out.push_str(&format!("             {line}\n"));
-            }
+    if let Some(entry) = &plan.log_line {
+        let daily = plan
+            .edits
+            .iter()
+            .find(|e| e.changes.contains(&Change::LogLine));
+        out.push_str(&format!(
+            "  log      {}\n",
+            daily.map_or_else(String::new, |e| e.path.to_string())
+        ));
+        for line in entry.lines() {
+            out.push_str(&format!("             {line}\n"));
         }
     }
     let (references, notes) = reference_totals(plan);

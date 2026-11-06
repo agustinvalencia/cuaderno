@@ -19,7 +19,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   (`slug_taken`, `invalid_slug`, `note_not_renamable`, `stem_shared`, `stale_plan`,
   `reference_drift`, `reference_unaddressable`, `rename_incomplete`). A reference that matched a
   former name says so (`found by its former name `old``), on the preview and for `cdno open` and
-  `note revise` on stderr. `--skip-sync-check` is accepted and takes effect with the freshness check.
+  `note revise` on stderr. `RenamePlan` carries the `log_line` it appends. `--skip-sync-check` is accepted and takes effect with the freshness check.
 - **Renaming a question with its portfolio** (RFC 0007 T23, closes #872). Renaming a question whose
   slug a portfolio shares (`portfolios/<slug>/_index.md` exists) renames both in the one plan and
   the one transaction: the question's flat note, then the portfolio's folder moves as in T22, under

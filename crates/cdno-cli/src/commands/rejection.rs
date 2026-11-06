@@ -87,7 +87,7 @@ pub fn rename_rejection(err: &cdno_domain::error::DomainError) -> Option<serde_j
         DomainError::RenameIncomplete { failed, source } => (
             "rename_incomplete",
             serde_json::json!({
-                "failed": failed.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "paths": failed.iter().map(ToString::to_string).collect::<Vec<_>>(),
                 "source": source.to_string(),
             }),
         ),
