@@ -90,9 +90,10 @@ the `project:` / `portfolio:` style fields that name it, an `aliases:` entry for
 note itself, and one `renamed` line in today's daily log. The old name keeps resolving through the alias.
 
 Renamable: projects, questions (a question whose slug a portfolio shares moves the portfolio with
-it), active action notes, portfolios and custom notes. A portfolio with a same-slug question is
-renamed through the question. Dailies, weeklies, monthlies, evidence, tracking, inbox items, archived action
-notes, stewardships and commitments are refused (`note_not_renamable`).
+it), active action notes, portfolios and custom notes kept as single files. A portfolio with a
+same-slug question is renamed through the question. Dailies, weeklies, monthlies, evidence,
+tracking, inbox items, archived action notes, stewardships, commitments, a custom note kept as a
+folder and a note with no `type` are refused (`note_not_renamable`).
 
 ### Arguments
 
