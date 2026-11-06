@@ -1138,8 +1138,9 @@ must cover the artefact moves without reading their bytes.
   `a_portfolio_rename_prunes_only_at_or_below_its_folder_and_never_fails_on_it`.
 - `cargo test -p cdno-cli --test portfolio` (real files, driven through
   `cdno_domain::bootstrap::open_vault` until the verb lands in T24): `an_emptied_folder_is_pruned`
-  and `a_folder_with_a_stray_file_is_left` (a `.DS_Store`-like file: the folder stays, the rename
-  still succeeded).
+  and `a_folder_with_a_stray_file_is_left` (a `.DS_Store`-like file that arrives in the old folder
+  after the rename's snapshot was taken: the folder stays, holding it, and the rename still
+  succeeded).
 - Mutation: `move_file` for the evidence notes; the resolve assertion fails.
 
 **Correct means.** A portfolio is one note to the person and moves as one.
@@ -1150,7 +1151,11 @@ other file through the `Move` op, markdown among them (a document filed in an ar
 ignored file), since none of them has an index row. A link that reaches the `_index.md` other than
 through its folder path (an alias) is rewritten to the folder form `portfolios/<new>`, never to a
 bare `[[<new>]]`, which would dangle. A destination `portfolios/<new>/` holding any file is
-refused as `slug_taken { kind: folder }`; one holding no file at any depth is free. After a good
+refused as `slug_taken { kind: folder }`. One holding no file at any depth is pruned by the
+write, under the lock and before staging, and refused if anything is left at its name (a case
+variant that survived, a symlink); the preview, which may not prune, treats it as free only when
+the store lists it as a directory under exactly its name. Every move's source must be reachable
+through the store (`metadata`), so a dangling or outside-vault symlink is refused before the write. After a good
 commit the prune lists every directory under `portfolios/<old>/` (`VaultStore::walk_dirs`, so an
 empty subfolder no file passed through goes too), tries them deepest first and then the folder,
 never above it. After a failed commit the same prune runs on `portfolios/<new>/`, so the folders

@@ -704,7 +704,7 @@ impl Vault {
     ) -> Result<RenamePlan, DomainError> {
         let snapshot = self.rename_snapshot()?;
         let plan = self.plan_rename(&snapshot, target, new_slug, reason, at)?;
-        ensure_destinations_free(&*self.store, &plan)?;
+        ensure_destinations_free(&*self.store, &plan, false)?;
         Ok(plan)
     }
 
@@ -751,7 +751,11 @@ impl Vault {
     /// [`rename_preview`](Self::rename_preview), as
     /// [`DomainError::SlugTaken`] (`kind: stem`, the file as holder), before
     /// anything is staged; for a portfolio, so is a `portfolios/<new>/`
-    /// folder holding any file (`kind: folder`, the folder as holder).
+    /// folder holding any file (`kind: folder`, the folder as holder). An
+    /// empty one is pruned here, under the lock, and refused when anything
+    /// is left at its name (a symlink, a case variant that survived); the
+    /// preview, which may not prune, refuses one the store does not list as
+    /// a directory under exactly that name.
     ///
     /// A failed file write rolls the written files back. When the rollback
     /// itself fails for some path, the result is
@@ -770,7 +774,7 @@ impl Vault {
         let mut tx = self.transaction()?; // lock held from here to the commit (#196)
         let snapshot = self.rename_snapshot()?;
         let plan = self.plan_rename(&snapshot, target, new_slug, reason, at)?;
-        ensure_destinations_free(&*self.store, &plan)?;
+        ensure_destinations_free(&*self.store, &plan, true)?;
         if let Some(expected) = expected_plan
             && expected != plan.hash
         {
@@ -1038,14 +1042,31 @@ fn failed_path(error: &cdno_core::error::StoreError) -> Option<VaultPath> {
 /// the destination's ignoring case, else the destination itself.
 ///
 /// A portfolio's folder moves as one, so a `portfolios/<new>/` holding any
-/// file (a folder of non-notes the snapshot's names cannot show, a case
-/// variant) is refused the same way, with `kind: folder`: the move never
-/// merges into a folder's contents. One holding no file at any depth (left
-/// by hand, or by an attempt whose rollback could not prune it) holds
-/// nothing to merge with, and is free.
+/// file (a folder of non-notes the snapshot's names cannot show) is refused
+/// the same way, with `kind: folder`: the move never merges into a folder's
+/// contents. One that holds no file at any depth (left by hand, or by an
+/// attempt whose rollback could not prune it) holds nothing to merge with,
+/// but its **name** still matters: on a filesystem that cannot tell names
+/// apart, an empty `portfolios/New/` would take every file while the index
+/// and the links say `new/`, and a symlink named `new` would have them
+/// written through it. So:
+///
+/// - with `prune` (the write, under the lock, before staging) the empty
+///   tree is pruned deepest first, and the folder is free only when nothing
+///   is left at its name afterwards (a removed case variant is recreated in
+///   the right case by the first write); a symlink, or whatever else
+///   survives, is refused;
+/// - without it (the preview, which holds no lock and must not change the
+///   vault) the folder is free only when the store lists it as a real
+///   directory under exactly its name, and refused otherwise.
+///
+/// Every move's source is checked too: one the store cannot reach (a
+/// dangling symlink, one pointing outside the vault) is refused with the
+/// store's error rather than at the write.
 fn ensure_destinations_free(
     store: &dyn cdno_core::store::VaultStore,
     plan: &RenamePlan,
+    prune: bool,
 ) -> Result<(), DomainError> {
     let taken = |to: &VaultPath, kind: TakenBy| -> Result<DomainError, DomainError> {
         let wanted = to.to_string().to_lowercase();
@@ -1069,11 +1090,29 @@ fn ensure_destinations_free(
     if portfolio_folder(&plan.target.path).is_some()
         && let Some(new_dir) = plan.moves.first().and_then(|(_, to)| portfolio_folder(to))
         && store.exists(&new_dir)?
-        && !store.walk_dir(&new_dir)?.is_empty()
     {
-        return Err(taken(&new_dir, TakenBy::Folder)?);
+        if !store.walk_dir(&new_dir)?.is_empty() {
+            return Err(taken(&new_dir, TakenBy::Folder)?);
+        }
+        let free = if prune {
+            prune_folder_tree(store, &new_dir);
+            !store.exists(&new_dir)?
+        } else {
+            let parent = VaultPath::new(paths::PORTFOLIOS)?;
+            store.walk_dirs(&parent)?.contains(&new_dir)
+        };
+        if !free {
+            return Err(taken(&new_dir, TakenBy::Folder)?);
+        }
     }
-    for (_, to) in &plan.moves {
+    for (from, to) in &plan.moves {
+        // The source must be a file the store can reach: a symlink that
+        // dangles or points outside the vault is listed by the walk as a
+        // file, planned as a `Move`, and would otherwise fail only at the
+        // write. `metadata` resolves it (confinement included) without
+        // reading a byte, so it is refused here, before the lock, with the
+        // store's own `OutsideVault` / `NotFound`.
+        store.metadata(from)?;
         if store.exists(to)? {
             return Err(taken(to, TakenBy::Stem)?);
         }

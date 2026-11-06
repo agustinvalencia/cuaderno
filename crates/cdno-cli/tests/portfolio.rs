@@ -899,6 +899,9 @@ fn vault_over(root: &Path, store: std::sync::Arc<HookedFs>) -> cdno_domain::Vaul
         .0
 }
 
+/// A `.DS_Store`-like file that arrives in the old folder after the
+/// rename's snapshot was taken, so no plan could list it: the folder stays,
+/// holding it, and the rename still succeeded.
 #[test]
 fn a_folder_with_a_stray_file_is_left() {
     let dir = vault();
@@ -1010,4 +1013,121 @@ fn an_empty_destination_folder_is_free() {
         matches!(err, cdno_domain::error::DomainError::SlugTaken { .. }),
         "{err:?}"
     );
+}
+
+#[test]
+fn an_empty_case_variant_destination_is_pruned_or_refused() {
+    let dir = vault();
+    let root = dir.path();
+    seed_renamable_portfolio(root);
+    fs::create_dir_all(root.join("portfolios/New")).unwrap();
+    let case_insensitive = root.join("portfolios/new").exists();
+
+    let opened = cdno_domain::bootstrap::open_vault(root).expect("open");
+    let outcome = opened.vault.rename_note(
+        "portfolio:old",
+        "new",
+        None,
+        None,
+        moment(2026, 10, 14, 9, 0),
+    );
+    drop(opened);
+    let listed: Vec<String> = fs::read_dir(root.join("portfolios"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    match outcome {
+        Ok(_) => {
+            // The files are under a folder listed as exactly `new`.
+            assert!(listed.contains(&"new".to_owned()), "{listed:?}");
+            assert!(!listed.contains(&"New".to_owned()), "{listed:?}");
+            assert!(root.join("portfolios/new/_index.md").is_file());
+            assert_lint_clean(root);
+        }
+        Err(err) => assert!(
+            matches!(err, cdno_domain::error::DomainError::SlugTaken { .. }),
+            "{err:?}"
+        ),
+    }
+    if case_insensitive {
+        // This filesystem (the macOS default) cannot tell `New` from
+        // `new`: the empty variant is pruned under the lock and the folder
+        // recreated in the right case.
+        assert!(listed.contains(&"new".to_owned()), "{listed:?}");
+    }
+}
+
+#[test]
+fn the_preview_refuses_an_empty_case_variant_it_may_not_prune() {
+    let dir = vault();
+    let root = dir.path();
+    seed_renamable_portfolio(root);
+    fs::create_dir_all(root.join("portfolios/New")).unwrap();
+    let opened = cdno_domain::bootstrap::open_vault(root).expect("open");
+    let preview =
+        opened
+            .vault
+            .rename_preview("portfolio:old", "new", None, moment(2026, 10, 14, 9, 0));
+    if root.join("portfolios/new").exists() {
+        let err = preview.expect_err("a case variant is not the folder's name");
+        assert!(
+            matches!(err, cdno_domain::error::DomainError::SlugTaken { .. }),
+            "{err:?}"
+        );
+    } else {
+        preview.expect("a different folder on a case-sensitive filesystem");
+    }
+    assert!(
+        root.join("portfolios/New").is_dir(),
+        "the preview prunes nothing"
+    );
+
+    // An empty folder under exactly the name is free for the preview too.
+    fs::remove_dir(root.join("portfolios/New")).unwrap();
+    fs::create_dir_all(root.join("portfolios/new/figures")).unwrap();
+    opened
+        .vault
+        .rename_preview("portfolio:old", "new", None, moment(2026, 10, 14, 9, 0))
+        .expect("an empty folder of the right name is free");
+}
+
+#[test]
+fn a_dangling_symlinked_artefact_is_refused_before_the_write() {
+    let dir = vault();
+    let root = dir.path();
+    seed_renamable_portfolio(root);
+    std::os::unix::fs::symlink(
+        root.join("nowhere.pdf"),
+        root.join("portfolios/old/2026-10-13-scan/link.pdf"),
+    )
+    .unwrap();
+    let opened = cdno_domain::bootstrap::open_vault(root).expect("open");
+    for refused in [
+        opened
+            .vault
+            .rename_preview("portfolio:old", "new", None, moment(2026, 10, 14, 9, 0)),
+        opened
+            .vault
+            .rename_note(
+                "portfolio:old",
+                "new",
+                None,
+                None,
+                moment(2026, 10, 14, 9, 0),
+            )
+            .map(|o| o.plan),
+    ] {
+        let err = refused.expect_err("the link reaches nothing");
+        assert!(
+            matches!(
+                err,
+                cdno_domain::error::DomainError::Store(
+                    StoreError::NotFound(_) | StoreError::OutsideVault(_)
+                )
+            ),
+            "{err:?}"
+        );
+    }
+    assert!(!root.join("portfolios/new").exists(), "nothing was written");
+    assert!(root.join("portfolios/old/_index.md").is_file());
 }

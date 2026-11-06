@@ -17,8 +17,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   embed, a link inside the folder itself) has that folder segment rewritten. Hidden files move too.
   After the commit every folder under `portfolios/<old>/` that holds nothing is pruned, and then the
   folder itself, never above it; after a failed commit the folders the attempt created under
-  `portfolios/<new>/` are pruned the same way, so a retry is not blocked. A destination folder
-  holding any file is refused, and so is a portfolio whose slug a question shares, until the pair
+  `portfolios/<new>/` are pruned the same way, so a retry is not blocked. An empty subfolder of the
+  old portfolio is pruned, not moved. A destination folder holding any file is refused; an empty one
+  is pruned under the lock and refused if anything is left at its name (a case variant on a
+  case-insensitive filesystem, a symlink). A symlinked artefact that dangles or points outside the
+  vault is refused before the write. So is a portfolio whose slug a question shares, until the pair
   can be renamed together. `VaultStore::walk_dirs` lists the directories beneath a path. No CLI or
   MCP surface yet.
 - **The rename against the real stores** (RFC 0007 T21, closes #870). Three tests the memory
