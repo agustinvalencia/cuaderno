@@ -274,8 +274,15 @@ pub fn resolve_reporting(
     interactive: bool,
     prompted: &mut bool,
 ) -> Result<cdno_core::path::VaultPath> {
-    let (path, via_alias) =
-        resolve_with_alias(vault, reference, today, interactive, prompted, &|_| true)?;
+    let (path, via_alias) = resolve_with_alias(
+        vault,
+        reference,
+        today,
+        interactive,
+        prompted,
+        &|_| true,
+        &plain_resolver,
+    )?;
     if let Some(alias) = via_alias {
         // stderr, so `$(cdno open --path …)` still captures only the path.
         eprintln!("found by its former name `{alias}`");
@@ -294,6 +301,7 @@ pub fn resolve_with_alias(
     interactive: bool,
     prompted: &mut bool,
     keep: &dyn Fn(&NoteCandidate) -> bool,
+    resolver: Resolver<'_>,
 ) -> Result<(cdno_core::path::VaultPath, Option<String>)> {
     resolve_with_via(
         vault,
@@ -302,8 +310,30 @@ pub fn resolve_with_alias(
         interactive,
         prompted,
         keep,
+        resolver,
         &mut real_picker,
     )
+}
+
+/// How a reference is resolved before any picker: the resolution, and
+/// whether the domain chose the one answer of an ambiguity itself (which an
+/// interactive caller confirms as it would a pick). `cdno open` passes
+/// [`plain_resolver`]; `cdno note rename` passes the domain's
+/// `Vault::resolve_rename_target`, the one place the pair rule lives.
+pub type Resolver<'a> =
+    &'a dyn Fn(
+        &Vault,
+        &str,
+        NaiveDate,
+    ) -> Result<(RefResolution, bool), cdno_domain::error::DomainError>;
+
+/// [`Vault::resolve_note_ref`] as a [`Resolver`]: nothing chosen for the caller.
+pub fn plain_resolver(
+    vault: &Vault,
+    reference: &str,
+    today: NaiveDate,
+) -> Result<(RefResolution, bool), cdno_domain::error::DomainError> {
+    Ok((vault.resolve_note_ref(reference, today)?, false))
 }
 
 /// Drive [`resolve_reporting`] interactively with a canned picker, returning
@@ -336,11 +366,13 @@ fn resolve_with(
         interactive,
         prompted,
         &|_| true,
+        &plain_resolver,
         pick,
     )
     .map(|(path, _)| path)
 }
 
+#[allow(clippy::too_many_arguments)] // the resolution seams (keep, resolver, picker) are separate on purpose
 fn resolve_with_via(
     vault: &Vault,
     reference: &str,
@@ -348,6 +380,7 @@ fn resolve_with_via(
     interactive: bool,
     prompted: &mut bool,
     keep: &dyn Fn(&NoteCandidate) -> bool,
+    resolver: Resolver<'_>,
     pick: Picker<'_>,
 ) -> Result<(cdno_core::path::VaultPath, Option<String>)> {
     // A path outside the vault, or one containing `..`, is rejected by
@@ -361,26 +394,24 @@ fn resolve_with_via(
              within the vault; use `--vault` to point at a different one"
         );
     }
-    match vault
-        .resolve_note_ref(reference, today)
-        .context("resolving the note reference")?
-    {
-        RefResolution::Resolved(note) => Ok((note.path, note.resolved_via_alias)),
+    let (resolution, chosen) =
+        resolver(vault, reference, today).context("resolving the note reference")?;
+    match resolution {
+        RefResolution::Resolved(note) => {
+            // The domain took the one answer of an ambiguity for the person:
+            // an interactive caller confirms it, as it would a pick.
+            if chosen && interactive {
+                *prompted = true;
+            }
+            Ok((note.path, note.resolved_via_alias))
+        }
         RefResolution::Ambiguous(hits) => {
-            // Only the hits the verb can act on are offered; when that
-            // leaves one (a question and its same-slug portfolio), it is the
-            // answer. When it leaves none, the full list stands and the
-            // verb refuses the pick with its own reason.
+            // Only the hits the verb can act on are offered. When that
+            // leaves none, the full list stands and the verb refuses the
+            // pick with its own reason. (Choosing a single answer is the
+            // resolver's job, not this picker's.)
             let kept: Vec<NoteCandidate> = hits.iter().filter(|c| keep(c)).cloned().collect();
             let hits = if kept.is_empty() { hits } else { kept };
-            if let [only] = hits.as_slice() {
-                // Taking the one hit is a choice made for the person, as a
-                // picker's would be: an interactive caller confirms it.
-                if interactive {
-                    *prompted = true;
-                }
-                return Ok((only.path.clone(), None));
-            }
             // In a terminal, an ambiguity is a question rather than a dead
             // end: the candidates are already known, so offer exactly those.
             if interactive && crate::prompt::picker_fits(crate::output::terminal_columns()) {
@@ -427,7 +458,7 @@ fn resolve_with_via(
 
 /// Whether a reference names somewhere outside the vault, which `VaultPath`
 /// will reject with a message written for a programmer rather than a user.
-pub(crate) fn reference_escapes_the_vault(reference: &str) -> bool {
+fn reference_escapes_the_vault(reference: &str) -> bool {
     let p = Path::new(reference.trim());
     p.is_absolute() || p.components().any(|c| c == std::path::Component::ParentDir)
 }

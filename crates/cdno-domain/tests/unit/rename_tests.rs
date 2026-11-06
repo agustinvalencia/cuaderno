@@ -2650,3 +2650,73 @@ fn is_renamable_refuses_a_custom_types_folder_note() {
     assert!(vault.is_renamable(&vp("concepts/flat.md"), "concept"));
     assert!(!vault.is_renamable(&vp("concepts/old/_index.md"), "concept"));
 }
+
+#[test]
+fn resolve_rename_target_narrows_to_the_pairs_question() {
+    use cdno_domain::frontmatter::QuestionDomain;
+    let f = fixture();
+    let today = at().date();
+
+    // A question and its same-slug portfolio share a stem: only the
+    // question is renamable, so it is the answer, and the flag says the
+    // domain chose.
+    f.vault
+        .create_question_with_vars(
+            at(),
+            QuestionDomain::Research,
+            "Does a surrogate beat the simulator?",
+            &Default::default(),
+            Some("surrogate-accuracy"),
+        )
+        .unwrap();
+    f.vault
+        .create_portfolio(at(), "surrogate-accuracy", None)
+        .unwrap();
+    assert!(matches!(
+        f.vault
+            .resolve_note_ref("surrogate-accuracy", today)
+            .unwrap(),
+        RefResolution::Ambiguous(_)
+    ));
+    let (resolution, chosen) = f
+        .vault
+        .resolve_rename_target("surrogate-accuracy", today)
+        .unwrap();
+    assert!(chosen);
+    match resolution {
+        RefResolution::Resolved(note) => {
+            assert_eq!(note.path, vp("questions/research/surrogate-accuracy.md"));
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // Two renamable notes with one stem stay an ambiguity.
+    f.write(
+        "actions/old.md",
+        "---\ntype: action\nstatus: active\nproject: old\nenergy: deep\ncreated: 2026-05-01\n---\n\n# Old\n",
+    );
+    let f = {
+        drop(f.vault);
+        Fixture {
+            vault: open(Arc::clone(&f.store), f.index.clone()),
+            ..f
+        }
+    };
+    let (resolution, chosen) = f.vault.resolve_rename_target("old", today).unwrap();
+    assert!(!chosen);
+    assert!(
+        matches!(resolution, RefResolution::Ambiguous(ref hits) if hits.len() == 2),
+        "{resolution:?}"
+    );
+
+    // A single exact hit is not a choice the domain made.
+    let (resolution, chosen) = f
+        .vault
+        .resolve_rename_target("projects/emulator", today)
+        .unwrap();
+    assert!(!chosen);
+    assert!(
+        matches!(resolution, RefResolution::Resolved(_)),
+        "{resolution:?}"
+    );
+}

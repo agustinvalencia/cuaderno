@@ -428,39 +428,17 @@ fn rename(
     let target = match args.note {
         Some(reference) => {
             let reference = crate::commands::open::strip_vault_root(&reference, root);
-            // The domain's own rule first: a question and its same-slug
-            // portfolio resolve to the question, as over MCP. Anything else
-            // (a miss, an ambiguity it cannot narrow) goes to the shared
-            // resolver for its picker and its messages.
-            let narrowed = if crate::commands::open::reference_escapes_the_vault(&reference) {
-                None
-            } else {
-                match vault
-                    .resolve_rename_target(&reference, at.date())
-                    .context("resolving the note reference")?
-                {
-                    (cdno_domain::RefResolution::Resolved(note), chosen) => {
-                        // Taking the one hit is a choice made for the person:
-                        // an interactive caller confirms it.
-                        if chosen && interactive {
-                            prompted = true;
-                        }
-                        Some((note.path, note.resolved_via_alias))
-                    }
-                    _ => None,
-                }
-            };
-            let (path, via_alias) = match narrowed {
-                Some(resolved) => resolved,
-                None => crate::commands::open::resolve_with_alias(
-                    vault,
-                    &reference,
-                    at.date(),
-                    interactive,
-                    &mut prompted,
-                    &renamable,
-                )?,
-            };
+            // The domain's resolver: a question and its same-slug portfolio
+            // resolve to the question, as over MCP.
+            let (path, via_alias) = crate::commands::open::resolve_with_alias(
+                vault,
+                &reference,
+                at.date(),
+                interactive,
+                &mut prompted,
+                &renamable,
+                &|v, r, d| v.resolve_rename_target(r, d),
+            )?;
             // The typed name goes through only when it carried a former name
             // to report; otherwise the resolved path does, so a hit taken
             // from an ambiguity is the note the domain plans for.

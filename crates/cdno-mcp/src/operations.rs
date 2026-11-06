@@ -534,7 +534,7 @@ impl CuadernoServer {
                     note.path.to_string()
                 };
                 // The freshness check, before the preview: a dry run is
-                // refused as the write would be. No root: not under git.
+                // refused as the write would be.
                 let checked = crate::freshness::check(&root, skip);
                 if let Some(refusal) = checked.refusal {
                     return Err(RenameFail::Domain(Box::new((refusal, checked.warnings))));
