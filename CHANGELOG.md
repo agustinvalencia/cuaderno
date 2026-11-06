@@ -8,6 +8,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Renaming a question with its portfolio** (RFC 0007 T23, closes #872). Renaming a question whose
+  slug a portfolio shares (`portfolios/<slug>/_index.md` exists) renames both in the one plan and
+  the one transaction: the question's flat note, then the portfolio's folder moves as in T22, under
+  one plan hash. The evidence notes' `portfolio:` fields and every link into the folder follow; a
+  `portfolio:` value with no folder note behind it is never rewritten. The `renamed` log line gains a
+  `portfolio: [[portfolios/<new>]]` continuation (a link) after `was:` and `reason:`
+  (`format_renamed_pair_log_entry`). A bare slug naming a question and its same-slug portfolio
+  resolves to the question. The destination checks cover both `questions/<kind>/<new>.md`
+  and `portfolios/<new>/`. The `folder` refusal of such a question is lifted; renaming the portfolio
+  alone stays refused (`rename the question`). No CLI or MCP surface yet.
 - **Renaming a portfolio** (RFC 0007 T22, closes #871). `Vault::rename_note` and `plan_rename` now
   take a portfolio (`portfolios/<old>`, `portfolio:<old>` or the bare slug) and move its whole
   folder in the one transaction: each note in it written at the new path and deleted at the old one,
@@ -21,8 +31,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   old portfolio is pruned, not moved. A destination folder holding any file is refused; an empty one
   is pruned under the lock and refused if anything is left at its name (a case variant on a
   case-insensitive filesystem, a symlink). A symlinked artefact that dangles or points outside the
-  vault is refused before the write. So is a portfolio whose slug a question shares, until the pair
-  can be renamed together. `VaultStore::walk_dirs` lists the directories beneath a path. No CLI or
+  vault is refused before the write. So is a portfolio whose slug a question shares: that pair
+  renames from the question. `VaultStore::walk_dirs` lists the directories beneath a path. No CLI or
   MCP surface yet.
 - **The rename against the real stores** (RFC 0007 T21, closes #870). Three tests the memory
   implementations cannot give: `rename_index_ops_land_in_order_on_sqlite` (old path gone, new path

@@ -567,14 +567,14 @@ fn a_folder_note_named_like_the_target_is_not_a_shared_stem() {
 }
 
 #[test]
-fn a_question_rename_leaves_portfolio_rows_alone() {
+fn a_dangling_portfolio_field_is_not_rewritten_on_a_question_rename() {
     let f = fixture();
     f.write(
         "questions/research/how-large-is-the-error.md",
         "---\ntype: question\nstatus: open\ncreated: 2026-05-01\n---\n\n# How large is the error?\n",
     );
     // An evidence note whose `portfolio:` equals the question's slug, with
-    // no such portfolio: it names nothing that moves.
+    // no portfolio folder note: it names nothing that moves.
     f.write(
         "portfolios/how-large-is-the-error/2026-05-02-baseline.md",
         "---\ntype: evidence\nportfolio: how-large-is-the-error\ncreated: 2026-05-02\n---\n\n# Baseline\n",
@@ -1768,11 +1768,12 @@ fn a_portfolio_rename_is_refused_while_a_question_shares_its_slug() {
         matches!(&err, DomainError::NoteNotRenamable { reason, .. } if reason == "rename the question"),
         "{err:?}"
     );
-    // And the question, for its part, is refused as the pair (T23).
-    let err = p.plan("questions/research/old", "new").unwrap_err();
+    // The question, for its part, renames the pair (T23): not refused.
+    let plan = p.plan("questions/research/old", "new").expect("the pair");
     assert!(
-        matches!(&err, DomainError::NoteNotRenamable { reason, .. } if reason == "folder"),
-        "{err:?}"
+        plan.moves
+            .iter()
+            .any(|(from, _)| *from == vp("portfolios/old/_index.md"))
     );
 }
 
@@ -1920,6 +1921,7 @@ struct HookStore {
     pruned: std::sync::Mutex<Vec<VaultPath>>,
     dirs: Vec<VaultPath>,
     no_artefact_reads: bool,
+    fail_moves: bool,
 }
 
 impl HookStore {
@@ -1929,6 +1931,7 @@ impl HookStore {
             pruned: std::sync::Mutex::new(Vec::new()),
             dirs: Vec::new(),
             no_artefact_reads: false,
+            fail_moves: false,
         }
     }
 
@@ -1958,6 +1961,9 @@ impl VaultStore for HookStore {
         self.inner.append_to_file(path, content)
     }
     fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        if self.fail_moves {
+            return Err(StoreError::PermissionDenied(dest.to_string()));
+        }
         self.inner.move_file(src, dest)
     }
     fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
@@ -2138,4 +2144,363 @@ fn a_custom_type_folder_note_is_refused_as_folder() {
         matches!(&err, DomainError::NoteNotRenamable { reason, .. } if reason == "folder"),
         "{err:?}"
     );
+}
+
+// ---------------------------------------------------------------------
+// The question-portfolio pair (T23): one plan, one transaction.
+// ---------------------------------------------------------------------
+
+const PAIR_QUESTION: &str = "---\ntype: question\nstatus: open\ncreated: 2026-05-01\n---\n\n# How large is the error?\n\n## Related Portfolios\n- [[portfolios/old]]\n";
+
+const PAIR_INDEX: &str = "---\ntype: portfolio\nquestion: \"How large is the error?\"\ncreated: 2026-05-01\nproject: \"[[projects/surrogate-model]]\"\n---\n\n# How large is the error?\n\n## Related Questions\n- [[questions/research/old]]\n\n## Evidence\n- [[portfolios/old/2026-10-12-baseline]]\n- [[portfolios/old/2026-10-13-scan]]\n";
+
+/// Portfolio `old` with its evidence and a same-slug question `old`, each
+/// linking the other.
+fn pair_vault_over(store: Arc<dyn VaultStore>) -> PortfolioVault {
+    let mut files = portfolio_files(P_PDF, "scan.pdf");
+    for (path, content) in &mut files {
+        if path == "portfolios/old/_index.md" {
+            *content = PAIR_INDEX.to_owned();
+        }
+    }
+    files.push(("questions/research/old.md".into(), PAIR_QUESTION.into()));
+    portfolio_vault_over(store, &files)
+}
+
+fn pair_vault() -> PortfolioVault {
+    pair_vault_over(Arc::new(MemoryVaultStore::new()))
+}
+
+#[test]
+fn a_question_rename_carries_its_portfolio() {
+    let p = pair_vault();
+    let preview = p
+        .vault
+        .rename_preview(
+            "questions/research/old",
+            "new",
+            Some("a clearer name"),
+            at(),
+        )
+        .expect("preview");
+    // The question's flat move, then the portfolio's index, then its files.
+    assert_eq!(
+        preview.moves[0],
+        (
+            vp("questions/research/old.md"),
+            vp("questions/research/new.md")
+        )
+    );
+    assert_eq!(
+        preview.moves[1],
+        (
+            vp("portfolios/old/_index.md"),
+            vp("portfolios/new/_index.md")
+        )
+    );
+    assert_eq!(preview.moves.len(), 5, "{:?}", preview.moves);
+    let outcome = p
+        .vault
+        .rename_note(
+            "questions/research/old",
+            "new",
+            Some("a clearer name"),
+            Some(&preview.hash),
+            at(),
+        )
+        .expect("rename");
+    assert!(!outcome.index_stale);
+
+    // Both moved; neither name is left behind.
+    let files: Vec<String> = p
+        .store
+        .walk_dir(&VaultPath::root())
+        .unwrap()
+        .into_iter()
+        .map(|f| f.to_string())
+        .collect();
+    assert!(!files.iter().any(|f| f.starts_with("portfolios/old/")));
+    assert!(!files.iter().any(|f| f == "questions/research/old.md"));
+    for moved in [
+        "questions/research/new.md",
+        "portfolios/new/_index.md",
+        "portfolios/new/2026-10-12-baseline.md",
+        "portfolios/new/2026-10-13-scan/scan.pdf",
+    ] {
+        assert!(files.iter().any(|f| f == moved), "{moved}: {files:?}");
+    }
+
+    // Each links the other by the new name.
+    assert!(
+        p.read("questions/research/new.md")
+            .contains("- [[portfolios/new]]\n")
+    );
+    assert!(
+        p.read("portfolios/new/_index.md")
+            .contains("- [[questions/research/new]]\n")
+    );
+    // The evidence rows follow.
+    for evidence in [
+        "portfolios/new/2026-10-12-baseline.md",
+        "portfolios/new/2026-10-13-scan.md",
+    ] {
+        assert!(
+            p.read(evidence).contains("\nportfolio: new\n"),
+            "{evidence}"
+        );
+    }
+    // The correlation `find_question_path(slug)` keys on survives: the
+    // question and the portfolio share the new stem, and both resolve.
+    assert_eq!(p.resolves("question:new"), vp("questions/research/new.md"));
+    assert_eq!(p.resolves("portfolio:new"), vp("portfolios/new/_index.md"));
+    assert_eq!(p.vault.get_portfolio_contents("new").unwrap().len(), 2);
+
+    // One log line naming the question, with the continuation last.
+    let day = p.read(DAILY_TODAY);
+    assert_eq!(day.matches("renamed [[").count(), 1, "{day}");
+    assert!(
+        day.contains(
+            "renamed [[questions/research/new]] \u{2014} How large is the error?\n  was: old\n  reason: a clearer name\n  portfolio: [[portfolios/new]]\n"
+        ),
+        "{day}"
+    );
+    let report = p.vault.lint_all_notes(super::support::lint_day()).unwrap();
+    assert_eq!(report.error_count(), 0, "{:?}", report.issues);
+}
+
+#[test]
+fn a_question_without_a_portfolio_renames_alone() {
+    let p = portfolio_vault();
+    p.store
+        .write_file(
+            &vp("questions/research/lonely.md"),
+            "---\ntype: question\nstatus: open\ncreated: 2026-05-01\n---\n\n# Is it lonely?\n",
+        )
+        .unwrap();
+    // Evidence in another portfolio whose `portfolio:` is not the question's.
+    let plan = p.plan("questions/research/lonely", "alone").expect("plan");
+    assert_eq!(plan.moves.len(), 1, "{:?}", plan.moves);
+    assert!(
+        plan.edits
+            .iter()
+            .all(|e| !e.path.to_string().starts_with("portfolios/")),
+        "{:?}",
+        plan.edits
+            .iter()
+            .map(|e| e.path.to_string())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        plan.edits
+            .iter()
+            .flat_map(|e| &e.changes)
+            .all(|c| !matches!(c, Change::Field { key } if key == "portfolio"))
+    );
+    let day = plan
+        .edits
+        .iter()
+        .find(|e| e.path.to_string().contains("journal/"))
+        .expect("the log line");
+    assert!(!day.after.contains("portfolio: [["), "{}", day.after);
+}
+
+#[test]
+fn a_question_rename_is_one_plan_hash() {
+    let p = pair_vault();
+    let preview = p
+        .vault
+        .rename_preview("questions/research/old", "new", None, at())
+        .expect("preview");
+    // Move an artefact of the portfolio's folder between preview and write:
+    // the portfolio's moves are in the question's plan hash.
+    let from = vp("portfolios/old/2026-10-13-scan/scan.pdf");
+    let text = p.read("portfolios/old/2026-10-13-scan/scan.pdf");
+    p.store.delete_file(&from).unwrap();
+    p.store
+        .write_file(&vp("portfolios/old/2026-10-13-scan/figure.pdf"), &text)
+        .unwrap();
+    let err = p
+        .vault
+        .rename_note(
+            "questions/research/old",
+            "new",
+            None,
+            Some(&preview.hash),
+            at(),
+        )
+        .unwrap_err();
+    assert!(matches!(err, DomainError::StalePlan { .. }), "{err:?}");
+    // And nothing was written.
+    assert!(p.store.exists(&vp("questions/research/old.md")).unwrap());
+    assert!(p.store.exists(&vp("portfolios/old/_index.md")).unwrap());
+}
+
+#[test]
+fn the_pair_checks_both_destinations() {
+    // A folder of files only (no folder note) at `portfolios/new/`: the
+    // question's own destination is free, the portfolio's is not.
+    let p = pair_vault();
+    p.store
+        .write_file(&vp("portfolios/new/kept.pdf"), "%PDF")
+        .unwrap();
+    let err = p
+        .vault
+        .rename_preview("questions/research/old", "new", None, at())
+        .unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken {
+                kind: TakenBy::Folder,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    let err = p
+        .vault
+        .rename_note("questions/research/old", "new", None, None, at())
+        .unwrap_err();
+    assert!(matches!(err, DomainError::SlugTaken { .. }), "{err:?}");
+    assert!(p.store.exists(&vp("questions/research/old.md")).unwrap());
+
+    // A question already at the new name, in the other domain, is taken.
+    let p = pair_vault();
+    p.store
+        .write_file(
+            &vp("questions/life/new.md"),
+            "---\ntype: question\nstatus: open\ncreated: 2026-05-01\n---\n\n# Another\n",
+        )
+        .unwrap();
+    let err = p.plan("questions/research/old", "new").unwrap_err();
+    assert!(matches!(err, DomainError::SlugTaken { .. }), "{err:?}");
+}
+
+#[test]
+fn renamed_pair_entry_places_portfolio_after_was_with_a_blank_reason() {
+    use cdno_domain::vault::format_renamed_pair_log_entry;
+    let head = "renamed [[questions/research/new]] \u{2014} How large is the error?";
+    assert_eq!(
+        format_renamed_pair_log_entry(
+            "questions/research/new",
+            "How large is the error?",
+            "old",
+            Some(" \n "),
+            Some("portfolios/new"),
+        ),
+        format!("{head}\n  was: old\n  portfolio: [[portfolios/new]]")
+    );
+    assert_eq!(
+        format_renamed_pair_log_entry(
+            "questions/research/new",
+            "How large is the error?",
+            "old",
+            Some("clearer"),
+            Some("portfolios/new"),
+        ),
+        format!("{head}\n  was: old\n  reason: clearer\n  portfolio: [[portfolios/new]]")
+    );
+    assert_eq!(
+        format_renamed_pair_log_entry(
+            "questions/research/new",
+            "How large is the error?",
+            "old",
+            None,
+            None,
+        ),
+        format!("{head}\n  was: old")
+    );
+}
+
+#[test]
+fn a_bare_slug_names_the_pairs_question() {
+    let p = pair_vault();
+    let plan = p.plan("old", "new").expect("the pair, by its bare slug");
+    assert_eq!(plan.target.path, vp("questions/research/old.md"));
+    assert!(
+        plan.moves
+            .iter()
+            .any(|(from, _)| *from == vp("portfolios/old/_index.md"))
+    );
+    // Any other multi-hit shape stays ambiguous: two questions, one in each
+    // domain, answer to the same slug.
+    let p = pair_vault();
+    p.store
+        .write_file(
+            &vp("questions/life/old.md"),
+            "---\ntype: question\nstatus: open\ncreated: 2026-05-01\n---\n\n# Another\n",
+        )
+        .unwrap();
+    let err = p.plan("old", "new").unwrap_err();
+    assert!(matches!(err, DomainError::AmbiguousSlug(_)), "{err:?}");
+}
+
+#[test]
+fn a_straggler_folder_link_resolves_through_the_question_until_913() {
+    // Pins today's resolver (#913): the alias rule ignores the folder
+    // segment, so a `[[portfolios/old]]` the rename never saw resolves to
+    // the question, and lint names the question. A resolver fix flips this.
+    let p = pair_vault();
+    p.vault
+        .rename_note("questions/research/old", "new", None, None, at())
+        .expect("rename");
+    p.store
+        .write_file(
+            &vp("journal/2026/daily/2026-05-11.md"),
+            "---\ntype: daily\ndate: 2026-05-11\n---\n\n# Monday, 11 May 2026\n\n## Logs\n- **09:00**: filed in [[portfolios/old]]\n",
+        )
+        .unwrap();
+    let index = Arc::new(MemoryIndex::new());
+    let vault = open(Arc::clone(&p.store), index.clone());
+    assert!(
+        index
+            .find_backlinks(&vp("questions/research/new.md"))
+            .unwrap()
+            .contains(&vp("journal/2026/daily/2026-05-11.md"))
+    );
+    let report = vault.lint_all_notes(super::support::lint_day()).unwrap();
+    assert!(
+        report.issues.iter().any(|i| i
+            .message
+            .contains("`[[portfolios/old]]` names a renamed note \u{2014} now `new`")),
+        "{:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn a_pair_rename_prunes_the_old_folder_and_a_failed_one_the_new() {
+    let dirs = |roots: &[&str]| -> Vec<VaultPath> { roots.iter().map(|d| vp(d)).collect() };
+    let hooks = Arc::new(HookStore {
+        dirs: dirs(&["portfolios/old/2026-10-13-scan"]),
+        ..HookStore::new()
+    });
+    let store: Arc<dyn VaultStore> = hooks.clone();
+    let p = pair_vault_over(store);
+    p.vault
+        .rename_note("questions/research/old", "new", None, None, at())
+        .expect("a failed prune does not fail the rename");
+    assert_eq!(
+        *hooks.pruned.lock().unwrap(),
+        vec![vp("portfolios/old/2026-10-13-scan"), vp("portfolios/old")],
+        "the old portfolio's folders, deepest first, and nothing else"
+    );
+
+    // A failing `Move` rolls back, then prunes what the attempt created
+    // under the new folder.
+    let hooks = Arc::new(HookStore {
+        dirs: dirs(&["portfolios/new/2026-10-13-scan"]),
+        fail_moves: true,
+        ..HookStore::new()
+    });
+    let store: Arc<dyn VaultStore> = hooks.clone();
+    let p = pair_vault_over(store);
+    p.vault
+        .rename_note("questions/research/old", "new", None, None, at())
+        .unwrap_err();
+    assert_eq!(
+        *hooks.pruned.lock().unwrap(),
+        vec![vp("portfolios/new/2026-10-13-scan"), vp("portfolios/new")],
+    );
+    assert!(p.store.exists(&vp("questions/research/old.md")).unwrap());
 }

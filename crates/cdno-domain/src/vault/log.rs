@@ -21,7 +21,9 @@ use super::Vault;
 use super::index_entry::build_index_entry_for;
 
 use super::DAILY_LOGS_SECTION;
-use super::projects::actions::{LOG_DURING_KEY, LOG_REASON_KEY, LOG_WAS_KEY, flatten_reason};
+use super::projects::actions::{
+    LOG_DURING_KEY, LOG_PORTFOLIO_KEY, LOG_REASON_KEY, LOG_WAS_KEY, flatten_reason,
+};
 
 impl Vault {
     /// Append a log entry to the daily note for the given moment.
@@ -284,14 +286,34 @@ pub fn format_renamed_log_entry(
     old_slug: &str,
     reason: Option<&str>,
 ) -> String {
-    let base = format!(
+    format_renamed_pair_log_entry(new_link, title, old_slug, reason, None)
+}
+
+/// [`format_renamed_log_entry`] for a question renamed together with its
+/// same-slug portfolio (RFC 0007 §5.3): the same entry, with an indented
+/// `portfolio: [[portfolios/<new>]]` continuation after `was:` and `reason:`.
+/// Unlike `was:`, the value is a link: it names the portfolio's current
+/// name, so a later rename rewrites it and the portfolio's history carries
+/// the event. `portfolio` is the portfolio's new folder path (no brackets);
+/// `None` writes the plain entry.
+pub fn format_renamed_pair_log_entry(
+    new_link: &str,
+    title: &str,
+    old_slug: &str,
+    reason: Option<&str>,
+    portfolio: Option<&str>,
+) -> String {
+    let mut entry = format!(
         "{LOG_RENAMED_PREFIX}[[{new_link}]] \u{2014} {}\n  {LOG_WAS_KEY}{old_slug}",
         flatten_for_log(title)
     );
-    match reason.map(flatten_reason).filter(|r| !r.is_empty()) {
-        Some(reason) => format!("{base}\n  {LOG_REASON_KEY}{reason}"),
-        None => base,
+    if let Some(reason) = reason.map(flatten_reason).filter(|r| !r.is_empty()) {
+        entry.push_str(&format!("\n  {LOG_REASON_KEY}{reason}"));
     }
+    if let Some(portfolio) = portfolio {
+        entry.push_str(&format!("\n  {LOG_PORTFOLIO_KEY}[[{portfolio}]]"));
+    }
+    entry
 }
 
 /// Render one log line in the canonical `- **HH:MM**: text` form.

@@ -49,7 +49,9 @@ use crate::note_type::NoteType;
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::lint::frozen_prefix_verifies;
-use super::log::{append_log_line, daily_note_path, format_log_line, format_renamed_log_entry};
+use super::log::{
+    append_log_line, daily_note_path, format_log_line, format_renamed_pair_log_entry,
+};
 use super::note_ref::{NoteRef, PeriodRef, ResolvedNote, candidate_slug};
 use super::projects::stage_project_index_rows;
 use super::slug::{TakenBy, taken_names_in, validate_explicit_slug};
@@ -252,8 +254,7 @@ impl Vault {
     /// 1. [`DomainError::NoteNotRenamable`] — a type outside the v1 set of
     ///    §5.2 (`type <name>`), an archived action note (`archived`), a
     ///    folder note other than a portfolio's `portfolios/<slug>/_index.md`
-    ///    or a question whose portfolio shares its slug (`folder`; the pair
-    ///    is T23), a portfolio whose slug a question shares (`rename the
+    ///    (`folder`), a portfolio whose slug a question shares (`rename the
     ///    question`), or an `aliases:` value the old slug cannot be appended
     ///    to;
     /// 2. [`DomainError::InvalidSlug`] — `new_slug` breaks the slug rule;
@@ -299,6 +300,16 @@ impl Vault {
     /// covers each move by its paths and by whether it is a note's (written
     /// and deleted) or a file's (moved): a non-note file's bytes are never
     /// read.
+    ///
+    /// **A question moves its portfolio with it** (§5.3) when a portfolio
+    /// whose folder note `portfolios/<slug>/_index.md` shares its slug exists:
+    /// `moves` holds the question's flat move, then the portfolio's as above,
+    /// all under the one `hash`, and the `renamed` line gains an indented
+    /// `portfolio: [[portfolios/<new>]]` continuation after `was:` and `reason:`.
+    /// The evidence notes' `portfolio:` fields follow; without the pair a
+    /// `portfolio:` value equal to the question's slug names nothing that
+    /// moves and is left alone.
+    ///
     pub fn plan_rename(
         &self,
         snapshot: &VaultSnapshot,
@@ -413,28 +424,45 @@ impl Vault {
             });
         }
 
+        // The portfolio folder that moves with the note: its own, for a
+        // portfolio; for a question, the same-slug portfolio's (§5.3), only
+        // when that folder note exists. The question's flat move comes first,
+        // then the portfolio's `_index.md`, then the folder's other files.
+        let pair_folder: Option<VaultPath> = (builtin == Some(NoteType::Question))
+            .then(|| question_portfolio_index(&target_path, snapshot))
+            .flatten()
+            .and_then(|index| portfolio_folder(&index));
+        let moved_folder: Option<VaultPath> = old_folder.clone().or(pair_folder.clone());
+
         // The folder segment a portfolio's links carry, before and after.
-        let folder_segments: Option<(String, String)> = old_folder
+        let folder_segments: Option<(String, String)> = moved_folder
             .as_ref()
             .map(|old| (old.to_string(), format!("{}/{new_slug}", paths::PORTFOLIOS)));
-        let (new_path, moves) = match (&old_folder, &folder_segments) {
-            (Some(old_dir), Some((_, new_dir))) => {
-                let new_dir = VaultPath::new(new_dir.as_str())?;
-                let new_path = rebase(&target_path, old_dir, &new_dir)?;
-                let mut moves = vec![(target_path.clone(), new_path.clone())];
-                for file in &snapshot.files {
-                    if *file == target_path || !file.as_path().starts_with(old_dir.as_path()) {
-                        continue;
-                    }
-                    moves.push((file.clone(), rebase(file, old_dir, &new_dir)?));
-                }
-                (new_path, moves)
-            }
-            _ => {
-                let new_path = sibling_path(&target_path, new_slug)?;
-                (new_path.clone(), vec![(target_path.clone(), new_path)])
-            }
+        let new_path = match &old_folder {
+            Some(old_dir) => rebase(
+                &target_path,
+                old_dir,
+                &VaultPath::new(format!("{}/{new_slug}", paths::PORTFOLIOS))?,
+            )?,
+            None => sibling_path(&target_path, new_slug)?,
         };
+        let mut moves = vec![(target_path.clone(), new_path.clone())];
+        if let Some(old_dir) = &moved_folder {
+            let new_dir = VaultPath::new(format!("{}/{new_slug}", paths::PORTFOLIOS))?;
+            let index = old_dir.as_path().join("_index.md");
+            if pair_folder.is_some() {
+                let index = VaultPath::new(index)?;
+                moves.push((index.clone(), rebase(&index, old_dir, &new_dir)?));
+            }
+            for file in &snapshot.files {
+                if moves.iter().any(|(from, _)| from == file)
+                    || !file.as_path().starts_with(old_dir.as_path())
+                {
+                    continue;
+                }
+                moves.push((file.clone(), rebase(file, old_dir, &new_dir)?));
+            }
+        }
 
         // The old slug already an alias of another note: once the note lists
         // it too, the alias is shared and resolves to nothing, so it rescues
@@ -486,7 +514,9 @@ impl Vault {
             // A link reaching the portfolio another way (through an alias):
             // a folder note answers to its folder path, never to a bare
             // name, so `[[new]]` would dangle.
-            if let Some((_, new)) = &folder_segments {
+            if old_folder.is_some()
+                && let Some((_, new)) = &folder_segments
+            {
                 return new.clone();
             }
             match address.rsplit_once('/') {
@@ -494,7 +524,25 @@ impl Vault {
                 None => new_slug.to_owned(),
             }
         };
-        let field_keys = field_keys_for(builtin);
+        let field_keys = field_keys_for(builtin, pair_folder.is_some());
+        let title = note_title(target_before).unwrap_or_else(|| old_slug.clone());
+        // The `renamed` entry (T19's formatter), linked in the form the
+        // type's other log lines use; a question renamed with its portfolio
+        // gains the `portfolio:` continuation.
+        let entry = {
+            let rendered = new_path.to_string();
+            let path_link = rendered.strip_suffix(".md").unwrap_or(&rendered);
+            let link = match builtin {
+                Some(NoteType::Project) => new_slug.to_owned(),
+                Some(NoteType::Action) => format!("{}/{new_slug}", paths::ACTIONS),
+                Some(NoteType::Portfolio) => format!("{}/{new_slug}", paths::PORTFOLIOS),
+                _ => path_link.to_owned(),
+            };
+            let portfolio = pair_folder
+                .is_some()
+                .then(|| format!("{}/{new_slug}", paths::PORTFOLIOS));
+            format_renamed_pair_log_entry(&link, &title, &old_slug, reason, portfolio.as_deref())
+        };
 
         let daily_path = daily_note_path(at.date())?;
         let mut edits: BTreeMap<VaultPath, PlannedEdit> = BTreeMap::new();
@@ -588,14 +636,7 @@ impl Vault {
 
             let mut hash_input = after.clone();
             if is_daily {
-                let entry = self.renamed_entry(
-                    &old_slug,
-                    new_slug,
-                    builtin,
-                    &new_path,
-                    target_before,
-                    reason,
-                );
+                let entry = entry.clone();
                 let logged = append_log_line(
                     after.clone(),
                     &format_log_line(at.time(), &entry),
@@ -632,14 +673,7 @@ impl Vault {
         // Today's daily note does not exist yet: it is scaffolded, and the
         // whole of it is the one insertion.
         if !snapshot.contents.contains_key(&daily_path) {
-            let entry = self.renamed_entry(
-                &old_slug,
-                new_slug,
-                builtin,
-                &new_path,
-                target_before,
-                reason,
-            );
+            let entry = entry.clone();
             let scaffold = self.scaffold_daily_base(at.date())?;
             let after = append_log_line(
                 scaffold.clone(),
@@ -795,8 +829,7 @@ impl Vault {
         // A portfolio's folders, before and after: the old one is pruned
         // once every file has left it, the new one when the commit failed
         // and the rollback took the files back out of it.
-        let folders = portfolio_folder(&plan.target.path)
-            .zip(plan.moves.first().and_then(|(_, to)| portfolio_folder(to)));
+        let folders = moved_portfolio_folders(&plan);
         let index_stale = match tx.commit() {
             Ok(_) => false,
             Err(TransactionError::IndexStale(_)) => true,
@@ -835,29 +868,6 @@ impl Vault {
             written,
             index_stale,
         })
-    }
-
-    /// The `renamed` entry for this rename (T19's formatter), linked in the
-    /// form the type's other log lines use.
-    fn renamed_entry(
-        &self,
-        old_slug: &str,
-        new_slug: &str,
-        note_type: Option<NoteType>,
-        new_path: &VaultPath,
-        target_content: &str,
-        reason: Option<&str>,
-    ) -> String {
-        let rendered = new_path.to_string();
-        let path_link = rendered.strip_suffix(".md").unwrap_or(&rendered);
-        let link = match note_type {
-            Some(NoteType::Project) => new_slug.to_owned(),
-            Some(NoteType::Action) => format!("{}/{new_slug}", paths::ACTIONS),
-            Some(NoteType::Portfolio) => format!("{}/{new_slug}", paths::PORTFOLIOS),
-            _ => path_link.to_owned(),
-        };
-        let title = note_title(target_content).unwrap_or_else(|| old_slug.to_owned());
-        format_renamed_log_entry(&link, &title, old_slug, reason)
     }
 
     /// Resolve the rename's `target` in the snapshot, with the grammar of
@@ -926,6 +936,26 @@ impl Vault {
             .filter(|p| candidate_slug(p).as_deref() == Some(slug) && of_type_ok(p))
             .collect();
         hits.sort();
+        // A question and its same-slug portfolio's folder note answer to the
+        // one bare slug (§5.3): the pair renames from the question, so that
+        // is the hit. Every other multi-hit shape stays ambiguous.
+        if let [a, b] = hits.as_slice() {
+            let is_question = |p: &VaultPath| {
+                [paths::QUESTIONS_RESEARCH, paths::QUESTIONS_LIFE]
+                    .iter()
+                    .any(|dir| p.as_path() == std::path::Path::new(&format!("{dir}/{slug}.md")))
+            };
+            let is_index = |p: &VaultPath| {
+                p.as_path()
+                    == std::path::Path::new(&format!("{}/{slug}/_index.md", paths::PORTFOLIOS))
+            };
+            if is_question(a) && is_index(b) {
+                return Ok(ResolvedNote::direct((*a).clone()));
+            }
+            if is_question(b) && is_index(a) {
+                return Ok(ResolvedNote::direct((*b).clone()));
+            }
+        }
         match hits.as_slice() {
             [one] => return Ok(ResolvedNote::direct((*one).clone())),
             [] => {}
@@ -1087,8 +1117,7 @@ fn ensure_destinations_free(
             kind,
         })
     };
-    if portfolio_folder(&plan.target.path).is_some()
-        && let Some(new_dir) = plan.moves.first().and_then(|(_, to)| portfolio_folder(to))
+    if let Some((_, new_dir)) = moved_portfolio_folders(plan)
         && store.exists(&new_dir)?
     {
         if !store.walk_dir(&new_dir)?.is_empty() {
@@ -1179,19 +1208,13 @@ fn renamable_type(
         return Err(not_renamable(path, "archived".to_owned()));
     }
     // A folder note moves its whole folder (§5.3). Only a portfolio's, at
-    // `portfolios/<slug>/_index.md`, does so far; a question whose
-    // portfolio shares its slug moves that folder with it, and the
-    // portfolio alone is refused until then (T23), since the pair's
-    // correlation (`find_question_path`) is by slug.
-    let question_with_portfolio = builtin == Some(NoteType::Question)
-        && candidate_slug(path)
-            .and_then(|slug| VaultPath::new(format!("{}/{slug}/_index.md", paths::PORTFOLIOS)).ok())
-            .is_some_and(|portfolio| snapshot.paths.contains(&portfolio));
+    // `portfolios/<slug>/_index.md`, does: a question whose portfolio
+    // shares its slug moves that folder with it (T23), and the portfolio
+    // alone is refused below, since the pair's correlation
+    // (`find_question_path`) is by slug.
     let a_portfolio_folder =
         builtin == Some(NoteType::Portfolio) && portfolio_folder(path).is_some();
-    if ((is_folder_note(path) || builtin == Some(NoteType::Portfolio)) && !a_portfolio_folder)
-        || question_with_portfolio
-    {
+    if (is_folder_note(path) || builtin == Some(NoteType::Portfolio)) && !a_portfolio_folder {
         return Err(not_renamable(path, "folder".to_owned()));
     }
     if a_portfolio_folder
@@ -1208,14 +1231,33 @@ fn renamable_type(
 
 /// The target types whose §3.5 fields follow a rename of a note of type
 /// `builtin`: its own. A question's same-slug portfolio (the evidence
-/// `portfolio:` rows) joins when the pair is renamed together (T23); until
-/// then the pair is refused, and a `portfolio:` value equal to a lone
-/// question's slug names no note that moves, so it is left alone.
-fn field_keys_for(builtin: Option<NoteType>) -> Vec<NoteType> {
+/// `portfolio:` rows) joins when `paired`, that is when the portfolio's
+/// folder note exists and moves with it (T23); a `portfolio:` value equal
+/// to a lone question's slug names no note that moves, so it is left alone.
+fn field_keys_for(builtin: Option<NoteType>, paired: bool) -> Vec<NoteType> {
     match builtin {
+        Some(NoteType::Question) if paired => vec![NoteType::Question, NoteType::Portfolio],
         Some(t) => vec![t],
         None => Vec::new(),
     }
+}
+
+/// The `portfolios/<slug>/_index.md` sharing the question `question`'s slug,
+/// when the snapshot holds it: the pair's other half (§5.3).
+fn question_portfolio_index(question: &VaultPath, snapshot: &VaultSnapshot) -> Option<VaultPath> {
+    let slug = candidate_slug(question)?;
+    VaultPath::new(format!("{}/{slug}/_index.md", paths::PORTFOLIOS))
+        .ok()
+        .filter(|index| snapshot.paths.contains(index))
+}
+
+/// The portfolio folder `plan` moves, before and after: the first move whose
+/// source is a portfolio's folder note and whose destination is one too (the
+/// target's own for a portfolio, the pair's for a question).
+fn moved_portfolio_folders(plan: &RenamePlan) -> Option<(VaultPath, VaultPath)> {
+    plan.moves
+        .iter()
+        .find_map(|(from, to)| portfolio_folder(from).zip(portfolio_folder(to)))
 }
 
 /// The edit to the note's `aliases:`, relative to its frontmatter block:
