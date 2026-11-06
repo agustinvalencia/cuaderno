@@ -144,7 +144,14 @@ fn rename_on_two_thousand_notes_stays_under_budget() {
 
     let t = Instant::now();
     let outcome = vault
-        .rename_note("old", "surrogate-model", None, Some(&plan.hash), at())
+        .rename_note(
+            "old",
+            "surrogate-model",
+            None,
+            Some(&plan.hash),
+            at(),
+            || Ok(()),
+        )
         .expect("rename");
     let write = t.elapsed();
     assert!(!outcome.index_stale);
@@ -215,7 +222,7 @@ fn rename_index_ops_land_in_order_on_sqlite() {
     assert!(links_before > 0, "the project map links its action");
 
     vault
-        .rename_note("old", "surrogate-model", None, None, at())
+        .rename_note("old", "surrogate-model", None, None, at(), || Ok(()))
         .expect("rename");
 
     // This is the assertion that catches the pure-move mutation (`move_file`

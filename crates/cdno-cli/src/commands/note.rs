@@ -119,10 +119,13 @@ pub enum NoteCommands {
         /// `reason:` line under the log entry. Never prompted.
         #[arg(long, value_name = "STRING")]
         reason: Option<String>,
-        /// Print the preview and exit 0, writing nothing.
+        /// Print the preview, writing nothing. Refused exactly as the write
+        /// would be (the sync check, against the last fetch); exits 0 only
+        /// when the write would proceed.
         #[arg(long)]
         dry_run: bool,
-        /// Accepted; takes effect with the freshness check.
+        /// Rename even when the vault is behind its upstream. A git
+        /// operation left paused mid-way (a merge, a rebase) still refuses.
         #[arg(long)]
         skip_sync_check: bool,
     },
@@ -221,7 +224,7 @@ pub fn run(
             to,
             reason,
             dry_run,
-            skip_sync_check: _,
+            skip_sync_check,
         } => rename(
             root,
             &vault,
@@ -231,6 +234,7 @@ pub fn run(
                 to,
                 reason,
                 dry_run,
+                skip_sync_check,
             },
             interactive,
             json,
@@ -392,6 +396,7 @@ struct RenameArgs {
     to: Option<String>,
     reason: Option<String>,
     dry_run: bool,
+    skip_sync_check: bool,
 }
 
 /// `cdno note rename`: resolve, gather, preview, confirm, rename.
@@ -400,6 +405,12 @@ struct RenameArgs {
 /// preview's hash as `expected_plan`, so what is written is what was shown,
 /// whether or not anything was prompted, and a vault that changed in between
 /// is refused (`stale_plan`) rather than rewritten differently.
+///
+/// Before the preview, the freshness check ([`crate::freshness::check`]):
+/// a fetch unless `--dry-run`, then a refusal when the vault is behind its
+/// upstream (unless `--skip-sync-check`) or git is paused mid-operation, its
+/// warnings on stderr. The paused check runs again under the write lock, as
+/// the guard `rename_note` is given.
 fn rename(
     root: &Path,
     vault: &Vault,
@@ -449,12 +460,24 @@ fn rename(
     })?;
     let reason = args.reason.as_deref();
 
+    // The sync check, before the preview: a dry run is refused as the
+    // write would be. Its warnings go to stderr in text, and into the plan's
+    // `warnings` under `--json` (to stderr there only before a refusal).
+    let checked = crate::freshness::check(root, args.skip_sync_check, args.dry_run);
+    if !json || checked.refusal.is_some() {
+        show_sync_warnings(&checked.warnings);
+    }
+    if let Some(refusal) = checked.refusal {
+        return Err(rename_refusal(refusal, json));
+    }
+    let shown = checked.warnings;
+
     let plan = vault
         .rename_preview(&target, &to, reason, at)
         .map_err(|e| rename_refusal(e, json))?;
     if args.dry_run {
         if json {
-            return emit_rename_json(&plan, false, false, true);
+            return emit_rename_json(&plan, false, false, true, &shown);
         }
         println!("Dry run: nothing written.");
         print!("{}", render_plan(&plan));
@@ -464,15 +487,31 @@ fn rename(
         println!("Aborted.");
         return Ok(());
     }
-    let outcome = vault
-        .rename_note(&target, &to, reason, Some(plan.hash.as_str()), at)
-        .map_err(|e| rename_refusal(e, json))?;
+    // The whole check again under the lock; what it newly warns about is
+    // shown as the first check's warnings are.
+    let fresh = std::cell::RefCell::new(Vec::new());
+    let outcome = vault.rename_note(
+        &target,
+        &to,
+        reason,
+        Some(plan.hash.as_str()),
+        at,
+        crate::freshness::guard(root, args.skip_sync_check, &shown, &fresh),
+    );
+    let fresh = fresh.into_inner();
+    if !json || outcome.is_err() {
+        show_sync_warnings(&fresh);
+    }
+    let outcome = outcome.map_err(|e| rename_refusal(e, json))?;
     if json {
+        let mut sync_warnings = shown;
+        sync_warnings.extend(fresh);
         return emit_rename_json(
             &outcome.plan,
             !outcome.written.is_empty(),
             outcome.index_stale,
             false,
+            &sync_warnings,
         );
     }
     if outcome.plan.is_empty() {
@@ -497,6 +536,13 @@ fn rename(
     Ok(())
 }
 
+/// The sync check's warnings, one `warning:` line each on stderr.
+fn show_sync_warnings(warnings: &[String]) {
+    for warning in warnings {
+        eprintln!("warning: {warning}");
+    }
+}
+
 /// A domain refusal of the rename, as the error the handler returns. Under
 /// `--json` a refusal with a code is printed as its rejection object and the
 /// process exits non-zero; in text a failed rollback lists its paths one per
@@ -516,6 +562,10 @@ pub fn rename_refusal(err: DomainError, json: bool) -> anyhow::Error {
         lines.push_str("\ncheck them by hand (version control has the previous content)");
         return anyhow::anyhow!(lines);
     }
+    if let DomainError::BehindUpstream { .. } = &err {
+        // The domain carries the fact; the remedy is this interface's.
+        return anyhow::anyhow!("{err}; {}", crate::freshness::BEHIND_REMEDY);
+    }
     err.into()
 }
 
@@ -527,6 +577,7 @@ fn emit_rename_json(
     written: bool,
     index_stale: bool,
     dry_run: bool,
+    sync_warnings: &[String],
 ) -> Result<()> {
     let changes = |changes: &[Change]| -> Vec<serde_json::Value> {
         changes
@@ -539,7 +590,16 @@ fn emit_rename_json(
             })
             .collect()
     };
-    let warnings: Vec<serde_json::Value> = plan.warnings.iter().map(warning_json).collect();
+    let warnings: Vec<serde_json::Value> = plan
+        .warnings
+        .iter()
+        .map(warning_json)
+        .chain(
+            sync_warnings
+                .iter()
+                .map(|m| serde_json::json!({ "kind": "sync_check", "message": m })),
+        )
+        .collect();
     let payload = serde_json::json!({
         "dry_run": dry_run,
         "target": plan.target.path.to_string(),

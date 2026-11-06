@@ -1020,13 +1020,26 @@ mod two_clones {
     use cdno_core::path::VaultPath;
     use std::process::Command as Proc;
 
-    fn git_available() -> bool {
+    pub(super) fn git_available() -> bool {
         Proc::new("git").arg("--version").output().is_ok()
     }
 
     /// Run `git` in `dir` as a throwaway identity, never the global one.
-    fn git(dir: &Path, args: &[&str]) {
-        let out = Proc::new("git")
+    pub(super) fn git(dir: &Path, args: &[&str]) {
+        let out = git_output(dir, args);
+        assert!(
+            out.status.success(),
+            "git {args:?} in {}: {}{}",
+            dir.display(),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// [`git`] without the success assertion, for a command expected to
+    /// fail (a conflicted merge).
+    pub(super) fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
+        Proc::new("git")
             .current_dir(dir)
             // Nothing from the developer's machine reaches these commands:
             // no global or system config (hooks, identity, rewrites), and no
@@ -1049,14 +1062,7 @@ mod two_clones {
             ])
             .args(args)
             .output()
-            .expect("run git");
-        assert!(
-            out.status.success(),
-            "git {args:?} in {}: {}{}",
-            dir.display(),
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+            .expect("run git")
     }
 
     fn cdno_at(root: &Path) -> Command {
@@ -1517,6 +1523,17 @@ enum PtyStep {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_in_pty_steps(root: &Path, args: &[&str], steps: Vec<PtyStep>) -> String {
+    run_in_pty_steps_with_env(root, args, steps, &[])
+}
+
+/// [`run_in_pty_steps`] with extra environment for the command.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_in_pty_steps_with_env(
+    root: &Path,
+    args: &[&str],
+    steps: Vec<PtyStep>,
+    env: &[(&str, &Path)],
+) -> String {
     use std::io::{Read, Write};
     use std::process::{Command, Stdio};
     use std::sync::{Arc, Mutex};
@@ -1545,6 +1562,7 @@ fn run_in_pty_steps(root: &Path, args: &[&str], steps: Vec<PtyStep>) -> String {
             .collect();
         script.args(["-qec", &quoted.join(" "), "/dev/null"]);
     }
+    script.envs(env.iter().map(|(k, v)| (*k, *v)));
     let mut child = script
         .env_remove("CUADERNO_VAULT_PATH")
         .stdin(Stdio::piped())
@@ -1933,4 +1951,503 @@ fn an_auto_taken_single_hit_passes_its_path() {
         .failure()
         .stderr(predicate::str::contains("is shared with"));
     assert_eq!(vault_bytes(dir.path()), before);
+}
+
+// ---------------------------------------------------------------------
+// The freshness check of `cdno note rename` (RFC 0007 §5.8 (2), T25), on
+// real repositories. Each test is skipped when `git` is not on PATH.
+// ---------------------------------------------------------------------
+
+mod freshness {
+    use super::two_clones::{git, git_available, git_output};
+    use super::*;
+
+    /// A rename-ready vault at `<tmp>/a`, committed, with a `.gitignore`
+    /// for the index and the lock. Not yet connected to any remote.
+    fn committed_vault(tmp: &Path) -> std::path::PathBuf {
+        let a = tmp.join("a");
+        init_rename_vault(&a);
+        fs::write(
+            a.join(".gitignore"),
+            ".cuaderno/index.db*\n.cuaderno/.lock\n",
+        )
+        .unwrap();
+        fs::write(a.join("notes.txt"), "base\n").unwrap();
+        git(&a, &["init"]);
+        git(&a, &["add", "-A"]);
+        git(&a, &["commit", "-m", "vault"]);
+        a
+    }
+
+    /// [`committed_vault`] pushed to a bare remote at `<tmp>/remote.git`
+    /// and tracking it: up to date with its upstream.
+    fn tracking_vault(tmp: &Path) -> std::path::PathBuf {
+        let bare = tmp.join("remote.git");
+        fs::create_dir_all(&bare).unwrap();
+        git(&bare, &["init", "--bare", "-b", "main"]);
+        let a = committed_vault(tmp);
+        git(&a, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        git(&a, &["push", "-u", "origin", "main"]);
+        a
+    }
+
+    /// [`tracking_vault`] whose remote has one commit the clone has not
+    /// fetched: another clone pushed it. Only a fetch shows `a` behind.
+    fn vault_behind(tmp: &Path) -> std::path::PathBuf {
+        let a = tracking_vault(tmp);
+        git(
+            tmp,
+            &["clone", tmp.join("remote.git").to_str().unwrap(), "b"],
+        );
+        let b = tmp.join("b");
+        fs::write(b.join("notes.txt"), "from the other clone\n").unwrap();
+        git(&b, &["commit", "-am", "other clone"]);
+        git(&b, &["push"]);
+        a
+    }
+
+    /// `cdno note rename` with a throwaway `HOME`, so the developer's git
+    /// config never reaches the git cdno runs.
+    fn rename_in(tmp: &Path, vault: &Path) -> Command {
+        let mut cmd = rename_cmd(vault);
+        cmd.env("HOME", tmp).env("XDG_CONFIG_HOME", tmp);
+        cmd
+    }
+
+    fn warnings(stderr: &[u8]) -> Vec<String> {
+        String::from_utf8_lossy(stderr)
+            .lines()
+            .filter(|l| l.starts_with("warning:"))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// [`vault_bytes`] without `.git/`, which a fetch writes to
+    /// (`FETCH_HEAD`): what "nothing written" means for the vault.
+    fn tree_bytes(vault: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+        let mut bytes = vault_bytes(vault);
+        bytes.retain(|path, _| !path.starts_with(".git/"));
+        bytes
+    }
+
+    fn renamed(vault: &Path) -> bool {
+        vault.join("projects/surrogate-model.md").exists()
+            && !vault.join("projects/old.md").exists()
+    }
+
+    macro_rules! require_git {
+        () => {
+            if !git_available() {
+                eprintln!("skipped: `git` is not on PATH");
+                return;
+            }
+        };
+    }
+
+    #[test]
+    fn behind_upstream_refuses_and_names_the_override() {
+        require_git!();
+        let tmp = tempdir().unwrap();
+        let a = vault_behind(tmp.path());
+        let before = tree_bytes(&a);
+        rename_in(tmp.path(), &a)
+            .args(["old", "--to", "surrogate-model"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("1 commit behind its upstream"))
+            .stderr(predicate::str::contains("--skip-sync-check"))
+            .stderr(predicate::str::contains("git pull"));
+        assert_eq!(tree_bytes(&a), before, "nothing written");
+
+        let out = rename_in(tmp.path(), &a)
+            .args(["--json", "old", "--to", "surrogate-model"])
+            .assert()
+            .failure()
+            .get_output()
+            .stdout
+            .clone();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["code"], "behind_upstream", "{v}");
+        assert_eq!(v["details"]["behind"], 1, "{v}");
+        assert!(
+            v["details"]["remedy"]
+                .as_str()
+                .unwrap()
+                .contains("--skip-sync-check"),
+            "{v}"
+        );
+        assert_eq!(tree_bytes(&a), before, "nothing written");
+    }
+
+    #[test]
+    fn skip_sync_check_proceeds_when_behind() {
+        require_git!();
+        let tmp = tempdir().unwrap();
+        let a = vault_behind(tmp.path());
+        let out = rename_in(tmp.path(), &a)
+            .args(["old", "--to", "surrogate-model", "--skip-sync-check"])
+            .assert()
+            .success()
+            .get_output()
+            .clone();
+        assert!(renamed(&a));
+        let warned = warnings(&out.stderr);
+        assert_eq!(warned.len(), 1, "{warned:?}");
+        assert!(warned[0].contains("behind its upstream"), "{warned:?}");
+    }
+
+    /// [`committed_vault`] with a conflicted merge of `notes.txt` stopped
+    /// mid-way: `MERGE_HEAD` is present.
+    fn start_conflicted_merge(a: &Path) {
+        let out = git_output(a, &["merge", "other"]);
+        assert!(!out.status.success(), "the merge conflicts");
+        assert!(a.join(".git/MERGE_HEAD").exists(), "the merge is paused");
+    }
+
+    /// Branch `other` and `main` both change `notes.txt`, so merging
+    /// `other` into `main` conflicts.
+    fn diverging_branches(a: &Path) {
+        git(a, &["checkout", "-b", "other"]);
+        fs::write(a.join("notes.txt"), "from other\n").unwrap();
+        git(a, &["commit", "-am", "other"]);
+        git(a, &["checkout", "main"]);
+        fs::write(a.join("notes.txt"), "from main\n").unwrap();
+        git(a, &["commit", "-am", "main"]);
+    }
+
+    #[test]
+    fn a_paused_merge_refuses_even_with_skip() {
+        require_git!();
+        let tmp = tempdir().unwrap();
+        let a = committed_vault(tmp.path());
+        diverging_branches(&a);
+        start_conflicted_merge(&a);
+        let before = tree_bytes(&a);
+        rename_in(tmp.path(), &a)
+            .args(["old", "--to", "surrogate-model", "--skip-sync-check"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("a git operation is in progress"))
+            .stderr(predicate::str::contains("MERGE_HEAD"));
+        let out = rename_in(tmp.path(), &a)
+            .args([
+                "--json",
+                "old",
+                "--to",
+                "surrogate-model",
+                "--skip-sync-check",
+            ])
+            .assert()
+            .failure()
+            .get_output()
+            .stdout
+            .clone();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["code"], "git_operation_in_progress", "{v}");
+        assert!(
+            v["details"]["reason"].as_str().unwrap().contains("merge"),
+            "{v}"
+        );
+        assert_eq!(tree_bytes(&a), before, "nothing written");
+
+        // The check before the lock refuses too, not only the guard under
+        // it: a dry run, which never reaches the guard, is refused even
+        // with the override.
+        rename_in(tmp.path(), &a)
+            .args([
+                "old",
+                "--to",
+                "surrogate-model",
+                "--skip-sync-check",
+                "--dry-run",
+            ])
+            .assert()
+            .failure()
+            .stdout(predicate::str::contains("move").not())
+            .stderr(predicate::str::contains("a git operation is in progress"));
+    }
+
+    #[test]
+    fn no_upstream_warns_and_proceeds() {
+        require_git!();
+        let tmp = tempdir().unwrap();
+        let a = committed_vault(tmp.path());
+        let out = rename_in(tmp.path(), &a)
+            .args(["old", "--to", "surrogate-model"])
+            .assert()
+            .success()
+            .get_output()
+            .clone();
+        assert!(renamed(&a));
+        let warned = warnings(&out.stderr);
+        assert_eq!(warned.len(), 1, "{warned:?}");
+        assert!(warned[0].contains("no upstream"), "{warned:?}");
+    }
+
+    #[test]
+    fn a_dirty_tree_does_not_refuse() {
+        require_git!();
+        let tmp = tempdir().unwrap();
+        let a = tracking_vault(tmp.path());
+        // A modified tracked note, a modified tracked file, an untracked
+        // file and a staged one: none of it is a reason to refuse.
+        let project = a.join("projects/taken.md");
+        let text = fs::read_to_string(&project).unwrap();
+        fs::write(&project, format!("{text}\nAn edit not yet committed.\n")).unwrap();
+        fs::write(a.join("notes.txt"), "changed\n").unwrap();
+        fs::write(a.join("scratch.txt"), "untracked\n").unwrap();
+        fs::write(a.join("staged.txt"), "staged\n").unwrap();
+        git(&a, &["add", "staged.txt"]);
+        let out = rename_in(tmp.path(), &a)
+            .args(["old", "--to", "surrogate-model"])
+            .assert()
+            .success()
+            .get_output()
+            .clone();
+        assert!(renamed(&a));
+        assert_eq!(warnings(&out.stderr), Vec::<String>::new());
+    }
+
+    /// [`tracking_vault`] whose remote is then pointed at a path that does
+    /// not exist: the upstream ref stays (up to date), any fetch fails.
+    fn unreachable_remote(tmp: &Path) -> std::path::PathBuf {
+        let a = tracking_vault(tmp);
+        let gone = tmp.join("no-such-remote.git");
+        git(&a, &["remote", "set-url", "origin", gone.to_str().unwrap()]);
+        a
+    }
+
+    #[test]
+    fn dry_run_never_fetches() {
+        require_git!();
+        let tmp = tempdir().unwrap();
+        let a = unreachable_remote(tmp.path());
+        let before = tree_bytes(&a);
+        let out = rename_in(tmp.path(), &a)
+            .args(["old", "--to", "surrogate-model", "--dry-run"])
+            .assert()
+            .success()
+            .get_output()
+            .clone();
+        assert_eq!(
+            warnings(&out.stderr),
+            Vec::<String>::new(),
+            "a fetch would have failed and warned"
+        );
+        assert_eq!(tree_bytes(&a), before);
+    }
+
+    #[test]
+    fn a_failed_fetch_warns_and_proceeds() {
+        require_git!();
+        let tmp = tempdir().unwrap();
+        let a = unreachable_remote(tmp.path());
+        let out = rename_in(tmp.path(), &a)
+            .args(["old", "--to", "surrogate-model"])
+            .assert()
+            .success()
+            .get_output()
+            .clone();
+        assert!(renamed(&a));
+        let warned = warnings(&out.stderr);
+        assert_eq!(warned.len(), 1, "{warned:?}");
+        assert!(warned[0].contains("could not fetch"), "{warned:?}");
+    }
+
+    #[test]
+    fn a_dry_run_refuses_as_the_write_would() {
+        require_git!();
+        let tmp = tempdir().unwrap();
+        let a = vault_behind(tmp.path());
+        // The dry run never fetches, so it is assessed against the last
+        // fetch: once a fetch has shown the vault behind, it refuses.
+        git(&a, &["fetch"]);
+        let before = tree_bytes(&a);
+        rename_in(tmp.path(), &a)
+            .args(["old", "--to", "surrogate-model", "--dry-run"])
+            .assert()
+            .failure()
+            .stdout(predicate::str::contains("Dry run").not())
+            .stderr(predicate::str::contains("1 commit behind its upstream"))
+            .stderr(predicate::str::contains("--skip-sync-check"));
+        let out = rename_in(tmp.path(), &a)
+            .args(["--json", "old", "--to", "surrogate-model", "--dry-run"])
+            .assert()
+            .failure()
+            .get_output()
+            .stdout
+            .clone();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["code"], "behind_upstream", "{v}");
+        assert_eq!(tree_bytes(&a), before);
+    }
+
+    #[test]
+    fn a_dry_run_with_skip_shows_the_plan_when_behind() {
+        require_git!();
+        let tmp = tempdir().unwrap();
+        let a = vault_behind(tmp.path());
+        git(&a, &["fetch"]);
+        let before = tree_bytes(&a);
+        let out = rename_in(tmp.path(), &a)
+            .args([
+                "old",
+                "--to",
+                "surrogate-model",
+                "--dry-run",
+                "--skip-sync-check",
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Dry run: nothing written."))
+            .stdout(predicate::str::contains("projects/surrogate-model.md"))
+            .get_output()
+            .clone();
+        let warned = warnings(&out.stderr);
+        assert!(
+            warned.len() == 1 && warned[0].contains("behind its upstream"),
+            "{warned:?}"
+        );
+        // Under `--json` the warning is a `sync_check` entry of the plan.
+        let out = rename_in(tmp.path(), &a)
+            .args([
+                "--json",
+                "old",
+                "--to",
+                "surrogate-model",
+                "--dry-run",
+                "--skip-sync-check",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .clone();
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let sync: Vec<_> = v["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|w| w["kind"] == "sync_check")
+            .collect();
+        assert_eq!(sync.len(), 1, "{v}");
+        assert!(sync[0]["message"].as_str().unwrap().contains("behind"));
+        assert!(
+            warnings(&out.stderr).is_empty(),
+            "not on stderr under --json"
+        );
+        assert_eq!(tree_bytes(&a), before);
+    }
+
+    #[test]
+    fn json_carries_a_failed_fetch_as_a_sync_check_warning() {
+        require_git!();
+        let tmp = tempdir().unwrap();
+        let a = unreachable_remote(tmp.path());
+        let out = rename_in(tmp.path(), &a)
+            .args(["--json", "old", "--to", "surrogate-model"])
+            .assert()
+            .success()
+            .get_output()
+            .clone();
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(v["written"], true, "{v}");
+        let sync: Vec<_> = v["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|w| w["kind"] == "sync_check")
+            .collect();
+        assert_eq!(sync.len(), 1, "{v}");
+        assert!(
+            sync[0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("could not fetch")
+        );
+    }
+
+    /// Seat C's sequence: the check before the preview finds the vault up
+    /// to date; while the confirm waits, the other clone pushes and a plain
+    /// `git fetch` lands in the vault; then `y`.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn fetch_during_the_confirm(extra: &[&str]) -> (tempfile::TempDir, std::path::PathBuf, String) {
+        let tmp = tempdir().unwrap();
+        let a = tracking_vault(tmp.path());
+        git(
+            tmp.path(),
+            &[
+                "clone",
+                tmp.path().join("remote.git").to_str().unwrap(),
+                "b",
+            ],
+        );
+        let b = tmp.path().join("b");
+        let fetching = a.clone();
+        let home = tmp.path().to_path_buf();
+        let mut args = vec!["note", "rename", "old"];
+        args.extend_from_slice(extra);
+        let seen = run_in_pty_steps_with_env(
+            &a,
+            &args,
+            vec![
+                PtyStep::WaitFor("New slug"),
+                PtyStep::Send("surrogate-model\r".to_owned()),
+                PtyStep::WaitFor("Proceed?"),
+                PtyStep::Do(Box::new(move || {
+                    fs::write(b.join("notes.txt"), "from the other clone\n").unwrap();
+                    git(&b, &["commit", "-am", "other clone"]);
+                    git(&b, &["push"]);
+                    git(&fetching, &["fetch"]);
+                })),
+                PtyStep::Send("y\r".to_owned()),
+            ],
+            &[("HOME", &home), ("XDG_CONFIG_HOME", &home)],
+        );
+        (tmp, a, seen)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_fetch_during_the_confirm_prompt_is_behind_upstream() {
+        require_git!();
+        let (_tmp, a, seen) = fetch_during_the_confirm(&[]);
+        assert!(seen.contains("1 commit behind its upstream"), "{seen}");
+        assert!(a.join("projects/old.md").exists(), "nothing moved");
+        assert!(!a.join("projects/surrogate-model.md").exists());
+
+        let (_tmp, a, seen) = fetch_during_the_confirm(&["--skip-sync-check"]);
+        assert!(renamed(&a), "the override lets it through: {seen}");
+        assert!(
+            seen.contains("renaming anyway (--skip-sync-check)"),
+            "{seen}"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn the_paused_check_runs_again_under_the_lock() {
+        // The check before the preview finds no merge; one is started while
+        // the confirm waits, and the guard under the lock refuses it.
+        require_git!();
+        let tmp = tempdir().unwrap();
+        let a = committed_vault(tmp.path());
+        diverging_branches(&a);
+        let in_merge = a.clone();
+        let home = tmp.path().to_path_buf();
+        let seen = run_in_pty_steps_with_env(
+            &a,
+            &["note", "rename", "old"],
+            vec![
+                PtyStep::WaitFor("New slug"),
+                PtyStep::Send("surrogate-model\r".to_owned()),
+                PtyStep::WaitFor("Proceed?"),
+                PtyStep::Do(Box::new(move || start_conflicted_merge(&in_merge))),
+                PtyStep::Send("y\r".to_owned()),
+            ],
+            &[("HOME", &home), ("XDG_CONFIG_HOME", &home)],
+        );
+        assert!(seen.contains("a git operation is in progress"), "{seen}");
+        assert!(a.join("projects/old.md").exists(), "nothing moved");
+        assert!(!a.join("projects/surrogate-model.md").exists());
+    }
 }

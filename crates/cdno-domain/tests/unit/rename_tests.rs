@@ -775,7 +775,7 @@ impl Fixture {
     fn rename(&self, target: &str, new_slug: &str) -> RenameOutcome {
         let plan = self.preview(target, new_slug);
         self.vault
-            .rename_note(target, new_slug, None, Some(&plan.hash), at())
+            .rename_note(target, new_slug, None, Some(&plan.hash), at(), || Ok(()))
             .expect("rename")
     }
 
@@ -828,7 +828,7 @@ fn a_rename_writes_exactly_the_plan() {
     let preview = f.preview("old", "new");
     let outcome = f
         .vault
-        .rename_note("old", "new", None, Some(&preview.hash), at())
+        .rename_note("old", "new", None, Some(&preview.hash), at(), || Ok(()))
         .expect("rename");
     assert_eq!(
         outcome.plan, preview,
@@ -1017,7 +1017,7 @@ fn a_stale_plan_is_refused_and_writes_nothing() {
     let before = f.files();
     let err = f
         .vault
-        .rename_note("old", "new", None, Some(&preview.hash), at())
+        .rename_note("old", "new", None, Some(&preview.hash), at(), || Ok(()))
         .unwrap_err();
     assert!(
         matches!(&err, DomainError::StalePlan { expected, actual }
@@ -1034,7 +1034,7 @@ fn a_stale_plan_is_refused_and_writes_nothing() {
 
     // Without an expected plan there is nothing to be stale against.
     f.vault
-        .rename_note("old", "new", None, None, at())
+        .rename_note("old", "new", None, None, at(), || Ok(()))
         .expect("unchecked rename");
     assert!(f.read("projects/new.md").contains("aliases: [old]"));
 }
@@ -1046,7 +1046,14 @@ fn a_rollover_is_a_stale_plan() {
     let before = f.files();
     let err = f
         .vault
-        .rename_note("old", "new", None, Some(&preview.hash), dt(11, 0, 5))
+        .rename_note(
+            "old",
+            "new",
+            None,
+            Some(&preview.hash),
+            dt(11, 0, 5),
+            || Ok(()),
+        )
         .unwrap_err();
     assert!(matches!(err, DomainError::StalePlan { .. }), "{err:?}");
     assert_eq!(f.files(), before, "nothing is written");
@@ -1054,7 +1061,14 @@ fn a_rollover_is_a_stale_plan() {
     // Later the same day is the same plan: the stamp is not in the hash.
     let outcome = f
         .vault
-        .rename_note("old", "new", None, Some(&preview.hash), dt(10, 23, 59))
+        .rename_note(
+            "old",
+            "new",
+            None,
+            Some(&preview.hash),
+            dt(10, 23, 59),
+            || Ok(()),
+        )
         .expect("same day");
     assert_eq!(outcome.plan.hash, preview.hash);
 }
@@ -1066,7 +1080,7 @@ fn a_rename_to_itself_writes_nothing() {
     let plan = f.preview("old", "old");
     let outcome = f
         .vault
-        .rename_note("old", "old", None, Some(&plan.hash), at())
+        .rename_note("old", "old", None, Some(&plan.hash), at(), || Ok(()))
         .expect("no-op");
     assert!(outcome.plan.is_empty());
     assert!(outcome.written.is_empty());
@@ -1084,7 +1098,7 @@ fn a_failed_write_rolls_back_byte_identical() {
     let index: Arc<dyn VaultIndex> = f.index.clone();
     let vault = open(failing, index);
     let err = vault
-        .rename_note("old", "new", None, Some(&preview.hash), at())
+        .rename_note("old", "new", None, Some(&preview.hash), at(), || Ok(()))
         .unwrap_err();
     assert!(
         matches!(err, DomainError::Store(StoreError::PermissionDenied(_))),
@@ -1116,7 +1130,7 @@ fn a_failed_rollback_is_reported_per_path() {
     let index: Arc<dyn VaultIndex> = f.index.clone();
     let vault = open(failing, index);
     let err = vault
-        .rename_note("old", "new", None, Some(&preview.hash), at())
+        .rename_note("old", "new", None, Some(&preview.hash), at(), || Ok(()))
         .unwrap_err();
     assert!(
         matches!(&err, DomainError::RenameIncomplete { failed, source: StoreError::PermissionDenied(_) }
@@ -1135,7 +1149,7 @@ fn index_stale_is_success() {
     let vault = open(Arc::clone(&f.store), index);
     flaky.arm();
     let outcome = vault
-        .rename_note("old", "new", None, Some(&preview.hash), at())
+        .rename_note("old", "new", None, Some(&preview.hash), at(), || Ok(()))
         .expect("the files landed, so the rename succeeded");
     assert!(outcome.index_stale);
     for (path, after) in destinations(&preview) {
@@ -1222,7 +1236,7 @@ fn another_notes_alias_is_still_taken() {
     for slug in ["newer", "shared"] {
         let err = f
             .vault
-            .rename_note("projects/old", slug, None, None, at())
+            .rename_note("projects/old", slug, None, None, at(), || Ok(()))
             .unwrap_err();
         assert!(
             matches!(&err, DomainError::SlugTaken { slug: s, holder, kind: TakenBy::Alias }
@@ -1317,7 +1331,7 @@ fn assert_destination_taken(
     );
     refused(
         vault
-            .rename_note(target, new_slug, None, None, at())
+            .rename_note(target, new_slug, None, None, at(), || Ok(()))
             .unwrap_err(),
     );
     assert_eq!(files_of(store), before, "nothing is written");
@@ -1432,7 +1446,7 @@ fn a_file_appearing_at_the_destination_is_taken() {
     let vault = open(store, index);
     racing.arm();
     let err = vault
-        .rename_note("old", "new", None, None, at())
+        .rename_note("old", "new", None, None, at(), || Ok(()))
         .unwrap_err();
     assert!(
         matches!(&err, DomainError::SlugTaken { holder, kind: TakenBy::Stem, .. }
@@ -1492,7 +1506,7 @@ fn a_case_variant_in_another_folder_is_not_taken() {
         &[],
     );
     let outcome = vault
-        .rename_note("old", "kernel-trick", None, None, at())
+        .rename_note("old", "kernel-trick", None, None, at(), || Ok(()))
         .expect("not taken");
     assert_eq!(outcome.written[0], vp("projects/kernel-trick.md"));
     assert_eq!(
@@ -1511,7 +1525,9 @@ fn a_case_only_rename_works_where_the_filesystem_tells_the_names_apart() {
         .rename_preview("projects/Old", "old", None, at())
         .expect("preview");
     vault
-        .rename_note("projects/Old", "old", None, Some(&plan.hash), at())
+        .rename_note("projects/Old", "old", None, Some(&plan.hash), at(), || {
+            Ok(())
+        })
         .expect("rename");
     assert!(!store.exists(&vp("projects/Old.md")).unwrap());
     let note = store.read_file(&vp("projects/old.md")).unwrap();
@@ -1633,7 +1649,14 @@ fn a_portfolio_rename_moves_every_file_and_rewrites_the_folder_segment() {
         .expect("preview");
     let outcome = p
         .vault
-        .rename_note("portfolio:old", "new", None, Some(&preview.hash), at())
+        .rename_note(
+            "portfolio:old",
+            "new",
+            None,
+            Some(&preview.hash),
+            at(),
+            || Ok(()),
+        )
         .expect("rename");
     assert!(!outcome.index_stale);
 
@@ -1829,7 +1852,14 @@ fn a_portfolio_rename_hash_covers_artefact_moves_without_their_bytes() {
         .rename_preview("portfolios/old", "new", None, at())
         .expect("preview reads no artefact");
     p.vault
-        .rename_note("portfolios/old", "new", None, Some(&preview.hash), at())
+        .rename_note(
+            "portfolios/old",
+            "new",
+            None,
+            Some(&preview.hash),
+            at(),
+            || Ok(()),
+        )
         .expect("the write reads no artefact");
     assert!(
         p.store
@@ -1898,7 +1928,7 @@ fn a_portfolio_destination_folder_that_exists_is_taken() {
     for refused in [
         p.vault.rename_preview("portfolios/old", "new", None, at()),
         p.vault
-            .rename_note("portfolios/old", "new", None, None, at())
+            .rename_note("portfolios/old", "new", None, None, at(), || Ok(()))
             .map(|o| o.plan),
     ] {
         let err = refused.unwrap_err();
@@ -2015,7 +2045,7 @@ fn a_portfolio_rename_prunes_only_at_or_below_its_folder_and_never_fails_on_it()
     let store: Arc<dyn VaultStore> = hooks.clone();
     let p = portfolio_vault_over(store, &portfolio_files(P_PDF, "scan.pdf"));
     p.vault
-        .rename_note("portfolios/old", "new", None, None, at())
+        .rename_note("portfolios/old", "new", None, None, at(), || Ok(()))
         .expect("a failed prune does not fail the rename");
     assert_eq!(
         *hooks.pruned.lock().unwrap(),
@@ -2032,7 +2062,14 @@ fn a_portfolio_rename_prunes_only_at_or_below_its_folder_and_never_fails_on_it()
     // A flat rename prunes nothing.
     hooks.pruned.lock().unwrap().clear();
     p.vault
-        .rename_note("projects/surrogate-model", "surrogate", None, None, at())
+        .rename_note(
+            "projects/surrogate-model",
+            "surrogate",
+            None,
+            None,
+            at(),
+            || Ok(()),
+        )
         .expect("flat rename");
     assert!(hooks.pruned.lock().unwrap().is_empty());
 }
@@ -2047,7 +2084,7 @@ fn a_hidden_note_at_the_top_level_moves_with_its_field_rewritten() {
     files.push(("portfolios/old/.DS_Store".into(), "Bud1".into()));
     let p = portfolio_vault_over(Arc::new(MemoryVaultStore::new()), &files);
     p.vault
-        .rename_note("portfolios/old", "new", None, None, at())
+        .rename_note("portfolios/old", "new", None, None, at(), || Ok(()))
         .expect("rename");
     assert!(
         !p.store.exists(&vp("portfolios/old")).unwrap(),
@@ -2086,7 +2123,7 @@ fn an_alias_reached_link_is_rewritten_to_the_folder_form() {
     ));
     let p = portfolio_vault_over(Arc::new(MemoryVaultStore::new()), &files);
     p.vault
-        .rename_note("portfolios/old", "new", None, None, at())
+        .rename_note("portfolios/old", "new", None, None, at(), || Ok(()))
         .expect("rename");
     let day = p.read("journal/2026/daily/2026-05-08.md");
     assert!(
@@ -2207,6 +2244,7 @@ fn a_question_rename_carries_its_portfolio() {
             Some("a clearer name"),
             Some(&preview.hash),
             at(),
+            || Ok(()),
         )
         .expect("rename");
     assert!(!outcome.index_stale);
@@ -2327,6 +2365,7 @@ fn a_question_rename_is_one_plan_hash() {
             None,
             Some(&preview.hash),
             at(),
+            || Ok(()),
         )
         .unwrap_err();
     assert!(matches!(err, DomainError::StalePlan { .. }), "{err:?}");
@@ -2359,7 +2398,7 @@ fn the_pair_checks_both_destinations() {
     );
     let err = p
         .vault
-        .rename_note("questions/research/old", "new", None, None, at())
+        .rename_note("questions/research/old", "new", None, None, at(), || Ok(()))
         .unwrap_err();
     assert!(matches!(err, DomainError::SlugTaken { .. }), "{err:?}");
     assert!(p.store.exists(&vp("questions/research/old.md")).unwrap());
@@ -2442,7 +2481,7 @@ fn a_straggler_folder_link_resolves_through_the_question_until_913() {
     // the question, and lint names the question. A resolver fix flips this.
     let p = pair_vault();
     p.vault
-        .rename_note("questions/research/old", "new", None, None, at())
+        .rename_note("questions/research/old", "new", None, None, at(), || Ok(()))
         .expect("rename");
     p.store
         .write_file(
@@ -2478,7 +2517,7 @@ fn a_pair_rename_prunes_the_old_folder_and_a_failed_one_the_new() {
     let store: Arc<dyn VaultStore> = hooks.clone();
     let p = pair_vault_over(store);
     p.vault
-        .rename_note("questions/research/old", "new", None, None, at())
+        .rename_note("questions/research/old", "new", None, None, at(), || Ok(()))
         .expect("a failed prune does not fail the rename");
     assert_eq!(
         *hooks.pruned.lock().unwrap(),
@@ -2496,7 +2535,7 @@ fn a_pair_rename_prunes_the_old_folder_and_a_failed_one_the_new() {
     let store: Arc<dyn VaultStore> = hooks.clone();
     let p = pair_vault_over(store);
     p.vault
-        .rename_note("questions/research/old", "new", None, None, at())
+        .rename_note("questions/research/old", "new", None, None, at(), || Ok(()))
         .unwrap_err();
     assert_eq!(
         *hooks.pruned.lock().unwrap(),

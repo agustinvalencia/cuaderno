@@ -4828,3 +4828,208 @@ async fn every_create_tool_passes_the_slug_through() {
         assert_eq!(&created_name(result), want, "{result:?}");
     }
 }
+
+// ---------------------------------------------------------------------
+// The rename's freshness policy (RFC 0007 §5.8 (2), T25): the helper the
+// `rename_note` tool (T26) calls, over constructed `GitState` values, and
+// its guard on a real repository.
+// ---------------------------------------------------------------------
+
+mod freshness {
+    use std::cell::RefCell;
+    use std::path::Path;
+
+    use cdno_core::git::{GitError, GitState, PausedGitOp, Upstream};
+    use cdno_domain::error::DomainError;
+    use cdno_mcp::freshness::{Assessment, assess, guard};
+
+    fn repo(paused: Result<Option<PausedGitOp>, GitError>, upstream: Option<Upstream>) -> GitState {
+        GitState::Repository { paused, upstream }
+    }
+
+    fn merge() -> PausedGitOp {
+        PausedGitOp {
+            reason: "a merge is in progress (.git/MERGE_HEAD present)".into(),
+            marker: Some("MERGE_HEAD"),
+        }
+    }
+
+    fn probe_failed() -> GitError {
+        GitError::TimedOut {
+            command: "git diff --name-only --diff-filter=U".into(),
+        }
+    }
+
+    fn up(ahead: u32, behind: u32) -> Option<Upstream> {
+        Some(Upstream { ahead, behind })
+    }
+
+    fn proceeds(a: &Assessment) -> bool {
+        a.refusal.is_none()
+    }
+
+    #[test]
+    fn not_a_repository_skips_the_check() {
+        for skip in [false, true] {
+            let a = assess(&GitState::NotARepository, skip);
+            assert!(proceeds(&a) && a.warnings.is_empty(), "{a:?}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_state_warns_and_proceeds() {
+        let state = GitState::Unknown(GitError::Exit {
+            command: "git rev-parse --is-inside-work-tree".into(),
+            stderr: "fatal: detected dubious ownership\nTo add an exception ...".into(),
+        });
+        let a = assess(&state, false);
+        assert!(proceeds(&a), "{a:?}");
+        assert_eq!(a.warnings.len(), 1);
+        assert!(
+            a.warnings[0].contains("dubious ownership") && !a.warnings[0].contains('\n'),
+            "{:?}",
+            a.warnings
+        );
+    }
+
+    #[test]
+    fn up_to_date_and_ahead_proceed_quietly() {
+        for upstream in [up(0, 0), up(3, 0)] {
+            let a = assess(&repo(Ok(None), upstream), false);
+            assert!(proceeds(&a) && a.warnings.is_empty(), "{a:?}");
+        }
+    }
+
+    #[test]
+    fn a_paused_operation_refuses_even_with_skip_sync_check() {
+        for skip in [false, true] {
+            for upstream in [up(0, 0), up(0, 2), None] {
+                let a = assess(&repo(Ok(Some(merge())), upstream), skip);
+                assert!(
+                    matches!(&a.refusal, Some(DomainError::GitOperationInProgress { reason })
+                        if reason.contains("MERGE_HEAD")),
+                    "skip {skip}, {upstream:?}: {a:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_failed_paused_probe_warns_and_proceeds() {
+        let a = assess(&repo(Err(probe_failed()), up(0, 0)), false);
+        assert!(proceeds(&a), "{a:?}");
+        assert_eq!(a.warnings.len(), 1, "{:?}", a.warnings);
+        assert!(a.warnings[0].contains("paused"));
+    }
+
+    #[test]
+    fn a_failed_paused_probe_keeps_its_warning_beside_a_refusal() {
+        let a = assess(&repo(Err(probe_failed()), up(0, 1)), false);
+        assert!(matches!(
+            a.refusal,
+            Some(DomainError::BehindUpstream { behind: 1 })
+        ));
+        assert_eq!(a.warnings.len(), 1, "{:?}", a.warnings);
+    }
+
+    #[test]
+    fn behind_refuses_unless_skipped() {
+        let a = assess(&repo(Ok(None), up(1, 2)), false);
+        let err = a.refusal.expect("refused");
+        assert!(matches!(err, DomainError::BehindUpstream { behind: 2 }));
+        assert_eq!(
+            err.to_string(),
+            "the vault is 2 commits behind its upstream"
+        );
+
+        let a = assess(&repo(Ok(None), up(1, 2)), true);
+        assert!(proceeds(&a), "{a:?}");
+        assert_eq!(a.warnings.len(), 1, "{:?}", a.warnings);
+        assert!(a.warnings[0].contains("behind"));
+    }
+
+    #[test]
+    fn no_upstream_warns_and_proceeds() {
+        for skip in [false, true] {
+            let a = assess(&repo(Ok(None), None), skip);
+            assert!(proceeds(&a), "{a:?}");
+            assert_eq!(a.warnings.len(), 1, "{:?}", a.warnings);
+            assert!(a.warnings[0].contains("no upstream"));
+        }
+    }
+
+    /// `git init` in `dir` with nothing from the developer's config.
+    fn git_init(dir: &Path) -> bool {
+        std::process::Command::new("git")
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .args(["init", "-q"])
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    #[test]
+    fn the_guard_refuses_a_paused_operation_under_the_lock() {
+        // The guard's git inherits `HOME` / `XDG_CONFIG_HOME` (cdno's git
+        // clears every other variable), so the body runs in a re-exec of
+        // this test with both pointed at a temp dir: the developer's git
+        // config never reaches it, and no other test's environment changes.
+        const REPO: &str = "CDNO_FRESHNESS_GUARD_REPO";
+        if let Some(repo) = std::env::var_os(REPO) {
+            return guard_on_a_paused_repository(Path::new(&repo));
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("vault");
+        std::fs::create_dir_all(&repo).unwrap();
+        if !git_init(&repo) {
+            eprintln!("skipped: `git` is not on PATH");
+            return;
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "freshness::the_guard_refuses_a_paused_operation_under_the_lock",
+                "--exact",
+                "--test-threads=1",
+            ])
+            .env(REPO, &repo)
+            .env("HOME", tmp.path())
+            .env("XDG_CONFIG_HOME", tmp.path())
+            .output()
+            .expect("re-run this test");
+        assert!(
+            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn guard_on_a_paused_repository(dir: &Path) {
+        // A clean repository with no upstream: the guard proceeds, and its
+        // warning is reported once, not again when the first check had it.
+        let fresh = RefCell::new(Vec::new());
+        assert!(guard(dir, false, &[], &fresh)().is_ok());
+        let first = fresh.into_inner();
+        assert_eq!(first.len(), 1, "{first:?}");
+        let fresh = RefCell::new(Vec::new());
+        assert!(guard(dir, false, &first, &fresh)().is_ok());
+        assert!(fresh.into_inner().is_empty());
+
+        // A merge stopped mid-way: refused, with or without the override.
+        std::fs::write(
+            dir.join(".git/MERGE_HEAD"),
+            "0123456789012345678901234567890123456789\n",
+        )
+        .unwrap();
+        for skip in [false, true] {
+            let fresh = RefCell::new(Vec::new());
+            let got = guard(dir, skip, &[], &fresh)();
+            assert!(
+                matches!(&got, Err(DomainError::GitOperationInProgress { reason })
+                    if reason.contains("MERGE_HEAD")),
+                "skip {skip}: {got:?}"
+            );
+        }
+    }
+}

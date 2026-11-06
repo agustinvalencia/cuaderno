@@ -265,6 +265,7 @@ fn a_rename_holds_the_lock_for_the_whole_plan() {
         None,
         Some(&plan.hash),
         at,
+        || Ok(()),
     );
     store.join();
     outcome.expect("the rename wrote the plan it previewed");
@@ -281,4 +282,93 @@ fn a_rename_holds_the_lock_for_the_whole_plan() {
         text.contains("calibrating [[surrogate-calibration]]"),
         "{text}"
     );
+}
+
+/// Whether another holder has the vault's write lock right now: a fresh
+/// open of `.cuaderno/.lock` that cannot take it means someone holds it.
+fn lock_is_held(root: &Path) -> bool {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(root.join(".cuaderno/.lock"))
+        .expect("open the lock file");
+    match file.try_lock() {
+        Ok(()) => {
+            let _ = file.unlock();
+            false
+        }
+        Err(std::fs::TryLockError::WouldBlock) => true,
+        Err(e) => panic!("probing the lock: {e:?}"),
+    }
+}
+
+#[test]
+fn the_guard_runs_under_the_lock_before_planning() {
+    // RFC 0007 §5.8 (T25): the interface's paused-operation re-check runs
+    // once the lock is held, and a refusal from it returns before the vault
+    // is planned or anything staged. The target here does not exist, so a
+    // guard run after planning would be beaten by `NoteNotFound`.
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join(".cuaderno")).unwrap();
+    let at: NaiveDateTime = NaiveDate::from_ymd_opt(2026, 6, 13)
+        .unwrap()
+        .and_time(NaiveTime::from_hms_opt(9, 0, 0).unwrap());
+    let vault = build_fs_vault(root);
+    vault
+        .create_project(at, "Surrogate model", Context::Work, None)
+        .expect("create project");
+    assert!(
+        !lock_is_held(root),
+        "nothing holds the lock before the call"
+    );
+
+    let held = std::cell::Cell::new(None);
+    let err = vault
+        .rename_note(
+            "no-such-note",
+            "surrogate-calibration",
+            None,
+            None,
+            at,
+            || {
+                held.set(Some(lock_is_held(root)));
+                Err(cdno_domain::error::DomainError::GitOperationInProgress {
+                    reason: "a merge is in progress (.git/MERGE_HEAD present)".into(),
+                })
+            },
+        )
+        .expect_err("the guard refuses");
+    assert_eq!(held.get(), Some(true), "the guard ran, under the lock");
+    assert!(
+        matches!(
+            err,
+            cdno_domain::error::DomainError::GitOperationInProgress { .. }
+        ),
+        "the guard's error comes back before planning: {err:?}"
+    );
+
+    // And a guard refusal on a real target writes nothing.
+    let before = std::fs::read(root.join("projects/surrogate-model.md")).unwrap();
+    vault
+        .rename_note(
+            "surrogate-model",
+            "surrogate-calibration",
+            None,
+            None,
+            at,
+            || {
+                Err(cdno_domain::error::DomainError::GitOperationInProgress {
+                    reason: "a rebase is in progress (.git/rebase-merge present)".into(),
+                })
+            },
+        )
+        .expect_err("the guard refuses");
+    assert_eq!(
+        std::fs::read(root.join("projects/surrogate-model.md")).unwrap(),
+        before
+    );
+    assert!(!root.join("projects/surrogate-calibration.md").exists());
+    assert!(!lock_is_held(root), "the lock is released after a refusal");
 }

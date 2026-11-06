@@ -157,6 +157,27 @@ pub enum DomainError {
     )]
     StalePlan { expected: String, actual: String },
 
+    /// A git operation (a merge, a rebase, a cherry-pick, ...) is paused
+    /// mid-way in the vault's repository (RFC 0007 §5.8): renaming now would
+    /// write through a half-finished merge. Never overridable; finish or
+    /// abort the operation, then rename. The domain never raises it itself:
+    /// an interface's freshness check does, before the lock and again in the
+    /// [`rename_note`](crate::Vault::rename_note) guard under it. `reason` is
+    /// git's fact (`PausedGitOp::reason`), not interface wording.
+    #[error(
+        "a git operation is in progress in the vault ({reason}); finish or abort it, then rename"
+    )]
+    GitOperationInProgress { reason: String },
+
+    /// The vault's branch is `behind` commits behind its upstream as of the
+    /// last fetch (RFC 0007 §5.8): renaming now would rewrite notes the
+    /// other clone has already changed. The fact only: each interface
+    /// appends its own remedy where it renders the refusal. Raised by an
+    /// interface's freshness check (before the lock, or in the
+    /// [`rename_note`](crate::Vault::rename_note) guard), never by the domain.
+    #[error("the vault is {behind} commit{} behind its upstream", if *.behind == 1 { "" } else { "s" })]
+    BehindUpstream { behind: u32 },
+
     /// A file write of the rename failed (`source`), and restoring the
     /// files already written failed too for `failed`: those paths may hold
     /// the renamed content (or none) while the rest of the vault does not.
