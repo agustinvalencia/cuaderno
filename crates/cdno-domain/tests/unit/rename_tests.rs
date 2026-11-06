@@ -2301,11 +2301,7 @@ fn a_question_without_a_portfolio_renames_alone() {
         .iter()
         .find(|e| e.path.to_string().contains("journal/"))
         .expect("the log line");
-    assert!(
-        !day.after.contains("portfolio: portfolios/"),
-        "{}",
-        day.after
-    );
+    assert!(!day.after.contains("portfolio: [["), "{}", day.after);
 }
 
 #[test]

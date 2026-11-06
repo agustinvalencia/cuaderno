@@ -1167,7 +1167,7 @@ the attempt created do not outlive the rollback and a retry is not refused by th
 **What.** Renaming a question whose slug a portfolio shares (`find_question_path`'s
 correlation, `questions.rs:294`) renames both in the one transaction and the one plan (§5.3):
 two `moves`, one `hash`, one log line naming the question with an indented
-`portfolio: portfolios/<new>` continuation. Renaming the portfolio alone is the T22 refusal.
+`portfolio: [[portfolios/<new>]]` continuation. Renaming the portfolio alone is the T22 refusal.
 The evidence notes' `portfolio:` rows join the question's field keys here (T18 leaves them out
 while the pair is refused), and T18's `folder` refusal of a question with a same-slug portfolio
 is lifted.
