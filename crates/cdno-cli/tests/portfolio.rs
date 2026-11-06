@@ -1015,52 +1015,63 @@ fn an_empty_destination_folder_is_free() {
     );
 }
 
+/// Whether the filesystem under `dir` folds case (the macOS default):
+/// a `probe-A` written there is also found as `probe-a`.
+fn folds_case(dir: &Path) -> bool {
+    fs::write(dir.join("probe-A"), b"").unwrap();
+    let folds = dir.join("probe-a").exists();
+    fs::remove_file(dir.join("probe-A")).unwrap();
+    folds
+}
+
 #[test]
 fn an_empty_case_variant_destination_is_pruned_or_refused() {
     let dir = vault();
     let root = dir.path();
+    let case_insensitive = folds_case(root);
     seed_renamable_portfolio(root);
     fs::create_dir_all(root.join("portfolios/New")).unwrap();
-    let case_insensitive = root.join("portfolios/new").exists();
 
     let opened = cdno_domain::bootstrap::open_vault(root).expect("open");
-    let outcome = opened.vault.rename_note(
-        "portfolio:old",
-        "new",
-        None,
-        None,
-        moment(2026, 10, 14, 9, 0),
-    );
+    opened
+        .vault
+        .rename_note(
+            "portfolio:old",
+            "new",
+            None,
+            None,
+            moment(2026, 10, 14, 9, 0),
+        )
+        .expect("the empty variant is pruned, or is another folder");
     drop(opened);
     let listed: Vec<String> = fs::read_dir(root.join("portfolios"))
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
-    match outcome {
-        Ok(_) => {
-            // The files are under a folder listed as exactly `new`.
-            assert!(listed.contains(&"new".to_owned()), "{listed:?}");
-            assert!(!listed.contains(&"New".to_owned()), "{listed:?}");
-            assert!(root.join("portfolios/new/_index.md").is_file());
-            assert_lint_clean(root);
-        }
-        Err(err) => assert!(
-            matches!(err, cdno_domain::error::DomainError::SlugTaken { .. }),
-            "{err:?}"
-        ),
-    }
+    // Either way the files are under a folder listed as exactly `new`.
+    assert!(listed.contains(&"new".to_owned()), "{listed:?}");
+    assert!(root.join("portfolios/new/_index.md").is_file());
     if case_insensitive {
-        // This filesystem (the macOS default) cannot tell `New` from
-        // `new`: the empty variant is pruned under the lock and the folder
-        // recreated in the right case.
-        assert!(listed.contains(&"new".to_owned()), "{listed:?}");
+        // `New` and `new` are one folder here: the empty variant was
+        // pruned under the lock and the folder recreated in the right case.
+        assert!(!listed.contains(&"New".to_owned()), "{listed:?}");
+    } else {
+        // Two folders here: the empty `New/` is someone else's, untouched.
+        assert!(listed.contains(&"New".to_owned()), "{listed:?}");
+        assert!(root.join("portfolios/New").is_dir());
+        assert_eq!(
+            fs::read_dir(root.join("portfolios/New")).unwrap().count(),
+            0
+        );
     }
+    assert_lint_clean(root);
 }
 
 #[test]
 fn the_preview_refuses_an_empty_case_variant_it_may_not_prune() {
     let dir = vault();
     let root = dir.path();
+    let case_insensitive = folds_case(root);
     seed_renamable_portfolio(root);
     fs::create_dir_all(root.join("portfolios/New")).unwrap();
     let opened = cdno_domain::bootstrap::open_vault(root).expect("open");
@@ -1068,14 +1079,14 @@ fn the_preview_refuses_an_empty_case_variant_it_may_not_prune() {
         opened
             .vault
             .rename_preview("portfolio:old", "new", None, moment(2026, 10, 14, 9, 0));
-    if root.join("portfolios/new").exists() {
+    if case_insensitive {
         let err = preview.expect_err("a case variant is not the folder's name");
         assert!(
             matches!(err, cdno_domain::error::DomainError::SlugTaken { .. }),
             "{err:?}"
         );
     } else {
-        preview.expect("a different folder on a case-sensitive filesystem");
+        preview.expect("no `new` at all on a case-sensitive filesystem");
     }
     assert!(
         root.join("portfolios/New").is_dir(),
