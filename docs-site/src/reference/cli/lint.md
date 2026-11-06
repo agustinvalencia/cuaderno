@@ -35,7 +35,10 @@ dash (U+2014). A stamp that was attempted and mangled — `- 09:20:` unbolded, `
 range, `- **09:40**` with no colon — is caught too, not only one that is missing outright. The check is
 deliberately narrow — the marker has to open the entry and be followed immediately by `[[` — so
 ordinary prose in `## Logs`, including a sentence that merely mentions starting something or names a
-note mid-sentence, is never flagged.
+note mid-sentence, is never flagged. The `renamed [[new]] — Title` line a rename writes gets the same
+near-miss check (it is not a focus marker, so `cdno now` never reads it), and a `was:` continuation
+under it that contains a `[[` link is a warning, because the value is a copied slug and a link would
+be rewritten by the next rename.
 
 It checks that an **archived action note** (`actions/_done/<year>/`) has only grown since it was
 archived. The archival recorded the note's frozen prefix; lines appended after it (a late

@@ -3851,3 +3851,95 @@ fn an_alias_listed_twice_is_reported_once() {
     let report = vault.lint_all_notes(lint_day()).unwrap();
     assert_eq!(conflict_or_folder(&report).len(), 1, "{:?}", report.issues);
 }
+
+#[test]
+fn a_renamed_line_with_an_ascii_hyphen_is_reported() {
+    let body = daily_log("- **10:00**: renamed [[alpha]] - Surrogate model\n  was: beta\n");
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+    let found: Vec<_> = report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("`renamed` log line"))
+        .collect();
+    assert_eq!(found.len(), 1, "issues: {:?}", report.issues);
+    assert_eq!(found[0].severity, LintSeverity::Warning);
+    assert!(
+        found[0].message.contains("ASCII hyphen"),
+        "hint should name the hyphen: {}",
+        found[0].message
+    );
+}
+
+#[test]
+fn a_well_formed_renamed_line_is_clean() {
+    let body = daily_log(
+        "- **10:00**: renamed [[alpha]] \u{2014} Surrogate model\n  was: beta\n  reason: clearer\n",
+    );
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+    assert!(
+        !report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("renamed") || i.message.contains("`was:`")),
+        "issues: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn a_linked_was_is_a_warning() {
+    let body =
+        daily_log("- **10:00**: renamed [[alpha]] \u{2014} Surrogate model\n  was: [[beta]]\n");
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+    let found: Vec<_> = report
+        .issues
+        .iter()
+        .filter(|i| {
+            i.message
+                .contains("is a copied value; a link here is rewritten by the next rename")
+        })
+        .collect();
+    assert_eq!(found.len(), 1, "issues: {:?}", report.issues);
+    assert_eq!(found[0].severity, LintSeverity::Warning);
+    assert!(
+        found[0].message.contains("under renamed [[alpha]]"),
+        "the message names the head: {}",
+        found[0].message
+    );
+}
+
+#[test]
+fn a_linked_was_under_another_entry_is_left_alone() {
+    // Only a `renamed` head owns a `was:` that this rule reads; the
+    // mutable-field family's own `was:` lines may carry links.
+    let body = daily_log("- **10:00**: state on [[alpha]]\n  was: see [[beta]]\n  now: done\n");
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+    assert!(
+        !report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("is a copied value")),
+        "issues: {:?}",
+        report.issues
+    );
+}

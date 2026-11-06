@@ -6,8 +6,8 @@
 //! back writes `held_by: null`, and each change appends a
 //! `holder on [[<slug>]]` entry with indented `was:` / `now:` lines to
 //! today's daily log, in the mutable-field family `set_core_question`
-//! belongs to. The entry is not a focus marker, so the lint prefix list
-//! (`FOCUS_MARKER_PREFIXES`) does not name it.
+//! belongs to. The entry is not one of the fixed-prefix lines the lint
+//! near-miss list (`MARKER_PREFIXES`) checks, so it is not named there.
 //!
 //! The three guards the verb carries:
 //!

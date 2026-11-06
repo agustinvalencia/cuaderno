@@ -843,6 +843,23 @@ fn current_focus_finds_a_started_action() {
 }
 
 #[test]
+fn a_renamed_line_does_not_touch_the_focus() {
+    // A rename is a record, not a focus move: even one shaped to match the
+    // started focus exactly (same project, same text, so a close arm would
+    // fire on it) leaves the started focus as it was.
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft the methods section",
+        "**10:00**: renamed [[alpha]] \u{2014} Draft the methods section\n  was: alpha-old",
+    ]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.project, "alpha");
+    assert_eq!(focus.action, "Draft the methods section");
+    assert_eq!(focus.started, NaiveTime::from_hms_opt(9, 30, 0).unwrap());
+}
+
+#[test]
 fn a_completed_action_is_no_longer_the_focus() {
     let vault = focus_vault(&[
         "**09:30**: started [[alpha]] \u{2014} Draft the methods section",

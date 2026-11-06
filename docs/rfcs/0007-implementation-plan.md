@@ -959,6 +959,12 @@ sits in `vault/log.rs` beside the formatter, `LOG_WAS_KEY` beside `LOG_REASON_KE
 `projects/<slug>` for a project), so the planner picks the §5.6 form itself: the bare slug for a
 project, `actions/<slug>`, `portfolios/<slug>`, the path for a question or a custom note.
 
+*Amended in the T19 PR:* the focus fold reads the `LOG_*_PREFIX` constants directly and never read
+lint's list, so the `is_focus` flag changes only the near-miss wording (a `renamed` line's hints say
+"title", not "action"). The context probe's rename line must match the open start's project and text,
+or a wrongly added close arm would not fire on it and the test would pass vacuously. The `was:`
+warning names the head's link, and its scope ends at the first non-indented line.
+
 **Deliverable.** The constants, the formatter, the lint list, the warning, tests.
 
 **Depends on.** Nothing.
