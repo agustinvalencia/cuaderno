@@ -1112,7 +1112,7 @@ argued.
 file under `portfolios/old/` — markdown as `write_file(new path, after)` + `delete_file`, with
 the evidence notes' `portfolio:` field rewritten through the same `Field` change and every
 in-folder link's folder segment rewritten; non-markdown artefacts as `move_file` (the `Move` op,
-`transaction.rs:51`), which is correct for them because they carry no index facets. Referrers
+`transaction.rs:61`), which is correct for them because they carry no index facets. Referrers
 outside the folder rewrite their folder segment (`[[portfolios/old/2026-10-12-baseline]]` →
 `[[portfolios/new/2026-10-12-baseline]]`, attachment embeds likewise). After commit,
 `remove_dir_if_empty` (T9) on the old folder and its emptied subfolders, best-effort, with a
@@ -1131,13 +1131,35 @@ must cover the artefact moves without reading their bytes.
   `a_portfolio_rename_moves_every_file_and_rewrites_the_folder_segment` (index, two evidence
   notes with `portfolio: old`, one PDF artefact, a daily note embedding it, a project map
   linking `[[portfolios/old]]`: every file at the new path, nothing at the old, the PDF's bytes
-  identical, every referrer resolves), `a_portfolio_rename_is_refused_while_a_question_shares_its_slug`.
-- `cargo test -p cdno-cli --test portfolio` (real files): `an_emptied_folder_is_pruned` and
-  `a_folder_with_a_stray_file_is_left` (a `.DS_Store`-like file: the folder stays, the rename
-  still succeeded).
+  identical, every referrer resolves), `a_portfolio_rename_is_refused_while_a_question_shares_its_slug`,
+  `a_portfolio_rename_hash_covers_artefact_moves_without_their_bytes`,
+  `a_folder_note_shared_stem_compares_folder_names`,
+  `a_portfolio_destination_folder_that_exists_is_taken` and
+  `a_portfolio_rename_prunes_only_at_or_below_its_folder_and_never_fails_on_it`.
+- `cargo test -p cdno-cli --test portfolio` (real files, driven through
+  `cdno_domain::bootstrap::open_vault` until the verb lands in T24): `an_emptied_folder_is_pruned`
+  and `a_folder_with_a_stray_file_is_left` (a `.DS_Store`-like file that arrives in the old folder
+  after the rename's snapshot was taken: the folder stays, holding it, and the rename still
+  succeeded).
 - Mutation: `move_file` for the evidence notes; the resolve assertion fails.
 
 **Correct means.** A portfolio is one note to the person and moves as one.
+
+*Amended in the T22 PR:* every file under the folder moves, hidden files included: a note (a
+file the snapshot holds as one) through `write_file` + `delete_file` with its index rows, and any
+other file through the `Move` op, markdown among them (a document filed in an artefact folder, an
+ignored file), since none of them has an index row. A link that reaches the `_index.md` other than
+through its folder path (an alias) is rewritten to the folder form `portfolios/<new>`, never to a
+bare `[[<new>]]`, which would dangle. A destination `portfolios/<new>/` holding any file is
+refused as `slug_taken { kind: folder }`. One holding no file at any depth is pruned by the
+write, under the lock and before staging, and refused if anything is left at its name (a case
+variant that survived, a symlink); the preview, which may not prune, treats it as free only when
+the store lists it as a directory under exactly its name. Every move's source must be reachable
+through the store (`metadata`), so a dangling or outside-vault symlink is refused before the write. After a good
+commit the prune lists every directory under `portfolios/<old>/` (`VaultStore::walk_dirs`, so an
+empty subfolder no file passed through goes too), tries them deepest first and then the folder,
+never above it. After a failed commit the same prune runs on `portfolios/<new>/`, so the folders
+the attempt created do not outlive the rollback and a retry is not refused by them.
 
 ### T23 — The question–portfolio pair
 

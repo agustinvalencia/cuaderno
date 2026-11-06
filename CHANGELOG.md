@@ -8,6 +8,22 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Renaming a portfolio** (RFC 0007 T22, closes #871). `Vault::rename_note` and `plan_rename` now
+  take a portfolio (`portfolios/<old>`, `portfolio:<old>` or the bare slug) and move its whole
+  folder in the one transaction: each note in it written at the new path and deleted at the old one,
+  with its index row moved, and every attachment artefact moved as it is (its bytes are never read,
+  and the plan hash covers each artefact move by its paths). The evidence notes' `portfolio:` field
+  follows, and every link whose address runs through `portfolios/<old>/` (a note, an attachment
+  embed, a link inside the folder itself) has that folder segment rewritten. Hidden files move too.
+  After the commit every folder under `portfolios/<old>/` that holds nothing is pruned, and then the
+  folder itself, never above it; after a failed commit the folders the attempt created under
+  `portfolios/<new>/` are pruned the same way, so a retry is not blocked. An empty subfolder of the
+  old portfolio is pruned, not moved. A destination folder holding any file is refused; an empty one
+  is pruned under the lock and refused if anything is left at its name (a case variant on a
+  case-insensitive filesystem, a symlink). A symlinked artefact that dangles or points outside the
+  vault is refused before the write. So is a portfolio whose slug a question shares, until the pair
+  can be renamed together. `VaultStore::walk_dirs` lists the directories beneath a path. No CLI or
+  MCP surface yet.
 - **The rename against the real stores** (RFC 0007 T21, closes #870). Three tests the memory
   implementations cannot give: `rename_index_ops_land_in_order_on_sqlite` (old path gone, new path
   and its links present, the archived referrer's snapshot row unchanged, no link left resolved to the

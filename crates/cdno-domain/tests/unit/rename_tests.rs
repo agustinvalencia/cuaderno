@@ -437,11 +437,12 @@ fn an_archived_action_is_not_renamable() {
 }
 
 #[test]
-fn a_folder_note_is_not_renamable_yet() {
+fn a_folder_note_other_than_a_portfolios_is_not_renamable_yet() {
+    // Only `portfolios/<slug>/_index.md` moves its folder (T22): a
+    // portfolio nested in a grouping folder is still refused.
     let f = fixture();
-    let err = f
-        .plan("portfolios/surrogate-error-budget", "new")
-        .unwrap_err();
+    f.write("portfolios/group/nested/_index.md", PORTFOLIO);
+    let err = f.plan("portfolios/group/nested", "new").unwrap_err();
     assert!(
         matches!(&err, DomainError::NoteNotRenamable { reason, .. } if reason == "folder"),
         "{err:?}"
@@ -1515,4 +1516,626 @@ fn a_case_only_rename_works_where_the_filesystem_tells_the_names_apart() {
     assert!(!store.exists(&vp("projects/Old.md")).unwrap());
     let note = store.read_file(&vp("projects/old.md")).unwrap();
     assert!(note.contains("aliases: [Old]\n"), "{note}");
+}
+
+// ---------------------------------------------------------------------
+// A portfolio (T22): the folder moves as one note.
+// ---------------------------------------------------------------------
+
+const P_INDEX: &str = "---\ntype: portfolio\nquestion: \"How large is the error?\"\ncreated: 2026-05-01\nproject: \"[[projects/surrogate-model]]\"\n---\n\n# How large is the error?\n\n## Evidence\n- [[portfolios/old/2026-10-12-baseline]]\n- [[portfolios/old/2026-10-13-scan]]\n";
+
+const P_BASELINE: &str = "---\ntype: evidence\ncreated: 2026-05-02\nsource: \"Baseline sweep\"\nportfolio: old\norigin: \"[[projects/surrogate-model]]\"\n---\n\n# Baseline sweep\n\nFiled in [[portfolios/old]], beside [[portfolios/old/2026-10-13-scan]].\n";
+
+const P_SCAN: &str = "---\ntype: evidence\ncreated: 2026-05-03\nsource: \"Scan\"\nportfolio: old\norigin: \"[[projects/surrogate-model]]\"\nkind: pdf\n---\n\n# Scan\n\n## Attachment\n\n[scan.pdf](<./2026-10-13-scan/scan.pdf>)\n\n## Abstract\n\nThe residuals, scanned.\n";
+
+const P_PDF: &str = "%PDF-1.4 the residuals, scanned";
+
+const P_PROJECT: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nCollecting evidence in [[portfolios/old]].\n\n## Next Actions\n\n## Milestones\n";
+
+const P_DAY: &str = "---\ntype: daily\ndate: 2026-05-09\n---\n\n# Saturday, 9 May 2026\n\n## Logs\n- **09:00**: scanned ![[portfolios/old/2026-10-13-scan/scan.pdf]]\n- **09:30**: see [[portfolios/old/2026-10-12-baseline|the baseline]] and [[portfolios/old#Evidence]]\n";
+
+const P_SIBLING: &str = "---\ntype: portfolio\nquestion: \"Is the emulator faster?\"\ncreated: 2026-05-01\n---\n\n# Is the emulator faster?\n";
+
+/// A vault holding portfolio `old` ("How large is the error?") with two
+/// evidence notes (`portfolio: old`), one of them an attachment stub owning
+/// a PDF, a project map linking `[[portfolios/old]]`, a daily note
+/// embedding the PDF, and a sibling portfolio `surrogate-emulator`.
+fn portfolio_files(pdf: &str, pdf_name: &str) -> Vec<(String, String)> {
+    vec![
+        ("portfolios/old/_index.md".into(), P_INDEX.into()),
+        (
+            "portfolios/old/2026-10-12-baseline.md".into(),
+            P_BASELINE.into(),
+        ),
+        (
+            "portfolios/old/2026-10-13-scan.md".into(),
+            P_SCAN.replace("scan.pdf", pdf_name),
+        ),
+        (
+            format!("portfolios/old/2026-10-13-scan/{pdf_name}"),
+            pdf.into(),
+        ),
+        (
+            "portfolios/surrogate-emulator/_index.md".into(),
+            P_SIBLING.into(),
+        ),
+        ("projects/surrogate-model.md".into(), P_PROJECT.into()),
+        (
+            "journal/2026/daily/2026-05-09.md".into(),
+            P_DAY.replace("scan.pdf", pdf_name),
+        ),
+    ]
+}
+
+struct PortfolioVault {
+    store: Arc<dyn VaultStore>,
+    index: Arc<MemoryIndex>,
+    vault: Vault,
+}
+
+fn portfolio_vault_over(store: Arc<dyn VaultStore>, files: &[(String, String)]) -> PortfolioVault {
+    for (path, content) in files {
+        store.write_file(&vp(path), content).unwrap();
+    }
+    let index = Arc::new(MemoryIndex::new());
+    let vault = open(Arc::clone(&store), index.clone());
+    PortfolioVault {
+        store,
+        index,
+        vault,
+    }
+}
+
+fn portfolio_vault() -> PortfolioVault {
+    portfolio_vault_over(
+        Arc::new(MemoryVaultStore::new()),
+        &portfolio_files(P_PDF, "scan.pdf"),
+    )
+}
+
+impl PortfolioVault {
+    fn plan(&self, target: &str, new_slug: &str) -> Result<RenamePlan, DomainError> {
+        let snapshot = self.vault.rename_snapshot().expect("snapshot");
+        self.vault
+            .plan_rename(&snapshot, target, new_slug, None, at())
+    }
+
+    fn read(&self, path: &str) -> String {
+        self.store.read_file(&vp(path)).unwrap()
+    }
+
+    fn resolves(&self, reference: &str) -> VaultPath {
+        match self
+            .vault
+            .resolve_note_ref(reference, at().date())
+            .expect("resolve")
+        {
+            RefResolution::Resolved(note) => note.path,
+            other => panic!("`{reference}` did not resolve: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_portfolio_rename_moves_every_file_and_rewrites_the_folder_segment() {
+    let p = portfolio_vault();
+    let pdf_before = p
+        .store
+        .read_bytes(&vp("portfolios/old/2026-10-13-scan/scan.pdf"))
+        .unwrap();
+    for target in ["portfolios/old", "portfolio:old", "old"] {
+        let plan = p.plan(target, "new").expect(target);
+        assert_eq!(plan.target.path, vp("portfolios/old/_index.md"), "{target}");
+    }
+    let preview = p
+        .vault
+        .rename_preview("portfolio:old", "new", None, at())
+        .expect("preview");
+    let outcome = p
+        .vault
+        .rename_note("portfolio:old", "new", None, Some(&preview.hash), at())
+        .expect("rename");
+    assert!(!outcome.index_stale);
+
+    // Every file at the new path, nothing at the old one, the PDF's bytes
+    // as they were.
+    let files: Vec<String> = p
+        .store
+        .walk_dir(&VaultPath::root())
+        .unwrap()
+        .into_iter()
+        .map(|p| p.to_string())
+        .collect();
+    assert!(
+        !files.iter().any(|f| f.starts_with("portfolios/old/")),
+        "{files:?}"
+    );
+    for moved in [
+        "portfolios/new/_index.md",
+        "portfolios/new/2026-10-12-baseline.md",
+        "portfolios/new/2026-10-13-scan.md",
+        "portfolios/new/2026-10-13-scan/scan.pdf",
+    ] {
+        assert!(files.iter().any(|f| f == moved), "{moved}: {files:?}");
+    }
+    assert_eq!(
+        p.store
+            .read_bytes(&vp("portfolios/new/2026-10-13-scan/scan.pdf"))
+            .unwrap(),
+        pdf_before
+    );
+    assert!(
+        p.read("portfolios/new/_index.md")
+            .contains("aliases: [old]\n---\n")
+    );
+
+    // The evidence notes' `portfolio:` field and every folder segment,
+    // inside the folder and out, read the new slug.
+    for evidence in [
+        "portfolios/new/2026-10-12-baseline.md",
+        "portfolios/new/2026-10-13-scan.md",
+    ] {
+        assert!(
+            p.read(evidence).contains("\nportfolio: new\n"),
+            "{evidence}"
+        );
+    }
+    assert!(
+        p.read("portfolios/new/2026-10-12-baseline.md")
+            .contains("Filed in [[portfolios/new]], beside [[portfolios/new/2026-10-13-scan]].\n")
+    );
+    assert!(
+        p.read("projects/surrogate-model.md")
+            .contains("Collecting evidence in [[portfolios/new]].\n")
+    );
+    let day = p.read("journal/2026/daily/2026-05-09.md");
+    assert!(
+        day.contains("![[portfolios/new/2026-10-13-scan/scan.pdf]]"),
+        "{day}"
+    );
+    assert!(
+        day.contains(
+            "[[portfolios/new/2026-10-12-baseline|the baseline]] and [[portfolios/new#Evidence]]"
+        ),
+        "{day}"
+    );
+    assert!(p.read(DAILY_TODAY).ends_with(
+        "- **10:30**: renamed [[portfolios/new]] \u{2014} How large is the error?\n  was: old\n"
+    ));
+    // The stub's relative link to its artefact needed nothing.
+    assert!(
+        p.read("portfolios/new/2026-10-13-scan.md")
+            .contains("[scan.pdf](<./2026-10-13-scan/scan.pdf>)")
+    );
+
+    // Every referrer resolves through the index, and the old paths are gone.
+    let index = vp("portfolios/new/_index.md");
+    let baseline = vp("portfolios/new/2026-10-12-baseline.md");
+    let mut backlinks = p.index.find_backlinks(&index).unwrap();
+    backlinks.sort();
+    assert_eq!(
+        backlinks,
+        vec![
+            vp("journal/2026/daily/2026-05-09.md"),
+            vp(DAILY_TODAY),
+            baseline.clone(),
+            vp("projects/surrogate-model.md"),
+        ]
+    );
+    let mut backlinks = p.index.find_backlinks(&baseline).unwrap();
+    backlinks.sort();
+    assert_eq!(
+        backlinks,
+        vec![vp("journal/2026/daily/2026-05-09.md"), index.clone()]
+    );
+    for old in [
+        "portfolios/old/_index.md",
+        "portfolios/old/2026-10-12-baseline.md",
+        "portfolios/old/2026-10-13-scan.md",
+    ] {
+        assert!(p.index.find_by_path(&vp(old)).unwrap().is_none(), "{old}");
+    }
+    assert_eq!(p.resolves("portfolios/new/_index"), index);
+    assert_eq!(p.resolves("portfolio:new"), index);
+    assert_eq!(p.resolves("new"), index);
+    assert_eq!(p.resolves("portfolio:old"), index, "the old name resolves");
+    assert_eq!(p.resolves("portfolios/new/2026-10-12-baseline"), baseline);
+    let contents = p.vault.get_portfolio_contents("new").expect("contents");
+    assert_eq!(contents.len(), 2, "{contents:?}");
+    assert!(p.vault.get_portfolio_contents("old").unwrap().is_empty());
+
+    // The written paths: the index note first, then its folder's files.
+    assert_eq!(outcome.written[0], index);
+    for (_, to) in &outcome.plan.moves {
+        assert!(outcome.written.contains(to), "{to}");
+    }
+
+    let report = p.vault.lint_all_notes(super::support::lint_day()).unwrap();
+    assert_eq!(report.error_count(), 0, "{:?}", report.issues);
+}
+
+#[test]
+fn a_portfolio_rename_is_refused_while_a_question_shares_its_slug() {
+    let p = portfolio_vault();
+    p.store
+        .write_file(
+            &vp("questions/research/old.md"),
+            "---\ntype: question\nstatus: open\ncreated: 2026-05-01\n---\n\n# How large is the error?\n",
+        )
+        .unwrap();
+    let err = p.plan("portfolios/old", "new").unwrap_err();
+    assert!(
+        matches!(&err, DomainError::NoteNotRenamable { reason, .. } if reason == "rename the question"),
+        "{err:?}"
+    );
+    // And the question, for its part, is refused as the pair (T23).
+    let err = p.plan("questions/research/old", "new").unwrap_err();
+    assert!(
+        matches!(&err, DomainError::NoteNotRenamable { reason, .. } if reason == "folder"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_portfolio_rename_hash_covers_artefact_moves_without_their_bytes() {
+    // A store that panics on any read of a non-markdown file under
+    // `portfolios/`: neither the plan, the preview nor the write reads one.
+    let guarded = || {
+        let store: Arc<dyn VaultStore> = Arc::new(HookStore {
+            no_artefact_reads: true,
+            ..HookStore::new()
+        });
+        store
+    };
+    let hash = |pdf: &str, name: &str| {
+        portfolio_vault_over(guarded(), &portfolio_files(pdf, name))
+            .plan("portfolios/old", "new")
+            .expect("plan")
+            .hash
+    };
+    let base = hash(P_PDF, "scan.pdf");
+    assert_eq!(
+        base,
+        hash("%PDF-1.4 another scan altogether", "scan.pdf"),
+        "an artefact's bytes are not hashed"
+    );
+    // The stub and the daily embed name the file, so rename only the
+    // artefact itself: a second artefact whose name differs.
+    let with_extra = |name: &str| {
+        let mut files = portfolio_files(P_PDF, "scan.pdf");
+        files.push((
+            format!("portfolios/old/2026-10-13-scan/{name}"),
+            "%PDF-1.4 a second page".into(),
+        ));
+        portfolio_vault_over(guarded(), &files)
+            .plan("portfolios/old", "new")
+            .expect("plan")
+            .hash
+    };
+    assert_ne!(
+        base,
+        with_extra("page-2.pdf"),
+        "an artefact's move is hashed"
+    );
+    assert_ne!(
+        with_extra("page-2.pdf"),
+        with_extra("page-3.pdf"),
+        "an artefact's name is hashed"
+    );
+    let p = portfolio_vault_over(guarded(), &portfolio_files(P_PDF, "scan.pdf"));
+    let preview = p
+        .vault
+        .rename_preview("portfolios/old", "new", None, at())
+        .expect("preview reads no artefact");
+    p.vault
+        .rename_note("portfolios/old", "new", None, Some(&preview.hash), at())
+        .expect("the write reads no artefact");
+    assert!(
+        p.store
+            .exists(&vp("portfolios/new/2026-10-13-scan/scan.pdf"))
+            .unwrap()
+    );
+}
+
+#[test]
+fn a_folder_note_shared_stem_compares_folder_names() {
+    // Another folder note with the same folder name (an expanded
+    // stewardship): a link by folder name cannot tell them apart.
+    let p = portfolio_vault();
+    p.store
+        .write_file(
+            &vp("stewardships/old/_index.md"),
+            "---\ntype: stewardship\ncreated: 2026-05-01\n---\n\n# Old\n",
+        )
+        .unwrap();
+    let err = p.plan("portfolios/old", "new").unwrap_err();
+    assert!(
+        matches!(&err, DomainError::StemShared { others, .. }
+            if *others == vec![vp("stewardships/old/_index.md")]),
+        "{err:?}"
+    );
+
+    // Every folder note's file stem is `_index`, so the sibling portfolio
+    // does not share one; a flat note named like the folder does not
+    // either (it is the taken check's business).
+    let p = portfolio_vault();
+    p.store.write_file(&vp("projects/old.md"), PROJECT).unwrap();
+    p.plan("portfolios/old", "new")
+        .expect("neither the sibling nor the flat note shares the name");
+
+    // Two portfolios cannot share a folder name: the taken check refuses
+    // the sibling's, and a flat note's stem likewise.
+    let err = p.plan("portfolios/old", "surrogate-emulator").unwrap_err();
+    assert!(
+        matches!(&err, DomainError::SlugTaken { holder, kind: TakenBy::Folder, .. }
+            if *holder == vp("portfolios/surrogate-emulator/_index.md")),
+        "{err:?}"
+    );
+    let err = p.plan("portfolios/old", "surrogate-model").unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            DomainError::SlugTaken {
+                kind: TakenBy::Stem,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_portfolio_destination_folder_that_exists_is_taken() {
+    // A folder of non-notes at the destination: no name in the snapshot
+    // holds it, but the move never merges into a folder that is there.
+    let p = portfolio_vault();
+    p.store
+        .write_file(&vp("portfolios/new/stray.txt"), "left over")
+        .unwrap();
+    p.plan("portfolios/old", "new")
+        .expect("the snapshot's names are free");
+    for refused in [
+        p.vault.rename_preview("portfolios/old", "new", None, at()),
+        p.vault
+            .rename_note("portfolios/old", "new", None, None, at())
+            .map(|o| o.plan),
+    ] {
+        let err = refused.unwrap_err();
+        assert!(
+            matches!(&err, DomainError::SlugTaken { holder, kind: TakenBy::Folder, .. }
+                if *holder == vp("portfolios/new")),
+            "{err:?}"
+        );
+    }
+    assert!(p.store.exists(&vp("portfolios/old/_index.md")).unwrap());
+}
+
+/// A `MemoryVaultStore` with test hooks: it records every folder the
+/// rename asks it to prune (and fails each one), lists `dirs` as its
+/// folders (the memory store's are implicit, so an empty one cannot exist),
+/// and with `no_artefact_reads` panics on any read of a non-markdown file
+/// under `portfolios/`.
+struct HookStore {
+    inner: Arc<MemoryVaultStore>,
+    pruned: std::sync::Mutex<Vec<VaultPath>>,
+    dirs: Vec<VaultPath>,
+    no_artefact_reads: bool,
+}
+
+impl HookStore {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(MemoryVaultStore::new()),
+            pruned: std::sync::Mutex::new(Vec::new()),
+            dirs: Vec::new(),
+            no_artefact_reads: false,
+        }
+    }
+
+    fn guard_read(&self, path: &VaultPath) {
+        let artefact = path.as_path().starts_with("portfolios")
+            && path.as_path().extension() != Some(std::ffi::OsStr::new("md"));
+        assert!(
+            !(self.no_artefact_reads && artefact),
+            "an artefact's bytes were read: {path}"
+        );
+    }
+}
+
+impl VaultStore for HookStore {
+    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        self.guard_read(path);
+        self.inner.read_file(path)
+    }
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.guard_read(path);
+        self.inner.read_bytes(path)
+    }
+    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.write_file(path, content)
+    }
+    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.append_to_file(path, content)
+    }
+    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.move_file(src, dest)
+    }
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        self.inner.delete_file(path)
+    }
+    fn remove_dir_if_empty(&self, dir: &VaultPath) -> Result<bool, StoreError> {
+        self.pruned.lock().unwrap().push(dir.clone());
+        Err(StoreError::PermissionDenied(dir.to_string()))
+    }
+    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
+        self.inner.exists(path)
+    }
+    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.list_dir(path)
+    }
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.walk_dir(path)
+    }
+    fn walk_dirs(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        Ok(self
+            .dirs
+            .iter()
+            .filter(|d| d.as_path().starts_with(path.as_path()) && *d != path)
+            .cloned()
+            .collect())
+    }
+    fn metadata(&self, path: &VaultPath) -> Result<cdno_core::file_meta::FileMeta, StoreError> {
+        self.inner.metadata(path)
+    }
+    fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.import_external(src, dest)
+    }
+}
+
+#[test]
+fn a_portfolio_rename_prunes_only_at_or_below_its_folder_and_never_fails_on_it() {
+    let hooks = Arc::new(HookStore {
+        dirs: [
+            "portfolios/old/2026-10-13-scan",
+            "portfolios/old/scratch",
+            "portfolios/old/scratch/deeper",
+            "portfolios/surrogate-emulator/figures",
+        ]
+        .into_iter()
+        .map(vp)
+        .collect(),
+        ..HookStore::new()
+    });
+    let store: Arc<dyn VaultStore> = hooks.clone();
+    let p = portfolio_vault_over(store, &portfolio_files(P_PDF, "scan.pdf"));
+    p.vault
+        .rename_note("portfolios/old", "new", None, None, at())
+        .expect("a failed prune does not fail the rename");
+    assert_eq!(
+        *hooks.pruned.lock().unwrap(),
+        vec![
+            vp("portfolios/old/scratch/deeper"),
+            vp("portfolios/old/2026-10-13-scan"),
+            vp("portfolios/old/scratch"),
+            vp("portfolios/old"),
+        ],
+        "every folder under the old one, deepest first, an empty one the \
+         move never saw included, then the folder, and nothing above it"
+    );
+
+    // A flat rename prunes nothing.
+    hooks.pruned.lock().unwrap().clear();
+    p.vault
+        .rename_note("projects/surrogate-model", "surrogate", None, None, at())
+        .expect("flat rename");
+    assert!(hooks.pruned.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_hidden_note_at_the_top_level_moves_with_its_field_rewritten() {
+    let mut files = portfolio_files(P_PDF, "scan.pdf");
+    files.push((
+        "portfolios/old/.draft.md".into(),
+        "---\ntype: evidence\ncreated: 2026-05-04\nsource: \"Draft\"\nportfolio: old\norigin: \"[[projects/surrogate-model]]\"\n---\n\n# Draft\n".into(),
+    ));
+    files.push(("portfolios/old/.DS_Store".into(), "Bud1".into()));
+    let p = portfolio_vault_over(Arc::new(MemoryVaultStore::new()), &files);
+    p.vault
+        .rename_note("portfolios/old", "new", None, None, at())
+        .expect("rename");
+    assert!(
+        !p.store.exists(&vp("portfolios/old")).unwrap(),
+        "nothing left"
+    );
+    assert!(
+        p.read("portfolios/new/.draft.md")
+            .contains("\nportfolio: new\n")
+    );
+    assert!(
+        p.index
+            .find_by_path(&vp("portfolios/new/.draft.md"))
+            .unwrap()
+            .is_some(),
+        "a hidden note is a note: its index row moves"
+    );
+    assert!(
+        p.index
+            .find_by_path(&vp("portfolios/old/.draft.md"))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(p.read("portfolios/new/.DS_Store"), "Bud1");
+}
+
+#[test]
+fn an_alias_reached_link_is_rewritten_to_the_folder_form() {
+    let mut files = portfolio_files(P_PDF, "scan.pdf");
+    files[0].1 = P_INDEX.replace(
+        "project: \"[[projects/surrogate-model]]\"\n",
+        "project: \"[[projects/surrogate-model]]\"\naliases: [error-budget]\n",
+    );
+    files.push((
+        "journal/2026/daily/2026-05-08.md".into(),
+        "---\ntype: daily\ndate: 2026-05-08\n---\n\n# Friday, 8 May 2026\n\n## Logs\n- **09:00**: opened [[error-budget|the budget]]\n".into(),
+    ));
+    let p = portfolio_vault_over(Arc::new(MemoryVaultStore::new()), &files);
+    p.vault
+        .rename_note("portfolios/old", "new", None, None, at())
+        .expect("rename");
+    let day = p.read("journal/2026/daily/2026-05-08.md");
+    assert!(
+        day.contains("opened [[portfolios/new|the budget]]\n"),
+        "a folder note answers to its folder path, never a bare name: {day}"
+    );
+    let mut backlinks = p
+        .index
+        .find_backlinks(&vp("portfolios/new/_index.md"))
+        .unwrap();
+    backlinks.sort();
+    assert!(backlinks.contains(&vp("journal/2026/daily/2026-05-08.md")));
+}
+
+#[test]
+fn a_custom_type_folder_note_is_refused_as_folder() {
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "concept".to_owned(),
+        cdno_core::config::CustomNoteType {
+            folder: "concepts".to_owned(),
+            required: vec!["created".to_owned()],
+            optional: vec![],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    store
+        .write_file(
+            &vp("concepts/old/_index.md"),
+            "---\ntype: concept\ncreated: 2026-05-01\n---\n\n# Surrogate model\n",
+        )
+        .unwrap();
+    store
+        .write_file(
+            &vp("concepts/flat.md"),
+            "---\ntype: concept\ncreated: 2026-05-01\n---\n\n# Surrogate model\n",
+        )
+        .unwrap();
+    let vault = Vault::new(store, Arc::new(MemoryIndex::new()), config)
+        .expect("vault opens")
+        .0;
+    let snapshot = vault.rename_snapshot().unwrap();
+    // The type is renamable: a flat note of it is.
+    vault
+        .plan_rename(&snapshot, "concepts/flat", "new", None, at())
+        .expect("a flat custom note is renamable");
+    let err = vault
+        .plan_rename(&snapshot, "concepts/old", "new", None, at())
+        .unwrap_err();
+    assert!(
+        matches!(&err, DomainError::NoteNotRenamable { reason, .. } if reason == "folder"),
+        "{err:?}"
+    );
 }
