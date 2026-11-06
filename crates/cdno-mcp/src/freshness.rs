@@ -8,70 +8,86 @@
 //! paused mid-operation (never overridable); when the state cannot be
 //! determined it warns and proceeds; a vault that is not a git repository
 //! skips the check; a dirty tree is never consulted (on the server it is the
-//! normal state between checkpoints).
+//! normal state between checkpoints). A dry run is assessed exactly as the
+//! write is.
+//!
+//! What `behind` means depends on the deployment. A server that commits its
+//! own checkpoints and never fetches sees `behind` only as the last human
+//! fetch left it, so the check rarely blocks. Behind a sync actor that
+//! fetches, merges under the vault's lock and pushes, `behind > 0` is
+//! either transient (its fetch landed, its merge has not) or a sign the
+//! actor has stalled; a conflicted merge leaves `MERGE_HEAD`, refused
+//! regardless. The whole assessment runs again under the lock ([`guard`]),
+//! which is what the actor will see next.
 //!
 //! Policy only: the facts are [`cdno_core::git`]'s.
 
+use std::cell::RefCell;
 use std::path::Path;
 
-use cdno_core::git::{GitError, GitState, git_operation_in_progress, git_state};
+use cdno_core::git::{GitError, GitState, git_state};
 use cdno_domain::error::DomainError;
 
-/// What a `behind_upstream` refusal tells the agent to do.
-pub const BEHIND_REMEDY: &str = "let the vault sync first (its upstream has commits this clone has not merged), or call again with `skip_sync_check: true` to rename anyway";
+/// What the tool appends to a `behind_upstream` refusal (T26 renders it):
+/// the remedy is the interface's, the domain error carries the fact only.
+pub const BEHIND_REMEDY: &str = "retry in a few seconds; if still behind, the sync is stalled: tell the person rather than skip the check";
 
-/// The outcome of a check that lets the rename go ahead.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct Cleared {
-    /// What could not be determined, or what the override let through, one
-    /// sentence each: for the tool's response and the server log.
+/// One reading of the policy: the warnings (what could not be determined,
+/// or what the override let through, one sentence each, for the tool's
+/// response and the server log), and the refusal, if any. The warnings are
+/// reported whether or not the rename is refused.
+#[derive(Debug, Default)]
+pub struct Assessment {
     pub warnings: Vec<String>,
-    /// Whether the vault is a git repository whose paused check should run
-    /// again under the lock ([`paused_guard`]).
-    pub recheck_paused: bool,
+    pub refusal: Option<DomainError>,
 }
 
-/// The policy over one reading of the repository facts: `Err` is the
-/// refusal ([`DomainError::GitOperationInProgress`], or
-/// [`DomainError::BehindUpstream`] unless `skip_sync_check`), `Ok` the
-/// warnings and whether to re-check under the lock. Pure: no git is run.
-pub fn assess(state: &GitState, skip_sync_check: bool) -> Result<Cleared, DomainError> {
+/// The policy over one reading of the repository facts. Pure: no git is
+/// run. The refusal is [`DomainError::GitOperationInProgress`] for a paused
+/// operation (whatever `skip_sync_check` says), or
+/// [`DomainError::BehindUpstream`] unless `skip_sync_check`.
+pub fn assess(state: &GitState, skip_sync_check: bool) -> Assessment {
     let (paused, upstream) = match state {
-        GitState::NotARepository => return Ok(Cleared::default()),
+        GitState::NotARepository => return Assessment::default(),
         GitState::Unknown(e) => {
-            return Ok(Cleared {
+            return Assessment {
                 warnings: vec![format!(
                     "could not tell whether the vault is a git repository ({}); renamed without the sync check",
                     one_line(e)
                 )],
-                recheck_paused: false,
-            });
+                refusal: None,
+            };
         }
         GitState::Repository { paused, upstream } => (paused, upstream),
     };
     let mut warnings = Vec::new();
     match paused {
         Ok(Some(op)) => {
-            return Err(DomainError::GitOperationInProgress {
-                reason: op.reason.clone(),
-            });
+            return Assessment {
+                warnings,
+                refusal: Some(DomainError::GitOperationInProgress {
+                    reason: op.reason.clone(),
+                }),
+            };
         }
         Ok(None) => {}
-        Err(e) => warnings.push(paused_unknown(e)),
+        Err(e) => warnings.push(format!(
+            "could not tell whether a git operation is paused ({}); renamed anyway",
+            one_line(e)
+        )),
     }
+    let mut refusal = None;
     match upstream {
         Some(u) if u.behind > 0 => {
-            if !skip_sync_check {
-                return Err(DomainError::BehindUpstream {
-                    behind: u.behind,
-                    remedy: BEHIND_REMEDY.to_owned(),
-                });
+            if skip_sync_check {
+                warnings.push(format!(
+                    "the vault is {} commit{} behind its upstream as last fetched; renamed anyway (skip_sync_check)",
+                    u.behind,
+                    if u.behind == 1 { "" } else { "s" }
+                ));
+            } else {
+                refusal = Some(DomainError::BehindUpstream { behind: u.behind });
             }
-            warnings.push(format!(
-                "the vault is {} commit{} behind its upstream as last fetched; renamed anyway (skip_sync_check)",
-                u.behind,
-                if u.behind == 1 { "" } else { "s" }
-            ));
         }
         Some(_) => {}
         None => warnings.push(
@@ -79,54 +95,39 @@ pub fn assess(state: &GitState, skip_sync_check: bool) -> Result<Cleared, Domain
                 .to_owned(),
         ),
     }
-    Ok(Cleared {
-        warnings,
-        recheck_paused: true,
-    })
+    Assessment { warnings, refusal }
 }
 
 /// The check before the lock: [`assess`] over [`git_state`], which reads
-/// the upstream as last fetched and never touches the network.
-pub fn check(root: &Path, skip_sync_check: bool) -> Result<Cleared, DomainError> {
+/// the upstream as last fetched and never touches the network. The same
+/// for a dry run and a write.
+pub fn check(root: &Path, skip_sync_check: bool) -> Assessment {
     assess(&git_state(root), skip_sync_check)
 }
 
-/// The paused check again, over one reading of
-/// [`git_operation_in_progress`]: a paused operation refuses, a failed
-/// probe is logged and lets the rename go ahead.
-pub fn recheck(
-    paused: Result<Option<cdno_core::git::PausedGitOp>, GitError>,
-) -> Result<(), DomainError> {
-    match paused {
-        Ok(Some(op)) => Err(DomainError::GitOperationInProgress { reason: op.reason }),
-        Ok(None) => Ok(()),
-        Err(e) => {
-            tracing::warn!("{}", paused_unknown(&e));
-            Ok(())
-        }
-    }
-}
-
-/// The guard `Vault::rename_note` runs under the lock: [`recheck`] for a
-/// merge (or rebase, ...) started after [`check`]. A no-op unless
-/// `recheck_paused`.
-pub fn paused_guard(
-    root: &Path,
-    recheck_paused: bool,
-) -> impl FnOnce() -> Result<(), DomainError> + '_ {
+/// The guard `Vault::rename_note` runs under the lock: [`check`] again,
+/// with the same `skip_sync_check`. A warning not among `shown` (the first
+/// check's, already reported) is pushed to `fresh` and logged; the refusal,
+/// if any, is the guard's error.
+pub fn guard<'a>(
+    root: &'a Path,
+    skip_sync_check: bool,
+    shown: &'a [String],
+    fresh: &'a RefCell<Vec<String>>,
+) -> impl FnOnce() -> Result<(), DomainError> + 'a {
     move || {
-        if !recheck_paused {
-            return Ok(());
+        let assessment = check(root, skip_sync_check);
+        for warning in assessment.warnings {
+            if !shown.contains(&warning) {
+                tracing::warn!("{warning}");
+                fresh.borrow_mut().push(warning);
+            }
         }
-        recheck(git_operation_in_progress(root))
+        match assessment.refusal {
+            Some(refusal) => Err(refusal),
+            None => Ok(()),
+        }
     }
-}
-
-fn paused_unknown(e: &GitError) -> String {
-    format!(
-        "could not tell whether a git operation is paused ({}); renamed anyway",
-        one_line(e)
-    )
 }
 
 /// A git error on one line: git's stderr can run to several.

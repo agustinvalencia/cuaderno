@@ -4831,13 +4831,17 @@ async fn every_create_tool_passes_the_slug_through() {
 
 // ---------------------------------------------------------------------
 // The rename's freshness policy (RFC 0007 §5.8 (2), T25): the helper the
-// `rename_note` tool (T26) calls, over constructed `GitState` values.
+// `rename_note` tool (T26) calls, over constructed `GitState` values, and
+// its guard on a real repository.
 // ---------------------------------------------------------------------
 
 mod freshness {
+    use std::cell::RefCell;
+    use std::path::Path;
+
     use cdno_core::git::{GitError, GitState, PausedGitOp, Upstream};
     use cdno_domain::error::DomainError;
-    use cdno_mcp::freshness::{BEHIND_REMEDY, Cleared, assess, paused_guard, recheck};
+    use cdno_mcp::freshness::{Assessment, assess, guard};
 
     fn repo(paused: Result<Option<PausedGitOp>, GitError>, upstream: Option<Upstream>) -> GitState {
         GitState::Repository { paused, upstream }
@@ -4860,39 +4864,39 @@ mod freshness {
         Some(Upstream { ahead, behind })
     }
 
+    fn proceeds(a: &Assessment) -> bool {
+        a.refusal.is_none()
+    }
+
     #[test]
     fn not_a_repository_skips_the_check() {
         for skip in [false, true] {
-            assert_eq!(
-                assess(&GitState::NotARepository, skip).unwrap(),
-                Cleared::default()
-            );
+            let a = assess(&GitState::NotARepository, skip);
+            assert!(proceeds(&a) && a.warnings.is_empty(), "{a:?}");
         }
     }
 
     #[test]
-    fn an_unknown_state_warns_and_proceeds_without_a_recheck() {
+    fn an_unknown_state_warns_and_proceeds() {
         let state = GitState::Unknown(GitError::Exit {
             command: "git rev-parse --is-inside-work-tree".into(),
             stderr: "fatal: detected dubious ownership\nTo add an exception ...".into(),
         });
-        let cleared = assess(&state, false).unwrap();
-        assert_eq!(cleared.warnings.len(), 1);
+        let a = assess(&state, false);
+        assert!(proceeds(&a), "{a:?}");
+        assert_eq!(a.warnings.len(), 1);
         assert!(
-            cleared.warnings[0].contains("dubious ownership")
-                && !cleared.warnings[0].contains('\n'),
+            a.warnings[0].contains("dubious ownership") && !a.warnings[0].contains('\n'),
             "{:?}",
-            cleared.warnings
+            a.warnings
         );
-        assert!(!cleared.recheck_paused);
     }
 
     #[test]
-    fn up_to_date_and_ahead_proceed_quietly_and_recheck() {
+    fn up_to_date_and_ahead_proceed_quietly() {
         for upstream in [up(0, 0), up(3, 0)] {
-            let cleared = assess(&repo(Ok(None), upstream), false).unwrap();
-            assert!(cleared.warnings.is_empty(), "{:?}", cleared.warnings);
-            assert!(cleared.recheck_paused);
+            let a = assess(&repo(Ok(None), upstream), false);
+            assert!(proceeds(&a) && a.warnings.is_empty(), "{a:?}");
         }
     }
 
@@ -4900,11 +4904,11 @@ mod freshness {
     fn a_paused_operation_refuses_even_with_skip_sync_check() {
         for skip in [false, true] {
             for upstream in [up(0, 0), up(0, 2), None] {
-                let err = assess(&repo(Ok(Some(merge())), upstream), skip).unwrap_err();
+                let a = assess(&repo(Ok(Some(merge())), upstream), skip);
                 assert!(
-                    matches!(&err, DomainError::GitOperationInProgress { reason }
+                    matches!(&a.refusal, Some(DomainError::GitOperationInProgress { reason })
                         if reason.contains("MERGE_HEAD")),
-                    "skip {skip}, {upstream:?}: {err:?}"
+                    "skip {skip}, {upstream:?}: {a:?}"
                 );
             }
         }
@@ -4912,56 +4916,90 @@ mod freshness {
 
     #[test]
     fn a_failed_paused_probe_warns_and_proceeds() {
-        let cleared = assess(&repo(Err(probe_failed()), up(0, 0)), false).unwrap();
-        assert_eq!(cleared.warnings.len(), 1, "{:?}", cleared.warnings);
-        assert!(cleared.warnings[0].contains("paused"));
-        assert!(cleared.recheck_paused);
+        let a = assess(&repo(Err(probe_failed()), up(0, 0)), false);
+        assert!(proceeds(&a), "{a:?}");
+        assert_eq!(a.warnings.len(), 1, "{:?}", a.warnings);
+        assert!(a.warnings[0].contains("paused"));
     }
 
     #[test]
-    fn behind_refuses_with_the_remedy_unless_skipped() {
-        let err = assess(&repo(Ok(None), up(1, 2)), false).unwrap_err();
-        match &err {
-            DomainError::BehindUpstream { behind, remedy } => {
-                assert_eq!(*behind, 2);
-                assert_eq!(remedy, BEHIND_REMEDY);
-                assert!(remedy.contains("skip_sync_check: true"));
-            }
-            other => panic!("{other:?}"),
-        }
-        assert!(err.to_string().contains("2 commits behind"), "{err}");
+    fn a_failed_paused_probe_keeps_its_warning_beside_a_refusal() {
+        let a = assess(&repo(Err(probe_failed()), up(0, 1)), false);
+        assert!(matches!(
+            a.refusal,
+            Some(DomainError::BehindUpstream { behind: 1 })
+        ));
+        assert_eq!(a.warnings.len(), 1, "{:?}", a.warnings);
+    }
 
-        let cleared = assess(&repo(Ok(None), up(1, 2)), true).unwrap();
-        assert_eq!(cleared.warnings.len(), 1, "{:?}", cleared.warnings);
-        assert!(cleared.warnings[0].contains("behind"));
-        assert!(cleared.recheck_paused);
+    #[test]
+    fn behind_refuses_unless_skipped() {
+        let a = assess(&repo(Ok(None), up(1, 2)), false);
+        let err = a.refusal.expect("refused");
+        assert!(matches!(err, DomainError::BehindUpstream { behind: 2 }));
+        assert_eq!(
+            err.to_string(),
+            "the vault is 2 commits behind its upstream"
+        );
+
+        let a = assess(&repo(Ok(None), up(1, 2)), true);
+        assert!(proceeds(&a), "{a:?}");
+        assert_eq!(a.warnings.len(), 1, "{:?}", a.warnings);
+        assert!(a.warnings[0].contains("behind"));
     }
 
     #[test]
     fn no_upstream_warns_and_proceeds() {
         for skip in [false, true] {
-            let cleared = assess(&repo(Ok(None), None), skip).unwrap();
-            assert_eq!(cleared.warnings.len(), 1, "{:?}", cleared.warnings);
-            assert!(cleared.warnings[0].contains("no upstream"));
-            assert!(cleared.recheck_paused);
+            let a = assess(&repo(Ok(None), None), skip);
+            assert!(proceeds(&a), "{a:?}");
+            assert_eq!(a.warnings.len(), 1, "{:?}", a.warnings);
+            assert!(a.warnings[0].contains("no upstream"));
         }
     }
 
-    #[test]
-    fn the_recheck_refuses_a_paused_operation_and_passes_an_unknown_one() {
-        assert!(matches!(
-            recheck(Ok(Some(merge()))),
-            Err(DomainError::GitOperationInProgress { .. })
-        ));
-        assert!(recheck(Ok(None)).is_ok());
-        assert!(recheck(Err(probe_failed())).is_ok());
+    /// `git init` in `dir` with nothing from the developer's config.
+    fn git_init(dir: &Path) -> bool {
+        std::process::Command::new("git")
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .args(["init", "-q"])
+            .status()
+            .is_ok_and(|s| s.success())
     }
 
     #[test]
-    fn the_guard_is_a_no_op_without_a_recheck() {
-        // A path git cannot read: probed, it would warn; not probed, it is
-        // simply `Ok`. Either way it never refuses here.
-        let nowhere = std::path::Path::new("/nonexistent/vault");
-        assert!(paused_guard(nowhere, false)().is_ok());
+    fn the_guard_refuses_a_paused_operation_under_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        if !git_init(dir.path()) {
+            eprintln!("skipped: `git` is not on PATH");
+            return;
+        }
+        // A clean repository with no upstream: the guard proceeds, and its
+        // warning is reported once, not again when the first check had it.
+        let fresh = RefCell::new(Vec::new());
+        assert!(guard(dir.path(), false, &[], &fresh)().is_ok());
+        let first = fresh.into_inner();
+        assert_eq!(first.len(), 1, "{first:?}");
+        let fresh = RefCell::new(Vec::new());
+        assert!(guard(dir.path(), false, &first, &fresh)().is_ok());
+        assert!(fresh.into_inner().is_empty());
+
+        // A merge stopped mid-way: refused, with or without the override.
+        std::fs::write(
+            dir.path().join(".git/MERGE_HEAD"),
+            "0123456789012345678901234567890123456789\n",
+        )
+        .unwrap();
+        for skip in [false, true] {
+            let fresh = RefCell::new(Vec::new());
+            let got = guard(dir.path(), skip, &[], &fresh)();
+            assert!(
+                matches!(&got, Err(DomainError::GitOperationInProgress { reason })
+                    if reason.contains("MERGE_HEAD")),
+                "skip {skip}: {got:?}"
+            );
+        }
     }
 }

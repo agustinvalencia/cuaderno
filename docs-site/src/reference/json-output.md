@@ -107,7 +107,7 @@ Nothing is written on a refusal. Do not retry with a `-2` of your own; ask for a
 }
 ```
 
-`written` is whether anything was written (`false` on `--dry-run` and for a rename to the current slug); `log_line` is the unstamped `renamed` entry appended to today's daily note. The MCP `rename_note` tool returns the same plan fields. `log_line` is `null` for a rename to the current slug. A `warnings` entry is `{kind, message, …}`: `frozen_prefix_already_diverged` adds `path` (an archived referrer that already failed its archival check, rewritten anyway), `old_slug_already_an_alias` adds `holder` (the old slug is already another note's alias, so it will resolve to nothing once shared). A `changes` entry is `links` (with `count`), `field` (with `key`), `alias` or `log_line`. A refusal
+`written` is whether anything was written (`false` on `--dry-run` and for a rename to the current slug); `log_line` is the unstamped `renamed` entry appended to today's daily note. The MCP `rename_note` tool returns the same plan fields. `log_line` is `null` for a rename to the current slug. A `warnings` entry is `{kind, message, …}`: `frozen_prefix_already_diverged` adds `path` (an archived referrer that already failed its archival check, rewritten anyway), `old_slug_already_an_alias` adds `holder` (the old slug is already another note's alias, so it will resolve to nothing once shared), and `sync_check` is a warning of [the sync check](cli/note.md#the-sync-check) (a failed fetch, no upstream, a state git could not report, an override that let a behind vault through), on a dry run and a write alike. A `changes` entry is `links` (with `count`), `field` (with `key`), `alias` or `log_line`. A refusal
 prints the usual `{code, message, details}` object and exits `1`, writing nothing:
 
 | `code` | `details` | When |
@@ -119,7 +119,7 @@ prints the usual `{code, message, details}` object and exits `1`, writing nothin
 | `reference_drift` | `path`, `drift` | Rewriting the references in `path` would change more than them. |
 | `reference_unaddressable` | `path`, `key` | A reference field names the note in a form the rewrite cannot address. |
 | `rename_incomplete` | `paths`, `source` | A write failed and the rollback could not restore the paths in `paths`; check them by hand. |
-| `behind_upstream` | `behind`, `remedy` | The vault is `behind` commits behind its upstream (after a fetch). `remedy` says what to do: sync first, or pass `--skip-sync-check`. |
+| `behind_upstream` | `behind`, `remedy` | The vault is `behind` commits behind its upstream (after a fetch; for a dry run, as last fetched). `remedy` says what to do: sync first, or pass `--skip-sync-check`. |
 | `git_operation_in_progress` | `reason` | A git operation is paused mid-way (`reason` names it, e.g. `.git/MERGE_HEAD present`). Not overridable: finish or abort it first. |
 
 ## `search --json` → an array of hits

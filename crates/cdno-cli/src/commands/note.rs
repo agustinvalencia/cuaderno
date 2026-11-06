@@ -458,18 +458,24 @@ fn rename(
     })?;
     let reason = args.reason.as_deref();
 
-    let cleared = crate::freshness::check(root, args.skip_sync_check, args.dry_run)
-        .map_err(|e| rename_refusal(e, json))?;
-    for warning in &cleared.warnings {
-        eprintln!("warning: {warning}");
+    // The sync check, before the preview: a dry run is refused as the
+    // write would be. Its warnings go to stderr in text, and into the plan's
+    // `warnings` under `--json` (to stderr there only before a refusal).
+    let checked = crate::freshness::check(root, args.skip_sync_check, args.dry_run);
+    if !json || checked.refusal.is_some() {
+        show_sync_warnings(&checked.warnings);
     }
+    if let Some(refusal) = checked.refusal {
+        return Err(rename_refusal(refusal, json));
+    }
+    let shown = checked.warnings;
 
     let plan = vault
         .rename_preview(&target, &to, reason, at)
         .map_err(|e| rename_refusal(e, json))?;
     if args.dry_run {
         if json {
-            return emit_rename_json(&plan, false, false, true);
+            return emit_rename_json(&plan, false, false, true, &shown);
         }
         println!("Dry run: nothing written.");
         print!("{}", render_plan(&plan));
@@ -479,22 +485,31 @@ fn rename(
         println!("Aborted.");
         return Ok(());
     }
-    let outcome = vault
-        .rename_note(
-            &target,
-            &to,
-            reason,
-            Some(plan.hash.as_str()),
-            at,
-            crate::freshness::paused_guard(root, cleared.recheck_paused),
-        )
-        .map_err(|e| rename_refusal(e, json))?;
+    // The whole check again under the lock; what it newly warns about is
+    // shown as the first check's warnings are.
+    let fresh = std::cell::RefCell::new(Vec::new());
+    let outcome = vault.rename_note(
+        &target,
+        &to,
+        reason,
+        Some(plan.hash.as_str()),
+        at,
+        crate::freshness::guard(root, args.skip_sync_check, &shown, &fresh),
+    );
+    let fresh = fresh.into_inner();
+    if !json || outcome.is_err() {
+        show_sync_warnings(&fresh);
+    }
+    let outcome = outcome.map_err(|e| rename_refusal(e, json))?;
     if json {
+        let mut sync_warnings = shown;
+        sync_warnings.extend(fresh);
         return emit_rename_json(
             &outcome.plan,
             !outcome.written.is_empty(),
             outcome.index_stale,
             false,
+            &sync_warnings,
         );
     }
     if outcome.plan.is_empty() {
@@ -519,6 +534,13 @@ fn rename(
     Ok(())
 }
 
+/// The sync check's warnings, one `warning:` line each on stderr.
+fn show_sync_warnings(warnings: &[String]) {
+    for warning in warnings {
+        eprintln!("warning: {warning}");
+    }
+}
+
 /// A domain refusal of the rename, as the error the handler returns. Under
 /// `--json` a refusal with a code is printed as its rejection object and the
 /// process exits non-zero; in text a failed rollback lists its paths one per
@@ -538,6 +560,10 @@ pub fn rename_refusal(err: DomainError, json: bool) -> anyhow::Error {
         lines.push_str("\ncheck them by hand (version control has the previous content)");
         return anyhow::anyhow!(lines);
     }
+    if let DomainError::BehindUpstream { .. } = &err {
+        // The domain carries the fact; the remedy is this interface's.
+        return anyhow::anyhow!("{err}; {}", crate::freshness::BEHIND_REMEDY);
+    }
     err.into()
 }
 
@@ -549,6 +575,7 @@ fn emit_rename_json(
     written: bool,
     index_stale: bool,
     dry_run: bool,
+    sync_warnings: &[String],
 ) -> Result<()> {
     let changes = |changes: &[Change]| -> Vec<serde_json::Value> {
         changes
@@ -561,7 +588,16 @@ fn emit_rename_json(
             })
             .collect()
     };
-    let warnings: Vec<serde_json::Value> = plan.warnings.iter().map(warning_json).collect();
+    let warnings: Vec<serde_json::Value> = plan
+        .warnings
+        .iter()
+        .map(warning_json)
+        .chain(
+            sync_warnings
+                .iter()
+                .map(|m| serde_json::json!({ "kind": "sync_check", "message": m })),
+        )
+        .collect();
     let payload = serde_json::json!({
         "dry_run": dry_run,
         "target": plan.target.path.to_string(),

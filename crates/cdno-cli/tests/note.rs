@@ -2151,9 +2151,9 @@ mod freshness {
         assert_eq!(tree_bytes(&a), before, "nothing written");
 
         // The check before the lock refuses too, not only the guard under
-        // it: a dry run, which never reaches the guard, reports it even
+        // it: a dry run, which never reaches the guard, is refused even
         // with the override.
-        let out = rename_in(tmp.path(), &a)
+        rename_in(tmp.path(), &a)
             .args([
                 "old",
                 "--to",
@@ -2162,14 +2162,9 @@ mod freshness {
                 "--dry-run",
             ])
             .assert()
-            .success()
-            .get_output()
-            .clone();
-        let warned = warnings(&out.stderr);
-        assert!(
-            warned.len() == 1 && warned[0].contains("would be refused"),
-            "{warned:?}"
-        );
+            .failure()
+            .stdout(predicate::str::contains("move").not())
+            .stderr(predicate::str::contains("a git operation is in progress"));
     }
 
     #[test]
@@ -2260,23 +2255,171 @@ mod freshness {
     }
 
     #[test]
-    fn a_dry_run_reports_what_would_refuse_and_exits_zero() {
+    fn a_dry_run_refuses_as_the_write_would() {
         require_git!();
         let tmp = tempdir().unwrap();
-        let a = committed_vault(tmp.path());
-        diverging_branches(&a);
-        start_conflicted_merge(&a);
-        let out = rename_in(tmp.path(), &a)
+        let a = vault_behind(tmp.path());
+        // The dry run never fetches, so it is assessed against the last
+        // fetch: once a fetch has shown the vault behind, it refuses.
+        git(&a, &["fetch"]);
+        let before = tree_bytes(&a);
+        rename_in(tmp.path(), &a)
             .args(["old", "--to", "surrogate-model", "--dry-run"])
+            .assert()
+            .failure()
+            .stdout(predicate::str::contains("Dry run").not())
+            .stderr(predicate::str::contains("1 commit behind its upstream"))
+            .stderr(predicate::str::contains("--skip-sync-check"));
+        let out = rename_in(tmp.path(), &a)
+            .args(["--json", "old", "--to", "surrogate-model", "--dry-run"])
+            .assert()
+            .failure()
+            .get_output()
+            .stdout
+            .clone();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["code"], "behind_upstream", "{v}");
+        assert_eq!(tree_bytes(&a), before);
+    }
+
+    #[test]
+    fn a_dry_run_with_skip_shows_the_plan_when_behind() {
+        require_git!();
+        let tmp = tempdir().unwrap();
+        let a = vault_behind(tmp.path());
+        git(&a, &["fetch"]);
+        let before = tree_bytes(&a);
+        let out = rename_in(tmp.path(), &a)
+            .args([
+                "old",
+                "--to",
+                "surrogate-model",
+                "--dry-run",
+                "--skip-sync-check",
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Dry run: nothing written."))
+            .stdout(predicate::str::contains("projects/surrogate-model.md"))
+            .get_output()
+            .clone();
+        let warned = warnings(&out.stderr);
+        assert!(
+            warned.len() == 1 && warned[0].contains("behind its upstream"),
+            "{warned:?}"
+        );
+        // Under `--json` the warning is a `sync_check` entry of the plan.
+        let out = rename_in(tmp.path(), &a)
+            .args([
+                "--json",
+                "old",
+                "--to",
+                "surrogate-model",
+                "--dry-run",
+                "--skip-sync-check",
+            ])
             .assert()
             .success()
             .get_output()
             .clone();
-        let warned = warnings(&out.stderr);
-        assert_eq!(warned.len(), 1, "{warned:?}");
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let sync: Vec<_> = v["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|w| w["kind"] == "sync_check")
+            .collect();
+        assert_eq!(sync.len(), 1, "{v}");
+        assert!(sync[0]["message"].as_str().unwrap().contains("behind"));
         assert!(
-            warned[0].contains("would be refused") && warned[0].contains("in progress"),
-            "{warned:?}"
+            warnings(&out.stderr).is_empty(),
+            "not on stderr under --json"
+        );
+        assert_eq!(tree_bytes(&a), before);
+    }
+
+    #[test]
+    fn json_carries_a_failed_fetch_as_a_sync_check_warning() {
+        require_git!();
+        let tmp = tempdir().unwrap();
+        let a = unreachable_remote(tmp.path());
+        let out = rename_in(tmp.path(), &a)
+            .args(["--json", "old", "--to", "surrogate-model"])
+            .assert()
+            .success()
+            .get_output()
+            .clone();
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(v["written"], true, "{v}");
+        let sync: Vec<_> = v["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|w| w["kind"] == "sync_check")
+            .collect();
+        assert_eq!(sync.len(), 1, "{v}");
+        assert!(
+            sync[0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("could not fetch")
+        );
+    }
+
+    /// Seat C's sequence: the check before the preview finds the vault up
+    /// to date; while the confirm waits, the other clone pushes and a plain
+    /// `git fetch` lands in the vault; then `y`.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn fetch_during_the_confirm(extra: &[&str]) -> (tempfile::TempDir, std::path::PathBuf, String) {
+        let tmp = tempdir().unwrap();
+        let a = tracking_vault(tmp.path());
+        git(
+            tmp.path(),
+            &[
+                "clone",
+                tmp.path().join("remote.git").to_str().unwrap(),
+                "b",
+            ],
+        );
+        let b = tmp.path().join("b");
+        let fetching = a.clone();
+        let home = tmp.path().to_path_buf();
+        let mut args = vec!["note", "rename", "old"];
+        args.extend_from_slice(extra);
+        let seen = run_in_pty_steps_with_env(
+            &a,
+            &args,
+            vec![
+                PtyStep::WaitFor("New slug"),
+                PtyStep::Send("surrogate-model\r".to_owned()),
+                PtyStep::WaitFor("Proceed?"),
+                PtyStep::Do(Box::new(move || {
+                    fs::write(b.join("notes.txt"), "from the other clone\n").unwrap();
+                    git(&b, &["commit", "-am", "other clone"]);
+                    git(&b, &["push"]);
+                    git(&fetching, &["fetch"]);
+                })),
+                PtyStep::Send("y\r".to_owned()),
+            ],
+            &[("HOME", &home), ("XDG_CONFIG_HOME", &home)],
+        );
+        (tmp, a, seen)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_fetch_during_the_confirm_prompt_is_behind_upstream() {
+        require_git!();
+        let (_tmp, a, seen) = fetch_during_the_confirm(&[]);
+        assert!(seen.contains("1 commit behind its upstream"), "{seen}");
+        assert!(a.join("projects/old.md").exists(), "nothing moved");
+        assert!(!a.join("projects/surrogate-model.md").exists());
+
+        let (_tmp, a, seen) = fetch_during_the_confirm(&["--skip-sync-check"]);
+        assert!(renamed(&a), "the override lets it through: {seen}");
+        assert!(
+            seen.contains("renaming anyway (--skip-sync-check)"),
+            "{seen}"
         );
     }
 

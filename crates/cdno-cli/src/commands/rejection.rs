@@ -91,10 +91,15 @@ pub fn rename_rejection(err: &cdno_domain::error::DomainError) -> Option<serde_j
                 "source": source.to_string(),
             }),
         ),
-        DomainError::BehindUpstream { behind, remedy } => (
-            "behind_upstream",
-            serde_json::json!({ "behind": behind, "remedy": remedy }),
-        ),
+        DomainError::BehindUpstream { behind } => {
+            // The domain carries the fact; the remedy is this interface's.
+            let remedy = crate::freshness::BEHIND_REMEDY;
+            return Some(serde_json::json!({
+                "code": "behind_upstream",
+                "message": format!("{err}; {remedy}"),
+                "details": { "behind": behind, "remedy": remedy },
+            }));
+        }
         DomainError::GitOperationInProgress { reason } => (
             "git_operation_in_progress",
             serde_json::json!({ "reason": reason }),

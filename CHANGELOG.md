@@ -14,10 +14,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   (`behind_upstream`, overridable with `--skip-sync-check`) or a git operation is paused mid-way
   (`git_operation_in_progress`, never overridable). An unreadable state or a missing upstream warns
   and proceeds; a dirty tree is never consulted; a vault outside git is not checked. The paused
-  check runs again under the write lock: `Vault::rename_note` takes a `guard` called under the lock
-  before planning. A dry run reports what would refuse the write as a warning and exits 0. Both
-  codes are `--json` rejection objects. `cdno_mcp::freshness` carries the same policy for the
-  `rename_note` tool, with no fetch and `skip_sync_check` as the only override.
+  check runs again in full under the write lock, with the same override and no fetch:
+  `Vault::rename_note` takes a `guard` called under the lock before planning, so a merge started or
+  a fetch landed during the confirm prompt is still refused. A dry run is refused exactly as the
+  write would be (against the last fetch); `--dry-run --skip-sync-check` shows the plan of a vault
+  that is behind. Both codes are `--json` rejection objects (`behind_upstream { behind, remedy }`,
+  `git_operation_in_progress { reason }`), and the sync warnings are plan `warnings` of kind
+  `sync_check`. `cdno_mcp::freshness` carries the same policy for the `rename_note` tool, with no
+  fetch and `skip_sync_check` as the only override.
 - **`cdno note rename`** (RFC 0007 T24, closes #873). `cdno note rename [<note>] --to <slug>
   [--reason <text>] [--dry-run]` renames a project, question (with its same-slug portfolio), active
   action note, portfolio or custom note and follows every reference. It prints the preview (`move`,

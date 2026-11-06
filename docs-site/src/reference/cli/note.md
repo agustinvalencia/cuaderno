@@ -151,10 +151,13 @@ Then:
 | has no upstream, or it cannot be read | warns and goes ahead |
 | has uncommitted changes | goes ahead: a dirty tree is never a reason to refuse |
 
-The paused check runs again once the rename holds the vault's write lock, so a merge started while
-the confirm prompt waits is still refused, and nothing is written. Warnings go to stderr. A dry run
-never fetches and is never refused: what would refuse the write is printed as a warning instead,
-and it exits 0.
+The whole check runs again once the rename holds the vault's write lock, with the same override
+and no fetch, so a merge started, or a fetch landed, while the confirm prompt waits is still refused,
+and nothing is written. A dry run is checked exactly as the write is, against the upstream as last
+fetched (it never fetches): it refuses with the same code and exit code, so `--dry-run
+--skip-sync-check` is how to see the plan of a vault that is behind. Warnings go to stderr; under
+`--json` they are `warnings` entries of kind `sync_check` in the plan instead (on stderr only before
+a refusal).
 
 ## Examples
 

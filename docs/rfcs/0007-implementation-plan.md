@@ -1259,11 +1259,18 @@ failed or timed-out fetch prints a one-line warning and proceeds. Then `git_stat
 `git_operation_in_progress`, not overridable, `Ok(None)` → proceed, `Err(_)` (the paused check
 failed) → warn and proceed; `behind > 0` → refuse with `behind_upstream` (the message names
 `--skip-sync-check` and the sync command) unless `--skip-sync-check`; `upstream == None` (no
-upstream, or the upstream probe failed) → warn and proceed; a dirty tree is never consulted. The paused check runs again
-after `rename_note` takes the lock, which means `rename_note` takes
+upstream, or the upstream probe failed) → warn and proceed; a dirty tree is never consulted. A dry
+run is assessed exactly as the write is, against the upstream as last fetched: it refuses with the
+same codes and exit code, and `--dry-run --skip-sync-check` shows the plan of a vault that is
+behind. The whole assessment (`git_state` and the same policy, the same override, no fetch) runs
+again after `rename_note` takes the lock, which means `rename_note` takes
 `guard: impl FnOnce() -> Result<(), DomainError>` called under the lock before planning — add
-that parameter here, defaulting to a no-op in T20's callers. The servers never fetch and use
-the upstream as last fetched; `skip_sync_check: true` is the only override.
+that parameter here, defaulting to a no-op in T20's callers; a fetch that lands during the confirm
+prompt is then `behind_upstream` unless skipped. The warnings (failed fetch, no upstream, unknown
+state, failed paused check) go to stderr, and under `--json` into the plan's `warnings` as
+`{ kind: "sync_check", message }`, on a dry run and a write alike. `DomainError::BehindUpstream
+{ behind }` carries the fact only; each interface's renderer appends its remedy. The servers never
+fetch and use the upstream as last fetched; `skip_sync_check: true` is the only override.
 
 **Deliverable.** The helper in both binaries, the guard parameter, tests on real repositories
 for the CLI; the MCP helper tested on `GitState` values (the e2e probe is T26's, since it needs
@@ -1280,28 +1287,37 @@ be written through.
   `behind_upstream_refuses_and_names_the_override`, `skip_sync_check_proceeds_when_behind`,
   `a_paused_merge_refuses_even_with_skip` , `no_upstream_warns_and_proceeds`,
   `a_dirty_tree_does_not_refuse`, `dry_run_never_fetches` (the remote is unreachable; no warning
-  is printed), `a_failed_fetch_warns_and_proceeds`, `a_dry_run_reports_what_would_refuse_and_exits_zero`
-  and `the_paused_check_runs_again_under_the_lock` (pty), all in its `freshness` module.
+  is printed), `a_failed_fetch_warns_and_proceeds`, `a_dry_run_refuses_as_the_write_would`,
+  `a_dry_run_with_skip_shows_the_plan_when_behind`, `json_carries_a_failed_fetch_as_a_sync_check_warning`,
+  and the pty probes `the_paused_check_runs_again_under_the_lock` (a merge starts while the confirm
+  waits) and `a_fetch_during_the_confirm_prompt_is_behind_upstream` (the other clone pushes and a
+  plain `git fetch` runs while the confirm waits: refused; with `--skip-sync-check`: proceeds), all
+  in its `freshness` module.
 - `cargo test -p cdno-mcp --test handlers_operations`: the `freshness` module, the helper
-  (`cdno_mcp::freshness::assess`, `recheck`, `paused_guard`) over constructed `GitState` values,
-  one test per branch. The e2e probe `rename_note_never_fetches` moved to T26: it needs the tool.
+  (`cdno_mcp::freshness::assess`) over constructed `GitState` values, one test per branch, and
+  `the_guard_refuses_a_paused_operation_under_the_lock` (`guard` on a temp repository with
+  `.git/MERGE_HEAD`). The e2e probe `rename_note_never_fetches` moved to T26: it needs the tool.
 - `cargo test -p cdno-domain --test unit`: `the_guard_runs_under_the_lock_before_planning` (the
   guard sees `.cuaderno/.lock` held, and its error beats the planner's).
 - Mutation: honour `skip_sync_check` for a paused operation; the third test fails (its dry-run
-  half, which never reaches the guard; the guard takes no override at all). Fetch on `--dry-run`;
-  `dry_run_never_fetches` fails. Make the guard a no-op; `the_paused_check_runs_again_under_the_lock`
-  (pty: the merge starts while the confirm waits) fails.
+  half, which never reaches the guard). Fetch on `--dry-run`; `dry_run_never_fetches` fails. Never
+  refuse a dry run; `a_dry_run_refuses_as_the_write_would` fails. Make the guard a no-op, or let it
+  re-check the paused operation only; the two pty probes (or the fetch one) fail. Make the guard
+  ignore `--skip-sync-check`; the fetch probe's skip half fails. Make the MCP guard a no-op;
+  `the_guard_refuses_a_paused_operation_under_the_lock` fails.
 
 **As built.** The helper is `crates/cdno-cli/src/freshness.rs` and `crates/cdno-mcp/src/freshness.rs`
-(`assess` over one `GitState`, `check`, `paused_guard`). The CLI probes `git_state` first and
-fetches only a repository, then probes again, so a vault outside git never warns about a fetch.
-The check runs after the slug is gathered and before the preview, so a refusal comes before the
-confirm. A dry run is never refused: what would refuse the write is one `warning:` line, exit 0.
-The two refusals are `DomainError::BehindUpstream { behind, remedy }` (the interface writes the
-remedy) and `DomainError::GitOperationInProgress { reason }`, the type the guard returns; the CLI
-renders them as `behind_upstream` / `git_operation_in_progress`, and the MCP classifier leaves them
-uncoded for T26. The MCP server holds no vault root yet: T26 gives the handler one to pass to
-`check` and `paused_guard`.
+(`assess` over one `GitState` into an `Assessment { warnings, refusal }`, `check`, `guard`). The CLI
+probes `git_state` first and fetches only a repository with no paused operation, then probes
+again, so a vault outside git never warns about a fetch and a mid-merge refusal is immediate. The
+check runs after the slug is gathered and before the preview, so a refusal comes before the
+confirm; the warnings already collected are shown before it. The guard reports only warnings the
+first check did not, so a failed paused probe warns once. The two refusals are
+`DomainError::BehindUpstream { behind }` and `DomainError::GitOperationInProgress { reason }`, the
+type the guard returns; the CLI renders them as `behind_upstream { behind, remedy }` /
+`git_operation_in_progress { reason }`, appending its remedy (`--skip-sync-check` and `git pull`),
+and the MCP classifier leaves them uncoded for T26. The MCP server holds no vault root yet: T26
+gives the handler one to pass to `check` and `guard`.
 
 **Correct means.** A rename refuses only when the vault is known to be behind or git is
 mid-operation, and a person who knows better can override exactly one of those.
@@ -1313,12 +1329,15 @@ mid-operation, and a person who knows better can override exactly one of those.
 through `resolve_note_reference` (`context.rs:519`) and running through `verified_write_with`
 (`verify.rs:117`) so a successful write fires the sync nudge (§5.8 (3)); a dry run does not go
 through the write path and does not nudge. `RenamePlanDto { target, from, new_slug, found_by_former_name, moves: [{from, to}], edits: [{path, changes: [{kind: links|field|alias|log_line, count|key}]}], references, notes, log_line, warnings, plan_hash }`
-(the shape `cdno note rename --json` prints, T24; a `warnings` entry is `{kind, message, …}` with `kind: frozen_prefix_already_diverged` + `path`, or `old_slug_already_an_alias` + `holder`; `log_line` is `null` on a no-op; `edits[].changes[]` replaces the planned `referrers`)
+(the shape `cdno note rename --json` prints, T24; a `warnings` entry is `{kind, message, …}` with `kind: frozen_prefix_already_diverged` + `path`, `old_slug_already_an_alias` + `holder`, or `sync_check` (T25's warnings, from `Assessment::warnings` and the guard's fresh ones, on a dry run and a write alike); `log_line` is `null` on a no-op; `edits[].changes[]` replaces the planned `referrers`)
 in `dto.rs`, returned whether or not it wrote, plus `written: bool` and `index_stale: bool`
 (§6.4). Codes in `rejection.rs`: `stem_shared`, `note_not_renamable { reason }`,
 `reference_drift { path, drift }`, `reference_unaddressable { path, key }` (added in the T18
 review),
-`behind_upstream { remedy }`, `git_operation_in_progress`, `stale_plan { expected, actual }`,
+`behind_upstream { behind }` (the handler appends the remedy, `cdno_mcp::freshness::BEHIND_REMEDY`:
+"retry in a few seconds; if still behind, the sync is stalled: tell the person rather than skip the
+check"; behind a sync actor a lasting `behind` is a stalled actor, and skipping writes into what it
+was about to merge), `git_operation_in_progress { reason }`, `stale_plan { expected, actual }`,
 `rename_incomplete { paths, source }` (`invalid_slug` and `slug_taken` exist from T4). The catalogue pins
 move 65 → 66 (`tests/server.rs:148`, `e2e_stdio.rs:227`, `e2e_http.rs:178`) and the prose that
 says 65 (`docs-site/src/getting-started/connect-to-claude.md:35`, `reference/mcp/overview.md:20`,

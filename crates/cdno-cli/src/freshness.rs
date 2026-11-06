@@ -5,79 +5,91 @@
 //! is known to be behind its upstream (overridable with `--skip-sync-check`)
 //! or when git is paused mid-operation (never overridable); when the state
 //! cannot be determined it warns and proceeds; a vault that is not a git
-//! repository skips the check; a dirty tree is never consulted.
+//! repository skips the check; a dirty tree is never consulted. A dry run is
+//! assessed exactly as the write is, so the preview never shows a plan the
+//! write would refuse; it only never fetches.
 //!
 //! The CLI fetches first ([`fetch_quietly`], [`FETCH_TIMEOUT`]), before the
-//! write lock is taken; a dry run never fetches. The paused check runs again
-//! under the lock as the guard [`Vault::rename_note`](cdno_domain::Vault::rename_note)
-//! takes ([`paused_guard`]), so a merge started between the check and the
-//! write is still refused.
+//! write lock is taken. A fetch killed at its deadline can, in a narrow
+//! window, leave a stale `refs/remotes/*.lock` behind; the next fetch then
+//! fails and reports it, which surfaces here as the failed-fetch warning
+//! until the lock file is removed.
+//!
+//! The whole assessment runs again under the lock, as the guard
+//! [`Vault::rename_note`](cdno_domain::Vault::rename_note) takes
+//! ([`guard`]), with the same override and no fetch: a merge started, or a
+//! fetch landed, between the check and the write is still refused.
 
+use std::cell::RefCell;
 use std::path::Path;
 use std::time::Duration;
 
-use cdno_core::git::{GitError, GitState, fetch_quietly, git_operation_in_progress, git_state};
+use cdno_core::git::{GitError, GitState, fetch_quietly, git_state};
 use cdno_domain::error::DomainError;
 
 /// How long the pre-rename fetch may take before it is killed and the
 /// rename goes ahead against the upstream as last fetched.
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// What a `behind_upstream` refusal tells the person to do.
+/// What the CLI appends to a `behind_upstream` refusal: the remedy is the
+/// interface's, the domain error carries the fact only.
 pub const BEHIND_REMEDY: &str = "sync the vault first (pull the upstream's commits, e.g. with `git pull`), or pass `--skip-sync-check` to rename anyway";
 
-/// The outcome of a check that lets the rename go ahead.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct Cleared {
-    /// One line each, for stderr: what could not be determined, or what an
-    /// override let through.
+/// One reading of the policy: the warnings to show (what could not be
+/// determined, or what the override let through), and the refusal, if any.
+/// The warnings are shown whether or not the rename is refused.
+#[derive(Debug, Default)]
+pub struct Assessment {
     pub warnings: Vec<String>,
-    /// Whether the vault is a git repository whose paused check should run
-    /// again under the lock ([`paused_guard`]).
-    pub recheck_paused: bool,
+    pub refusal: Option<DomainError>,
 }
 
-/// The policy over one reading of the repository facts: `Err` is the
-/// refusal (`git_operation_in_progress`, or `behind_upstream` unless
-/// `skip_sync_check`), `Ok` the warnings to print and whether to re-check
-/// under the lock. Pure: no git is run here.
-pub fn assess(state: &GitState, skip_sync_check: bool) -> Result<Cleared, DomainError> {
+/// The policy over one reading of the repository facts. Pure: no git is
+/// run here. The refusal is [`DomainError::GitOperationInProgress`] for a
+/// paused operation (whatever `skip_sync_check` says), or
+/// [`DomainError::BehindUpstream`] unless `skip_sync_check`.
+pub fn assess(state: &GitState, skip_sync_check: bool) -> Assessment {
     let (paused, upstream) = match state {
-        GitState::NotARepository => return Ok(Cleared::default()),
+        GitState::NotARepository => return Assessment::default(),
         GitState::Unknown(e) => {
-            return Ok(Cleared {
+            return Assessment {
                 warnings: vec![format!(
                     "could not tell whether the vault is a git repository ({}); renaming without the sync check",
                     one_line(e)
                 )],
-                recheck_paused: false,
-            });
+                refusal: None,
+            };
         }
         GitState::Repository { paused, upstream } => (paused, upstream),
     };
     let mut warnings = Vec::new();
     match paused {
         Ok(Some(op)) => {
-            return Err(DomainError::GitOperationInProgress {
-                reason: op.reason.clone(),
-            });
+            return Assessment {
+                warnings,
+                refusal: Some(DomainError::GitOperationInProgress {
+                    reason: op.reason.clone(),
+                }),
+            };
         }
         Ok(None) => {}
-        Err(e) => warnings.push(paused_unknown(e)),
+        Err(e) => warnings.push(format!(
+            "could not tell whether a git operation is paused ({}); renaming anyway",
+            one_line(e)
+        )),
     }
+    let mut refusal = None;
     match upstream {
         Some(u) if u.behind > 0 => {
-            if !skip_sync_check {
-                return Err(DomainError::BehindUpstream {
-                    behind: u.behind,
-                    remedy: BEHIND_REMEDY.to_owned(),
-                });
+            if skip_sync_check {
+                warnings.push(format!(
+                    "the vault is {} commit{} behind its upstream; renaming anyway (--skip-sync-check)",
+                    u.behind,
+                    if u.behind == 1 { "" } else { "s" }
+                ));
+            } else {
+                refusal = Some(DomainError::BehindUpstream { behind: u.behind });
             }
-            warnings.push(format!(
-                "the vault is {} commit{} behind its upstream; renaming anyway (--skip-sync-check)",
-                u.behind,
-                if u.behind == 1 { "" } else { "s" }
-            ));
         }
         Some(_) => {}
         None => warnings.push(
@@ -85,21 +97,26 @@ pub fn assess(state: &GitState, skip_sync_check: bool) -> Result<Cleared, Domain
                 .to_owned(),
         ),
     }
-    Ok(Cleared {
-        warnings,
-        recheck_paused: true,
-    })
+    Assessment { warnings, refusal }
 }
 
-/// The check before the lock. Unless `dry_run`, a git repository's upstream
-/// is fetched first (a failure or a timeout is a warning, and the check
-/// reads the upstream as last fetched); then [`assess`]. A dry run writes
-/// nothing, so it is never refused: what would refuse the write is
-/// reported as a warning instead.
-pub fn check(root: &Path, skip_sync_check: bool, dry_run: bool) -> Result<Cleared, DomainError> {
+/// The check before the lock. A git repository's upstream is fetched first
+/// unless `dry_run` (a failure or a timeout is a warning, and the check
+/// reads the upstream as last fetched) or the first reading already shows a
+/// paused operation, which refuses whatever a fetch would say; then
+/// [`assess`]. A dry run is assessed as the write is.
+pub fn check(root: &Path, skip_sync_check: bool, dry_run: bool) -> Assessment {
     let mut state = git_state(root);
     let mut fetch_warning = None;
-    if !dry_run && matches!(state, GitState::Repository { .. }) {
+    let fetch = !dry_run
+        && matches!(
+            state,
+            GitState::Repository {
+                paused: Ok(None) | Err(_),
+                ..
+            }
+        );
+    if fetch {
         if let Err(e) = fetch_quietly(root, FETCH_TIMEOUT) {
             fetch_warning = Some(format!(
                 "could not fetch the upstream ({}); checking against the last fetch",
@@ -108,46 +125,37 @@ pub fn check(root: &Path, skip_sync_check: bool, dry_run: bool) -> Result<Cleare
         }
         state = git_state(root);
     }
-    let assessed = assess(&state, skip_sync_check);
-    let mut cleared = match assessed {
-        Ok(cleared) => cleared,
-        Err(refusal) if dry_run => Cleared {
-            warnings: vec![format!("the rename itself would be refused: {refusal}")],
-            recheck_paused: false,
-        },
-        Err(refusal) => return Err(refusal),
-    };
+    let mut assessment = assess(&state, skip_sync_check);
     if let Some(w) = fetch_warning {
-        cleared.warnings.insert(0, w);
+        assessment.warnings.insert(0, w);
     }
-    Ok(cleared)
+    assessment
 }
 
 /// The guard [`Vault::rename_note`](cdno_domain::Vault::rename_note) runs
-/// under the lock: the paused check again, for a merge (or rebase, ...)
-/// started after [`check`]. A paused operation refuses; a probe that fails
-/// warns on stderr and lets the rename go ahead. A no-op unless `recheck`.
-pub fn paused_guard(root: &Path, recheck: bool) -> impl FnOnce() -> Result<(), DomainError> + '_ {
+/// under the lock: [`git_state`] and [`assess`] again, with the same
+/// `skip_sync_check` and no fetch. A warning not among `shown` (those of the
+/// check before the lock, already shown) is pushed to `fresh` for the
+/// caller to show; the refusal, if any, is the guard's error.
+pub fn guard<'a>(
+    root: &'a Path,
+    skip_sync_check: bool,
+    shown: &'a [String],
+    fresh: &'a RefCell<Vec<String>>,
+) -> impl FnOnce() -> Result<(), DomainError> + 'a {
     move || {
-        if !recheck {
-            return Ok(());
-        }
-        match git_operation_in_progress(root) {
-            Ok(Some(op)) => Err(DomainError::GitOperationInProgress { reason: op.reason }),
-            Ok(None) => Ok(()),
-            Err(e) => {
-                eprintln!("warning: {}", paused_unknown(&e));
-                Ok(())
-            }
+        let assessment = assess(&git_state(root), skip_sync_check);
+        fresh.borrow_mut().extend(
+            assessment
+                .warnings
+                .into_iter()
+                .filter(|w| !shown.contains(w)),
+        );
+        match assessment.refusal {
+            Some(refusal) => Err(refusal),
+            None => Ok(()),
         }
     }
-}
-
-fn paused_unknown(e: &GitError) -> String {
-    format!(
-        "could not tell whether a git operation is paused ({}); renaming anyway",
-        one_line(e)
-    )
 }
 
 /// A git error on one line: git's stderr can run to several.
