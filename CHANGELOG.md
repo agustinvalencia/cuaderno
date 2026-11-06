@@ -8,6 +8,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **The rename against the real stores** (RFC 0007 T21, closes #870). Three tests the memory
+  implementations cannot give: `rename_index_ops_land_in_order_on_sqlite` (old path gone, new path
+  and its links present, the archived referrer's snapshot row unchanged, no link left resolved to the
+  old path), a two-clone test in `cdno-cli --test note` (a bare remote, a rename on one clone, the
+  other lints clean, resolves the old slug and keeps its snapshot row), and the `#[ignore]`d
+  `rename_on_two_thousand_notes_stays_under_budget` bench. Recorded on an Apple-silicon mini, 2 000
+  notes and 300 referrers: preview about 0.11 s, write about 3.1 s in the test profile and 2.9 s in
+  release, almost all of it the fsync pair each of the 302 atomic file writes costs.
 - **The rename write** (RFC 0007 T20, closes #869). `Vault::rename_preview` plans a rename against
   the vault as it is, without the write lock; `Vault::rename_note` takes the lock, plans again from
   the store, refuses with `StalePlan` when the plan's hash differs from the one previewed (a
