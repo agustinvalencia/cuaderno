@@ -3890,6 +3890,62 @@ fn a_renamed_line_with_an_ascii_hyphen_is_reported() {
 }
 
 #[test]
+fn a_relink_clears_the_straggler_warnings() {
+    let daily = DAILY_LINKING.replace("{{link}}", "[[old-model]] and [[projects/old-model]]");
+    let vault = vault_with_notes(
+        &[
+            ("journal/2026/daily/2026-05-01.md", &daily),
+            (
+                "projects/surrogate-model.md",
+                &project_with_aliases("[old-model]"),
+            ),
+        ],
+        VaultConfig::default(),
+    );
+    let report = vault.lint_all_notes(lint_day()).unwrap();
+    assert_eq!(straggler_issues(&report).len(), 2, "{:?}", report.issues);
+
+    let at = chrono::NaiveDate::from_ymd_opt(2026, 5, 10)
+        .unwrap()
+        .and_hms_opt(10, 30, 0)
+        .unwrap();
+    let plan = vault.relink_preview("surrogate-model", at).unwrap();
+    vault
+        .relink_note("surrogate-model", Some(&plan.hash), at, || Ok(()))
+        .unwrap();
+
+    let report = vault.lint_all_notes(lint_day()).unwrap();
+    assert!(straggler_issues(&report).is_empty(), "{:?}", report.issues);
+    // The `relinked` line it logged is in the shape lint expects.
+    assert!(
+        !report.issues.iter().any(|i| i.message.contains("relinked")),
+        "{:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn a_relinked_line_with_an_ascii_hyphen_is_reported() {
+    let body = daily_log("- **10:00**: relinked [[alpha]] - Surrogate model\n  references: 2\n");
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+    let found: Vec<_> = report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("`relinked` log line"))
+        .collect();
+    assert_eq!(found.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        found[0].message.contains("ASCII hyphen"),
+        "{}",
+        found[0].message
+    );
+}
+
+#[test]
 fn a_well_formed_renamed_line_is_clean() {
     let body = daily_log(
         "- **10:00**: renamed [[alpha]] \u{2014} Surrogate model\n  was: beta\n  reason: clearer\n",

@@ -648,6 +648,10 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         // path. Nothing the caller passes differently changes it, so it never
         // gets a code.
         DomainError::RenameEditOverlap { .. } => return None,
+        // An argument error, not a refusal of the vault's: `rename_note`
+        // turns it into `INVALID_PARAMS` naming `to` before it gets here,
+        // as it does every other malformed argument.
+        DomainError::RelinkTakesNoSlug { .. } => return None,
 
         // A slug the caller typed (RFC 0007 §5.7, §6.2). The keys and the
         // `why` / `holder` / `kind` rendering match the CLI's `slug_rejection`

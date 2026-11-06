@@ -135,9 +135,10 @@ pub use portfolios::PortfolioSummary;
 // Exported for the unit suite, which pins the paused entry's exact shape.
 #[doc(hidden)]
 pub use projects::actions::format_action_paused_log_entry;
-// Exported for the unit suite, which pins the renamed entry's exact shape.
+// Exported for the unit suite, which pins the renamed and relinked entries'
+// exact shapes.
 #[doc(hidden)]
-pub use log::{format_renamed_log_entry, format_renamed_pair_log_entry};
+pub use log::{format_relinked_log_entry, format_renamed_log_entry, format_renamed_pair_log_entry};
 pub use projects::{
     ActionListEntry, AttachedAction, ClosedProjectEntry, HolderChange, LOG_HOLDER_PREFIX,
     LinkedCommitment, NO_HOLDER, OpenAction, OpenItems, OpenItemsHash, OpenItemsReport,
@@ -145,7 +146,9 @@ pub use projects::{
     ResumedKind, SlotUsage, SwitchOutcome, TopAction,
 };
 pub use questions::QuestionSummary;
-pub use rename::{Change, PlannedEdit, RenameOutcome, RenamePlan, RenameWarning, VaultSnapshot};
+pub use rename::{
+    Change, PlannedEdit, RenameOutcome, RenamePlan, RenameRequest, RenameWarning, VaultSnapshot,
+};
 pub use revise::{ReviseOutcome, Revision};
 pub use search::{SearchFilters, SearchResultEntry};
 pub use stewardships::{StewardshipSummary, StewardshipVariant};

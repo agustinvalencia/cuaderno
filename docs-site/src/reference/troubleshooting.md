@@ -184,10 +184,14 @@ that was written with the old name afterwards (typed from memory, or brought bac
 from a machine that had not seen the rename) still works in cdno, but an editor such as Obsidian
 or Neovim follows the file name, not the alias, and cannot open it.
 
-`cdno lint` finds them: ``[[old]] names a renamed note — now `new` ``. Change the link to the new
-name by hand if you like, even in a past log entry (it is the same address correction a rename
-makes); leaving it is harmless, since it still works in cdno. A sweep that rewrites every such link in one go (`--relink`) is the next piece of
-work and is not available yet.
+`cdno lint` finds them: ``[[old]] names a renamed note — now `new` ``. Leaving them is harmless,
+since they still work in cdno. To rewrite every one to the current name in one go, run
+[`cdno note rename new --relink`](cli/note.md#relinking-the-stragglers---relink) (`--dry-run` first
+to see them; over MCP, `rename_note` with `relink: true`): nothing moves, the old name stays listed,
+and a `relinked` line is logged. This works for an archived action note too, which cannot be renamed.
+A union merge brings back the whole hunk, so the lines it duplicated stay after the relink, as
+identical text twice: the relink corrects addresses, it does not tidy the merge. Changing one link
+by hand is fine too, even in a past log entry: it is the same address correction.
 
 ## Rename refused: behind upstream
 

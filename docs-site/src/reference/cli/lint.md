@@ -12,7 +12,8 @@ that "resolves to no note".
 
 A link that resolves only through a note's `aliases:` entry — a former name — is a straggler: it still
 works, but lint warns and names the note's current slug (`[[old]]` names a renamed note — now `new`),
-so you can fix the link by hand. Lint also warns when an alias collides with another note's name. If it equals another note's file
+so you can fix the link by hand, or rewrite them all with
+[`cdno note rename <note> --relink`](note.md#relinking-the-stragglers---relink). Lint also warns when an alias collides with another note's name. If it equals another note's file
 stem, the stem wins and the alias can never be followed (alias `x` on `<path>` is shadowed by
 `<other>`). If it equals the folder name of a folder note such as `portfolios/x/_index.md`, the alias
 takes the bare link `[[x]]` (alias `x` on `<path>` takes bare `[[x]]` from folder note `<other>`);
@@ -35,8 +36,9 @@ dash (U+2014). A stamp that was attempted and mangled — `- 09:20:` unbolded, `
 range, `- **09:40**` with no colon — is caught too, not only one that is missing outright. The check is
 deliberately narrow — the marker has to open the entry and be followed immediately by `[[` — so
 ordinary prose in `## Logs`, including a sentence that merely mentions starting something or names a
-note mid-sentence, is never flagged. The `renamed [[new]] — Title` line a rename writes gets the same
-near-miss check (it is not a focus marker, so `cdno now` never reads it), and a `was:` continuation
+note mid-sentence, is never flagged. The `renamed [[new]] — Title` line a rename writes, and the
+`relinked [[new]] — Title` line of `--relink`, get the same near-miss check (neither is a focus
+marker, so `cdno now` never reads them), and a `was:` continuation
 under it that contains a `[[` link is a warning, because the value is a copied slug and a link would
 be rewritten by the next rename.
 

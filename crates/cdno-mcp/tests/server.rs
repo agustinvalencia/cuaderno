@@ -1162,6 +1162,11 @@ fn rename_note_description_states_the_contract() {
         "A reference is an address, not content",
         "changes no other byte",
         "the one exception to the append-only rule",
+        // T30: the straggler repair, exclusive with `to`.
+        "`relink: true` in place of `to` keeps the slug",
+        "only by a former name",
+        "nothing moves",
+        "it takes no `reason`",
     ] {
         assert!(desc.contains(phrase), "missing {phrase:?}: {desc}");
     }

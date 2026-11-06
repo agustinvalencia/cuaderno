@@ -264,7 +264,7 @@ the field.
 
 | Tool | Inputs | Effect |
 |------|--------|--------|
-| `rename_note` | `note`, `to`, `reason?`, `dry_run?`, `expected_plan?`, `skip_sync_check?` | Rename a note's slug and follow every reference to it in one transaction, logging a `renamed` line to today's daily note. ([`cdno note rename`](../cli/note.md#cdno-note-rename-note)) |
+| `rename_note` | `note`, `to` or `relink: true`, `reason?`, `dry_run?`, `expected_plan?`, `skip_sync_check?` | Rename a note's slug and follow every reference to it in one transaction, logging a `renamed` line to today's daily note; or, with `relink`, keep the slug and rewrite the links still under a former name. ([`cdno note rename`](../cli/note.md#cdno-note-rename-note)) |
 
 The preview is the contract. The sequence an agent follows:
 
@@ -279,6 +279,17 @@ The preview is the contract. The sequence an agent follows:
 `note` takes the references [`read_note`](reads.md) takes, including a former name of the note
 (`found_by_former_name` in the result says which); `reason` is a short clause for the log line. A
 rename to the note's current slug is an empty plan: `written: false`, `log_line: null`.
+
+**Relinking.** `relink: true` in place of `to` keeps the note's slug and rewrites every link that
+reaches it only through a former name, links and reference fields alike (the links are the
+stragglers [`lint`](reads.md) reports, which a sync merge can bring back), to the current slug. The
+same preview-then-write sequence applies, with `relink: true` on both calls. Nothing moves and the
+aliases stay listed: the result has `moves: []` and `new_slug` equal to `from`, and the `log_line`
+is `relinked [[<slug>]] — <title>` with an indented `references: <n>` line. With no straggler the
+plan is empty and nothing is logged. An archived action note can be relinked, though not renamed.
+A blank `to` beside `relink: true` reads as omitted. `relink` with `to`, either with `reason`, or neither `to` nor
+`relink`, is refused as an invalid argument naming the field
+([`cdno note rename --relink`](../cli/note.md#relinking-the-stragglers---relink)).
 
 The result is the plan, whether or not it was written: `dry_run`, `target`, `from` (the note's
 current slug), `new_slug`, `found_by_former_name` (the former name `note` matched, or `null`),

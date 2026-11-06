@@ -223,7 +223,9 @@ A rename writes `renamed [[<new>]] — <title>` with an indented `was: <old-slug
 `reason:`), where `was:` is a copied value, never a link, so a later rename never rewrites it. A
 question renamed with its same-slug portfolio adds `portfolio: [[portfolios/<new>]]` after
 `reason:`, which is a link, so a later rename rewrites it, unlike `was:`. `renamed` is not a focus
-marker: lint lists it in `MARKER_PREFIXES` with `is_focus: false` (RFC 0007, `vault/log.rs`).
+marker: lint lists it in `MARKER_PREFIXES` with `is_focus: false` (RFC 0007, `vault/log.rs`), and
+so is `relinked [[<new>]] — <title>` with an indented `references: <n>` and no `was:`, which
+`--relink` writes when it rewrites the alias-resolved stragglers to the current slug.
 Tracing a project's evolution is a search over the daily log — so never replace a mutable section
 without emitting its log entry, and never hand-write that entry in any other shape.
 

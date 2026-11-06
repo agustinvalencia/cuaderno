@@ -20,7 +20,7 @@ use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::EnergyLevel;
 use cdno_domain::vault::{
     Change, CommitmentSource, RefResolution, RenameOutcome, RenamePlan, RenameWarning,
-    VaultSnapshot, format_renamed_log_entry,
+    VaultSnapshot, format_relinked_log_entry, format_renamed_log_entry,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
@@ -2719,4 +2719,425 @@ fn resolve_rename_target_narrows_to_the_pairs_question() {
         matches!(resolution, RefResolution::Resolved(_)),
         "{resolution:?}"
     );
+}
+
+// ---------------------------------------------------------------------
+// The relink (T30): the planner in the mode where the note does not move.
+// ---------------------------------------------------------------------
+
+/// Project `new` ("Surrogate model"), renamed from `old` earlier: it lists
+/// `old` as an alias.
+const RELINKED_PROJECT: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\naliases:\n  - old\n---\n\n# Surrogate model\n\n## Current State\nCalibrating.\n\n## Next Actions\n\n## Milestones\n";
+
+/// Today's daily note after a `merge=union` sync (RFC 0007 §5.8 (4)): the
+/// rename rewrote the line to `[[new]]` on one clone, the other clone
+/// appended beside it, and the union kept both sides, so the old line came
+/// back holding the old slug.
+const UNION_DAY: &str = "---\ntype: daily\ndate: 2026-05-10\n---\n\n# Sunday, 10 May 2026\n\n## Logs\n- **08:00**: back on [[old]]\n- **08:00**: back on [[new]]\n";
+
+fn relink_vault(notes: &[(&str, &str)]) -> Vault {
+    vault_over(Arc::new(MemoryVaultStore::new()), notes, &[])
+}
+
+fn relink_plan(vault: &Vault, target: &str) -> RenamePlan {
+    let snapshot = vault.rename_snapshot().unwrap();
+    vault
+        .plan_relink(&snapshot, target, at())
+        .expect("relink plan")
+}
+
+/// Preview the relink, then write that plan, as a surface does.
+fn relink(vault: &Vault, target: &str) -> RenameOutcome {
+    let plan = vault.relink_preview(target, at()).expect("preview");
+    vault
+        .relink_note(target, Some(&plan.hash), at(), || Ok(()))
+        .expect("relink")
+}
+
+#[test]
+fn relink_rewrites_only_alias_resolved_references() {
+    let vault = relink_vault(&[
+        ("projects/new.md", RELINKED_PROJECT),
+        (DAILY_TODAY, UNION_DAY),
+    ]);
+    let plan = relink_plan(&vault, "new");
+    assert!(plan.relink);
+    assert_eq!(plan.new_slug, "new");
+    assert_eq!(
+        changes_by_path(&plan),
+        BTreeMap::from([(
+            DAILY_TODAY.to_owned(),
+            vec![Change::Address { count: 1 }, Change::LogLine]
+        )]),
+        "exactly one address changes: the `[[old]]` line; `[[new]]` resolves by stem"
+    );
+    assert_eq!(plan.reference_totals(), (1, 1));
+    let day = &plan.edits[0];
+    let address_edits: Vec<_> = day
+        .edits
+        .iter()
+        .filter(|e| !e.replacement.contains("relinked"))
+        .collect();
+    assert_eq!(address_edits.len(), 1, "{:?}", day.edits);
+    assert_eq!(&day.before[address_edits[0].range.clone()], "old");
+    assert_eq!(address_edits[0].replacement, "new");
+    assert!(
+        day.after
+            .contains("- **08:00**: back on [[new]]\n- **08:00**: back on [[new]]\n")
+    );
+    // A relink never plans a no-op: no edit leaves its bytes as they were,
+    // so nothing needs filtering out.
+    for edit in &plan.edits {
+        assert_ne!(edit.before, edit.after, "{}", edit.path);
+        for e in &edit.edits {
+            assert_ne!(
+                &edit.before[e.range.clone()],
+                e.replacement,
+                "{}",
+                edit.path
+            );
+        }
+    }
+}
+
+#[test]
+fn relink_leaves_a_link_that_resolves_by_stem_even_when_listed_as_an_alias() {
+    // A hand edit lists the note's own slug among its aliases: `[[new]]`
+    // still resolves by stem, so it is no straggler and is not counted.
+    let project = RELINKED_PROJECT.replace("  - old\n", "  - old\n  - new\n");
+    let vault = relink_vault(&[("projects/new.md", &project), (DAILY_TODAY, UNION_DAY)]);
+    let plan = relink_plan(&vault, "new");
+    assert_eq!(plan.reference_totals(), (1, 1));
+}
+
+#[test]
+fn relink_leaves_a_link_the_stem_sends_elsewhere_alone() {
+    // `older` is also an alias of `new`, but a note has that stem now, so
+    // `[[older]]` names that note: rewriting it would change its referent.
+    let project = RELINKED_PROJECT.replace("  - old\n", "  - old\n  - older\n");
+    let other = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Older\n\n## Current State\n\n## Next Actions\n\n## Milestones\n";
+    let day = UNION_DAY.replace("back on [[new]]", "and [[older]]");
+    let vault = relink_vault(&[
+        ("projects/new.md", &project),
+        ("projects/older.md", other),
+        (DAILY_TODAY, &day),
+    ]);
+    let plan = relink_plan(&vault, "new");
+    assert_eq!(plan.reference_totals(), (1, 1));
+    assert!(plan.edits[0].after.contains("and [[older]]"));
+    assert!(plan.edits[0].after.contains("back on [[new]]"));
+}
+
+#[test]
+fn relink_rewrites_a_portfolio_straggler_to_its_folder_form() {
+    // A folder note answers to its folder path; a link that already
+    // reaches it by path is not a straggler, so it is left as written.
+    let index = "---\ntype: portfolio\nquestion: \"How large is the error?\"\ncreated: 2026-05-01\naliases:\n  - old\n---\n\n# How large is the error?\n";
+    let day = UNION_DAY.replace("[[new]]", "[[portfolios/new/_index]]");
+    let vault = relink_vault(&[("portfolios/new/_index.md", index), (DAILY_TODAY, &day)]);
+    let plan = relink_plan(&vault, "portfolios/new");
+    assert_eq!(plan.reference_totals(), (1, 1));
+    assert!(plan.moves.is_empty());
+    let after = &plan.edits[0].after;
+    assert!(after.contains("back on [[portfolios/new]]\n"), "{after}");
+    assert!(
+        after.contains("back on [[portfolios/new/_index]]\n"),
+        "{after}"
+    );
+    assert!(after.contains("relinked [[portfolios/new]] \u{2014} How large is the error?"));
+}
+
+#[test]
+fn relink_leaves_a_folder_straggler_whose_folder_form_points_elsewhere() {
+    // #913: after a pair rename, `[[portfolios/old]]` resolves through the
+    // question's alias. Its own folder form, `[[portfolios/new]]`, names the
+    // portfolio: a different note, so the relink leaves it.
+    let p = pair_vault();
+    p.vault
+        .rename_note("questions/research/old", "new", None, None, at(), || Ok(()))
+        .expect("rename");
+    p.store
+        .write_file(
+            &vp("journal/2026/daily/2026-05-11.md"),
+            "---\ntype: daily\ndate: 2026-05-11\n---\n\n# Monday, 11 May 2026\n\n## Logs\n- **09:00**: filed in [[portfolios/old]]\n",
+        )
+        .unwrap();
+    let plan = p
+        .vault
+        .relink_preview("questions/research/new", at())
+        .unwrap();
+    assert!(plan.is_empty(), "{:?}", changes_by_path(&plan));
+}
+
+#[test]
+fn relink_with_no_stragglers_is_an_empty_plan() {
+    let day = UNION_DAY.replace("back on [[old]]", "back on [[new]] again");
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let vault = vault_over(
+        Arc::clone(&store),
+        &[("projects/new.md", RELINKED_PROJECT), (DAILY_TODAY, &day)],
+        &[],
+    );
+    let plan = relink_plan(&vault, "new");
+    assert!(plan.is_empty());
+    assert!(plan.relink);
+    assert_eq!(plan.log_line, None, "nothing relinked, nothing logged");
+
+    let before = files_of(&*store);
+    let outcome = relink(&vault, "new");
+    assert!(outcome.written.is_empty());
+    assert_eq!(files_of(&*store), before);
+}
+
+#[test]
+fn relink_never_moves_or_extends_aliases() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let vault = vault_over(
+        Arc::clone(&store),
+        &[
+            ("projects/new.md", RELINKED_PROJECT),
+            (DAILY_TODAY, UNION_DAY),
+        ],
+        &[],
+    );
+    let outcome = relink(&vault, "new");
+    assert!(outcome.plan.moves.is_empty());
+    assert_eq!(outcome.written, vec![vp(DAILY_TODAY)]);
+    assert!(
+        outcome
+            .plan
+            .edits
+            .iter()
+            .all(|e| !e.changes.contains(&Change::Alias))
+    );
+    // D5: the note is where it was, byte for byte, its aliases still listed.
+    assert_eq!(
+        store.read_file(&vp("projects/new.md")).unwrap(),
+        RELINKED_PROJECT
+    );
+    assert!(!store.exists(&vp("projects/old.md")).unwrap());
+}
+
+#[test]
+fn relink_logs_the_count_and_no_was() {
+    let emulator = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-02\n---\n\n# Emulator\n\n## Current State\nWaiting on [[old#Current State]].\n\n## Next Actions\n\n## Milestones\n";
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let vault = vault_over(
+        Arc::clone(&store),
+        &[
+            ("projects/new.md", RELINKED_PROJECT),
+            ("projects/emulator.md", emulator),
+            (DAILY_TODAY, UNION_DAY),
+        ],
+        &[],
+    );
+    let outcome = relink(&vault, "new");
+    let entry = "relinked [[new]] \u{2014} Surrogate model\n  references: 2";
+    assert_eq!(outcome.plan.log_line.as_deref(), Some(entry));
+    assert_eq!(
+        format_relinked_log_entry("new", "Surrogate model", 2),
+        entry
+    );
+    let day = store.read_file(&vp(DAILY_TODAY)).unwrap();
+    assert!(day.ends_with(&format!("- **10:30**: {entry}\n")), "{day}");
+    assert!(!day.contains("was:"), "{day}");
+    assert!(
+        store
+            .read_file(&vp("projects/emulator.md"))
+            .unwrap()
+            .contains("Waiting on [[new#Current State]].")
+    );
+    // The focus fold never reads the line.
+    assert_eq!(vault.current_focus(at().date()).unwrap(), None);
+}
+
+#[test]
+fn relink_rewrites_a_field_holding_an_alias() {
+    // A field is read by its bare value, so `project: old` was detached
+    // from the note; the relink reattaches it.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let vault = vault_over(
+        Arc::clone(&store),
+        &[
+            ("projects/new.md", RELINKED_PROJECT),
+            ("actions/fit-the-baseline.md", ACTION),
+        ],
+        &[],
+    );
+    let plan = relink_plan(&vault, "new");
+    assert_eq!(
+        changes_by_path(&plan).get("actions/fit-the-baseline.md"),
+        Some(&vec![field("project")])
+    );
+    relink(&vault, "new");
+    let after = store.read_file(&vp("actions/fit-the-baseline.md")).unwrap();
+    assert!(after.contains("\nproject: new\n"), "{after}");
+    // The tag in the body is not a reference; it is left as written.
+    assert!(after.contains("#action/old"), "{after}");
+}
+
+#[test]
+fn relink_with_to_is_refused() {
+    use cdno_domain::vault::RenameRequest;
+    let err = RenameRequest::from_args(Some("emulator".to_owned()), true).unwrap_err();
+    assert!(
+        matches!(&err, DomainError::RelinkTakesNoSlug { to } if to == "emulator"),
+        "{err:?}"
+    );
+    assert_eq!(
+        RenameRequest::from_args(None, true).unwrap(),
+        Some(RenameRequest::Relink)
+    );
+    assert_eq!(
+        RenameRequest::from_args(Some("emulator".to_owned()), false).unwrap(),
+        Some(RenameRequest::To("emulator".to_owned()))
+    );
+    assert_eq!(RenameRequest::from_args(None, false).unwrap(), None);
+}
+
+#[test]
+fn a_relinked_straggler_pause_line_is_reachable_by_the_new_slug() {
+    // The issue's case (review of #893): a hand-written pause naming the
+    // old slug is keyed by the log's text, so `resume_action(Some("new"))`
+    // cannot find it until the relink rewrites it.
+    let project = RELINKED_PROJECT.replace(
+        "## Next Actions\n",
+        "## Next Actions\n- [ ] Fit the baseline (deep)\n",
+    );
+    let day = "---\ntype: daily\ndate: 2026-05-10\n---\n\n# Sunday, 10 May 2026\n\n## Logs\n- **09:00**: action paused on [[old]] \u{2014} Fit the baseline\n";
+    let vault = relink_vault(&[("projects/new.md", &project), (DAILY_TODAY, day)]);
+    assert!(
+        vault.resume_action(dt(10, 10, 0), Some("new")).is_err(),
+        "before the relink the pause is out of reach by the new slug"
+    );
+    relink(&vault, "new");
+    let resumed = vault
+        .resume_action(dt(10, 11, 0), Some("new"))
+        .expect("the relinked pause resumes by the new slug");
+    assert_eq!(resumed.resumed.project, "new");
+}
+
+#[test]
+fn a_folder_note_listing_its_own_name_relinks_to_an_empty_plan() {
+    // Review of #921: a portfolio's stem is `_index`, so its own folder
+    // name listed as an alias reaches it through the alias rule. It is
+    // still its current name: `portfolio: new` already names it, and there
+    // is no straggler to rewrite.
+    let index = "---\ntype: portfolio\nquestion: \"How large is the error?\"\ncreated: 2026-05-01\naliases:\n  - new\n---\n\n# How large is the error?\n";
+    let evidence = "---\ntype: evidence\ncreated: 2026-05-02\nsource: \"Baseline sweep\"\nportfolio: new\n---\n\n# Baseline sweep\n\nFiled in [[portfolios/new]].\n";
+    let day = "---\ntype: daily\ndate: 2026-05-10\n---\n\n# Sunday, 10 May 2026\n\n## Logs\n- **08:00**: filed in [[portfolios/new]]\n";
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let vault = vault_over(
+        Arc::clone(&store),
+        &[
+            ("portfolios/new/_index.md", index),
+            ("portfolios/new/2026-05-02-baseline.md", evidence),
+            (DAILY_TODAY, day),
+        ],
+        &[],
+    );
+    let before = files_of(&*store);
+    for _ in 0..2 {
+        let plan = relink_plan(&vault, "portfolios/new");
+        assert!(plan.is_empty(), "{:?}", changes_by_path(&plan));
+        assert_eq!(plan.log_line, None);
+        let outcome = relink(&vault, "portfolios/new");
+        assert!(outcome.written.is_empty());
+        assert_eq!(files_of(&*store), before, "nothing written, nothing logged");
+    }
+}
+
+#[test]
+fn an_archived_action_can_be_the_target_of_a_relink() {
+    // Review of #921: the two-clone sequence for an action. Renamed while
+    // active, completed, and a straggler `[[old-act]]` arrives afterwards.
+    // The relink changes nothing on the archived note, so it is not refused.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index = Arc::new(MemoryIndex::new());
+    store
+        .write_file(&vp("projects/surrogate-model.md"), PROJECT)
+        .unwrap();
+    let vault = open(Arc::clone(&store), index.clone());
+    vault
+        .add_action_with_note(dt(7, 9, 0), "surrogate-model", "Old act", EnergyLevel::Deep)
+        .expect("add action");
+    vault
+        .rename_note(
+            "actions/old-act",
+            "new-act",
+            None,
+            None,
+            dt(7, 9, 30),
+            || Ok(()),
+        )
+        .expect("rename the active action");
+    vault
+        .complete_action(dt(7, 10, 0), "surrogate-model", "new-act")
+        .expect("complete action");
+    let archived = vp("actions/_done/2026/new-act.md");
+    assert!(store.exists(&archived).unwrap());
+    let row = index.find_archival_snapshot(&archived).unwrap();
+    assert!(row.is_some(), "archival stamps a snapshot");
+    let archived_before = store.read_file(&archived).unwrap();
+
+    // Renaming it is still refused.
+    let err = vault
+        .rename_preview("new-act", "newer-act", None, at())
+        .unwrap_err();
+    assert!(
+        matches!(&err, DomainError::NoteNotRenamable { reason, .. } if reason == "archived"),
+        "{err:?}"
+    );
+
+    store
+        .write_file(
+            &vp(DAILY_TODAY),
+            "---\ntype: daily\ndate: 2026-05-10\n---\n\n# Sunday, 10 May 2026\n\n## Logs\n- **08:00**: thought on [[old-act]]\n",
+        )
+        .unwrap();
+    let outcome = relink(&vault, "new-act");
+    assert_eq!(outcome.plan.target.path, archived);
+    assert_eq!(outcome.plan.reference_totals(), (1, 1));
+    assert_eq!(outcome.written, vec![vp(DAILY_TODAY)]);
+    let day = store.read_file(&vp(DAILY_TODAY)).unwrap();
+    assert!(day.contains("thought on [[new-act]]"), "{day}");
+    assert!(day.contains("relinked [[actions/new-act]]"), "{day}");
+    assert_eq!(store.read_file(&archived).unwrap(), archived_before);
+    assert_eq!(index.find_archival_snapshot(&archived).unwrap(), row);
+
+    let report = vault.lint_all_notes(super::support::lint_day()).unwrap();
+    assert!(
+        report
+            .issues
+            .iter()
+            .all(|i| i.severity != cdno_domain::LintSeverity::Error
+                && !i.message.contains("names a renamed note")
+                && !i.message.contains("relinked")),
+        "{:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn a_bare_link_to_a_folder_notes_own_name_is_relinked_to_its_folder_form() {
+    // The link half of the same shape: `[[new]]` reaches the portfolio only
+    // through the alias rule (its stem is `_index`), lint reports it, and
+    // its folder form is a real change. The `portfolio: new` field is left.
+    let index = "---\ntype: portfolio\nquestion: \"How large is the error?\"\ncreated: 2026-05-01\naliases:\n  - new\n---\n\n# How large is the error?\n";
+    let evidence = "---\ntype: evidence\ncreated: 2026-05-02\nsource: \"Baseline sweep\"\nportfolio: new\n---\n\n# Baseline sweep\n";
+    let day = "---\ntype: daily\ndate: 2026-05-10\n---\n\n# Sunday, 10 May 2026\n\n## Logs\n- **08:00**: filed in [[new]]\n";
+    let vault = relink_vault(&[
+        ("portfolios/new/_index.md", index),
+        ("portfolios/new/2026-05-02-baseline.md", evidence),
+        (DAILY_TODAY, day),
+    ]);
+    let plan = relink_plan(&vault, "portfolios/new");
+    assert_eq!(
+        changes_by_path(&plan),
+        BTreeMap::from([(
+            DAILY_TODAY.to_owned(),
+            vec![Change::Address { count: 1 }, Change::LogLine]
+        )])
+    );
+    assert!(plan.edits[0].after.contains("filed in [[portfolios/new]]"));
 }

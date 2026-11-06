@@ -441,8 +441,9 @@ pub struct ReviseNoteInput {
     pub reason: String,
 }
 
-/// Input for `rename_note` (RFC 0007 §6.4, T26). `note` and `to` are trimmed
-/// by the handler; the flags default to false.
+/// Input for `rename_note` (RFC 0007 §6.4, T26; `relink` T30). `note` and
+/// `to` are trimmed by the handler; the flags default to false. Exactly one
+/// of `to` and `relink: true` is given.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RenameNoteInput {
     /// Which note to rename, in any form `read_note` accepts: a vault path,
@@ -451,9 +452,14 @@ pub struct RenameNoteInput {
     pub note: String,
     /// The new slug, which becomes the file's name (or its folder's, for a
     /// portfolio). Refused, not suffixed, when it is taken or malformed.
-    pub to: String,
+    /// Required unless `relink` is true, and refused with it.
+    pub to: Option<String>,
+    /// Keep the note's slug and rewrite every reference that reaches it only
+    /// through a former name (an alias) to the current slug: nothing moves,
+    /// the aliases stay listed, and a `relinked` line is logged.
+    pub relink: Option<bool>,
     /// Why the note is renamed, in a short clause; it is written into the
-    /// daily-log line the rename appends.
+    /// daily-log line the rename appends. Not taken by a relink.
     pub reason: Option<String>,
     /// Return the plan and write nothing. The plan's `plan_hash` is what a
     /// later call passes as `expected_plan`.

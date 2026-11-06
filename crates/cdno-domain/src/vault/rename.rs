@@ -20,6 +20,13 @@
 //! expressed in `before`'s byte positions and merged in ascending order, so
 //! `after` is `before` with [`PlannedEdit::edits`] applied
 //! ([`differs_only_by`](cdno_core::extractors::differs_only_by) holds).
+//!
+//! **A relink is the same planner in a mode where the note does not move**
+//! (RFC 0007 §8 S8, T30): [`Vault::plan_relink`] rewrites every reference
+//! that reaches the note only through a former name (one of its
+//! `aliases:`), links and §3.5 fields alike, to the current slug, with no move, no alias
+//! edit and a `relinked` line instead of a `renamed` one. One planner, one
+//! hash, one preview and one write path serve both.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ffi::OsStr;
@@ -50,7 +57,8 @@ use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::lint::frozen_prefix_verifies;
 use super::log::{
-    append_log_line, daily_note_path, format_log_line, format_renamed_pair_log_entry,
+    append_log_line, daily_note_path, format_log_line, format_relinked_log_entry,
+    format_renamed_pair_log_entry,
 };
 use super::note_ref::{NoteRef, PeriodRef, RefResolution, ResolvedNote, candidate_slug};
 use super::projects::stage_project_index_rows;
@@ -108,6 +116,10 @@ pub struct RenamePlan {
     /// plan. What a preview shows for the log, instead of the daily note's
     /// byte edit, which may be the whole scaffolded note.
     pub log_line: Option<String>,
+    /// The plan is a relink ([`Vault::plan_relink`]): `moves` is empty,
+    /// `new_slug` is the note's current slug, and the log line is a
+    /// `relinked` one.
+    pub relink: bool,
     /// [`content_hash`] over the moves and every edit's `after`, in path
     /// order, with the log line's time stamp left out (§6.2). The write
     /// refuses a plan whose hash moved.
@@ -137,7 +149,8 @@ impl RenamePlan {
         (references, notes)
     }
 
-    /// Whether the plan writes nothing (a rename to the current slug).
+    /// Whether the plan writes nothing (a rename to the current slug, or a
+    /// relink with no straggler to rewrite).
     pub fn is_empty(&self) -> bool {
         self.moves.is_empty() && self.edits.is_empty()
     }
@@ -169,7 +182,7 @@ pub enum Change {
     /// The old slug appended to the target's `aliases:` (and the new slug
     /// dropped from it, when the note takes back a former name).
     Alias,
-    /// The `renamed` line appended to today's daily log.
+    /// The `renamed` (or `relinked`) line appended to today's daily log.
     LogLine,
 }
 
@@ -220,6 +233,41 @@ impl std::fmt::Display for RenameWarning {
             ),
         }
     }
+}
+
+/// What a call of the rename verb asks of the note's slug: a new one, or
+/// none, to relink the stragglers to the current one (T30). The two are
+/// exclusive: a relink keeps the slug, so a relink request carries no new
+/// slug, and [`RenameRequest::from_args`] refuses one that does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenameRequest {
+    /// Rename to this slug ([`Vault::rename_preview`], [`Vault::rename_note`]).
+    To(String),
+    /// Keep the slug and rewrite the stragglers ([`Vault::relink_preview`],
+    /// [`Vault::relink_note`]).
+    Relink,
+}
+
+impl RenameRequest {
+    /// The request an interface's two arguments make: `to` (the new slug)
+    /// and the `relink` switch. Both given is
+    /// [`DomainError::RelinkTakesNoSlug`]; neither is `Ok(None)`, for the
+    /// interface to prompt for or demand `to` as it does.
+    pub fn from_args(to: Option<String>, relink: bool) -> Result<Option<Self>, DomainError> {
+        match (to, relink) {
+            (Some(to), true) => Err(DomainError::RelinkTakesNoSlug { to }),
+            (None, true) => Ok(Some(Self::Relink)),
+            (Some(to), false) => Ok(Some(Self::To(to))),
+            (None, false) => Ok(None),
+        }
+    }
+}
+
+/// The planner's mode: a rename to a new slug, or a relink.
+#[derive(Debug, Clone, Copy)]
+enum Mode<'a> {
+    Rename(&'a str),
+    Relink,
 }
 
 impl Vault {
@@ -274,7 +322,7 @@ impl Vault {
                 }
             }
         }
-        renamable_type(self, path, Some(note_type), &snapshot).is_ok()
+        renamable_type(self, path, Some(note_type), &snapshot, false).is_ok()
     }
 
     /// Read the vault into a [`VaultSnapshot`] for [`plan_rename`](Self::plan_rename):
@@ -416,26 +464,100 @@ impl Vault {
         reason: Option<&str>,
         at: NaiveDateTime,
     ) -> Result<RenamePlan, DomainError> {
+        self.plan(snapshot, target, Mode::Rename(new_slug), reason, at)
+    }
+
+    /// Plan relinking the note `target` names (RFC 0007 §8 S8, T30):
+    /// [`plan_rename`](Self::plan_rename) in the mode where the note does
+    /// not move. Writes nothing.
+    ///
+    /// The plan is built from the note's **aliases** instead of its old
+    /// slug: it rewrites every reference that reaches the note only through
+    /// a former name, links and §3.5 fields alike. Every wikilink that
+    /// resolves to the note **only through one of its aliases** (by the
+    /// index's own resolver, the stragglers `cdno lint` warns about) has its
+    /// address's last segment rewritten to
+    /// the current slug (a portfolio's to its folder form,
+    /// `portfolios/<slug>`), and only when the rewritten address resolves to
+    /// the note too, so a reference can only ever move to where it already
+    /// points. A link the stem rule or a path resolves is left alone,
+    /// wherever it points; so is one whose own folder form would resolve
+    /// elsewhere (a folder-qualified straggler the alias tier reaches across
+    /// folders, #913).
+    ///
+    /// A §3.5 field of the note's own type whose value is one of the note's
+    /// aliases (never one of its current names), and that alias resolves to
+    /// the note, is rewritten to the current slug; lint does not report
+    /// these, since a field is not a link. This is the one mode where that is right: a rename
+    /// leaves such a field alone, since a field is read by its bare value
+    /// and a value equal to an alias was already detached from the note
+    /// before the rename; a relink is the repair that reattaches it.
+    ///
+    /// No move, no `aliases:` edit (D5: the aliases stay listed, so an old
+    /// link elsewhere keeps working), and a `relinked [[<new>]] — <title>`
+    /// line with an indented `references: <n>` continuation and no `was:`.
+    /// With no straggler the plan is empty and logs nothing. The refusals
+    /// are the rename's that apply to a note that keeps its slug, in its
+    /// order: [`DomainError::NoteNotRenamable`] (the same types and the same
+    /// reasons but `archived`: an archived action note may be relinked,
+    /// since nothing on it changes),
+    /// [`DomainError::StemShared`] (a bare `[[<slug>]]` would resolve to
+    /// neither note), then the referrers' own.
+    pub fn plan_relink(
+        &self,
+        snapshot: &VaultSnapshot,
+        target: &str,
+        at: NaiveDateTime,
+    ) -> Result<RenamePlan, DomainError> {
+        self.plan(snapshot, target, Mode::Relink, None, at)
+    }
+
+    /// The one planner behind [`plan_rename`](Self::plan_rename) and
+    /// [`plan_relink`](Self::plan_relink).
+    fn plan(
+        &self,
+        snapshot: &VaultSnapshot,
+        target: &str,
+        mode: Mode<'_>,
+        reason: Option<&str>,
+        at: NaiveDateTime,
+    ) -> Result<RenamePlan, DomainError> {
         let alias_map = AliasMap::from_rows(snapshot.aliases.iter().cloned());
         let resolved = self.resolve_in_snapshot(snapshot, target, at)?;
         let target_path = resolved.path.clone();
         let old_slug = resolved.slug.clone();
+        let relink = matches!(mode, Mode::Relink);
+        // A relink "renames" the note to the slug it already has.
+        let new_slug_owned = match mode {
+            Mode::Rename(slug) => slug.to_owned(),
+            Mode::Relink => old_slug.clone(),
+        };
+        let new_slug = new_slug_owned.as_str();
         let target_before = snapshot
             .contents
             .get(&target_path)
             .ok_or_else(|| cdno_core::error::StoreError::NotFound(target_path.to_string()))?;
         let target_type = note_type_name(target_before);
 
-        // 1. Not renamable.
-        let builtin = renamable_type(self, &target_path, target_type.as_deref(), snapshot)?;
-        let alias_edit = alias_edit(target_before, &old_slug, new_slug)
-            .map_err(|reason| not_renamable(&target_path, reason))?;
+        // 1. Not renamable. A relink edits no alias, so it cannot be
+        // refused for its `aliases:` shape, and it changes nothing on the
+        // target, so an archived action note may be relinked.
+        let builtin = renamable_type(self, &target_path, target_type.as_deref(), snapshot, relink)?;
+        let alias_edit = if relink {
+            None
+        } else {
+            alias_edit(target_before, &old_slug, new_slug)
+                .map_err(|reason| not_renamable(&target_path, reason))?
+        };
 
-        // 2. Invalid slug.
-        validate_explicit_slug(new_slug).map_err(|why| DomainError::InvalidSlug {
-            slug: new_slug.to_owned(),
-            why,
-        })?;
+        // 2. Invalid slug. A relink keeps the note's slug, whatever rule it
+        // was made under.
+        if !relink {
+            validate_explicit_slug(new_slug).map_err(|why| DomainError::InvalidSlug {
+                slug: new_slug.to_owned(),
+                why,
+            })?;
+        }
 
         // 3. Taken: against the snapshot's stems, folder names and the
         // aliases of every **other** note (D5: a name is reserved while it
@@ -510,34 +632,44 @@ impl Vault {
             });
         }
 
-        // 5. No-op.
-        if new_slug == old_slug {
-            return Ok(RenamePlan {
-                target: resolved,
-                new_slug: new_slug.to_owned(),
-                moves: Vec::new(),
-                edits: Vec::new(),
-                warnings: Vec::new(),
-                log_line: None,
-                hash: content_hash(""),
-            });
+        // 5. No-op. (A relink is never one here: its new slug is its old
+        // one by construction, and whether it is empty depends on the
+        // stragglers.)
+        let empty_plan = |resolved: ResolvedNote| RenamePlan {
+            target: resolved,
+            new_slug: new_slug.to_owned(),
+            moves: Vec::new(),
+            edits: Vec::new(),
+            warnings: Vec::new(),
+            log_line: None,
+            relink,
+            hash: content_hash(""),
+        };
+        if !relink && new_slug == old_slug {
+            return Ok(empty_plan(resolved));
         }
 
         // The portfolio folder that moves with the note: its own, for a
         // portfolio; for a question, the same-slug portfolio's (§5.3), only
         // when that folder note exists. The question's flat move comes first,
         // then the portfolio's `_index.md`, then the folder's other files.
-        let pair_folder: Option<VaultPath> = (builtin == Some(NoteType::Question))
+        // Nothing moves in a relink.
+        let pair_folder: Option<VaultPath> = (!relink && builtin == Some(NoteType::Question))
             .then(|| question_portfolio_index(&target_path, snapshot))
             .flatten()
             .and_then(|index| portfolio_folder(&index));
-        let moved_folder: Option<VaultPath> = old_folder.clone().or(pair_folder.clone());
+        let moved_folder: Option<VaultPath> = if relink {
+            None
+        } else {
+            old_folder.clone().or(pair_folder.clone())
+        };
 
         // The folder segment a portfolio's links carry, before and after.
         let folder_segments: Option<(String, String)> = moved_folder
             .as_ref()
             .map(|old| (old.to_string(), format!("{}/{new_slug}", paths::PORTFOLIOS)));
         let new_path = match &old_folder {
+            _ if relink => target_path.clone(),
             Some(old_dir) => rebase(
                 &target_path,
                 old_dir,
@@ -545,7 +677,11 @@ impl Vault {
             )?,
             None => sibling_path(&target_path, new_slug)?,
         };
-        let mut moves = vec![(target_path.clone(), new_path.clone())];
+        let mut moves = if relink {
+            Vec::new()
+        } else {
+            vec![(target_path.clone(), new_path.clone())]
+        };
         if let Some(old_dir) = &moved_folder {
             let new_dir = VaultPath::new(format!("{}/{new_slug}", paths::PORTFOLIOS))?;
             let index = old_dir.as_path().join("_index.md");
@@ -566,11 +702,15 @@ impl Vault {
         // The old slug already an alias of another note: once the note lists
         // it too, the alias is shared and resolves to nothing, so it rescues
         // no straggler. Worth saying; not worth refusing (lint reports the
-        // shared alias).
+        // shared alias). A relink adds no alias, so it has nothing to say.
         let mut warnings = Vec::new();
         let mut alias_holders: Vec<&VaultPath> = Vec::new();
         for (alias, holder) in &snapshot.aliases {
-            if *alias == old_slug && *holder != target_path && !alias_holders.contains(&holder) {
+            if !relink
+                && *alias == old_slug
+                && *holder != target_path
+                && !alias_holders.contains(&holder)
+            {
                 alias_holders.push(holder);
             }
         }
@@ -589,8 +729,34 @@ impl Vault {
             .filter(|(_, holder)| holder == &target_path)
             .map(|(alias, _)| alias.as_str())
             .collect();
-        let mut names: HashSet<&str> = note_link_names(&target_path).into_iter().collect();
+        let own_names = note_link_names(&target_path);
+        let mut names: HashSet<&str> = own_names.iter().copied().collect();
         names.extend(own_aliases.iter().copied());
+        // The aliases a relink follows: the note's own that the resolver
+        // reaches it through (no stem shadows it, no other note shares it).
+        // Links are judged by the resolver alone, so a bare `[[new]]` to a
+        // portfolio listing its own folder name `new` (lint's straggler, the
+        // stem being `_index`) is rewritten to its folder form, a real
+        // change. A field is read by its text, so the note's current names
+        // are never field values to rewrite: `portfolio: new` already names
+        // the portfolio, and rewriting `new` to `new` is no change.
+        let alias_names: HashSet<&str> = own_aliases.iter().copied().collect();
+        let effective_aliases: Vec<&str> = own_aliases
+            .iter()
+            .copied()
+            .filter(|alias| *alias != new_slug && !own_names.contains(alias))
+            .filter(|alias| {
+                resolve_with_alias(alias, snapshot, &alias_map) == Some((target_path.clone(), true))
+            })
+            .collect();
+        // The address a folder note answers to: its folder path, never a
+        // bare name, so `[[new]]` would dangle. After a rename it is the new
+        // folder; in a relink, the folder the note already has.
+        let folder_form: Option<String> = match (&old_folder, &folder_segments) {
+            (Some(folder), _) if relink => Some(folder.to_string()),
+            (Some(_), Some((_, new))) => Some(new.clone()),
+            _ => None,
+        };
         // For a portfolio, an address under its folder (`portfolios/old`,
         // `portfolios/old/2026-10-12-baseline`, an attachment's
         // `portfolios/old/<stem>/<file>`) with only that segment moved. None
@@ -600,53 +766,68 @@ impl Vault {
             let rest = address.strip_prefix(old.as_str())?;
             (rest.is_empty() || rest.starts_with('/')).then(|| format!("{new}{rest}"))
         };
-        let names_target = |raw: &str| {
-            let address = raw.split_once('#').map_or(raw, |(address, _)| address);
-            under_folder(address.trim_end()).is_some()
-                || (target_may_name(raw, &names)
-                    && resolve_in(raw, snapshot, &alias_map).as_ref() == Some(&target_path))
-        };
         let rewrite = |address: &str| {
             if let Some(moved) = under_folder(address) {
                 return moved;
             }
-            // A link reaching the portfolio another way (through an alias):
-            // a folder note answers to its folder path, never to a bare
-            // name, so `[[new]]` would dangle.
-            if old_folder.is_some()
-                && let Some((_, new)) = &folder_segments
-            {
-                return new.clone();
+            // A link reaching the portfolio another way (through an alias).
+            if let Some(folder) = &folder_form {
+                return folder.clone();
             }
             match address.rsplit_once('/') {
                 Some((folder, _)) => format!("{folder}/{new_slug}"),
                 None => new_slug.to_owned(),
             }
         };
+        let names_target = |raw: &str| {
+            let address = raw.split_once('#').map_or(raw, |(address, _)| address);
+            if relink {
+                // A straggler: resolves to the note through one of its
+                // aliases (the index's rule, so lint's straggler set), and
+                // its rewrite resolves to the note too. A link that reaches
+                // the note by path or stem is not one, and neither is a
+                // link the stem rule sends elsewhere. Load-bearing: the
+                // resolution to the target (without it `[[older]]`, another
+                // note's stem, would move onto this note) and the rewrite
+                // check (#913). `via_alias` adds little beside the alias-name
+                // gate, but it is lint's definition, so it stays.
+                return target_may_name(raw, &alias_names)
+                    && resolve_with_alias(raw, snapshot, &alias_map)
+                        == Some((target_path.clone(), true))
+                    && resolve_in(&rewrite(address.trim_end()), snapshot, &alias_map).as_ref()
+                        == Some(&target_path);
+            }
+            under_folder(address.trim_end()).is_some()
+                || (target_may_name(raw, &names)
+                    && resolve_in(raw, snapshot, &alias_map).as_ref() == Some(&target_path))
+        };
         let field_keys = field_keys_for(builtin, pair_folder.is_some());
+        // The values a §3.5 field may hold to be rewritten: the old slug in
+        // a rename; in a relink, each alias the note is reached through.
+        let field_values: Vec<&str> = if relink {
+            effective_aliases.clone()
+        } else {
+            vec![old_slug.as_str()]
+        };
         let title = note_title(target_before).unwrap_or_else(|| old_slug.clone());
-        // The `renamed` entry (T19's formatter), linked in the form the
-        // type's other log lines use; a question renamed with its portfolio
-        // gains the `portfolio:` continuation.
-        let entry = {
+        // The log line's link, in the form the type's other log lines use.
+        let link = {
             let rendered = new_path.to_string();
             let path_link = rendered.strip_suffix(".md").unwrap_or(&rendered);
-            let link = match builtin {
+            match builtin {
                 Some(NoteType::Project) => new_slug.to_owned(),
                 Some(NoteType::Action) => format!("{}/{new_slug}", paths::ACTIONS),
                 Some(NoteType::Portfolio) => format!("{}/{new_slug}", paths::PORTFOLIOS),
                 _ => path_link.to_owned(),
-            };
-            let portfolio = pair_folder
-                .is_some()
-                .then(|| format!("{}/{new_slug}", paths::PORTFOLIOS));
-            format_renamed_pair_log_entry(&link, &title, &old_slug, reason, portfolio.as_deref())
+            }
         };
 
         let daily_path = daily_note_path(at.date())?;
         let mut edits: BTreeMap<VaultPath, PlannedEdit> = BTreeMap::new();
         let mut hashed: BTreeMap<VaultPath, String> = BTreeMap::new();
 
+        // The references first, every path; then the log line, which a
+        // relink composes from their count.
         for (path, before) in &snapshot.contents {
             let is_target = *path == target_path;
             let is_daily = *path == daily_path;
@@ -658,8 +839,17 @@ impl Vault {
 
             let (_, mut link_edits) = rewrite_wikilink_addresses(before, names_target, rewrite);
             // A link that already reads the new slug (a straggler through
-            // an own alias the note now takes back) is not a change.
-            link_edits.retain(|e| before[e.range.clone()] != e.replacement);
+            // an own alias the note now takes back) is not a change. Rename
+            // only: a relink's predicate never yields a byte-identical link
+            // edit (a flat note's own slug resolves by stem, never through
+            // the alias rule; a folder note's own name rewrites to its folder
+            // form, a real change), and its own names are kept out of the
+            // field values by `effective_aliases`. Keeping the relink's edits
+            // unfiltered is what lets a test see a predicate that rewrites a
+            // link reaching the note directly.
+            if !relink {
+                link_edits.retain(|e| before[e.range.clone()] != e.replacement);
+            }
             let after_links = apply(before, &link_edits);
             let mut all = link_edits.clone();
             let mut changes = Vec::new();
@@ -684,16 +874,21 @@ impl Vault {
                     .filter(|(_, ty)| field_keys.contains(ty))
                     .map(|(key, _)| *key)
                 {
-                    let (_, field_edits) =
-                        rewrite_frontmatter_scalar(block, key, &old_slug, new_slug);
+                    let field_edits = field_values
+                        .iter()
+                        .map(|value| rewrite_frontmatter_scalar(block, key, value, new_slug).1)
+                        .find(|edits| !edits.is_empty())
+                        .unwrap_or_default();
                     if field_edits.is_empty() {
                         // No scalar site, but the parser (which every reader
-                        // goes through) may still read the old slug there:
+                        // goes through) may still read the value there:
                         // a block or folded scalar, a value on the next line,
                         // a tag. Refuse rather than leave the note attached
                         // to a name that no longer exists.
                         if frontmatter_json(before).is_some_and(|fm| {
-                            fm.get(key).and_then(|v| v.as_str()) == Some(&old_slug)
+                            fm.get(key)
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|v| field_values.contains(&v))
                         }) {
                             return Err(DomainError::ReferenceUnaddressable {
                                 path: path.clone(),
@@ -718,7 +913,7 @@ impl Vault {
             if all.windows(2).any(|w| w[1].range.start < w[0].range.end) {
                 return Err(DomainError::RenameEditOverlap { path: path.clone() });
             }
-            let mut after = apply(before, &all);
+            let after = apply(before, &all);
 
             // The drift guard: past the address rewrite, only the fields
             // just rewritten (and the alias) may differ.
@@ -733,30 +928,18 @@ impl Vault {
                 )?;
             }
 
-            let mut hash_input = after.clone();
-            if is_daily {
-                let entry = entry.clone();
-                let logged = append_log_line(
-                    after.clone(),
-                    &format_log_line(at.time(), &entry),
-                    &self.daily_anchor_section()?,
-                )?;
-                all = fold_in(&all, &after, &logged);
-                hash_input = format!("{after}\u{0}{entry}");
-                after = logged;
-                changes.push(Change::LogLine);
-            }
-
-            if changes.is_empty() {
+            // Today's daily note is kept even with no reference in it: the
+            // log line lands there below.
+            if changes.is_empty() && !is_daily {
                 continue;
             }
-            if path.as_path().starts_with(paths::ACTIONS_DONE)
+            if !changes.is_empty()
+                && path.as_path().starts_with(paths::ACTIONS_DONE)
                 && let Some(row) = snapshot.frozen.get(path)
                 && !frozen_prefix_verifies(before, row)
             {
                 warnings.push(RenameWarning::FrozenPrefixAlreadyDiverged { path: path.clone() });
             }
-            hashed.insert(path.clone(), hash_input);
             edits.insert(
                 path.clone(),
                 PlannedEdit {
@@ -769,16 +952,50 @@ impl Vault {
             );
         }
 
+        let references: usize = edits
+            .values()
+            .flat_map(|e| &e.changes)
+            .map(|c| match c {
+                Change::Address { count } => *count,
+                Change::Field { .. } => 1,
+                Change::Alias | Change::LogLine => 0,
+            })
+            .sum();
+        // A relink with no straggler writes nothing, not even its log line.
+        if relink && references == 0 {
+            return Ok(empty_plan(resolved));
+        }
+
+        // The entry: `renamed` (T19's formatter), a question renamed with
+        // its portfolio gaining the `portfolio:` continuation; or
+        // `relinked`, with the count and no `was:`.
+        let entry = if relink {
+            format_relinked_log_entry(&link, &title, references)
+        } else {
+            let portfolio = pair_folder
+                .is_some()
+                .then(|| format!("{}/{new_slug}", paths::PORTFOLIOS));
+            format_renamed_pair_log_entry(&link, &title, &old_slug, reason, portfolio.as_deref())
+        };
+        let line = format_log_line(at.time(), &entry);
+        let anchor = self.daily_anchor_section()?;
+        for edit in edits.values_mut() {
+            if edit.path == daily_path {
+                let logged = append_log_line(edit.after.clone(), &line, &anchor)?;
+                edit.edits = fold_in(&edit.edits, &edit.after, &logged);
+                hashed.insert(edit.path.clone(), format!("{}\u{0}{entry}", edit.after));
+                edit.after = logged;
+                edit.changes.push(Change::LogLine);
+            } else {
+                hashed.insert(edit.path.clone(), edit.after.clone());
+            }
+        }
+
         // Today's daily note does not exist yet: it is scaffolded, and the
         // whole of it is the one insertion.
         if !snapshot.contents.contains_key(&daily_path) {
-            let entry = entry.clone();
             let scaffold = self.scaffold_daily_base(at.date())?;
-            let after = append_log_line(
-                scaffold.clone(),
-                &format_log_line(at.time(), &entry),
-                &self.daily_anchor_section()?,
-            )?;
+            let after = append_log_line(scaffold.clone(), &line, &anchor)?;
             hashed.insert(daily_path.clone(), format!("{scaffold}\u{0}{entry}"));
             edits.insert(
                 daily_path.clone(),
@@ -818,7 +1035,8 @@ impl Vault {
             moves,
             edits: edits.into_values().collect(),
             warnings,
-            log_line: Some(entry.clone()),
+            log_line: Some(entry),
+            relink,
             hash: content_hash(&input),
         })
     }
@@ -836,8 +1054,30 @@ impl Vault {
         reason: Option<&str>,
         at: NaiveDateTime,
     ) -> Result<RenamePlan, DomainError> {
+        self.preview(target, Mode::Rename(new_slug), reason, at)
+    }
+
+    /// [`rename_preview`](Self::rename_preview) for a relink
+    /// ([`plan_relink`](Self::plan_relink)): the plan against the vault as
+    /// it is now, without the lock. Writes nothing; its `hash` is what
+    /// [`relink_note`](Self::relink_note) takes as `expected_plan`.
+    pub fn relink_preview(
+        &self,
+        target: &str,
+        at: NaiveDateTime,
+    ) -> Result<RenamePlan, DomainError> {
+        self.preview(target, Mode::Relink, None, at)
+    }
+
+    fn preview(
+        &self,
+        target: &str,
+        mode: Mode<'_>,
+        reason: Option<&str>,
+        at: NaiveDateTime,
+    ) -> Result<RenamePlan, DomainError> {
         let snapshot = self.rename_snapshot()?;
-        let plan = self.plan_rename(&snapshot, target, new_slug, reason, at)?;
+        let plan = self.plan(&snapshot, target, mode, reason, at)?;
         ensure_destinations_free(&*self.store, &plan, false)?;
         Ok(plan)
     }
@@ -912,10 +1152,44 @@ impl Vault {
         at: NaiveDateTime,
         guard: impl FnOnce() -> Result<(), DomainError>,
     ) -> Result<RenameOutcome, DomainError> {
+        self.write(
+            target,
+            Mode::Rename(new_slug),
+            reason,
+            expected_plan,
+            at,
+            guard,
+        )
+    }
+
+    /// [`rename_note`](Self::rename_note) for a relink
+    /// ([`plan_relink`](Self::plan_relink)): the same write path, under the
+    /// lock, with the same `expected_plan` contract and `guard`. Nothing
+    /// moves, so `written` is the rewritten referrers and today's daily
+    /// note, in path order; an empty plan writes nothing.
+    pub fn relink_note(
+        &self,
+        target: &str,
+        expected_plan: Option<&str>,
+        at: NaiveDateTime,
+        guard: impl FnOnce() -> Result<(), DomainError>,
+    ) -> Result<RenameOutcome, DomainError> {
+        self.write(target, Mode::Relink, None, expected_plan, at, guard)
+    }
+
+    fn write(
+        &self,
+        target: &str,
+        mode: Mode<'_>,
+        reason: Option<&str>,
+        expected_plan: Option<&str>,
+        at: NaiveDateTime,
+        guard: impl FnOnce() -> Result<(), DomainError>,
+    ) -> Result<RenameOutcome, DomainError> {
         let mut tx = self.transaction()?; // lock held from here to the commit (#196)
         guard()?;
         let snapshot = self.rename_snapshot()?;
-        let plan = self.plan_rename(&snapshot, target, new_slug, reason, at)?;
+        let plan = self.plan(&snapshot, target, mode, reason, at)?;
         ensure_destinations_free(&*self.store, &plan, true)?;
         if let Some(expected) = expected_plan
             && expected != plan.hash
@@ -1289,11 +1563,18 @@ fn prune_folder_tree(store: &dyn cdno_core::store::VaultStore, root: &VaultPath)
 
 /// The §5.2 check. Returns the target's built-in type (`None` for a custom
 /// note) when it is renamable now.
+///
+/// `relink` skips the one refusal that protects the target's own bytes:
+/// an archived action note is refused a rename because its frozen prefix
+/// would change, and a relink changes nothing on the target (no move, no
+/// alias edit; a self-link through a former name is the masked address
+/// rewrite any archived referrer gets). Every other refusal applies.
 fn renamable_type(
     vault: &Vault,
     path: &VaultPath,
     type_name: Option<&str>,
     snapshot: &VaultSnapshot,
+    relink: bool,
 ) -> Result<Option<NoteType>, DomainError> {
     let Some(name) = type_name else {
         return Err(not_renamable(path, "type none".to_owned()));
@@ -1312,7 +1593,7 @@ fn renamable_type(
     if !renamable {
         return Err(not_renamable(path, format!("type {name}")));
     }
-    if path.as_path().starts_with(paths::ACTIONS_DONE) {
+    if !relink && path.as_path().starts_with(paths::ACTIONS_DONE) {
         return Err(not_renamable(path, "archived".to_owned()));
     }
     // A folder note moves its whole folder (§5.3). Only a portfolio's, at
@@ -1479,6 +1760,16 @@ fn rebase(path: &VaultPath, from: &VaultPath, to: &VaultPath) -> Result<VaultPat
 
 /// Where `raw` resolves in the snapshot, by the index's own resolver.
 fn resolve_in(raw: &str, snapshot: &VaultSnapshot, aliases: &AliasMap) -> Option<VaultPath> {
+    resolve_with_alias(raw, snapshot, aliases).map(|(path, _)| path)
+}
+
+/// [`resolve_in`], with whether the alias rule was the one that matched:
+/// the `via_alias` the index records and lint's straggler warning reads.
+fn resolve_with_alias(
+    raw: &str,
+    snapshot: &VaultSnapshot,
+    aliases: &AliasMap,
+) -> Option<(VaultPath, bool)> {
     let link = WikilinkRaw {
         target: raw.to_owned(),
         label: None,
@@ -1487,7 +1778,7 @@ fn resolve_in(raw: &str, snapshot: &VaultSnapshot, aliases: &AliasMap) -> Option
     resolve_wikilinks(vec![link], &snapshot.paths, aliases)
         .into_iter()
         .next()
-        .and_then(|entry| entry.resolved_path)
+        .and_then(|entry| entry.resolved_path.map(|path| (path, entry.via_alias)))
 }
 
 fn frontmatter_json(content: &str) -> Option<serde_json::Value> {

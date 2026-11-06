@@ -1339,6 +1339,83 @@ fn a_rename_writes_the_previewed_plan() {
 }
 
 #[test]
+fn relink_previews_and_writes_like_a_rename() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    rename_cmd(dir.path())
+        .args(["old", "--to", "surrogate-model"])
+        .assert()
+        .success();
+    // A straggler: a line written after the rename, under the old name.
+    cdno()
+        .args(["--vault", &vault_arg(dir.path()), "log", "back on [[old]]"])
+        .assert()
+        .success();
+    let before = vault_bytes(dir.path());
+
+    let preview = rename_cmd(dir.path())
+        .args(["surrogate-model", "--relink", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Dry run: nothing written."))
+        .stdout(predicate::str::contains("1 link"))
+        .stdout(predicate::str::contains("relinked [[surrogate-model]]"))
+        .stdout(predicate::str::contains("references: 1"))
+        .stdout(predicate::str::contains("1 reference in 1 note · plan "));
+    let shown = String::from_utf8_lossy(&preview.get_output().stdout).into_owned();
+    assert!(!shown.contains("move "), "a relink moves nothing: {shown}");
+    assert!(!shown.contains("alias "), "a relink adds no alias: {shown}");
+    assert_eq!(vault_bytes(dir.path()), before, "a dry run writes nothing");
+
+    rename_cmd(dir.path())
+        .args(["surrogate-model", "--relink"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Relinked 1 reference to `surrogate-model`.",
+        ));
+    let daily = read_today_daily(dir.path());
+    assert!(daily.contains("back on [[surrogate-model]]"), "{daily}");
+    assert!(!daily.contains("[[old]]"), "{daily}");
+    assert!(
+        daily.contains("relinked [[surrogate-model]] \u{2014} Old\n  references: 1"),
+        "{daily}"
+    );
+    let map = fs::read_to_string(dir.path().join("projects/surrogate-model.md")).unwrap();
+    assert!(map.contains("old"), "the alias stays listed: {map}");
+
+    // Nothing left to relink.
+    rename_cmd(dir.path())
+        .args(["surrogate-model", "--relink"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nothing to relink"));
+
+    // `--relink` with `--to` or `--reason` is a usage error, and writes
+    // nothing.
+    let before = vault_bytes(dir.path());
+    for extra in [["--to", "emulator"], ["--reason", "tidy"]] {
+        rename_cmd(dir.path())
+            .args(["surrogate-model", "--relink"])
+            .args(extra)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("cannot be used with"));
+    }
+    assert_eq!(vault_bytes(dir.path()), before);
+
+    // Neither `--to` nor `--relink`, non-interactively: the message names
+    // both.
+    rename_cmd(dir.path())
+        .arg("surrogate-model")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "missing required flag: --to or --relink",
+        ));
+}
+
+#[test]
 fn json_carries_the_plan_and_written() {
     let dir = tempdir().unwrap();
     init_rename_vault(dir.path());

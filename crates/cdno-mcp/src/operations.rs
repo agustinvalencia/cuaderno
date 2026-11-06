@@ -10,7 +10,7 @@ use rmcp::{tool, tool_router};
 
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, EnergyLevel};
-use cdno_domain::vault::Revision;
+use cdno_domain::vault::{RenameRequest, Revision};
 use cdno_domain::{DailySection, MonthlySection, TrackingEntryDraft, WeeklySection};
 
 use crate::context::{
@@ -486,10 +486,19 @@ impl CuadernoServer {
     /// success fires the sync nudge; an empty plan (a rename to the current
     /// slug) writes nothing and has nothing to verify or nudge.
     ///
+    /// `relink: true` (T30) goes through [`Vault::relink_preview`] and
+    /// [`Vault::relink_note`] on the same path: exclusive with `to` (the
+    /// domain's [`RenameRequest::from_args`] refuses both, and the handler
+    /// reports it as `INVALID_PARAMS` naming `to`), and it takes no
+    /// `reason`. The response is the same DTO, `moves` empty and `new_slug`
+    /// the current slug.
+    ///
     /// [`Vault::rename_preview`]: cdno_domain::Vault::rename_preview
+    /// [`Vault::relink_preview`]: cdno_domain::Vault::relink_preview
+    /// [`Vault::relink_note`]: cdno_domain::Vault::relink_note
     /// [`Vault::rename_note`]: cdno_domain::Vault::rename_note
     #[tool(
-        description = "Rename a note's slug and follow every reference to it, in one transaction: every wikilink and reference field, the old slug kept as an alias on the note, and a `renamed` line logged to today's daily note. A reference is an address, not content: `rename_note` rewrites addresses in every note, the journal included, and changes no other byte; this is the one exception to the append-only rule. The preview is the contract: first call with `dry_run: true`, which writes nothing and returns the plan (`moves`, `edits`, `log_line`, `warnings`, `plan_hash`); show it to the person; only when they agree call again with the same `note`, `to` and `reason` and `expected_plan` set to that `plan_hash` (the reason is part of the plan, so a changed or dropped one makes it stale). Code `stale_plan` means the vault changed since the preview (any log append does it): preview again and show the new plan, never retry blindly. `note` takes the references `read_note` takes, including a former name; when one was typed, `found_by_former_name` says so and `from` is the current slug: use it from now on. `to` is refused, not suffixed, when taken or malformed (`slug_taken`, `invalid_slug`); `stem_shared`, `note_not_renamable`, `reference_drift` and `reference_unaddressable` are the person's to fix, not yours to work around. A portfolio whose slug a question shares is renamed through the question. `behind_upstream` means the vault is behind its upstream as last fetched: retry in a few seconds, and if still behind, tell the person rather than set `skip_sync_check`; `git_operation_in_progress` (a merge or rebase left paused) is never overridable. `reason` is a short clause for the log line, repeated on the confirming call. The result is the plan plus `written` and `index_stale` (true: the files are written and the rename succeeded; the index catches up on the next open). `rename_incomplete` lists the paths a failed rollback left for the person to check by hand."
+        description = "Rename a note's slug and follow every reference to it, in one transaction: every wikilink and reference field, the old slug kept as an alias on the note, and a `renamed` line logged to today's daily note. A reference is an address, not content: `rename_note` rewrites addresses in every note, the journal included, and changes no other byte; this is the one exception to the append-only rule. The preview is the contract: first call with `dry_run: true`, which writes nothing and returns the plan (`moves`, `edits`, `log_line`, `warnings`, `plan_hash`); show it to the person; only when they agree call again with the same `note`, `to` (or `relink`) and `reason` and `expected_plan` set to that `plan_hash` (the reason is part of the plan, so a changed or dropped one makes it stale). Code `stale_plan` means the vault changed since the preview (any log append does it): preview again and show the new plan, never retry blindly. `note` takes the references `read_note` takes, including a former name; when one was typed, `found_by_former_name` says so and `from` is the current slug: use it from now on. `to` is refused, not suffixed, when taken or malformed (`slug_taken`, `invalid_slug`); `stem_shared`, `note_not_renamable`, `reference_drift` and `reference_unaddressable` are the person's to fix, not yours to work around. A portfolio whose slug a question shares is renamed through the question. `relink: true` in place of `to` keeps the slug and rewrites each link reaching the note only by a former name (lint's stragglers) to it; nothing moves; it takes no `reason`. `behind_upstream` means the vault is behind its upstream as last fetched: retry in a few seconds, and if still behind, tell the person rather than set `skip_sync_check`; `git_operation_in_progress` (a merge or rebase left paused) is never overridable. The result is the plan plus `written` and `index_stale` (true: written; the index catches up on next open). `rename_incomplete` lists the paths a failed rollback left for the person to check by hand."
     )]
     pub async fn rename_note(
         &self,
@@ -498,8 +507,28 @@ impl CuadernoServer {
         let at = chrono::Local::now().naive_local();
         let reference = input.note.trim().to_owned();
         refuse_reference_outside_the_vault(&reference)?;
-        let to = input.to.trim().to_owned();
+        let relink = input.relink.unwrap_or(false);
         let reason = input.reason.filter(|r| !r.trim().is_empty());
+        // A blank `to` beside `relink: true` reads as omitted, like a blank
+        // `reason`; without `relink` it is a slug, refused as `invalid_slug`.
+        let to = input
+            .to
+            .map(|t| t.trim().to_owned())
+            .filter(|t| !(relink && t.is_empty()));
+        let request = RenameRequest::from_args(to, relink)
+            .map_err(|e| invalid_argument("to", &e.to_string()))?
+            .ok_or_else(|| {
+                invalid_argument(
+                    "to",
+                    "missing: pass the new slug, or `relink: true` to keep the slug",
+                )
+            })?;
+        if relink && reason.is_some() {
+            return Err(invalid_argument(
+                "reason",
+                "a relink logs no reason: drop it, or rename with `to`",
+            ));
+        }
         let dry_run = input.dry_run.unwrap_or(false);
         let skip = input.skip_sync_check.unwrap_or(false);
         // A blank hash is not an omitted one: an agent that lost the hash
@@ -541,9 +570,13 @@ impl CuadernoServer {
                 }
                 let shown = checked.warnings;
                 if dry_run {
-                    let plan = vault
-                        .rename_preview(&target, &to, reason.as_deref(), at)
-                        .map_err(|e| RenameFail::Domain(Box::new((e, shown.clone()))))?;
+                    let plan = match &request {
+                        RenameRequest::To(to) => {
+                            vault.rename_preview(&target, to, reason.as_deref(), at)
+                        }
+                        RenameRequest::Relink => vault.relink_preview(&target, at),
+                    }
+                    .map_err(|e| RenameFail::Domain(Box::new((e, shown.clone()))))?;
                     return Ok(RenameRun {
                         plan,
                         sync_warnings: shown,
@@ -554,14 +587,20 @@ impl CuadernoServer {
                 // The whole check again under the lock; what it newly warns
                 // about joins the first check's.
                 let fresh = std::cell::RefCell::new(Vec::new());
-                let outcome = vault.rename_note(
-                    &target,
-                    &to,
-                    reason.as_deref(),
-                    expected.as_deref(),
-                    at,
-                    crate::freshness::guard(&root, skip, &shown, &fresh),
-                );
+                let guard = crate::freshness::guard(&root, skip, &shown, &fresh);
+                let outcome = match &request {
+                    RenameRequest::To(to) => vault.rename_note(
+                        &target,
+                        to,
+                        reason.as_deref(),
+                        expected.as_deref(),
+                        at,
+                        guard,
+                    ),
+                    RenameRequest::Relink => {
+                        vault.relink_note(&target, expected.as_deref(), at, guard)
+                    }
+                };
                 let mut sync_warnings = shown;
                 sync_warnings.extend(fresh.into_inner());
                 match outcome {
