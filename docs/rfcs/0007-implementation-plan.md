@@ -1403,10 +1403,16 @@ why it could not.
   other reads that resolve through an alias (project and question context) were not touched: they
   take slugs through other resolvers, so surfacing it there is a separate change, not a one-field
   addition.
-- Probes added: `a_paused_git_operation_refuses_a_preview_and_a_write_alike`,
-  `rename_note_reports_a_former_name_and_read_note_does_too`, `rename_note_to_a_taken_slug_is_refused_not_suffixed`,
-  `rename_note_of_an_unknown_note_is_not_found`, `a_blank_expected_plan_is_a_missing_one`,
-  `rename_note_description_states_the_contract`.
+- Probes added: in `handlers_operations`: `a_paused_git_operation_refuses_a_preview_and_a_write_alike`,
+  `rename_note_reports_a_former_name_and_read_note_does_too`,
+  `rename_note_to_a_taken_slug_is_refused_not_suffixed`, `rename_note_of_an_unknown_note_is_not_found`,
+  `a_blank_expected_plan_is_refused_not_written_past`, `a_different_reason_makes_the_plan_stale`,
+  `a_question_and_its_portfolio_resolve_to_the_question_over_mcp`,
+  `sync_check_warnings_reach_the_tool_result`; in `server`: `rename_note_description_states_the_contract`;
+  in `e2e_stdio` / `e2e_http`: `rename_note_over_stdio_is_refused_while_a_merge_is_paused`,
+  `rename_note_over_http_is_refused_while_a_merge_is_paused`; in `cdno-domain`:
+  `resolve_rename_target_narrows_to_the_pairs_question`. The former-name surfacing beyond `read_note`
+  is #917.
 
 ### T27 — Instructions and descriptions
 

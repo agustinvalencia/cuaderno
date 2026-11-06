@@ -57,10 +57,7 @@ fn server_with<F: FnOnce(&Vault, Arc<dyn VaultStore>)>(
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
     seed(&vault, Arc::clone(&store));
-    (
-        CuadernoServer::new(Arc::new(vault), std::env::temp_dir()),
-        store,
-    )
+    (CuadernoServer::new(Arc::new(vault), scratch_root()), store)
 }
 
 /// Like [`server_with`] but with a caller-supplied `VaultConfig`, so tests
@@ -73,10 +70,7 @@ fn server_with_config<F: FnOnce(&Vault, Arc<dyn VaultStore>)>(
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _r) = Vault::new(Arc::clone(&store), index, config).unwrap();
     seed(&vault, Arc::clone(&store));
-    (
-        CuadernoServer::new(Arc::new(vault), std::env::temp_dir()),
-        store,
-    )
+    (CuadernoServer::new(Arc::new(vault), scratch_root()), store)
 }
 
 /// A `VaultConfig` whose `[variables.prompt]` map has a single `name → message`
@@ -5082,7 +5076,7 @@ mod rename {
     }
 
     fn server_over(store: &Arc<dyn VaultStore>, index: Arc<dyn VaultIndex>) -> CuadernoServer {
-        server_at(store, index, std::env::temp_dir())
+        server_at(store, index, scratch_root())
     }
 
     fn server() -> (CuadernoServer, Arc<dyn VaultStore>) {
@@ -5486,4 +5480,11 @@ mod rename {
         }
         assert!(store.exists(&vp(OLD)).unwrap(), "nothing was written");
     }
+}
+
+/// A fresh empty directory as the server's vault root: the in-memory vault
+/// has no folder of its own, and the root must not be a place git could find
+/// a repository above (a developer's temp dir may sit inside one).
+fn scratch_root() -> std::path::PathBuf {
+    tempfile::TempDir::new().expect("tempdir").keep()
 }

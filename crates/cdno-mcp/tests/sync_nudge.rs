@@ -94,7 +94,7 @@ impl VaultStore for SwallowingStore {
 fn server_over(store: Arc<dyn VaultStore>) -> CuadernoServer {
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _report) = Vault::new(store, index, VaultConfig::default()).expect("open vault");
-    CuadernoServer::new(Arc::new(vault), std::env::temp_dir())
+    CuadernoServer::new(Arc::new(vault), scratch_root())
 }
 
 #[tokio::test]
@@ -237,4 +237,11 @@ async fn a_written_rename_nudges_and_a_dry_run_does_not() {
         .await
         .expect("the previewed plan is written");
     assert!(sentinel.exists(), "a written rename must nudge");
+}
+
+/// A fresh empty directory as the server's vault root: the in-memory vault
+/// has no folder of its own, and the root must not be a place git could find
+/// a repository above (a developer's temp dir may sit inside one).
+fn scratch_root() -> std::path::PathBuf {
+    tempfile::TempDir::new().expect("tempdir").keep()
 }
