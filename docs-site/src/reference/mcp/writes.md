@@ -287,7 +287,7 @@ current slug), `new_slug`, `found_by_former_name` (the former name `note` matche
 and a `message`: `frozen_prefix_already_diverged`, `old_slug_already_an_alias`, or `sync_check`),
 `plan_hash`, `log_line` (`null` when the plan is empty), then `written`, `index_stale` (`true`: the
 files are written and the rename succeeded; the index catches up on the next open) and
-`verification`. A write nudges the sync agent; a preview does not.
+`verification`. A write nudges the sync agent only when the HTTP server runs with `--sync-nudge` (off by default; the stdio server never does); a preview never does.
 
 Before planning, the tool checks the vault against its upstream **as last fetched**: it never
 fetches. A preview is refused exactly as a write would be.

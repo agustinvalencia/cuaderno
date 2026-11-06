@@ -91,16 +91,16 @@ Next: [The concept library](concept-library.md).
 
 [`cdno note rename`](../reference/cli/note.md#cdno-note-rename-note) takes:
 
-| Renamable | How |
-|-----------|-----|
+| Type | Renamable? |
+|------|------------|
 | `project` | Yes. |
 | `action` notes | Active ones only; an archived action note (`actions/_done/`) is refused. |
 | `question` | A portfolio with the same slug moves with it, as a pair. |
 | `portfolio` | Directly, and its folder moves with it. A portfolio that shares a question's slug is renamed through the question instead. |
-| custom types | Any type declared in `[note_types.<type>]`. |
+| custom types | Any type declared in `[note_types.<type>]`, as a flat note; a custom folder note (`<dir>/<slug>/_index.md`) is refused. |
 
 Not renamable: `daily`, `weekly` and `monthly` (the journal is addressed by date), archived action
-notes, `commitment`, `stewardship`, `evidence`, `tracking` and inbox items. They are refused with
+notes, `commitment`, `stewardship`, `evidence`, `tracking`, inbox items, custom folder notes and a note with no `type`. They are refused with
 `note_not_renamable`, and nothing is written. A rename corrects references, which is the one
 exception to the append-only rule; see [the method page](rlm.md).
 

@@ -28,7 +28,15 @@ exists, rename it.
 
 ## Preview first
 
-Say a daily log line and an action note already point at the project. Preview the rename:
+Give the project an action note and start it, so that the journal and the action note both point at
+the project:
+
+```bash
+cdno action add --project calibrate-the-surrogate-model-against-the --title "Run the baseline sweep" --note --energy deep
+cdno action start --project calibrate-the-surrogate-model-against-the --query baseline
+```
+
+Then preview the rename:
 
 ```bash
 cdno note rename calibrate-the-surrogate-model-against-the --to surrogate-calibration --dry-run
@@ -43,14 +51,14 @@ Dry run: nothing written.
   log      journal/2026/daily/2026-11-06.md
              renamed [[surrogate-calibration]] — Calibrate the surrogate model against the high-fidelity thermal runs
                was: calibrate-the-surrogate-model-against-the
-  4 references in 2 notes · plan 0a13…
+  4 references in 2 notes · plan 2109…
 ```
 
-Each line is one change: the file moves, two other notes have references corrected (links in the
-journal, the `project:` field of the action note), the project gains an alias, and today's log gets
+Each line is one change: the file moves, two other notes have references corrected (three links in
+the journal, from the lines for the project's creation, the action and the start; the `project:`
+field of the action note), the project gains an alias, and today's log gets
 one entry. Nothing is written. If the preview is refused, it is refused exactly as the write would
-be, so a dry run is a real check. Run without `--dry-run` in a terminal and you get the same preview
-and a confirm.
+be, so a dry run is a real check.
 
 ## Write it
 
@@ -59,8 +67,11 @@ cdno note rename calibrate-the-surrogate-model-against-the --to surrogate-calibr
   --reason "the derived slug stopped mid-title"
 ```
 
-The write is tied to the plan you were shown. If anything it would rewrite changed in between
-(another log line is enough), it refuses with `stale_plan` and writes nothing: preview again.
+With the note and `--to` given, the command writes as soon as it has checked the plan, without a
+confirm, in a terminal or not; the dry run was your look, and it is advice, not a lock. Leave out
+`--to` in a terminal and you are asked for it, shown the preview and asked to confirm. That confirmed
+write is tied to the preview: if a note it would rewrite changed while you decided, it refuses with
+`stale_plan` and writes nothing. Over MCP the same guard joins the two calls.
 
 ## What changed
 
@@ -116,10 +127,12 @@ renamed files, the corrected links and the alias arrive through the sync like an
   side touches these notes.
 - If the sync stops on a conflict, resolve it, then run `cdno lint`. A link that came back with the
   old name still works through the alias, and lint warns that `[[old]]` names a renamed note, now
-  `new`. Fix it by hand for now; a sweep for these is planned.
-- Open the vault once on this version on every machine before renaming anything an archived action
-  references; [the reference](../reference/cli/note.md#on-the-other-machine) says why and what
-  `cdno lint` says otherwise.
+  `new`. Editing it to the new name is allowed, even in a past log entry; leaving it is harmless. A
+  sweep for these is planned.
+- Run any `cdno` command in the vault once on every machine, on a cdno that has `note rename`, before
+  renaming anything an archived action references;
+  [the reference](../reference/cli/note.md#on-the-other-machine) says why and what `cdno lint` says
+  otherwise.
 
 ## Over MCP
 

@@ -185,13 +185,14 @@ from a machine that had not seen the rename) still works in cdno, but an editor 
 or Neovim follows the file name, not the alias, and cannot open it.
 
 `cdno lint` finds them: ``[[old]] names a renamed note — now `new` ``. Change the link to the new
-name by hand. A sweep that rewrites every such link in one go (`--relink`) is the next piece of
+name by hand if you like, even in a past log entry (it is the same address correction a rename
+makes); leaving it is harmless, since it still works in cdno. A sweep that rewrites every such link in one go (`--relink`) is the next piece of
 work and is not available yet.
 
 ## Rename refused: behind upstream
 
 ```text
-Error: the vault is 2 commits behind its upstream
+Error: the vault is 2 commits behind its upstream; sync the vault first (pull the upstream's commits, e.g. with `git pull`), or pass `--skip-sync-check` to rename anyway
 ```
 
 `cdno note rename` will not rewrite many notes in a vault whose other clone has already changed them.
@@ -200,8 +201,9 @@ unpushed on the other side touches these notes, pass `--skip-sync-check` (over M
 is for the person to decide, not the agent). `cdno note rename --dry-run --skip-sync-check` shows the
 plan of a vault that is behind without writing.
 
-If the message is `git_operation_in_progress` instead, a merge, rebase or cherry-pick was left
-paused in the vault. Finish or abort it (`git status` says which); `--skip-sync-check` does not
+If the message is instead `a git operation is in progress in the vault (…); finish or abort it, then
+rename` (code `git_operation_in_progress` with `--json`; text mode prints no code), a merge, rebase
+or cherry-pick was left paused in the vault. Finish or abort it (`git status` says which); `--skip-sync-check` does not
 override this one.
 
 ## `--json` output won't parse
