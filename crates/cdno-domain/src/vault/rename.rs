@@ -52,7 +52,7 @@ use super::lint::frozen_prefix_verifies;
 use super::log::{append_log_line, daily_note_path, format_log_line, format_renamed_log_entry};
 use super::note_ref::{NoteRef, PeriodRef, ResolvedNote, candidate_slug};
 use super::projects::stage_project_index_rows;
-use super::slug::{taken_names_in, validate_explicit_slug};
+use super::slug::{TakenBy, taken_names_in, validate_explicit_slug};
 
 /// The frontmatter key the renamed note records its former slugs under
 /// (RFC 0007 §5.5).
@@ -70,10 +70,14 @@ const ALIASES_KEY: &str = "aliases";
 /// the taken check while resolving to nothing). `contents` holds every
 /// note's text; [`Vault::plan_rename`] parses only those that contain the
 /// old slug or one of the note's aliases. `frozen` holds the archival
-/// snapshot of every archived note in `paths` that has one.
+/// snapshot of every archived note in `paths` that has one. `ignored`
+/// holds the markdown files the walk saw that the config `ignore` globs
+/// exclude: no link resolves to them and none is planned, but they are
+/// files on disk, so the names they hold are taken.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct VaultSnapshot {
     pub paths: HashSet<VaultPath>,
+    pub ignored: HashSet<VaultPath>,
     pub aliases: Vec<(String, VaultPath)>,
     pub contents: BTreeMap<VaultPath, String>,
     pub frozen: BTreeMap<VaultPath, ArchivalSnapshot>,
@@ -194,17 +198,19 @@ impl Vault {
             .filter(|p| !p.as_path().starts_with(paths::CUADERNO_DIR))
             .collect();
         let stubs = cdno_core::artefacts::attachment_stubs(&self.store, &md, &dirs);
-        let mut notes: Vec<VaultPath> = md
+        let (mut notes, ignored): (Vec<VaultPath>, Vec<VaultPath>) = md
             .iter()
             .filter(|p| {
                 cdno_core::artefacts::owning_artefact_stub(p, |stub| stubs.contains(stub)).is_none()
             })
-            .filter(|p| !ignore.is_match(p.as_path()))
             .cloned()
-            .collect();
+            .partition(|p| !ignore.is_match(p.as_path()));
         notes.sort();
 
-        let mut snapshot = VaultSnapshot::default();
+        let mut snapshot = VaultSnapshot {
+            ignored: ignored.into_iter().collect(),
+            ..VaultSnapshot::default()
+        };
         for path in notes {
             let content = self.store.read_file(&path)?;
             if content.contains(ALIASES_KEY)
@@ -299,10 +305,23 @@ impl Vault {
         // afterwards; the alias edit drops it from the list. The current
         // slug is the note's own name, not a taken one: a rename to it is
         // the shared-stem check and then the no-op below.
+        //
+        // Ignored markdown files count too, and names are compared without
+        // case: the filesystems a vault lives on (macOS and Windows by
+        // default) may not tell `Other.md` from `other.md`, so writing
+        // either would overwrite the other, and a rename that only changes
+        // case would write the note over itself and then delete it. The
+        // note's own stem is therefore taken by a case variant of it.
         let mut sorted: Vec<VaultPath> = snapshot.paths.iter().cloned().collect();
         sorted.sort();
+        let mut on_disk: Vec<VaultPath> = sorted
+            .iter()
+            .cloned()
+            .chain(snapshot.ignored.iter().cloned())
+            .collect();
+        on_disk.sort();
         let taken = taken_names_in(
-            sorted.iter().cloned(),
+            on_disk.iter().cloned(),
             snapshot
                 .aliases
                 .iter()
@@ -310,23 +329,29 @@ impl Vault {
                 .cloned(),
         );
         if new_slug != old_slug
-            && let Some((holder, kind)) = taken.get(new_slug)
+            && let Some((holder, kind)) = taken_ignoring_case(&taken, new_slug)
         {
             return Err(DomainError::SlugTaken {
                 slug: new_slug.to_owned(),
-                holder: holder.clone(),
-                kind: *kind,
+                holder,
+                kind,
             });
         }
 
         // 4. Shared stem: another note with the same **file stem**, the only
         // name the bare-link rule matches on, so the only way a link to the
         // note can resolve to neither. A folder note named like it is
-        // addressed by its folder path and is not a shared stem.
-        let target_stem = target_path.as_path().file_stem();
-        let others: Vec<VaultPath> = sorted
+        // addressed by its folder path and is not a shared stem. Ignored
+        // files and case variants count, for the reason above.
+        let stem_of = |p: &VaultPath| {
+            p.as_path()
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_lowercase())
+        };
+        let target_stem = stem_of(&target_path);
+        let others: Vec<VaultPath> = on_disk
             .iter()
-            .filter(|p| **p != target_path && p.as_path().file_stem() == target_stem)
+            .filter(|p| **p != target_path && stem_of(p) == target_stem)
             .cloned()
             .collect();
         if !others.is_empty() {
@@ -588,7 +613,9 @@ impl Vault {
         at: NaiveDateTime,
     ) -> Result<RenamePlan, DomainError> {
         let snapshot = self.rename_snapshot()?;
-        self.plan_rename(&snapshot, target, new_slug, reason, at)
+        let plan = self.plan_rename(&snapshot, target, new_slug, reason, at)?;
+        ensure_destinations_free(&*self.store, &plan)?;
+        Ok(plan)
     }
 
     /// Rename the note `target` names to `new_slug` (RFC 0007 §5.2–§5.6,
@@ -616,10 +643,16 @@ impl Vault {
     /// path does not change, `upsert_note` does not cascade, and the
     /// masked hash still verifies.
     ///
+    /// A move destination the store already holds is refused, here and in
+    /// [`rename_preview`](Self::rename_preview), as
+    /// [`DomainError::SlugTaken`] (`kind: stem`, the file as holder), before
+    /// anything is staged.
+    ///
     /// A failed file write rolls the written files back. When the rollback
     /// itself fails for some path, the result is
-    /// [`DomainError::RenameIncomplete`] naming each such path; otherwise
-    /// the store error. An index failure after every file landed is not a
+    /// [`DomainError::RenameIncomplete`] naming each such path, with the
+    /// write's error; when no failure names a path, the transaction error;
+    /// with a clean rollback, the store error. An index failure after every file landed is not a
     /// failure of the rename: `Ok` with `index_stale: true`.
     pub fn rename_note(
         &self,
@@ -632,6 +665,7 @@ impl Vault {
         let mut tx = self.transaction()?; // lock held from here to the commit (#196)
         let snapshot = self.rename_snapshot()?;
         let plan = self.plan_rename(&snapshot, target, new_slug, reason, at)?;
+        ensure_destinations_free(&*self.store, &plan)?;
         if let Some(expected) = expected_plan
             && expected != plan.hash
         {
@@ -659,9 +693,17 @@ impl Vault {
                 if rollback_failures.is_empty() {
                     return Err(DomainError::Store(source));
                 }
-                return Err(DomainError::RenameIncomplete {
-                    failed: rollback_failures.iter().filter_map(failed_path).collect(),
-                });
+                let failed: Vec<VaultPath> =
+                    rollback_failures.iter().filter_map(failed_path).collect();
+                if failed.is_empty() {
+                    // Nothing to name: the transaction's own error says
+                    // what failed and that the rollback did too.
+                    return Err(DomainError::Transaction(TransactionError::FileWrite {
+                        source,
+                        rollback_failures,
+                    }));
+                }
+                return Err(DomainError::RenameIncomplete { failed, source });
             }
         };
         Ok(RenameOutcome {
@@ -861,6 +903,50 @@ fn failed_path(error: &cdno_core::error::StoreError) -> Option<VaultPath> {
     VaultPath::new(raw.as_str()).ok()
 }
 
+/// The holder of `name` in `taken`, compared without case (see the taken
+/// check in [`Vault::plan_rename`]): a stem or folder ahead of an alias, as
+/// in [`taken_names_in`], then the first holder in path order.
+fn taken_ignoring_case(
+    taken: &std::collections::HashMap<String, (VaultPath, TakenBy)>,
+    name: &str,
+) -> Option<(VaultPath, TakenBy)> {
+    let wanted = name.to_lowercase();
+    let rank = |kind: TakenBy| match kind {
+        TakenBy::Stem | TakenBy::Folder => 0,
+        TakenBy::Alias => 1,
+    };
+    taken
+        .iter()
+        .filter(|(key, _)| key.to_lowercase() == wanted)
+        .map(|(_, (holder, kind))| (holder.clone(), *kind))
+        .min_by(|a, b| {
+            rank(a.1)
+                .cmp(&rank(b.1))
+                .then_with(|| a.0.as_path().cmp(b.0.as_path()))
+        })
+}
+
+/// Refuse a plan whose move would write over a file the store already
+/// holds (RFC 0007 §5.2): a case variant on a filesystem that does not
+/// tell names apart, a file the snapshot did not list, one that appeared
+/// since. The planner's taken check catches what the snapshot shows; this
+/// asks the store itself, so the write never overwrites a note.
+fn ensure_destinations_free(
+    store: &dyn cdno_core::store::VaultStore,
+    plan: &RenamePlan,
+) -> Result<(), DomainError> {
+    for (_, to) in &plan.moves {
+        if store.exists(to)? {
+            return Err(DomainError::SlugTaken {
+                slug: plan.new_slug.clone(),
+                holder: to.clone(),
+                kind: TakenBy::Stem,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// The §5.2 check. Returns the target's built-in type (`None` for a custom
 /// note) when it is renamable now.
 fn renamable_type(
@@ -937,31 +1023,41 @@ fn alias_edit(
             .unwrap_or(false)
     };
     let not_a_list = || "its `aliases:` is not a list the old slug can be added to".to_owned();
-    if removal.is_empty() {
-        // Only the insertion, in `block`'s positions already.
-        return match appended.pop() {
-            Some(edit) => Ok(Some(edit)),
-            None if listed(content, old_slug) => Ok(None),
-            None => Err(not_a_list()),
+    let edit = if removal.is_empty() {
+        // Only the insertion, in `block`'s positions already. Whether it
+        // parses is the drift guard's to say; `None` is right only when the
+        // old slug is listed already.
+        match appended.pop() {
+            Some(edit) => Some(edit),
+            None if listed(content, old_slug) => None,
+            None => return Err(not_a_list()),
+        }
+    } else {
+        // A removal, then perhaps an insertion in the shifted text: one
+        // edit over the region where `block` and `after` differ.
+        let (region, suffix) = diff_region(block, &after);
+        let edit = AddressEdit {
+            range: region.clone(),
+            replacement: after[region.start..after.len() - suffix].to_owned(),
         };
-    }
-    // A removal, then perhaps an insertion in the shifted text: one edit
-    // over the region where `block` and `after` differ.
-    let (region, suffix) = diff_region(block, &after);
-    let edit = AddressEdit {
-        range: region.clone(),
-        replacement: after[region.start..after.len() - suffix].to_owned(),
+        let edited = apply(content, &[shift(edit.clone(), offset_in(content, block))]);
+        if !listed(&edited, old_slug) {
+            return Err(not_a_list());
+        }
+        Some(edit)
     };
-    let edited = apply(content, &[shift(edit.clone(), offset_in(content, block))]);
-    if !listed(&edited, old_slug) {
-        return Err(not_a_list());
-    }
-    if listed(&edited, new_slug) {
+    // On either branch, the new slug must be gone from the list: a slug is
+    // never its own alias.
+    let edited = match &edit {
+        Some(edit) => apply(content, &[shift(edit.clone(), offset_in(content, block))]),
+        None => content.to_owned(),
+    };
+    if old_slug != new_slug && listed(&edited, new_slug) {
         return Err(
             "its `aliases:` lists the new slug in a form it cannot be removed from".to_owned(),
         );
     }
-    Ok(Some(edit))
+    Ok(edit)
 }
 
 fn not_renamable(path: &VaultPath, reason: String) -> DomainError {

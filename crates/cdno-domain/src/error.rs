@@ -157,16 +157,19 @@ pub enum DomainError {
     )]
     StalePlan { expected: String, actual: String },
 
-    /// A file write of the rename failed, and restoring the files already
-    /// written failed too for `failed`: those paths may hold the renamed
-    /// content (or none) while the rest of the vault does not. Check them by
-    /// hand (version control has the previous content); reconciliation
-    /// heals the index at the next open.
+    /// A file write of the rename failed (`source`), and restoring the
+    /// files already written failed too for `failed`: those paths may hold
+    /// the renamed content (or none) while the rest of the vault does not.
+    /// Check them by hand (version control has the previous content);
+    /// reconciliation heals the index at the next open.
     #[error(
-        "the rename failed part-way and could not restore {}; check them by hand",
+        "the rename failed part-way ({source}) and could not restore {}; check them by hand",
         .failed.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
     )]
-    RenameIncomplete { failed: Vec<VaultPath> },
+    RenameIncomplete {
+        failed: Vec<VaultPath>,
+        source: StoreError,
+    },
 
     #[error("project cap reached ({current}/{max}), counted: {active_projects:?}")]
     ProjectCapReached {

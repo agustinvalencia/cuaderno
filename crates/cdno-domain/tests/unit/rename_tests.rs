@@ -24,7 +24,7 @@ use cdno_domain::vault::{
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
-use super::support::{FailingStore, FlakyIndex};
+use super::support::{CaseInsensitiveStore, FailingStore, FlakyIndex, RacingStore};
 
 const PROJECT: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nCalibrating.\n\n## Next Actions\n- [ ] [[actions/fit-the-baseline]] (deep)\n\n## Milestones\n- [ ] Baseline fitted \u{2014} hard: 2026-05-20\n";
 
@@ -1118,7 +1118,7 @@ fn a_failed_rollback_is_reported_per_path() {
         .rename_note("old", "new", None, Some(&preview.hash), at())
         .unwrap_err();
     assert!(
-        matches!(&err, DomainError::RenameIncomplete { failed }
+        matches!(&err, DomainError::RenameIncomplete { failed, source: StoreError::PermissionDenied(_) }
             if *failed == vec![vp("projects/old.md")]),
         "{err:?}"
     );
@@ -1261,4 +1261,188 @@ fn a_rename_stages_remove_note_of_the_source_in_the_same_transaction() {
         .collect();
     assert_eq!(holders, vec![vp("projects/new.md")]);
     assert_eq!(f.resolves("old"), vp("projects/new.md"));
+}
+
+// ---------------------------------------------------------------------
+// An occupied destination (review of #906): the write never overwrites a
+// file, whatever the snapshot showed.
+// ---------------------------------------------------------------------
+
+/// A vault over `store` holding `notes`, with `ignore` globs.
+fn vault_over(store: Arc<dyn VaultStore>, notes: &[(&str, &str)], ignore: &[&str]) -> Vault {
+    for (path, content) in notes {
+        store.write_file(&vp(path), content).unwrap();
+    }
+    let config = VaultConfig {
+        ignore: ignore.iter().map(|g| (*g).to_owned()).collect(),
+        ..VaultConfig::default()
+    };
+    Vault::new(store, Arc::new(MemoryIndex::new()), config)
+        .expect("vault opens")
+        .0
+}
+
+/// Both verbs refuse renaming `target` to `new_slug` with `slug_taken {
+/// kind: stem }` held by `holder`, and the store is left as it was.
+fn assert_destination_taken(
+    vault: &Vault,
+    store: &dyn VaultStore,
+    target: &str,
+    new_slug: &str,
+    holder: &str,
+) {
+    let before = files_of(store);
+    let refused = |err: DomainError| {
+        assert!(
+            matches!(&err, DomainError::SlugTaken { slug, holder: h, kind: TakenBy::Stem }
+                if slug == new_slug && *h == vp(holder)),
+            "{target} -> {new_slug}: {err:?}"
+        );
+    };
+    refused(
+        vault
+            .rename_preview(target, new_slug, None, at())
+            .unwrap_err(),
+    );
+    refused(
+        vault
+            .rename_note(target, new_slug, None, None, at())
+            .unwrap_err(),
+    );
+    assert_eq!(files_of(store), before, "nothing is written");
+}
+
+#[test]
+fn an_ignored_file_at_the_destination_is_taken() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let vault = vault_over(
+        Arc::clone(&store),
+        &[
+            ("projects/old.md", PROJECT),
+            ("projects/scratch.md", "Notes kept out of the vault.\n"),
+        ],
+        &["projects/scratch.md"],
+    );
+    assert_destination_taken(&vault, &*store, "old", "scratch", "projects/scratch.md");
+
+    // An ignored file sharing the note's stem shares it all the same.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let vault = vault_over(
+        Arc::clone(&store),
+        &[
+            ("projects/old.md", PROJECT),
+            ("scratch/old.md", "Notes kept out of the vault.\n"),
+        ],
+        &["scratch/**"],
+    );
+    let err = vault.rename_preview("old", "new", None, at()).unwrap_err();
+    assert!(
+        matches!(&err, DomainError::StemShared { others, .. } if *others == vec![vp("scratch/old.md")]),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_case_variant_at_the_destination_is_taken() {
+    let store: Arc<dyn VaultStore> = Arc::new(CaseInsensitiveStore::new());
+    let vault = vault_over(
+        Arc::clone(&store),
+        &[
+            ("projects/old.md", PROJECT),
+            (
+                "projects/Other.md",
+                &EMULATOR.replace("# Emulator", "# Other"),
+            ),
+        ],
+        &[],
+    );
+    assert_destination_taken(&vault, &*store, "old", "other", "projects/Other.md");
+
+    // A case variant of the note's own stem elsewhere is a shared stem.
+    let store: Arc<dyn VaultStore> = Arc::new(CaseInsensitiveStore::new());
+    let vault = vault_over(
+        Arc::clone(&store),
+        &[
+            ("projects/old.md", PROJECT),
+            (
+                "questions/research/Old.md",
+                "---\ntype: question\nstatus: open\ncreated: 2026-05-01\n---\n\n# Old\n",
+            ),
+        ],
+        &[],
+    );
+    let err = vault
+        .rename_preview("projects/old", "new", None, at())
+        .unwrap_err();
+    assert!(
+        matches!(&err, DomainError::StemShared { others, .. }
+            if *others == vec![vp("questions/research/Old.md")]),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_case_only_rename_is_refused() {
+    let store: Arc<dyn VaultStore> = Arc::new(CaseInsensitiveStore::new());
+    let vault = vault_over(Arc::clone(&store), &[("projects/Old.md", PROJECT)], &[]);
+    assert_destination_taken(&vault, &*store, "projects/Old", "old", "projects/Old.md");
+}
+
+#[test]
+fn a_file_appearing_at_the_destination_is_taken() {
+    // The file lands behind the lock's back after the walk, so the
+    // snapshot never lists it: only asking the store sees it.
+    let f = fixture();
+    let racing = Arc::new(RacingStore::new(
+        Arc::clone(&f.mem),
+        vp("projects/emulator.md"),
+        vp("projects/new.md"),
+        "Written by another tool.\n",
+    ));
+    let store: Arc<dyn VaultStore> = racing.clone();
+    let index: Arc<dyn VaultIndex> = f.index.clone();
+    let vault = open(store, index);
+    racing.arm();
+    let err = vault
+        .rename_note("old", "new", None, None, at())
+        .unwrap_err();
+    assert!(
+        matches!(&err, DomainError::SlugTaken { holder, kind: TakenBy::Stem, .. }
+            if *holder == vp("projects/new.md")),
+        "{err:?}"
+    );
+    assert_eq!(f.read("projects/new.md"), "Written by another tool.\n");
+    assert_eq!(f.read("projects/old.md"), PROJECT);
+}
+
+#[test]
+fn a_leftover_link_already_reading_the_new_slug_is_not_an_edit() {
+    let f = fixture();
+    f.rename("old", "new");
+    // By hand, after the rename: one link reads the new slug, one is left
+    // over on the old (resolving through the alias), and a daily note
+    // holds only leftovers.
+    f.write(
+        "projects/emulator.md",
+        &EMULATOR.replace("Waiting on [[old]].", "Waiting on [[new]]."),
+    );
+    let day_9 = "journal/2026/daily/2026-05-09.md";
+    f.write(day_9, DAY_9);
+
+    let plan = f.preview("new", "old");
+    for edit in &plan.edits {
+        assert_ne!(edit.before, edit.after, "{} is not an edit", edit.path);
+    }
+    assert!(
+        plan.edits.iter().all(|e| e.path != vp(day_9)),
+        "a note holding only leftovers is not in the plan"
+    );
+    let emulator = plan
+        .edits
+        .iter()
+        .find(|e| e.path == vp("projects/emulator.md"))
+        .expect("the emulator links the note as `[[new]]`");
+    assert_eq!(emulator.changes, vec![Change::Address { count: 1 }]);
+    assert!(emulator.after.contains("Waiting on [[old]]."));
+    assert!(emulator.after.contains("Hand-off from [[old]]"));
 }

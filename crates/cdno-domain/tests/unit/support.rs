@@ -113,6 +113,70 @@ impl VaultStore for FailingStore {
     }
 }
 
+/// A `MemoryVaultStore` that does not tell names apart by case, as the
+/// default filesystems on macOS and Windows do: a path names the stored
+/// file whose path equals it ignoring case, and a write keeps the stored
+/// file's case (case-preserving). Walks list the names as stored.
+#[derive(Default)]
+pub struct CaseInsensitiveStore {
+    inner: MemoryVaultStore,
+}
+
+impl CaseInsensitiveStore {
+    pub fn new() -> Self {
+        Self {
+            inner: MemoryVaultStore::new(),
+        }
+    }
+
+    /// The stored path `path` names, or `path` itself when none does.
+    fn stored(&self, path: &VaultPath) -> VaultPath {
+        let wanted = path.to_string().to_lowercase();
+        self.inner
+            .walk_dir(&VaultPath::root())
+            .unwrap_or_default()
+            .into_iter()
+            .find(|p| p.to_string().to_lowercase() == wanted)
+            .unwrap_or_else(|| path.clone())
+    }
+}
+
+impl VaultStore for CaseInsensitiveStore {
+    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        self.inner.read_file(&self.stored(path))
+    }
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.inner.read_bytes(&self.stored(path))
+    }
+    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.write_file(&self.stored(path), content)
+    }
+    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.append_to_file(&self.stored(path), content)
+    }
+    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.move_file(&self.stored(src), &self.stored(dest))
+    }
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        self.inner.delete_file(&self.stored(path))
+    }
+    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
+        self.inner.exists(&self.stored(path))
+    }
+    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.list_dir(path)
+    }
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.walk_dir(path)
+    }
+    fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
+        self.inner.metadata(&self.stored(path))
+    }
+    fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.import_external(src, &self.stored(dest))
+    }
+}
+
 /// Wraps a `MemoryIndex` and, once armed, fails the next
 /// `replace_milestones` (and only that one): an index update failing after
 /// every file of a commit landed, which the commit reports as
