@@ -70,7 +70,7 @@ fn server(focused: bool) -> CuadernoServer {
             .write_file(&VaultPath::new(path).unwrap(), &body)
             .unwrap();
     }
-    CuadernoServer::new(Arc::new(vault))
+    CuadernoServer::new(Arc::new(vault), std::env::temp_dir())
 }
 
 async fn call(server: &CuadernoServer, tool: &str) -> Result<CallToolResult, ErrorData> {

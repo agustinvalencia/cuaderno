@@ -13,7 +13,9 @@ use cdno_domain::frontmatter::{Context, EnergyLevel};
 use cdno_domain::vault::Revision;
 use cdno_domain::{DailySection, MonthlySection, TrackingEntryDraft, WeeklySection};
 
-use crate::context::{refuse_reference_outside_the_vault, resolve_note, resolve_note_reference};
+use crate::context::{
+    refuse_reference_outside_the_vault, resolve_note_reference, resolve_rename_note,
+};
 use crate::dto::{
     CurrentFocusDto, NoteToDailyResponse, PauseResultDto, RenamePlanDto, ResumeResultDto,
     ResumedFromDto, ReviseNoteResponse, SwitchResultDto,
@@ -487,7 +489,7 @@ impl CuadernoServer {
     /// [`Vault::rename_preview`]: cdno_domain::Vault::rename_preview
     /// [`Vault::rename_note`]: cdno_domain::Vault::rename_note
     #[tool(
-        description = "Rename a note's slug and follow every reference to it, in one transaction: every wikilink and reference field (the journal included: an address is rewritten, no other byte of any note changes), the old slug kept as an alias on the note, and a `renamed` line logged to today's daily note. The preview is the contract: first call with `dry_run: true`, which writes nothing and returns the plan (`moves`, `edits`, `log_line`, `warnings`, `plan_hash`); show it to the person; only when they agree call again with the same `note` and `to` and `expected_plan` set to that `plan_hash`. Code `stale_plan` means the vault changed since the preview (any log append does it): preview again and show the new plan, never retry blindly. `note` takes the references `read_note` takes, including a former name; when one was typed, `found_by_former_name` says so and `from` is the current slug: use it from now on. `to` is refused, not suffixed, when taken or malformed (`slug_taken`, `invalid_slug`); `stem_shared`, `note_not_renamable`, `reference_drift` and `reference_unaddressable` are the person's to fix, not yours to work around. A portfolio whose slug a question shares is renamed through the question. `behind_upstream` means the vault is behind its upstream as last fetched: retry in a few seconds, and if still behind, tell the person rather than set `skip_sync_check`; `git_operation_in_progress` (a merge or rebase left paused) is never overridable. `reason` is a short clause for the log line. The result is the plan plus `written` and `index_stale` (true: the files are written and the rename succeeded; the index catches up on the next open). `rename_incomplete` lists the paths a failed rollback left for the person to check by hand."
+        description = "Rename a note's slug and follow every reference to it, in one transaction: every wikilink and reference field (the journal included: an address is rewritten, no other byte of any note changes), the old slug kept as an alias on the note, and a `renamed` line logged to today's daily note. The preview is the contract: first call with `dry_run: true`, which writes nothing and returns the plan (`moves`, `edits`, `log_line`, `warnings`, `plan_hash`); show it to the person; only when they agree call again with the same `note`, `to` and `reason` and `expected_plan` set to that `plan_hash` (the reason is part of the plan, so a changed or dropped one makes it stale). Code `stale_plan` means the vault changed since the preview (any log append does it): preview again and show the new plan, never retry blindly. `note` takes the references `read_note` takes, including a former name; when one was typed, `found_by_former_name` says so and `from` is the current slug: use it from now on. `to` is refused, not suffixed, when taken or malformed (`slug_taken`, `invalid_slug`); `stem_shared`, `note_not_renamable`, `reference_drift` and `reference_unaddressable` are the person's to fix, not yours to work around. A portfolio whose slug a question shares is renamed through the question. `behind_upstream` means the vault is behind its upstream as last fetched: retry in a few seconds, and if still behind, tell the person rather than set `skip_sync_check`; `git_operation_in_progress` (a merge or rebase left paused) is never overridable. `reason` is a short clause for the log line, repeated on the confirming call. The result is the plan plus `written` and `index_stale` (true: the files are written and the rename succeeded; the index catches up on the next open). `rename_incomplete` lists the paths a failed rollback left for the person to check by hand."
     )]
     pub async fn rename_note(
         &self,
@@ -500,14 +502,24 @@ impl CuadernoServer {
         let reason = input.reason.filter(|r| !r.trim().is_empty());
         let dry_run = input.dry_run.unwrap_or(false);
         let skip = input.skip_sync_check.unwrap_or(false);
-        // A blank hash would be a hash that matches nothing: `stale_plan`
-        // with advice that does not apply. It is a missing hash.
-        let expected = input.expected_plan.filter(|h| !h.trim().is_empty());
-        let root = self.vault_root().map(std::path::Path::to_path_buf);
+        // A blank hash is not an omitted one: an agent that lost the hash
+        // must not be written past the contract.
+        if input
+            .expected_plan
+            .as_deref()
+            .is_some_and(|h| h.trim().is_empty())
+        {
+            return Err(invalid_argument(
+                "expected_plan",
+                "blank: pass the `plan_hash` of the dry run the person saw, or omit it to write without that check",
+            ));
+        }
+        let expected = input.expected_plan;
+        let root = self.vault_root().to_path_buf();
 
         let run = self
             .with_vault(move |vault| -> Result<RenameRun, RenameFail> {
-                let note = match resolve_note(vault, &reference, at.date())
+                let note = match resolve_rename_note(vault, &reference, at.date())
                     .map_err(|e| RenameFail::Domain(Box::new((e, Vec::new()))))?
                 {
                     Ok(note) => note,
@@ -523,10 +535,7 @@ impl CuadernoServer {
                 };
                 // The freshness check, before the preview: a dry run is
                 // refused as the write would be. No root: not under git.
-                let checked = match &root {
-                    Some(root) => crate::freshness::check(root, skip),
-                    None => crate::freshness::Assessment::default(),
-                };
+                let checked = crate::freshness::check(&root, skip);
                 if let Some(refusal) = checked.refusal {
                     return Err(RenameFail::Domain(Box::new((refusal, checked.warnings))));
                 }
@@ -545,24 +554,14 @@ impl CuadernoServer {
                 // The whole check again under the lock; what it newly warns
                 // about joins the first check's.
                 let fresh = std::cell::RefCell::new(Vec::new());
-                let outcome = match &root {
-                    Some(root) => vault.rename_note(
-                        &target,
-                        &to,
-                        reason.as_deref(),
-                        expected.as_deref(),
-                        at,
-                        crate::freshness::guard(root, skip, &shown, &fresh),
-                    ),
-                    None => vault.rename_note(
-                        &target,
-                        &to,
-                        reason.as_deref(),
-                        expected.as_deref(),
-                        at,
-                        || Ok(()),
-                    ),
-                };
+                let outcome = vault.rename_note(
+                    &target,
+                    &to,
+                    reason.as_deref(),
+                    expected.as_deref(),
+                    at,
+                    crate::freshness::guard(&root, skip, &shown, &fresh),
+                );
                 let mut sync_warnings = shown;
                 sync_warnings.extend(fresh.into_inner());
                 match outcome {

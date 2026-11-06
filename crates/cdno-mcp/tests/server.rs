@@ -17,7 +17,7 @@ fn empty_server() -> CuadernoServer {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _r) = Vault::new(store, index, VaultConfig::default()).expect("Vault::new");
-    CuadernoServer::new(Arc::new(vault))
+    CuadernoServer::new(Arc::new(vault), std::env::temp_dir())
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn read_only_server_advertises_read_note() {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _r) = Vault::new(store, index, VaultConfig::default()).expect("Vault::new");
-    let server = CuadernoServer::read_only(Arc::new(vault));
+    let server = CuadernoServer::read_only(Arc::new(vault), std::env::temp_dir());
     let names: Vec<String> = server
         .advertised_tools()
         .iter()
@@ -188,7 +188,7 @@ fn revise_note_is_a_write_tool_absent_from_the_read_only_server() {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _r) = Vault::new(store, index, VaultConfig::default()).expect("Vault::new");
-    let read_only: Vec<String> = CuadernoServer::read_only(Arc::new(vault))
+    let read_only: Vec<String> = CuadernoServer::read_only(Arc::new(vault), std::env::temp_dir())
         .advertised_tools()
         .iter()
         .map(|t| t.name.to_string())
@@ -214,7 +214,7 @@ fn note_to_daily_is_a_write_tool_absent_from_the_read_only_server() {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _r) = Vault::new(store, index, VaultConfig::default()).expect("Vault::new");
-    let read_only: Vec<String> = CuadernoServer::read_only(Arc::new(vault))
+    let read_only: Vec<String> = CuadernoServer::read_only(Arc::new(vault), std::env::temp_dir())
         .advertised_tools()
         .iter()
         .map(|t| t.name.to_string())

@@ -59,10 +59,10 @@ pub struct CuadernoServer {
     // `cdno-mcp-server` does; the stdio binary has no agent to signal.
     sync_nudge: Option<crate::nudge::SharedNudge>,
     // The vault's root on disk, for the one tool that asks git about the
-    // folder (`rename_note`'s freshness check, RFC 0007 §5.8). `None` unless
-    // a caller opted in via `with_vault_root` — both binaries do; a server
-    // built without it treats the vault as not under git and skips the check.
-    vault_root: Option<std::path::PathBuf>,
+    // folder (`rename_note`'s freshness check, RFC 0007 §5.8). Required, so
+    // no server can skip the check by omission; a folder that is not a git
+    // repository is reported as such by `git_state` and passes.
+    vault_root: std::path::PathBuf,
     // Merged dispatch table (the four per-group `#[tool_router]`s).
     // `#[tool_handler(router = self.tool_router)]` reads it at runtime;
     // dead-code analysis can't trace the proc-macro-generated reads.
@@ -71,7 +71,7 @@ pub struct CuadernoServer {
 }
 
 impl CuadernoServer {
-    pub fn new(vault: Arc<Vault>) -> Self {
+    pub fn new(vault: Arc<Vault>, vault_root: std::path::PathBuf) -> Self {
         // Tool handlers are split into per-group `#[tool_router]` impls
         // (context / operations / creation in sibling modules, lifecycle
         // in `lifecycle.rs`); `new` merges their routers into the
@@ -83,23 +83,14 @@ impl CuadernoServer {
         Self {
             vault,
             sync_nudge: None,
-            vault_root: None,
+            vault_root,
             tool_router,
         }
     }
 
-    /// Tell the server where the vault lives on disk, so `rename_note` can
-    /// ask git whether it is behind its upstream or paused mid-operation
-    /// (RFC 0007 §5.8). Both binaries call this; without it the check is
-    /// skipped as for a vault that is not a git repository.
-    pub fn with_vault_root(mut self, root: std::path::PathBuf) -> Self {
-        self.vault_root = Some(root);
-        self
-    }
-
-    /// The root set by [`with_vault_root`](Self::with_vault_root).
-    pub(crate) fn vault_root(&self) -> Option<&std::path::Path> {
-        self.vault_root.as_deref()
+    /// The vault's root on disk, as given to [`new`](Self::new).
+    pub(crate) fn vault_root(&self) -> &std::path::Path {
+        &self.vault_root
     }
 
     /// Attach a sync-nudge sentinel (GH #540): after every **verified**
@@ -124,13 +115,13 @@ impl CuadernoServer {
     /// cannot mutate the vault at all. Used by `cdno-mcp-server
     /// --read-only` for scoped remote deployments and the initial
     /// exposure soak (GH #61).
-    pub fn read_only(vault: Arc<Vault>) -> Self {
+    pub fn read_only(vault: Arc<Vault>, vault_root: std::path::PathBuf) -> Self {
         Self {
             vault,
             // No mutating tool exists on this server, so nothing could
             // ever reach the nudge; leaving it `None` says so.
             sync_nudge: None,
-            vault_root: None,
+            vault_root,
             tool_router: Self::context_router(),
         }
     }

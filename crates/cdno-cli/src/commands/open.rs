@@ -427,7 +427,7 @@ fn resolve_with_via(
 
 /// Whether a reference names somewhere outside the vault, which `VaultPath`
 /// will reject with a message written for a programmer rather than a user.
-fn reference_escapes_the_vault(reference: &str) -> bool {
+pub(crate) fn reference_escapes_the_vault(reference: &str) -> bool {
     let p = Path::new(reference.trim());
     p.is_absolute() || p.components().any(|c| c == std::path::Component::ParentDir)
 }

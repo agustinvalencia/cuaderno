@@ -428,14 +428,39 @@ fn rename(
     let target = match args.note {
         Some(reference) => {
             let reference = crate::commands::open::strip_vault_root(&reference, root);
-            let (path, via_alias) = crate::commands::open::resolve_with_alias(
-                vault,
-                &reference,
-                at.date(),
-                interactive,
-                &mut prompted,
-                &renamable,
-            )?;
+            // The domain's own rule first: a question and its same-slug
+            // portfolio resolve to the question, as over MCP. Anything else
+            // (a miss, an ambiguity it cannot narrow) goes to the shared
+            // resolver for its picker and its messages.
+            let narrowed = if crate::commands::open::reference_escapes_the_vault(&reference) {
+                None
+            } else {
+                match vault
+                    .resolve_rename_target(&reference, at.date())
+                    .context("resolving the note reference")?
+                {
+                    (cdno_domain::RefResolution::Resolved(note), chosen) => {
+                        // Taking the one hit is a choice made for the person:
+                        // an interactive caller confirms it.
+                        if chosen && interactive {
+                            prompted = true;
+                        }
+                        Some((note.path, note.resolved_via_alias))
+                    }
+                    _ => None,
+                }
+            };
+            let (path, via_alias) = match narrowed {
+                Some(resolved) => resolved,
+                None => crate::commands::open::resolve_with_alias(
+                    vault,
+                    &reference,
+                    at.date(),
+                    interactive,
+                    &mut prompted,
+                    &renamable,
+                )?,
+            };
             // The typed name goes through only when it carried a former name
             // to report; otherwise the resolved path does, so a hit taken
             // from an ambiguity is the note the domain plans for.
@@ -614,8 +639,8 @@ fn emit_rename_json(
             "path": e.path.to_string(),
             "changes": changes(&e.changes),
         })).collect::<Vec<_>>(),
-        "references": reference_totals(plan).0,
-        "notes": reference_totals(plan).1,
+        "references": plan.reference_totals().0,
+        "notes": plan.reference_totals().1,
         "warnings": warnings,
         "plan_hash": plan.hash,
         "log_line": plan.log_line,
@@ -631,45 +656,14 @@ fn warning_json(warning: &RenameWarning) -> serde_json::Value {
         RenameWarning::FrozenPrefixAlreadyDiverged { path } => serde_json::json!({
             "kind": "frozen_prefix_already_diverged",
             "path": path.to_string(),
-            "message": warning_text(warning),
+            "message": warning.to_string(),
         }),
         RenameWarning::OldSlugAlreadyAnAlias { holder } => serde_json::json!({
             "kind": "old_slug_already_an_alias",
             "holder": holder.to_string(),
-            "message": warning_text(warning),
+            "message": warning.to_string(),
         }),
     }
-}
-
-fn warning_text(warning: &RenameWarning) -> String {
-    match warning {
-        RenameWarning::FrozenPrefixAlreadyDiverged { path } => format!(
-            "{path} already failed its archival check before this rename; it is rewritten anyway and stays flagged"
-        ),
-        RenameWarning::OldSlugAlreadyAnAlias { holder } => format!(
-            "the old slug is already an alias of {holder}; once this note lists it too the alias is shared and resolves to nothing"
-        ),
-    }
-}
-
-/// References rewritten (links plus fields) and the notes holding them.
-fn reference_totals(plan: &RenamePlan) -> (usize, usize) {
-    let mut references = 0;
-    let mut notes = 0;
-    for edit in &plan.edits {
-        let here: usize = edit
-            .changes
-            .iter()
-            .map(|c| match c {
-                Change::Address { count } => *count,
-                Change::Field { .. } => 1,
-                Change::Alias | Change::LogLine => 0,
-            })
-            .sum();
-        references += here;
-        notes += usize::from(here > 0);
-    }
-    (references, notes)
 }
 
 /// The preview, RFC 0007 §1.1: a `move` line per move, a `rewrite` line per
@@ -750,7 +744,7 @@ fn render_plan(plan: &RenamePlan) -> String {
             out.push_str(&format!("             {line}\n"));
         }
     }
-    let (references, notes) = reference_totals(plan);
+    let (references, notes) = plan.reference_totals();
     out.push_str(&format!(
         "  {references} reference{} in {notes} note{} · plan {}…\n",
         plural(references),
@@ -758,7 +752,7 @@ fn render_plan(plan: &RenamePlan) -> String {
         plan.hash.chars().take(4).collect::<String>()
     ));
     for warning in &plan.warnings {
-        out.push_str(&format!("  warning: {}\n", warning_text(warning)));
+        out.push_str(&format!("  warning: {}\n", warning));
     }
     out
 }

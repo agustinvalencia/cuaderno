@@ -52,7 +52,7 @@ use super::lint::frozen_prefix_verifies;
 use super::log::{
     append_log_line, daily_note_path, format_log_line, format_renamed_pair_log_entry,
 };
-use super::note_ref::{NoteRef, PeriodRef, ResolvedNote, candidate_slug};
+use super::note_ref::{NoteRef, PeriodRef, RefResolution, ResolvedNote, candidate_slug};
 use super::projects::stage_project_index_rows;
 use super::slug::{TakenBy, taken_names_in, validate_explicit_slug};
 
@@ -115,6 +115,28 @@ pub struct RenamePlan {
 }
 
 impl RenamePlan {
+    /// References rewritten (links plus fields) and the notes holding them:
+    /// the totals the preview's last line and the tools' `references` /
+    /// `notes` report, computed here so every interface says the same.
+    pub fn reference_totals(&self) -> (usize, usize) {
+        let mut references = 0;
+        let mut notes = 0;
+        for edit in &self.edits {
+            let here: usize = edit
+                .changes
+                .iter()
+                .map(|c| match c {
+                    Change::Address { count } => *count,
+                    Change::Field { .. } => 1,
+                    Change::Alias | Change::LogLine => 0,
+                })
+                .sum();
+            references += here;
+            notes += usize::from(here > 0);
+        }
+        (references, notes)
+    }
+
     /// Whether the plan writes nothing (a rename to the current slug).
     pub fn is_empty(&self) -> bool {
         self.moves.is_empty() && self.edits.is_empty()
@@ -184,7 +206,54 @@ pub enum RenameWarning {
     OldSlugAlreadyAnAlias { holder: VaultPath },
 }
 
+impl std::fmt::Display for RenameWarning {
+    /// The sentence every interface shows for the warning.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RenameWarning::FrozenPrefixAlreadyDiverged { path } => write!(
+                f,
+                "{path} already failed its archival check before this rename; it is rewritten anyway and stays flagged"
+            ),
+            RenameWarning::OldSlugAlreadyAnAlias { holder } => write!(
+                f,
+                "the old slug is already an alias of {holder}; once this note lists it too the alias is shared and resolves to nothing"
+            ),
+        }
+    }
+}
+
 impl Vault {
+    /// Resolve the `reference` a rename names, as
+    /// [`resolve_note_ref`](Self::resolve_note_ref) does, with one addition:
+    /// an ambiguity whose hits include exactly one the rename accepts (see
+    /// [`is_renamable`](Self::is_renamable)) resolves to that one. A question
+    /// and its same-slug portfolio share a stem; the portfolio is renamed
+    /// through the question, so the question is the answer. The flag is true
+    /// when that narrowing chose for the caller, which an interactive
+    /// interface confirms as it would a pick. Every other outcome, including
+    /// an ambiguity with none or several renamable hits, is returned as
+    /// `resolve_note_ref` gave it.
+    pub fn resolve_rename_target(
+        &self,
+        reference: &str,
+        today: chrono::NaiveDate,
+    ) -> Result<(RefResolution, bool), DomainError> {
+        match self.resolve_note_ref(reference, today)? {
+            RefResolution::Ambiguous(hits) => {
+                let kept: Vec<_> = hits
+                    .iter()
+                    .filter(|c| self.is_renamable(&c.path, &c.note_type))
+                    .collect();
+                if let [only] = kept.as_slice() {
+                    let note = ResolvedNote::direct(only.path.clone());
+                    return Ok((RefResolution::Resolved(note), true));
+                }
+                Ok((RefResolution::Ambiguous(hits), false))
+            }
+            other => Ok((other, false)),
+        }
+    }
+
     /// Whether the note at `path`, of index type `note_type`, is one the
     /// rename verb accepts (RFC 0007 §5.2): the same check the planner makes
     /// first, so an interface offering notes to rename (a picker) offers

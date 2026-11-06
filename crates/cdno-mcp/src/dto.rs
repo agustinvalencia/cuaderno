@@ -1997,21 +1997,7 @@ impl RenamePlanDto {
         index_stale: bool,
     ) -> Self {
         use cdno_domain::vault::{Change, RenameWarning};
-        let mut references = 0;
-        let mut notes = 0;
-        for edit in &plan.edits {
-            let here: usize = edit
-                .changes
-                .iter()
-                .map(|c| match c {
-                    Change::Address { count } => *count,
-                    Change::Field { .. } => 1,
-                    Change::Alias | Change::LogLine => 0,
-                })
-                .sum();
-            references += here;
-            notes += usize::from(here > 0);
-        }
+        let (references, notes) = plan.reference_totals();
         let change = |c: &Change| match c {
             Change::Address { count } => RenameChangeDto {
                 kind: "links",
@@ -2037,17 +2023,13 @@ impl RenamePlanDto {
         let warning = |w: &RenameWarning| match w {
             RenameWarning::FrozenPrefixAlreadyDiverged { path } => RenameWarningDto {
                 kind: "frozen_prefix_already_diverged",
-                message: format!(
-                    "{path} already failed its archival check before this rename; it is rewritten anyway and stays flagged"
-                ),
+                message: w.to_string(),
                 path: Some(path.to_string()),
                 holder: None,
             },
             RenameWarning::OldSlugAlreadyAnAlias { holder } => RenameWarningDto {
                 kind: "old_slug_already_an_alias",
-                message: format!(
-                    "the old slug is already an alias of {holder}; once this note lists it too the alias is shared and resolves to nothing"
-                ),
+                message: w.to_string(),
                 path: None,
                 holder: Some(holder.to_string()),
             },

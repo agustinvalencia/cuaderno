@@ -790,3 +790,47 @@ fn rename_note_over_stdio() {
     let inbox = std::fs::read_to_string(dir.path().join("inbox/2026-05-08-link.md")).unwrap();
     assert!(inbox.contains("[[emulator-study]]"), "{inbox}");
 }
+
+/// The binary hands the vault root to the server: a merge left paused in
+/// the vault's git repository refuses the rename, a preview included, with
+/// a code the agent can read. A server with no root would skip the check.
+#[test]
+fn rename_note_over_stdio_is_refused_while_a_merge_is_paused() {
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    std::fs::write(
+        dir.path().join("projects/surrogate-model.md"),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nCalibrating.\n\n## Next Actions\n\n## Milestones\n",
+    )
+    .unwrap();
+    let init = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir.path())
+        .args(["init", "-q"])
+        .output()
+        .expect("git init");
+    assert!(init.status.success());
+    std::fs::write(dir.path().join(".git/MERGE_HEAD"), "0".repeat(40) + "\n").unwrap();
+    let mut mcp = McpSubprocess::spawn(dir.path());
+    initialise(&mut mcp);
+
+    for (id, dry_run) in [(30u64, true), (31, false)] {
+        mcp.send(&json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "name": "rename_note", "arguments": {
+                "note": "surrogate-model", "to": "emulator-study",
+                "dry_run": dry_run, "skip_sync_check": true
+            } }
+        }));
+        let response = mcp.read_response(id);
+        assert_eq!(response["result"]["isError"], json!(true), "{response}");
+        let rejection: Value =
+            serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap())
+                .unwrap();
+        assert_eq!(
+            rejection["code"], "git_operation_in_progress",
+            "{rejection}"
+        );
+    }
+    assert!(dir.path().join("projects/surrogate-model.md").exists());
+}

@@ -108,7 +108,7 @@ impl VaultStore for SwallowingStore {
 fn server_over(store: Arc<dyn VaultStore>) -> CuadernoServer {
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _report) = Vault::new(store, index, VaultConfig::default()).expect("open vault");
-    CuadernoServer::new(Arc::new(vault))
+    CuadernoServer::new(Arc::new(vault), std::env::temp_dir())
 }
 
 fn healthy_server() -> CuadernoServer {

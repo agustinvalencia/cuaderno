@@ -543,6 +543,21 @@ pub(crate) fn resolve_note(
     })
 }
 
+/// [`resolve_note`] for a note about to be renamed: the domain's
+/// [`Vault::resolve_rename_target`], so a question and its same-slug
+/// portfolio resolve to the question here as they do in the CLI.
+pub(crate) fn resolve_rename_note(
+    vault: &Vault,
+    reference: &str,
+    today: chrono::NaiveDate,
+) -> Result<Result<ResolvedNote, ErrorData>, DomainError> {
+    Ok(match vault.resolve_rename_target(reference, today)?.0 {
+        RefResolution::Resolved(note) => Ok(note),
+        RefResolution::Ambiguous(hits) => Err(ambiguous_note_ref(reference, &hits)),
+        RefResolution::NotFound { reference, miss } => Err(unresolved_note_ref(&reference, miss)),
+    })
+}
+
 /// `read_note`'s answer to a slug several notes share: a rejection carrying
 /// every candidate's path, since a path is always unambiguous.
 fn ambiguous_note_ref(reference: &str, hits: &[NoteCandidate]) -> ErrorData {

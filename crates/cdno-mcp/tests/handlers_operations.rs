@@ -57,7 +57,10 @@ fn server_with<F: FnOnce(&Vault, Arc<dyn VaultStore>)>(
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
     seed(&vault, Arc::clone(&store));
-    (CuadernoServer::new(Arc::new(vault)), store)
+    (
+        CuadernoServer::new(Arc::new(vault), std::env::temp_dir()),
+        store,
+    )
 }
 
 /// Like [`server_with`] but with a caller-supplied `VaultConfig`, so tests
@@ -70,7 +73,10 @@ fn server_with_config<F: FnOnce(&Vault, Arc<dyn VaultStore>)>(
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _r) = Vault::new(Arc::clone(&store), index, config).unwrap();
     seed(&vault, Arc::clone(&store));
-    (CuadernoServer::new(Arc::new(vault)), store)
+    (
+        CuadernoServer::new(Arc::new(vault), std::env::temp_dir()),
+        store,
+    )
 }
 
 /// A `VaultConfig` whose `[variables.prompt]` map has a single `name → message`
@@ -5065,10 +5071,18 @@ mod rename {
         store
     }
 
-    fn server_over(store: &Arc<dyn VaultStore>, index: Arc<dyn VaultIndex>) -> CuadernoServer {
+    fn server_at(
+        store: &Arc<dyn VaultStore>,
+        index: Arc<dyn VaultIndex>,
+        root: std::path::PathBuf,
+    ) -> CuadernoServer {
         let (vault, _r) =
             Vault::new(Arc::clone(store), index, VaultConfig::default()).expect("vault opens");
-        CuadernoServer::new(Arc::new(vault))
+        CuadernoServer::new(Arc::new(vault), root)
+    }
+
+    fn server_over(store: &Arc<dyn VaultStore>, index: Arc<dyn VaultIndex>) -> CuadernoServer {
+        server_at(store, index, std::env::temp_dir())
     }
 
     fn server() -> (CuadernoServer, Arc<dyn VaultStore>) {
@@ -5288,17 +5302,132 @@ mod rename {
     }
 
     #[tokio::test]
-    async fn a_blank_expected_plan_is_a_missing_one() {
+    async fn a_blank_expected_plan_is_refused_not_written_past() {
         let (server, store) = server();
-        let result = server
+        let err = server
             .rename_note(Parameters(RenameNoteInput {
                 expected_plan: Some("  ".to_owned()),
                 ..input("surrogate-model", "emulator-study")
             }))
             .await
-            .expect("no hash given, so none to be stale against");
-        assert_eq!(decode_json(&result)["written"], json!(true));
-        assert!(store.exists(&vp(NEW)).unwrap());
+            .expect_err("a blank hash is not an omitted one");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "{err:?}");
+        assert!(err.message.contains("expected_plan"), "{}", err.message);
+        assert!(store.exists(&vp(OLD)).unwrap(), "nothing was written");
+    }
+
+    #[tokio::test]
+    async fn a_different_reason_makes_the_plan_stale() {
+        let (server, store) = server();
+        let plan = preview(&server).await;
+        let err = server
+            .rename_note(Parameters(RenameNoteInput {
+                reason: None,
+                expected_plan: Some(plan["plan_hash"].as_str().unwrap().to_owned()),
+                ..input("surrogate-model", "emulator-study")
+            }))
+            .await
+            .expect_err("the reason is part of the plan");
+        let rejection = rejection_of(&err);
+        assert_eq!(rejection["code"], "stale_plan");
+        let message = rejection["message"].as_str().unwrap();
+        assert!(message.contains("`reason`"), "{message}");
+        assert_eq!(message.matches("preview it again").count(), 1, "{message}");
+        assert!(store.exists(&vp(OLD)).unwrap());
+    }
+
+    /// A question and its same-slug portfolio share a stem; the portfolio is
+    /// renamed through the question, so the bare slug is the question, as in
+    /// the CLI, rather than an `ambiguous_slug`.
+    #[tokio::test]
+    async fn a_question_and_its_portfolio_resolve_to_the_question_over_mcp() {
+        let (server, _store) = server();
+        server
+            .create_question(Parameters(CreateQuestionInput {
+                domain: "research".to_owned(),
+                text: "Does a surrogate beat the simulator?".to_owned(),
+                vars: None,
+                slug: Some("surrogate-accuracy".to_owned()),
+            }))
+            .await
+            .expect("question");
+        server
+            .create_portfolio(Parameters(CreatePortfolioInput {
+                question: "surrogate-accuracy".to_owned(),
+                project: None,
+                vars: None,
+                slug: None,
+            }))
+            .await
+            .expect("portfolio");
+        let result = server
+            .rename_note(Parameters(RenameNoteInput {
+                dry_run: Some(true),
+                ..input("surrogate-accuracy", "surrogate-error")
+            }))
+            .await
+            .expect("the question is the only renamable hit");
+        let plan = decode_json(&result);
+        assert_eq!(plan["target"], "questions/research/surrogate-accuracy.md");
+        assert!(
+            plan["moves"][0]["to"] == "questions/research/surrogate-error.md",
+            "{plan}"
+        );
+    }
+
+    /// The freshness check's warnings are part of the tool's answer (an MCP
+    /// client has no stderr), on a preview and a write alike. A git vault
+    /// with no upstream warns and proceeds.
+    #[tokio::test]
+    async fn sync_check_warnings_reach_the_tool_result() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["init", "-q"])
+            .output()
+            .expect("git");
+        assert!(out.status.success(), "{out:?}");
+        let store = seeded_store();
+        let server = server_at(
+            &store,
+            Arc::new(MemoryIndex::new()),
+            dir.path().to_path_buf(),
+        );
+
+        let plan = server
+            .rename_note(Parameters(RenameNoteInput {
+                dry_run: Some(true),
+                ..input("surrogate-model", "emulator-study")
+            }))
+            .await
+            .expect("a dry run");
+        let plan = decode_json(&plan);
+        let sync = |payload: &serde_json::Value| -> Vec<String> {
+            payload["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|w| w["kind"] == "sync_check")
+                .map(|w| w["message"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        let shown = sync(&plan);
+        assert_eq!(shown.len(), 1, "{plan}");
+        assert!(shown[0].starts_with("no upstream"), "{shown:?}");
+
+        let written = server
+            .rename_note(Parameters(RenameNoteInput {
+                expected_plan: Some(plan["plan_hash"].as_str().unwrap().to_owned()),
+                ..input("surrogate-model", "emulator-study")
+            }))
+            .await
+            .expect("a write");
+        let written = decode_json(&written);
+        assert_eq!(written["written"], json!(true));
+        // The first check's warning and the guard's are the same sentence:
+        // reported once, not twice.
+        assert_eq!(sync(&written), shown, "{written}");
     }
 
     fn today_daily_text(store: &Arc<dyn VaultStore>) -> String {
@@ -5325,8 +5454,11 @@ mod rename {
         run(&["init", "-q"]);
         std::fs::write(dir.path().join(".git/MERGE_HEAD"), "0".repeat(40) + "\n").unwrap();
         let store = seeded_store();
-        let server = server_over(&store, Arc::new(MemoryIndex::new()))
-            .with_vault_root(dir.path().to_path_buf());
+        let server = server_at(
+            &store,
+            Arc::new(MemoryIndex::new()),
+            dir.path().to_path_buf(),
+        );
 
         for dry_run in [true, false] {
             for skip in [false, true] {

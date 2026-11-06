@@ -410,9 +410,9 @@ async fn serve() -> Result<()> {
         let vault = Arc::new(opened.vault);
         let server = if args.read_only {
             tracing::info!("read-only mode: mutating tools are not registered");
-            CuadernoServer::read_only(vault)
+            CuadernoServer::read_only(vault, root.clone())
         } else {
-            let server = CuadernoServer::new(vault).with_vault_root(root.clone());
+            let server = CuadernoServer::new(vault, root.clone());
             if args.sync_nudge {
                 tracing::info!(
                     sentinel = %sentinel.path().display(),

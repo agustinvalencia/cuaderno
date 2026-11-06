@@ -1378,9 +1378,14 @@ why it could not.
 **As built.** `rename_note` is in `operations.rs` beside `revise_note`; `RenameNoteInput` in
 `input.rs`; `RenamePlanDto` (with `RenameMoveDto`, `RenameEditDto`, `RenameChangeDto`,
 `RenameWarningDto`) in `dto.rs`. Plan amendments:
-- The server held no vault root: `CuadernoServer::with_vault_root` (called by `cdno-mcp` and
-  `cdno-mcp-server`) supplies it. A server built without one, as the in-process tests do, treats
-  the vault as not under git and skips the check; the tests that need git set a root.
+- The server held no vault root: it is now a constructor argument (`CuadernoServer::new(vault, root)`,
+  `read_only(vault, root)`), so no server can skip the freshness check by omission; a folder that is
+  not a git repository passes as `NotARepository`. In-process tests pass `std::env::temp_dir()`; a
+  paused merge is refused through the real stdio and HTTP binaries.
+- A bare slug resolves through `Vault::resolve_rename_target` (an ambiguity with one renamable hit,
+  a question beside its portfolio, resolves to it), shared by `cdno note rename` and the tool.
+  `RenameWarning`'s `Display` and `RenamePlan::reference_totals` are the one rendering of a warning
+  and of the totals. A blank `expected_plan` is `invalid_params`.
 - The DTO carries `dry_run` (as the CLI's `--json` does), `references` and `notes` (the CLI's
   totals), and `verification` (null unless a write landed), beside the fields the plan names;
   `found_by_former_name` is the alias string or null, as in the CLI.

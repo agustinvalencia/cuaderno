@@ -183,7 +183,7 @@ fn rejection_message(code: RejectionCode, e: &DomainError) -> String {
         // The domain carries the fact; the remedy is this interface's.
         RejectionCode::BehindUpstream => format!("{e}; {}", crate::freshness::BEHIND_REMEDY),
         RejectionCode::StalePlan => format!(
-            "{e}; the vault changed since the preview (any log append does it): call rename_note with dry_run: true again, show the person the new plan, and write that one. Do not retry with the same expected_plan"
+            "{e}. Any log append since the preview does it, and so does a different `reason`, `note` or `to`. Call rename_note with dry_run: true, show the person the new plan, and write that one. Do not retry with the same expected_plan"
         ),
         RejectionCode::InvalidSlug => {
             format!("{e}; fix the shape as the message says, or ask the person for another name")
@@ -1454,7 +1454,9 @@ mod tests {
         assert_eq!(payload["details"]["actual"], "bbbb");
         let message = payload["message"].as_str().unwrap();
         assert!(
-            message.contains("dry_run: true") && message.contains("Do not retry"),
+            message.contains("dry_run: true")
+                && message.contains("Do not retry")
+                && message.contains("`reason`"),
             "{message}"
         );
     }
