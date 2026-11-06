@@ -54,6 +54,8 @@ Dry run: nothing written.
   4 references in 2 notes · plan 2109…
 ```
 
+Your plan hash will differ: the log lines carry their time stamps.
+
 Each line is one change: the file moves, two other notes have references corrected (three links in
 the journal, from the lines for the project's creation, the action and the start; the `project:`
 field of the action note), the project gains an alias, and today's log gets
@@ -71,7 +73,7 @@ With the note and `--to` given, the command writes as soon as it has checked the
 confirm, in a terminal or not; the dry run was your look, and it is advice, not a lock. Leave out
 `--to` in a terminal and you are asked for it, shown the preview and asked to confirm. That confirmed
 write is tied to the preview: if a note it would rewrite changed while you decided, it refuses with
-`stale_plan` and writes nothing. Over MCP the same guard joins the two calls.
+`stale_plan` and writes nothing. Over MCP the guard applies when the agent passes the preview's `plan_hash` as `expected_plan`.
 
 ## What changed
 

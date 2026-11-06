@@ -194,7 +194,7 @@ with the `code` below; in text the message is printed and the exit status is `1`
 |------|-----|------------|
 | `invalid_slug` | `--to` breaks [the slug rule](overview.md#naming-a-note---slug) (upper case, spaces, a leading `-`, a value YAML reads as a number or boolean, too long). | Pick a slug that follows the rule. It is refused, never rewritten. |
 | `slug_taken` | Another note, a folder note's folder or another note's former name already holds the slug; the message names the holder. | Pick another name. Nothing is suffixed. |
-| `note_not_renamable` | The note is of a kind the rename does not take (see [which notes can be renamed](../../concepts/note-types.md#which-notes-can-be-renamed)). The `reason` is one of six, below. | See below. |
+| `note_not_renamable` | The note is of a kind the rename does not take (see [which notes can be renamed](../../concepts/note-types.md#which-notes-can-be-renamed)). The `reason` is one of seven, below. | See below. |
 | `stem_shared` | Another note has the same file name, so a link to it cannot be told apart from a link to this one. | Rename or move the other note first (or fix the duplicate), then rename. |
 | `reference_drift`, `reference_unaddressable` | Rewriting a referrer's frontmatter would change more than the reference, or a field names the note in a form the rewrite cannot address. The message names the note and the key. | Fix that note by hand, then run the rename again. |
 | `stale_plan` | A referrer changed while a confirm waited (any log append does it), so the plan you confirmed is no longer the plan. Over MCP the same code answers a write whose `expected_plan` no longer matches. | Preview again and confirm the new plan. |
@@ -202,17 +202,18 @@ with the `code` below; in text the message is printed and the exit status is `1`
 | `git_operation_in_progress` | A merge, rebase or cherry-pick was left paused. Text: `a git operation is in progress in the vault (…); finish or abort it, then rename`. | Finish or abort it. `--skip-sync-check` does not override this. |
 | `rename_incomplete` | A write failed and the rollback could not restore every file; the paths are listed. | Check those paths by hand, then run the rename again. |
 
-The six `note_not_renamable` reasons, and what to do for each. In text mode the code itself is not
+The seven `note_not_renamable` reasons, and what to do for each. In text mode the code itself is not
 printed, only the message (``note '…' cannot be renamed: <reason>``); `--json` carries both.
 
 | `reason` | Meaning | What to do |
 |----------|---------|------------|
 | `type <name>` (`type none` for a note with no `type:`) | The kind never renames: daily, weekly, monthly, commitment, stewardship, evidence, tracking, inbox; or a note without a `type`. | Nothing: the note keeps its name. For a note with no `type`, add one first. |
 | `archived` | An archived action note, whose frozen prefix would change. | Nothing: the note keeps its name. |
-| `folder` | A folder note (`<dir>/<slug>/_index.md`) of a custom type, or a portfolio on its own. | Nothing for a custom folder note. |
-| `rename the question` | A portfolio whose slug a question shares. | Rename the question: the pair moves together. |
+| `folder` | A folder note other than a portfolio's `portfolios/<slug>/_index.md`, of any type (a custom note kept as a folder, `projects/<slug>/_index.md`); or a portfolio kept as a single file. A portfolio on its own, in its folder, renames fine. | Nothing: the note keeps its name. |
+| `rename the question` | A portfolio whose slug a question shares (the portfolio alone is refused). | Rename the question: the pair moves together. |
 | `it has no frontmatter to record its old slug in` | The note has no frontmatter block. | Repair the note (add frontmatter), then rename. |
 | ``its `aliases:` is not a list the old slug can be added to`` | `aliases:` is a scalar or some other shape. | Make `aliases:` a list, then rename. |
+| ``its `aliases:` lists the new slug in a form it cannot be removed from`` | The note takes back a former name that `aliases:` lists twice or with a tag. | Tidy the `aliases:` list by hand, then rename. |
 
 A rename that would write over a file the vault already holds is refused as `slug_taken`. That
 includes a rename that changes only the case of a slug (`Alpha` to `alpha`): it is refused where the
@@ -220,7 +221,8 @@ filesystem cannot tell the two names apart (macOS and Windows by default) and al
 (a default Linux filesystem). The message names the note itself as the holder (``slug 'alpha' is taken
 by 'projects/Alpha.md' (as its stem)``), which is expected. To change only the case, rename through a
 temporary slug (`Alpha` to `alpha-tmp`, then `alpha-tmp` to `alpha`); the note ends up with both old
-names as aliases.
+names as aliases. The old spelling (`Alpha`) stays listed but nothing resolves it, because aliases
+must be slug-shaped; it can be deleted by hand.
 
 ### Renaming back, and former names
 
