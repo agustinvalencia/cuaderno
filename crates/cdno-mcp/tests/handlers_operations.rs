@@ -5088,7 +5088,8 @@ mod rename {
     fn input(note: &str, to: &str) -> RenameNoteInput {
         RenameNoteInput {
             note: note.to_owned(),
-            to: to.to_owned(),
+            to: Some(to.to_owned()),
+            relink: None,
             reason: Some("the model became an emulator study".to_owned()),
             dry_run: None,
             expected_plan: None,
@@ -5293,6 +5294,119 @@ mod rename {
             .expect_err("the stem is taken");
         assert_eq!(rejection_code(&err), "slug_taken");
         assert!(store.exists(&vp(OLD)).unwrap());
+    }
+
+    #[tokio::test]
+    async fn rename_note_relink_rewrites_stragglers_and_moves_nothing() {
+        let (server, store) = server();
+        let plan = preview(&server).await;
+        server
+            .rename_note(Parameters(RenameNoteInput {
+                expected_plan: Some(plan["plan_hash"].as_str().unwrap().to_owned()),
+                ..input("surrogate-model", "emulator-study")
+            }))
+            .await
+            .expect("renamed");
+        // A straggler written after the rename, as a synced clone brings
+        // one back: a link and a field still under the old name.
+        let straggler = "actions/wire-the-emulator.md";
+        store
+            .write_file(
+                &vp(straggler),
+                "---\ntype: action\nstatus: active\nproject: surrogate-model\nenergy: deep\ncreated: 2026-05-02\n---\n\n# Wire the emulator\n\nSee [[surrogate-model]].\n",
+            )
+            .unwrap();
+        let relink = || RenameNoteInput {
+            note: "emulator-study".to_owned(),
+            to: None,
+            relink: Some(true),
+            reason: None,
+            dry_run: Some(true),
+            expected_plan: None,
+            skip_sync_check: None,
+        };
+
+        let dry = decode_json(
+            &server
+                .rename_note(Parameters(relink()))
+                .await
+                .expect("a dry run"),
+        );
+        assert_eq!(dry["moves"], json!([]));
+        assert_eq!(dry["from"], "emulator-study");
+        assert_eq!(dry["new_slug"], "emulator-study");
+        assert_eq!(dry["references"], 2);
+        assert_eq!(dry["notes"], 1);
+        assert!(
+            dry["log_line"]
+                .as_str()
+                .is_some_and(|l| l.starts_with("relinked [[emulator-study]]")
+                    && l.ends_with("\n  references: 2")),
+            "{dry}"
+        );
+        assert!(
+            store
+                .read_file(&vp(straggler))
+                .unwrap()
+                .contains("[[surrogate-model]]")
+        );
+
+        let written = decode_json(
+            &server
+                .rename_note(Parameters(RenameNoteInput {
+                    dry_run: None,
+                    expected_plan: Some(dry["plan_hash"].as_str().unwrap().to_owned()),
+                    ..relink()
+                }))
+                .await
+                .expect("the previewed relink is written"),
+        );
+        assert_eq!(written["written"], json!(true));
+        assert_eq!(written["verification"]["verified"], "content");
+        let action = store.read_file(&vp(straggler)).unwrap();
+        assert!(
+            action.contains("project: emulator-study") && action.contains("[[emulator-study]]"),
+            "{action}"
+        );
+        assert!(store.exists(&vp(NEW)).unwrap() && !store.exists(&vp(OLD)).unwrap());
+        assert!(today_daily_text(&store).contains("relinked [[emulator-study]]"));
+
+        // `relink` is exclusive with `to` (and takes no `reason`); one of
+        // the two must be given.
+        for (bad, field) in [
+            (
+                RenameNoteInput {
+                    to: Some("emulator".to_owned()),
+                    ..relink()
+                },
+                "to",
+            ),
+            (
+                RenameNoteInput {
+                    reason: Some("tidy".to_owned()),
+                    ..relink()
+                },
+                "reason",
+            ),
+            (
+                RenameNoteInput {
+                    relink: None,
+                    ..relink()
+                },
+                "to",
+            ),
+        ] {
+            let err = server
+                .rename_note(Parameters(bad))
+                .await
+                .expect_err("an argument error");
+            assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "{err:?}");
+            assert!(
+                err.message.contains(&format!("'{field}'")),
+                "{}",
+                err.message
+            );
+        }
     }
 
     #[tokio::test]

@@ -316,6 +316,25 @@ pub fn format_renamed_pair_log_entry(
     entry
 }
 
+/// Head of the daily-log entry recording a relink (RFC 0007 §8 S8, T30).
+pub(in crate::vault) const LOG_RELINKED_PREFIX: &str = "relinked ";
+
+/// The continuation key of a `relinked` entry: how many references it
+/// rewrote.
+const LOG_REFERENCES_KEY: &str = "references: ";
+
+/// The daily-log entry recording a relink (T30):
+/// `relinked [[<new_link>]] — <title>`, then an indented
+/// `references: <n>` line. No `was:`: the
+/// note kept its slug, and the aliases its stragglers named stay listed on
+/// it. `title` goes through [`flatten_for_log`], as in the `renamed` entry.
+pub fn format_relinked_log_entry(new_link: &str, title: &str, references: usize) -> String {
+    format!(
+        "{LOG_RELINKED_PREFIX}[[{new_link}]] \u{2014} {}\n  {LOG_REFERENCES_KEY}{references}",
+        flatten_for_log(title)
+    )
+}
+
 /// Render one log line in the canonical `- **HH:MM**: text` form.
 /// Trailing newline means subsequent `append_to_section` calls stack
 /// cleanly without introducing blank lines between entries.

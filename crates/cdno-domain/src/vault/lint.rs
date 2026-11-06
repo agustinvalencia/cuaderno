@@ -26,7 +26,7 @@ use super::context::{
     RECORD_TIME_FORMATS, RecordTime, parse_focus_marker, parse_log_entry_heads,
     parse_promotion_marker, record_time, records_of, str_field,
 };
-use super::log::LOG_RENAMED_PREFIX;
+use super::log::{LOG_RELINKED_PREFIX, LOG_RENAMED_PREFIX};
 use super::method_status::MethodStatus;
 use super::note_ref::candidate_slug;
 use super::orient::{ACTIVE_HABITS_SECTION, parse_habit_line};
@@ -828,8 +828,9 @@ struct FocusClaim<'a> {
 
 /// The fixed-prefix log lines the near-miss check covers, as
 /// `(prefix, is_focus)`. The six `is_focus` entries are the markers
-/// [`Vault::current_focus`] is built from; `renamed` (RFC 0007 §5.6) is
-/// checked for its shape only and the focus fold never sees it.
+/// [`Vault::current_focus`] is built from; `renamed` (RFC 0007 §5.6) and
+/// `relinked` (§8 S8) are checked for their shape only and the focus fold
+/// never sees them.
 const MARKER_PREFIXES: &[(&str, bool)] = &[
     (LOG_STARTED_PREFIX, true),
     (LOG_RESUMED_PREFIX, true),
@@ -838,6 +839,7 @@ const MARKER_PREFIXES: &[(&str, bool)] = &[
     (LOG_ACTION_PAUSED_PREFIX, true),
     (LOG_ACTION_PROMOTED_PREFIX, true),
     (LOG_RENAMED_PREFIX, false),
+    (LOG_RELINKED_PREFIX, false),
 ];
 
 /// Did this line reach for a focus marker?

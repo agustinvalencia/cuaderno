@@ -14,7 +14,9 @@ use clap::Subcommand;
 
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
-use cdno_domain::vault::{Change, RenamePlan, RenameWarning, ReviseOutcome, Revision};
+use cdno_domain::vault::{
+    Change, RenamePlan, RenameRequest, RenameWarning, ReviseOutcome, Revision,
+};
 
 use crate::bootstrap;
 use crate::prompt;
@@ -105,6 +107,11 @@ pub enum NoteCommands {
     /// moves, which notes are rewritten and how many references, a plan hash)
     /// is what gets written: confirm it, or run with `--dry-run` to see it
     /// and write nothing.
+    ///
+    /// With `--relink` the note keeps its slug: every link that still reaches
+    /// it only through a former name (`cdno lint`'s "names a renamed note"
+    /// warning, as a synced clone can bring back) is rewritten to the current
+    /// slug, nothing moves, and a `relinked` line is logged.
     Rename {
         /// The note to rename, resolved as `cdno open` resolves a reference:
         /// a path with or without `.md`, a slug, a former slug or `type:slug`.
@@ -112,9 +119,14 @@ pub enum NoteCommands {
         /// notes only.
         note: Option<String>,
         /// The new slug (the file name without `.md`). Prompted in an
-        /// interactive session when omitted.
+        /// interactive session when omitted (and not `--relink`).
         #[arg(long, value_name = "SLUG")]
         to: Option<String>,
+        /// Keep the slug and rewrite the links that reach the note only
+        /// through a former name to it. Composes with `--dry-run`; takes no
+        /// `--to` and no `--reason`.
+        #[arg(long, conflicts_with_all = ["to", "reason"])]
+        relink: bool,
         /// Why the note is renamed, in a short clause; it becomes the
         /// `reason:` line under the log entry. Never prompted.
         #[arg(long, value_name = "STRING")]
@@ -222,6 +234,7 @@ pub fn run(
         NoteCommands::Rename {
             note,
             to,
+            relink,
             reason,
             dry_run,
             skip_sync_check,
@@ -232,6 +245,7 @@ pub fn run(
             RenameArgs {
                 note,
                 to,
+                relink,
                 reason,
                 dry_run,
                 skip_sync_check,
@@ -394,6 +408,7 @@ fn emit_revise_result(json: bool, outcome: &ReviseOutcome) -> Result<()> {
 struct RenameArgs {
     note: Option<String>,
     to: Option<String>,
+    relink: bool,
     reason: Option<String>,
     dry_run: bool,
     skip_sync_check: bool,
@@ -411,6 +426,9 @@ struct RenameArgs {
 /// upstream (unless `--skip-sync-check`) or git is paused mid-operation, its
 /// warnings on stderr. The paused check runs again under the write lock, as
 /// the guard `rename_note` is given.
+///
+/// `--relink` goes through the same steps with [`Vault::relink_preview`]
+/// and [`Vault::relink_note`]: no slug is gathered, and nothing moves.
 fn rename(
     root: &Path,
     vault: &Vault,
@@ -458,9 +476,18 @@ fn rename(
             ));
         }
     };
-    let to = prompt::gather_or_error(args.to, "to", interactive, &mut prompted, || {
-        prompt::prompt_text("New slug")
-    })?;
+    // clap refuses `--relink` with `--to`; the domain's own check is what
+    // the MCP tool shares.
+    let request = match RenameRequest::from_args(args.to, args.relink)? {
+        Some(request) => request,
+        None => RenameRequest::To(prompt::gather_or_error(
+            None,
+            "to",
+            interactive,
+            &mut prompted,
+            || prompt::prompt_text("New slug"),
+        )?),
+    };
     let reason = args.reason.as_deref();
 
     // The sync check, before the preview: a dry run is refused as the
@@ -475,9 +502,11 @@ fn rename(
     }
     let shown = checked.warnings;
 
-    let plan = vault
-        .rename_preview(&target, &to, reason, at)
-        .map_err(|e| rename_refusal(e, json))?;
+    let plan = match &request {
+        RenameRequest::To(to) => vault.rename_preview(&target, to, reason, at),
+        RenameRequest::Relink => vault.relink_preview(&target, at),
+    }
+    .map_err(|e| rename_refusal(e, json))?;
     if args.dry_run {
         if json {
             return emit_rename_json(&plan, false, false, true, &shown);
@@ -493,14 +522,13 @@ fn rename(
     // The whole check again under the lock; what it newly warns about is
     // shown as the first check's warnings are.
     let fresh = std::cell::RefCell::new(Vec::new());
-    let outcome = vault.rename_note(
-        &target,
-        &to,
-        reason,
-        Some(plan.hash.as_str()),
-        at,
-        crate::freshness::guard(root, args.skip_sync_check, &shown, &fresh),
-    );
+    let guard = crate::freshness::guard(root, args.skip_sync_check, &shown, &fresh);
+    let outcome = match &request {
+        RenameRequest::To(to) => {
+            vault.rename_note(&target, to, reason, Some(plan.hash.as_str()), at, guard)
+        }
+        RenameRequest::Relink => vault.relink_note(&target, Some(plan.hash.as_str()), at, guard),
+    };
     let fresh = fresh.into_inner();
     if !json || outcome.is_err() {
         show_sync_warnings(&fresh);
@@ -518,19 +546,35 @@ fn rename(
         );
     }
     if outcome.plan.is_empty() {
-        println!(
-            "Nothing to do: `{}` already has the slug `{}`.",
-            outcome.plan.target.slug, outcome.plan.new_slug
-        );
+        if outcome.plan.relink {
+            println!(
+                "Nothing to relink: no link reaches `{}` through a former name.",
+                outcome.plan.target.slug
+            );
+        } else {
+            println!(
+                "Nothing to do: `{}` already has the slug `{}`.",
+                outcome.plan.target.slug, outcome.plan.new_slug
+            );
+        }
         return Ok(());
     }
     if !prompted {
         print!("{}", render_plan(&outcome.plan));
     }
-    println!(
-        "Renamed `{}` to `{}`.",
-        outcome.plan.target.slug, outcome.plan.new_slug
-    );
+    if outcome.plan.relink {
+        let (references, _) = outcome.plan.reference_totals();
+        println!(
+            "Relinked {references} reference{} to `{}`.",
+            plural(references),
+            outcome.plan.new_slug
+        );
+    } else {
+        println!(
+            "Renamed `{}` to `{}`.",
+            outcome.plan.target.slug, outcome.plan.new_slug
+        );
+    }
     if outcome.index_stale {
         println!(
             "The files are written but the index is stale for some of them; the next command reconciles it."
@@ -651,6 +695,13 @@ fn render_plan(plan: &RenamePlan) -> String {
     let mut out = String::new();
     if let Some(alias) = &plan.target.resolved_via_alias {
         out.push_str(&format!("found by its former name `{alias}`\n"));
+    }
+    if plan.is_empty() && plan.relink {
+        out.push_str(&format!(
+            "nothing to relink: no link reaches `{}` through a former name\n",
+            plan.target.slug
+        ));
+        return out;
     }
     if plan.is_empty() {
         out.push_str(&format!(

@@ -1563,6 +1563,36 @@ a rewrite of a reference that resolves by stem, not alias, which would change a 
 **Correct means.** The backstop for the two-clone case exists, and it can only ever move a
 reference to where it already points.
 
+**As built.** One private planner (`Vault::plan` in `vault/rename.rs`) behind `plan_rename` and
+the new `plan_relink`, `relink_preview` and `relink_note`, which keep the rename's signatures
+untouched. The interfaces share `RenameRequest::from_args(to, relink)`, which refuses both as
+`DomainError::RelinkTakesNoSlug`; the CLI also has clap refuse `--relink` with `--to` (exit 2), and
+the tool reports it as `INVALID_PARAMS` naming `to`. Plan amendments:
+
+- **Names.** `plan_rename` with `new_slug` = the current slug is `plan_relink`, a mode of the same
+  planner, so the rename's API is unchanged. `RenamePlan` gains `relink: bool`; the JSON and the
+  DTO do not, since the caller knows what it asked (`moves` is empty and `new_slug` equals `from`).
+- **The predicate is stricter than "resolves via an alias".** A link is rewritten when its last
+  segment is one of the note's aliases, it resolves to the note with the alias rule (the index's
+  `via_alias`, so exactly lint's straggler set, #913 included), **and** its rewritten address
+  resolves to the note too. The third clause leaves the #913 shape alone (`[[portfolios/old]]`
+  reaching a question through its alias would become `[[portfolios/new]]`, the portfolio): it
+  still resolves and warns, and the resolver fix will change it. A portfolio's straggler is
+  rewritten to its folder form.
+- **`--reason` is refused with `--relink`** (and `reason` with `relink`): the `relinked` line has no
+  `reason:` continuation, so a reason would be dropped silently otherwise.
+- **The no-op `retain` is the rename's only.** A rename drops an address rewrite whose text does not
+  change (a former name taken back); a relink never produces one, so it keeps every edit, which is
+  what makes the plan's mutation observable (`[[new]]` counted as a second address).
+- **More probes**: `relink_leaves_a_link_the_stem_sends_elsewhere_alone`,
+  `relink_leaves_a_link_that_resolves_by_stem_even_when_listed_as_an_alias`,
+  `relink_rewrites_a_portfolio_straggler_to_its_folder_form`,
+  `relink_leaves_a_folder_straggler_whose_folder_form_points_elsewhere`,
+  `relink_rewrites_a_field_holding_an_alias`, `relink_with_to_is_refused`,
+  `a_relinked_straggler_pause_line_is_reachable_by_the_new_slug` (#879's comment), and in
+  `lint_tests` `a_relink_clears_the_straggler_warnings` and
+  `a_relinked_line_with_an_ascii_hyphen_is_reported`.
+
 ---
 
 ## Out of scope, by the RFC

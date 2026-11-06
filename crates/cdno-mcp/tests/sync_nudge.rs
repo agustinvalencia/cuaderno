@@ -208,7 +208,8 @@ async fn a_written_rename_nudges_and_a_dry_run_does_not() {
     let server = server_over(store).with_sync_nudge(Arc::new(SyncNudge::new(sentinel.clone())));
     let input = |dry_run: bool, expected_plan: Option<String>| RenameNoteInput {
         note: "surrogate-model".to_owned(),
-        to: "emulator-study".to_owned(),
+        to: Some("emulator-study".to_owned()),
+        relink: None,
         reason: None,
         dry_run: Some(dry_run),
         expected_plan,

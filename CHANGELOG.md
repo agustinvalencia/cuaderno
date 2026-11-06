@@ -8,6 +8,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`--relink`: rewrite the stragglers to where they already point** (RFC 0007 T30, closes #879;
+  the last task of epic #848). `cdno note rename <note> --relink` and `rename_note { note, relink:
+  true }` keep the note's slug and rewrite every link that reaches it only through one of its
+  aliases (exactly `cdno lint`'s "names a renamed note" set, as a `merge=union` journal on a second
+  clone brings back) to the current slug, and a §3.5 field holding one of its aliases with it. The
+  same planner, plan hash, preview, sync check and write path as a rename, in a mode where nothing
+  moves and the aliases stay listed; a link is rewritten only when the new address resolves to the
+  same note, so a reference can only move to where it already points. The log line is `relinked
+  [[<new>]] — <title>` with an indented `references: <n>` and no `was:`; with no straggler nothing is
+  written or logged. `--relink` with `--to` or `--reason` is a usage error; over MCP `to` becomes
+  optional, `relink` with `to` (or `reason`) is `INVALID_PARAMS`, and the result is the rename DTO
+  with `moves: []`. Lint checks a `relinked` line's shape as it does a `renamed` one. A hand-written
+  `action paused on [[old]]` is reachable by `resume_action` under the new slug once relinked.
 - **RLM 1.2: a reference is an address** (RFC 0007 T28, closes #877). The method gains a minor
   version: practice 1 keeps its rule that past entries are never edited, with one exception, an
   address: when a page is renamed, every reference to it is corrected, the old name is kept on the

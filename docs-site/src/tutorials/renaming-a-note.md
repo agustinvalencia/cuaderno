@@ -129,8 +129,9 @@ renamed files, the corrected links and the alias arrive through the sync like an
   side touches these notes.
 - If the sync stops on a conflict, resolve it, then run `cdno lint`. A link that came back with the
   old name still works through the alias, and lint warns that `[[old]]` names a renamed note, now
-  `new`. Editing it to the new name is allowed, even in a past log entry; leaving it is harmless. A
-  sweep for these is planned.
+  `new`. Leaving it is harmless; `cdno note rename new --relink` rewrites every such link to the new
+  name in one go ([relinking the stragglers](../reference/cli/note.md#relinking-the-stragglers---relink)),
+  and editing one by hand is allowed too, even in a past log entry.
 - Run any `cdno` command in the vault once on every machine, on a cdno that has `note rename`, before
   renaming anything an archived action references;
   [the reference](../reference/cli/note.md#on-the-other-machine) says why and what `cdno lint` says

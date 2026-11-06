@@ -95,6 +95,9 @@ same-slug question is renamed through the question. Dailies, weeklies, monthlies
 tracking, inbox items, archived action notes, stewardships, commitments, a custom note kept as a
 folder and a note with no `type` are refused (`note_not_renamable`).
 
+With [`--relink`](#relinking-the-stragglers---relink) the note keeps its slug, and the links that
+still reach it through a former name are rewritten to the current one.
+
 ### Arguments
 
 | Argument | Description |
@@ -105,7 +108,8 @@ folder and a note with no `type` are refused (`note_not_renamable`).
 
 | Flag | Description |
 |------|-------------|
-| `--to <SLUG>` | The new slug. Prompted in an interactive session; required under `--no-interactive`. |
+| `--to <SLUG>` | The new slug. Prompted in an interactive session; required under `--no-interactive` (unless `--relink`). |
+| `--relink` | Keep the slug and rewrite every link that reaches the note only through a former name to it. Nothing moves. Cannot be combined with `--to` or `--reason` (a usage error, exit `2`); composes with `--dry-run` and `--skip-sync-check`. See [relinking the stragglers](#relinking-the-stragglers---relink). |
 | `--reason <STRING>` | Why, in a short clause; it becomes the `reason:` line of the log entry. Never prompted. |
 | `--dry-run` | Print the preview, writing nothing. Refused exactly as the write would be (see [the sync check](#the-sync-check)); exits 0 only when the write would proceed. |
 | `--skip-sync-check` | Rename even when the vault is behind its upstream. A git operation paused mid-way still refuses. See [the sync check](#the-sync-check). |
@@ -240,6 +244,51 @@ A link written with an old name still works in cdno, so leaving it is harmless. 
 to the new name is allowed too, even in a past log entry or an archived action note: it is the same
 address correction a rename makes.
 
+### Relinking the stragglers: `--relink`
+
+A link written with a former name after the rename is a straggler: cdno still resolves it through
+the alias, and [`cdno lint`](lint.md) reports it, but an editor cannot follow it. The usual way one
+appears is a vault synced between two machines with a journal merged line by line (`merge=union`):
+the rename rewrote a log line on one machine, the other appended a line beside it, and the merge kept
+both versions, so the old line comes back holding the old name. `--relink` rewrites every straggler
+in one go:
+
+```text
+$ cdno lint
+[warning] journal/2026/daily/2026-11-06.md: `[[calibrate-the-surrogate-model-against-the]]` names a renamed note — now `surrogate-calibration`
+
+$ cdno note rename surrogate-calibration --relink --dry-run
+Dry run: nothing written.
+  rewrite  journal/2026/daily/2026-11-06.md  1 link
+  log      journal/2026/daily/2026-11-06.md
+             relinked [[surrogate-calibration]] — Calibrate the surrogate model against the high-fidelity thermal runs
+               references: 1
+  1 reference in 1 note · plan 1c09…
+
+$ cdno note rename surrogate-calibration --relink
+```
+
+The last command prints the same preview and ``Relinked 1 reference to `surrogate-calibration`.``
+It goes through the same preview, plan hash, sync check and refusals as a rename, with three
+differences:
+
+- **Only a straggler is rewritten.** A link is rewritten when it resolves to the note through one of
+  its aliases, exactly the links `cdno lint` warns about, and only to an address that resolves to
+  the same note. A link that already names the note by its slug or path is left alone, and so is a
+  link a former name no longer reaches (another note took that file name since). A reference can
+  only ever move to where it already points. A field such as `project:` that holds one of the note's
+  former names is rewritten too: a field is read by its value alone, so until the relink it named no
+  note at all.
+- **Nothing moves and no alias changes.** The note stays where it is, byte for byte unless it links
+  to itself by a former name, and its `aliases:` stay listed, so an old link anywhere else (a file
+  `ignore` hides, the other machine) keeps working.
+- **The log line is `relinked`.** It reads `relinked [[<slug>]] — <title>` with an indented
+  `references: <n>` line and no `was:`, since the name did not change. With no straggler there is
+  nothing to write: ``Nothing to relink: no link reaches `<slug>` through a former name.``, and
+  nothing is logged.
+
+With `--json` the shape is a rename's, with `moves` empty and `new_slug` equal to `from`.
+
 ### On the other machine
 
 Some vaults live in a git repository with a working copy on more than one machine, synced by a tool
@@ -251,8 +300,9 @@ that merges. Three things apply:
 - **A conflict is the other machine's edit meeting the rename.** The sync stops rather than resolve
   it. Resolve it as you would any merge, then run [`cdno lint`](lint.md): a link the merge brought
   back with the old name is reported as a straggler (`[[old]]` names a renamed note — now `new`).
-  It still resolves in cdno, through the alias, but an editor cannot follow it; a command that sweeps
-  these (`--relink`) is planned and not yet available, so fix such a link by hand for now.
+  It still resolves in cdno, through the alias, but an editor cannot follow it: run
+  [`cdno note rename <note> --relink`](#relinking-the-stragglers---relink) to rewrite every one to
+  the current name (or fix one by hand).
 - **Run any `cdno` command in the vault once on every clone, on a cdno that stamps RLM 1.2 (one that
   has `note rename`), before renaming anything an archived action references.** (Starting the MCP
   server on it counts too.) That records each archived action note in a form that ignores link
@@ -271,6 +321,8 @@ cdno note list person
 cdno note rename calibrate-the-surrogate-model --to surrogate-calibration --dry-run
 cdno note rename calibrate-the-surrogate-model --to surrogate-calibration --reason "the derived slug was too long"
 cdno note rename calibrate-the-surrogate-model --to surrogate-calibration --dry-run --skip-sync-check   # plan a vault that is behind
+cdno note rename surrogate-calibration --relink --dry-run   # the links still under a former name
+cdno note rename surrogate-calibration --relink
 cdno note revise concept:woodbury-identity --section Proof --content-file proof.md \
   --reason "shorter proof via push-through"
 ```

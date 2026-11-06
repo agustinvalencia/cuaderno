@@ -102,6 +102,15 @@ pub enum DomainError {
     )]
     PortfolioSlugMismatch { question_slug: String, slug: String },
 
+    /// A rename was asked both to relink and to take the new slug `to`
+    /// (RFC 0007 §8 S8, T30). A relink keeps the note's slug, so a relink
+    /// request carries no new one: refused rather than one of the two
+    /// silently winning.
+    #[error(
+        "a relink keeps the note's slug, so it takes no new one ('{to}'); relink, or rename to '{to}', not both"
+    )]
+    RelinkTakesNoSlug { to: String },
+
     /// A note the rename verb does not rename (RFC 0007 §5.2). `reason` is
     /// `archived` (an archived action note, whose own frozen prefix would
     /// change), `folder` (a folder note, or a question whose portfolio

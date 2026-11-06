@@ -898,6 +898,13 @@ This ensures no information is lost while keeping the project map clean and focu
 
   This is the one exception to the append-only rule: a reference is an address, so a rename corrects every reference to the note, through its slug or any of its earlier aliases, in every indexed note, the journal included, to the new name. Everything else in a past entry stays as it was written; the `renamed` line records that the correction happened and what the old name was.
 
+  The straggler repair, `cdno note rename <note> --relink` and `rename_note { relink: true }` (RFC 0007 §8 S8), is the same correction for a note that does not move: every link that reaches the note only through one of its aliases (lint's straggler, as a `merge=union` journal brings one back) is rewritten to the current slug, nothing moves and the aliases stay listed. It writes `relinked [[<new>]] — <title>` with an indented `references: <n>` line and no `was:`, and nothing at all when there is no straggler. `relinked` is not a focus marker either.
+
+  ```markdown
+  - **15:05**: relinked [[surrogate-calibration]] — Calibrate the surrogate model against the baseline
+    references: 1
+  ```
+
 - **The `during:` tag.** While a focus is open (a carried one included), a log line written by `cdno log`, `cdno log note`, `append_to_log` and `note_to_daily` gets an indented `during: [[<project-slug>]]` continuation, and `cdno capture` / `capture` writes `captured_during: <project-slug>` into the new inbox item's frontmatter. Triage (`cdno triage`, `discard_inbox_item`) copies the item's tag onto its own log line, so the tag outlives the file. The continuation sits below the line's head, so no reader of the heads sees it; it is how a later review can tell where a captured thought came from.
 
 **The trade-off.** A project's Current State is a small snapshot, so copying the old text into the log is cheap and makes the log self-contained. A concept's body can be pages long and is revised often, so copying it would bury the daily sequence under prose. Mutable custom notes therefore keep their history through the daily log line, which records *when* and *why*, not through a diff of *what*: the old text is left to version control, when the vault is kept under it, rather than copied into the log. Edits made outside cuaderno, in an editor, are legitimate because markdown is the source of truth, but they leave no log line; that is a limit of the invariant, not something lint enforces.
