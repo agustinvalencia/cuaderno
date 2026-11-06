@@ -70,7 +70,7 @@ impl RelativeDay {
     /// bounds rather than panicking — `chrono`'s range is far outside any
     /// date a vault will hold, so the saturation arm is unreachable in
     /// practice and exists only to keep this total.
-    fn resolve(self, today: NaiveDate) -> NaiveDate {
+    pub(in crate::vault) fn resolve(self, today: NaiveDate) -> NaiveDate {
         let offset = match self {
             Self::Yesterday => -1,
             Self::Today => 0,

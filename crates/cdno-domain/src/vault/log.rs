@@ -21,7 +21,7 @@ use super::Vault;
 use super::index_entry::build_index_entry_for;
 
 use super::DAILY_LOGS_SECTION;
-use super::projects::actions::LOG_DURING_KEY;
+use super::projects::actions::{LOG_DURING_KEY, LOG_REASON_KEY, LOG_WAS_KEY, flatten_reason};
 
 impl Vault {
     /// Append a log entry to the daily note for the given moment.
@@ -137,10 +137,7 @@ impl Vault {
         entry: &str,
     ) -> Result<String, DomainError> {
         let line = format_log_line(time, entry);
-        let mut doc = MarkdownDocument::parse(base)?;
-        doc.append_to_section(DAILY_LOGS_SECTION, &line)?;
-        doc.move_section_to_end(&self.daily_anchor_section()?)?;
-        Ok(doc.render().to_owned())
+        append_log_line(base, &line, &self.daily_anchor_section()?)
     }
 
     /// Stage a "created" log line for a freshly-written note onto `tx`,
@@ -247,10 +244,60 @@ pub(in crate::vault) fn daily_note_path(date: NaiveDate) -> Result<VaultPath, Do
     Ok(VaultPath::new(cdno_core::paths::daily_note_relpath(date))?)
 }
 
+/// Place one rendered log `line` (as [`format_log_line`] renders it) in a
+/// daily note's `content`: at the end of the `## Logs` section, with the
+/// note's trailing `anchor` section re-pinned to the bottom (#232/#212).
+///
+/// Pure: the one placement rule [`Vault::fold_daily_log_line`] (and so
+/// [`Vault::stage_daily_logs`]) applies, shared with the rename planner,
+/// which folds the `renamed` line into a daily note it is already
+/// rewriting (RFC 0007 §5.6). `anchor` is
+/// [`Vault::daily_anchor_section`]'s answer.
+pub(in crate::vault) fn append_log_line(
+    content: String,
+    line: &str,
+    anchor: &str,
+) -> Result<String, DomainError> {
+    let mut doc = MarkdownDocument::parse(content)?;
+    doc.append_to_section(DAILY_LOGS_SECTION, line)?;
+    doc.move_section_to_end(anchor)?;
+    Ok(doc.render().to_owned())
+}
+
+/// Head of the daily-log entry recording a rename (RFC 0007 §5.6).
+pub(in crate::vault) const LOG_RENAMED_PREFIX: &str = "renamed ";
+
+/// The daily-log entry recording a rename: `renamed [[<new_link>]] —
+/// <title>`, then an indented `was: <old_slug>` line and, when `reason` is
+/// given and not blank once flattened, an indented `reason: <reason>` line
+/// (RFC 0007 §5.6, the shape of the `was:` / `now:` and `reason:`
+/// continuations the family already writes).
+///
+/// `was:` carries a **copied value, never a link**: as a link it would
+/// dangle, or be rewritten by the very operation it records. `old_slug` is
+/// a slug (the planner passes the note's current slug, which the slug rule
+/// keeps free of brackets). `title` goes through [`flatten_for_log`] and
+/// the reason through `flatten_reason`, so the entry stays one entry.
+pub(in crate::vault) fn format_renamed_log_entry(
+    new_link: &str,
+    title: &str,
+    old_slug: &str,
+    reason: Option<&str>,
+) -> String {
+    let base = format!(
+        "{LOG_RENAMED_PREFIX}[[{new_link}]] \u{2014} {}\n  {LOG_WAS_KEY}{old_slug}",
+        flatten_for_log(title)
+    );
+    match reason.map(flatten_reason).filter(|r| !r.is_empty()) {
+        Some(reason) => format!("{base}\n  {LOG_REASON_KEY}{reason}"),
+        None => base,
+    }
+}
+
 /// Render one log line in the canonical `- **HH:MM**: text` form.
 /// Trailing newline means subsequent `append_to_section` calls stack
 /// cleanly without introducing blank lines between entries.
-fn format_log_line(time: NaiveTime, entry: &str) -> String {
+pub(in crate::vault) fn format_log_line(time: NaiveTime, entry: &str) -> String {
     format!("- **{:02}:{:02}**: {}\n", time.hour(), time.minute(), entry,)
 }
 

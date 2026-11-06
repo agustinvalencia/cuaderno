@@ -1292,30 +1292,24 @@ fn check_append_only(
     let content = store.read_file(path)?;
     let mut issues = Vec::new();
 
-    let plain = verify_extent(&content, snap.frozen_size, &snap.frozen_hash);
+    let (plain, masked) = hash_verdicts(&content, snap);
     // The version check runs whichever path accepts the row: an unknown
     // version is worth a warning even on a note that was never renamed.
-    let masked = match (&snap.masked_hash, snap.mask_version, snap.masked_size) {
-        (Some(hash), Some(version), Some(size)) => {
-            if version == cdno_core::hash::MASK_VERSION {
-                let text = cdno_core::hash::mask_references(&content, NoteType::reference_keys());
-                Some((verify_extent(&text, size, hash), size, text.len()))
-            } else {
-                issues.push(LintIssue::warning(
-                    path.clone(),
-                    format!(
-                        "archival snapshot was masked under mask version {version}, which this \
-                         cdno does not know (it knows {}); only the plain hash was checked, so a \
-                         renamed reference in the frozen prefix reads as an edit; upgrade cdno",
-                        cdno_core::hash::MASK_VERSION
-                    ),
-                ));
-                None
-            }
+    let masked = match masked {
+        MaskedVerdict::Checked(extent, size, now) => Some((extent, size, now)),
+        MaskedVerdict::UnknownVersion(version) => {
+            issues.push(LintIssue::warning(
+                path.clone(),
+                format!(
+                    "archival snapshot was masked under mask version {version}, which this \
+                     cdno does not know (it knows {}); only the plain hash was checked, so a \
+                     renamed reference in the frozen prefix reads as an edit; upgrade cdno",
+                    cdno_core::hash::MASK_VERSION
+                ),
+            ));
+            None
         }
-        // Archived before migration 004 and not yet backfilled (its plain
-        // hash failed at open): the plain path alone decides.
-        _ => None,
+        MaskedVerdict::Absent => None,
     };
 
     let masked_verified = matches!(masked, Some((Extent::Verified, _, _)));
@@ -1355,6 +1349,48 @@ fn check_append_only(
     }
     issues.push(LintIssue::error(path.clone(), message));
     Ok(issues)
+}
+
+/// The masked path's verdict in [`hash_verdicts`].
+enum MaskedVerdict {
+    /// Checked: the extent, the masked size stamped, the masked file's length.
+    Checked(Extent, u64, usize),
+    /// Stamped under a mask version this binary does not know: not checked.
+    UnknownVersion(u32),
+    /// Archived before migration 004 and not yet backfilled (its plain hash
+    /// failed at open): the plain path alone decides.
+    Absent,
+}
+
+/// Both hash paths of [`check_append_only`] over `content`: the plain
+/// verdict, and the masked one when the row has a usable masked hash.
+fn hash_verdicts(
+    content: &str,
+    snap: &cdno_core::index::ArchivalSnapshot,
+) -> (Extent, MaskedVerdict) {
+    let plain = verify_extent(content, snap.frozen_size, &snap.frozen_hash);
+    let masked = match (&snap.masked_hash, snap.mask_version, snap.masked_size) {
+        (Some(hash), Some(version), Some(size)) if version == cdno_core::hash::MASK_VERSION => {
+            let text = cdno_core::hash::mask_references(content, NoteType::reference_keys());
+            MaskedVerdict::Checked(verify_extent(&text, size, hash), size, text.len())
+        }
+        (Some(_), Some(version), Some(_)) => MaskedVerdict::UnknownVersion(version),
+        _ => MaskedVerdict::Absent,
+    };
+    (plain, masked)
+}
+
+/// Whether an archived note's `content` still verifies against its
+/// archival snapshot: the plain hash, or the masked one when the row has
+/// one at a known version — exactly the rule [`check_append_only`] accepts a
+/// row by, so the rename planner's "already diverged" warning (RFC 0007
+/// §5.4) and lint can never disagree.
+pub(in crate::vault) fn frozen_prefix_verifies(
+    content: &str,
+    snap: &cdno_core::index::ArchivalSnapshot,
+) -> bool {
+    let (plain, masked) = hash_verdicts(content, snap);
+    plain == Extent::Verified || matches!(masked, MaskedVerdict::Checked(Extent::Verified, _, _))
 }
 
 /// The verdict of one hash path in [`check_append_only`].

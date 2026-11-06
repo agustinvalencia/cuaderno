@@ -872,6 +872,25 @@ whose snapshot no longer verifies (the masked hash when the row has one, the pla
 and is still rewritten (§5.4). `hash` is `content_hash` over every path's `after` in path order
 with the log line's stamp and today's date excluded (§6.2).
 
+*Amended in the T18 PR:* `plan_rename` is `pub` (the unit suite is an integration target and
+cannot reach `pub(in crate::vault)`), and the builder is `Vault::rename_snapshot`. The snapshot is
+`VaultSnapshot { paths, aliases: Vec<(String, VaultPath)>, contents, frozen: BTreeMap<VaultPath, ArchivalSnapshot> }`:
+alias **rows** in `list_aliases` order rather than a map, so an alias two notes share stays taken
+while resolving to nothing; `contents` holds every note's text (the prefilter needs it) and the
+substring prefilter on the old slug and the note's aliases runs inside `plan_rename`, which parses
+only the notes that pass it; `frozen` carries the archived notes' snapshot rows, the one input the
+store cannot supply. `PlannedEdit` carries its merged `edits: Vec<AddressEdit>` (`after` is
+`before` with them applied). `append_log_line(content, line, anchor) -> Result<String, DomainError>`
+is extracted from `fold_daily_log_line`, the function that places a line (`stage_daily_logs` calls
+it through that): the anchor section comes from the daily template, and placing can fail. The
+`target` is resolved in the snapshot with `NoteRef::parse`'s grammar; a bare slug two notes share is
+`AmbiguousSlug` (pass a path, and `stem_shared` answers). The taken check skips the current slug,
+so a rename to it reaches `stem_shared` and then the no-op. A referrer's type is read from its
+`type:` scalar as text, so one whose frontmatter no longer parses still has its fields found and is
+refused by the drift guard instead of skipped. The date enters the hash only through today's daily
+note's path (T20's rollover rule); "today's date excluded" is read as "not hashed on its own".
+`VaultPath` derives `Ord` for the `BTreeMap` keys.
+
 **Deliverable.** The module, the types, the planner, tests on `MemoryVaultStore`.
 
 **Depends on.** T6, T7, T12, T13, T17.
@@ -918,6 +937,13 @@ type; reuse its chooser). Lint (`lint.rs`): `FOCUS_MARKER_PREFIXES` is generalis
 `:690`) covers `renamed` without the focus fold ever seeing it; plus a Warning when a `was:`
 continuation under a `renamed` head contains `[[` ("`was:` under a rename is a copied value; a
 link here is rewritten by the next rename").
+
+*Amended in the T18 PR:* the constants and `format_renamed_log_entry` landed with T18 (it writes
+the line); T19 keeps the lint list, the warning and the reader-side tests. `LOG_RENAMED_PREFIX`
+sits in `vault/log.rs` beside the formatter, `LOG_WAS_KEY` beside `LOG_REASON_KEY`.
+`build_created_line` has no per-type chooser to reuse (`stage_created_line` links the path stem,
+`projects/<slug>` for a project), so the planner picks the §5.6 form itself: the bare slug for a
+project, `actions/<slug>`, `portfolios/<slug>`, the path for a question or a custom note.
 
 **Deliverable.** The constants, the formatter, the lint list, the warning, tests.
 

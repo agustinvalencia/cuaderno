@@ -588,6 +588,13 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         | DomainError::ConfigChangedDuringMigration
         | DomainError::MigrationStampInvalid { .. } => return None,
 
+        // The rename planner's refusals (RFC 0007 §5.2, §5.4). No MCP tool
+        // reaches the planner yet; the `rename_note` tool (T26) gives each
+        // its code.
+        DomainError::NoteNotRenamable { .. }
+        | DomainError::StemShared { .. }
+        | DomainError::ReferenceDrift { .. } => return None,
+
         // A slug the caller typed (RFC 0007 §5.7, §6.2). The keys and the
         // `why` / `holder` / `kind` rendering match the CLI's `slug_rejection`
         // (`cdno-cli/src/commands/rejection.rs`); a test pins the pairing.
