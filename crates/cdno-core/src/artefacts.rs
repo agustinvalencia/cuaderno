@@ -32,7 +32,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::frontmatter::Frontmatter;
 use crate::path::VaultPath;
 use crate::paths::PORTFOLIOS;
 use crate::store::VaultStore;
@@ -59,7 +58,7 @@ pub fn is_attachment_stub(store: &Arc<dyn VaultStore>, path: &VaultPath) -> bool
     let Ok(raw) = store.read_file(path) else {
         return false;
     };
-    let Ok((frontmatter, _body)) = Frontmatter::parse(&raw) else {
+    let Ok((frontmatter, _body)) = crate::frontmatter::parse_note(path, &raw) else {
         return false;
     };
     let is_evidence = frontmatter
