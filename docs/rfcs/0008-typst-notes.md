@@ -384,7 +384,7 @@ and it is defined structurally so that no character list has to be maintained:
   any Typst markup character; over-escaping is harmless.* The characters met in practice are `#`,
   `_`, `*`, `$`, a backtick, `<`, `@`, `~`, `//` (so also the `://` of a URL, which otherwise
   lexes as a Link) and `/*`, and `:` in the head of a term-list item. And *put a space before `[[` when it follows a `#…`
-  expression*: `#emph[a][[x]]` is a trailing content-block argument, so it holds no link at all. The rule for the **machine**: the bytes
+  expression or a reference*: `#emph[a][[x]]` is a trailing content-block argument and `@ref[[x]]` a reference's supplement, so neither holds a link at all. The rule for the **machine**: the bytes
   between `[[` and `]]` must lex as one inline run of the leaf kinds above; any other leaf kind
   inside the brackets is a lint **Error**, as is a `[[` with no `]]` in its run (a stray `[[` in
   prose, unlike Markdown) and a link that spans a line (a Space leaf can hold a newline; the
@@ -434,11 +434,16 @@ One verb per type, as today, with a format switch, and two ways to supply the Ty
   note. The interface layer reads it and enumerates an optional assets folder beside it into
   `(source, destination)` pairs (the domain does no file I/O); the engine refuses a file whose
   parse holds an Error node or that already carries `<cdno>`; it finds every **literal relative
-  path** under `image`, `read`, `json`, `csv`, `yaml`, `toml`, `xml`, `cbor`, `bibliography`,
-  `include` and a path `import`, resolves each against the source file's directory, **refuses**
+  path** under `image` (and its `icc:`), `read`, `json`, `csv`, `yaml`, `toml`, `xml`, `cbor`,
+  `plugin`, `pdf.attach`, `bibliography`, `include` and a path `import`, and the string values
+  of `bibliography(style:)` and `cite(style:)` when they have an extension (any other string there is
+  a built-in style name), `raw(theme:)` and `raw(syntaxes:)`, array forms included, whether the
+  callee is bare, `std.`-qualified, parenthesised or reached through `.with(...)`, and `set`
+  rules, resolves each against the source file's directory, **refuses**
   unless every one lands inside the folder being copied (a non-literal path argument is refused
   with a `remedy`; a `/`-rooted path is refused, since it depends on the compile root the
-  rendering RFC owns; `@preview` imports and URLs are left alone), and **rewrites** each at its
+  rendering RFC owns; a `@preview` package import or include is left alone; Typst has no URL loading, so a string
+  such as `x://y` is an ordinary local path and is checked like any other), and **rewrites** each at its
   span to `<stem>/…` with the literal writer, listing the rewrites in the result. The assets are
   copied with the existing `FileOp::Import`, one op per file, before the note's write, each
   destination checked for existence as `file_attachment` does today. A compiled PDF among the
@@ -561,6 +566,9 @@ compiler, which is the rendering phase.
   template variables, the concept scaffold — does not apply to Typst notes in v1. Each is listed
   above with its rejection.
 - A **search hit** inside a Typst note shows Typst syntax in its snippet.
+- **A listed function used as a value is not seen.** `("a.png",).map(image)` or `let load = read`
+  followed by `load("x.txt")` reach for a file the adoption scan cannot find, so the file is not
+  copied and the path is not rewritten. The scan reads calls, not data flow.
 - A Typst **evidence** body is frozen as written; a wrong package version has no remedy until the
   rendering RFC (§9 D16).
 
