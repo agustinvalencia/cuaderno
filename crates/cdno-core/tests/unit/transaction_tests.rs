@@ -1174,3 +1174,95 @@ fn a_link_staged_before_its_alias_in_one_commit_resolves() {
     assert_eq!(row.resolved_path, Some(vp(NEW)));
     assert!(row.via_alias);
 }
+
+// ---------------------------------------------------------------------
+// A bare link resolved to a folder note by its folder name (#538)
+// ---------------------------------------------------------------------
+
+const PORTFOLIO_X: &str = "portfolios/x/_index.md";
+
+/// A portfolio `x` and a daily note linking `[[x]]`, resolved to it.
+fn vault_with_a_bare_folder_link(
+    index: Arc<dyn VaultIndex>,
+) -> (Arc<dyn VaultStore>, Arc<dyn VaultIndex>) {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    commit_note(
+        &store,
+        &index,
+        PORTFOLIO_X,
+        "---\ntype: portfolio\n---\n\n# X\n",
+    );
+    commit_note(
+        &store,
+        &index,
+        DAILY,
+        "---\ntype: daily\n---\n\n- see [[x]] and [[x#Evidence]]\n",
+    );
+    assert_eq!(resolution_of(&index, DAILY, "x"), Some(vp(PORTFOLIO_X)));
+    assert_eq!(
+        index.find_backlinks(&vp(PORTFOLIO_X)).unwrap(),
+        vec![vp(DAILY)]
+    );
+    (store, index)
+}
+
+fn both_indexes(check: impl Fn(Arc<dyn VaultIndex>)) {
+    check(Arc::new(MemoryIndex::new()));
+    let db = tempfile::tempdir().unwrap();
+    check(Arc::new(
+        cdno_core::index::SqliteIndex::open(db.path().join("index.sqlite")).unwrap(),
+    ));
+}
+
+#[test]
+fn a_flat_note_appearing_takes_a_bare_folder_link() {
+    both_indexes(|index| {
+        let (store, index) = vault_with_a_bare_folder_link(index);
+        commit_note(&store, &index, "stewardships/x.md", "# Flat X\n");
+
+        for raw in ["x", "x#Evidence"] {
+            assert_eq!(
+                resolution_of(&index, DAILY, raw),
+                Some(vp("stewardships/x.md"))
+            );
+        }
+        assert!(index.find_backlinks(&vp(PORTFOLIO_X)).unwrap().is_empty());
+    });
+}
+
+#[test]
+fn a_second_folder_note_unresolves_a_bare_folder_link() {
+    both_indexes(|index| {
+        let (store, index) = vault_with_a_bare_folder_link(index);
+        commit_note(&store, &index, "stewardships/x/_index.md", "# Folder X\n");
+
+        assert_eq!(resolution_of(&index, DAILY, "x"), None);
+        assert!(index.find_backlinks(&vp(PORTFOLIO_X)).unwrap().is_empty());
+    });
+}
+
+#[test]
+fn an_alias_appearing_takes_a_bare_folder_link() {
+    both_indexes(|index| {
+        let (store, index) = vault_with_a_bare_folder_link(index);
+        let (content, fm) = project_with_aliases(&["x"]);
+        commit_note_with(&store, &index, NEW, &content, fm);
+
+        let row = link_row(&index, DAILY, "x");
+        assert_eq!(row.resolved_path, Some(vp(NEW)));
+        assert!(row.via_alias);
+        assert!(index.find_backlinks(&vp(PORTFOLIO_X)).unwrap().is_empty());
+    });
+}
+
+#[test]
+fn a_shared_alias_unresolves_a_bare_folder_link() {
+    both_indexes(|index| {
+        let (store, index) = vault_with_a_bare_folder_link(index);
+        let (content, fm) = project_with_aliases(&["x"]);
+        commit_note_with(&store, &index, "projects/a.md", &content, fm.clone());
+        commit_note_with(&store, &index, "projects/b.md", &content, fm);
+
+        assert_eq!(resolution_of(&index, DAILY, "x"), None);
+    });
+}

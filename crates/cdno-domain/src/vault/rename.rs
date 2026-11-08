@@ -750,7 +750,8 @@ impl Vault {
             })
             .collect();
         // The address a folder note answers to: its folder path, never a
-        // bare name, so `[[new]]` would dangle. After a rename it is the new
+        // bare name, since the folder form is unambiguous and `[[new]]`
+        // can be taken by a note with that file name or an alias. After a rename it is the new
         // folder; in a relink, the folder the note already has.
         let folder_form: Option<String> = match (&old_folder, &folder_segments) {
             (Some(folder), _) if relink => Some(folder.to_string()),

@@ -528,6 +528,17 @@ impl VaultTransaction {
                                             &row.target_raw,
                                             &names,
                                         )))
+                                // A bare link resolved to a folder note by
+                                // its folder name ranks below every stem
+                                // and alias (#538), so it follows a path or
+                                // alias that could take it.
+                                || (crate::extractors::is_bare_folder_name_link(
+                                    p,
+                                    &row.target_raw,
+                                ) && crate::extractors::target_may_name(
+                                    &row.target_raw,
+                                    &names,
+                                ))
                         },
                         |t| crate::extractors::target_may_name(t, &names),
                     )

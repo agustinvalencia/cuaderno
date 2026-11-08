@@ -1705,3 +1705,44 @@ fn a_derived_portfolio_slug_that_is_an_alias_is_refused() {
     );
     assert_eq!(snapshot(&store), before, "nothing was written");
 }
+
+#[test]
+fn creating_a_portfolio_resolves_a_dangling_bare_link_and_backlinks_agree() {
+    // #538, the transaction seam: `[[sparse-vs-dense-ood]]` dangles until the
+    // portfolio is created through a domain write.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index = Arc::new(MemoryIndex::new());
+    store
+        .write_file(
+            &vp("journal/2026/daily/2026-01-31.md"),
+            "---\ntype: daily\ndate: 2026-01-31\n---\n\n# Saturday\n\n## Logs\n- **09:00**: see [[sparse-vs-dense-ood]]\n",
+        )
+        .unwrap();
+    let (vault, _report) = Vault::new(
+        Arc::clone(&store),
+        index.clone() as Arc<dyn VaultIndex>,
+        VaultConfig::default(),
+    )
+    .expect("Vault::new");
+    assert!(
+        vault
+            .resolve_wikilink("sparse-vs-dense-ood")
+            .unwrap()
+            .is_none()
+    );
+
+    let path = vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Sparse vs dense OOD", None)
+        .expect("create succeeds");
+
+    let resolved = vault
+        .resolve_wikilink("sparse-vs-dense-ood")
+        .unwrap()
+        .expect("bare name resolves");
+    assert_eq!(resolved.path, path);
+    let backlinks = index.find_backlinks(&path).unwrap();
+    assert!(
+        backlinks.contains(&vp("journal/2026/daily/2026-01-31.md")),
+        "{backlinks:?}"
+    );
+}

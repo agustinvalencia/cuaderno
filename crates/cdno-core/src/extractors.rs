@@ -530,6 +530,11 @@ impl AliasMap {
         self.0.get(name).and_then(Option::as_ref)
     }
 
+    /// Whether two or more notes declare `name`, so it resolves to nothing.
+    pub fn is_shared(&self, name: &str) -> bool {
+        matches!(self.0.get(name), Some(None))
+    }
+
     /// Whether no note declares any alias.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
@@ -648,6 +653,11 @@ pub(crate) fn resolve_one(
     // to nothing. The holder must be in the path set, like every other
     // rule's answer, so a map read moments apart from the paths cannot
     // resolve to a note the set no longer has.
+    // An alias two notes share resolves to nothing, and does not fall
+    // through to the folder-note rule below.
+    if aliases.is_shared(needle) {
+        return None;
+    }
     if let Some(holder) = aliases
         .unique(needle)
         .filter(|holder| vault_paths.contains(*holder))
@@ -682,6 +692,25 @@ pub(crate) fn resolve_one(
         }
     }
     None
+}
+
+/// Whether a link row resolved to `path` is a bare link to that folder note
+/// by its folder name (the last rule of [`resolve_wikilinks`], #538). Such a
+/// row ranks below the stem and alias rules but is recorded as a direct
+/// resolution, so re-resolution has to reconsider it explicitly when a
+/// path or an alias appears or goes. Anchor stripped, like the rule.
+pub fn is_bare_folder_name_link(path: &VaultPath, target_raw: &str) -> bool {
+    let p = path.as_path();
+    if p.file_name().and_then(|f| f.to_str()) != Some("_index.md") {
+        return false;
+    }
+    let target = target_raw.split_once('#').map_or(target_raw, |(t, _)| t);
+    let target = target.trim_end();
+    !target.contains('/')
+        && p.parent()
+            .and_then(|d| d.file_name())
+            .and_then(|f| f.to_str())
+            == Some(target)
 }
 
 /// The names a note answers to under [`resolve_wikilinks`]'s rules: its

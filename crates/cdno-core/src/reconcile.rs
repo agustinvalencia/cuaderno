@@ -261,8 +261,10 @@ pub fn reconcile(
     // that name has to follow. Phase 1 resolved against the map before, so
     // when the step runs it reconsiders every unresolved row, every row
     // pointing at a vanished path, and every row resolved through an alias
-    // (an added stem outranks it, a changed map may move it), with the map
-    // after. Rows resolved by path or stem do not depend on aliases.
+    // (an added stem outranks it, a changed map may move it), and every bare
+    // link resolved to a folder note by its folder name (#538: the last rule,
+    // so an added stem, a second folder note or an alias takes it), with the
+    // map after. Other rows resolved by path or stem do not depend on aliases.
     //
     // This is a best-effort heal of a cache, so a failure here (the write
     // lock timing out, the link query failing) is recorded as a per-pass
@@ -281,7 +283,11 @@ pub fn reconcile(
                     &**index,
                     &fs_set,
                     &aliases_after,
-                    |p, row| !fs_set.contains(p) || row.via_alias,
+                    |p, row| {
+                        !fs_set.contains(p)
+                            || row.via_alias
+                            || crate::extractors::is_bare_folder_name_link(p, &row.target_raw)
+                    },
                     |_| true,
                 )
             });
@@ -356,7 +362,7 @@ pub fn reconcile(
 /// path are left alone, so this never overrides what the source note's own
 /// reindex decided.
 ///
-/// - Reconciliation (Phase 2b) passes `is_stale = |p, row| !vault_paths.contains(p) || row.via_alias`
+/// - Reconciliation (Phase 2b) passes `is_stale = |p, row| !vault_paths.contains(p) || row.via_alias || is_bare_folder_name_link(p, &row.target_raw)`
 ///   and accepts every target: a pass sees the whole filesystem, and its
 ///   Phase 1 resolved against the alias map from before the pass.
 /// - `VaultTransaction::commit` passes a predicate true for the paths the

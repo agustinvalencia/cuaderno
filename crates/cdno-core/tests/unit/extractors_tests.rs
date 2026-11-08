@@ -1128,3 +1128,17 @@ fn a_qualified_target_gains_no_folder_name_match() {
         Some((vp("portfolios/surrogate-model/_index.md"), false))
     );
 }
+
+#[test]
+fn a_shared_alias_does_not_fall_through_to_a_folder_note() {
+    let vault = paths(&[
+        "notes/a.md",
+        "notes/b.md",
+        "portfolios/surrogate-model/_index.md",
+    ]);
+    let aliases = AliasMap::from_rows([
+        ("surrogate-model".to_string(), vp("notes/a.md")),
+        ("surrogate-model".to_string(), vp("notes/b.md")),
+    ]);
+    assert_eq!(resolve_bare("surrogate-model", &vault, &aliases), None);
+}

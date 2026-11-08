@@ -2098,3 +2098,78 @@ fn a_bare_link_resolves_once_its_folder_note_is_created_sqlite() {
 fn a_bare_link_resolves_once_its_folder_note_is_created_memory() {
     bare_folder_note_gains_backlink(Arc::new(MemoryIndex::new()));
 }
+
+// ---- #538: a bare folder-note link follows the paths and aliases that outrank it
+
+fn write_raw(root: &Path, rel: &str, content: &str) {
+    let path = root.join(rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, content).unwrap();
+}
+
+fn bare_folder_link_vault(index: &Arc<dyn VaultIndex>) -> (TempDir, Arc<dyn VaultStore>) {
+    let vault = TempDir::new().unwrap();
+    let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(vault.path()));
+    write_md(vault.path(), "portfolios/x/_index.md", "# X");
+    write_md(vault.path(), "journal/a.md", "# A\n\nSee [[x]].");
+    reconcile(&store, index, &IgnoreSet::empty()).unwrap();
+    assert_eq!(
+        outgoing_resolution(index, "journal/a.md", "x"),
+        Some(vp("portfolios/x/_index.md"))
+    );
+    (vault, store)
+}
+
+fn for_both_indexes(check: impl Fn(Arc<dyn VaultIndex>)) {
+    check(Arc::new(MemoryIndex::new()));
+    let db = TempDir::new().unwrap();
+    check(Arc::new(
+        SqliteIndex::open(db.path().join("index.sqlite")).unwrap(),
+    ));
+}
+
+#[test]
+fn reconcile_gives_a_bare_folder_link_to_a_flat_note_that_appears() {
+    for_both_indexes(|index| {
+        let (vault, store) = bare_folder_link_vault(&index);
+        write_md(vault.path(), "stewardships/x.md", "# Flat");
+        reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+        assert_eq!(
+            outgoing_resolution(&index, "journal/a.md", "x"),
+            Some(vp("stewardships/x.md"))
+        );
+        assert!(
+            index
+                .find_backlinks(&vp("portfolios/x/_index.md"))
+                .unwrap()
+                .is_empty()
+        );
+    });
+}
+
+#[test]
+fn reconcile_unresolves_a_bare_folder_link_when_a_second_folder_note_appears() {
+    for_both_indexes(|index| {
+        let (vault, store) = bare_folder_link_vault(&index);
+        write_md(vault.path(), "stewardships/x/_index.md", "# Other");
+        reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+        assert_eq!(outgoing_resolution(&index, "journal/a.md", "x"), None);
+    });
+}
+
+#[test]
+fn reconcile_gives_a_bare_folder_link_to_an_alias_that_appears() {
+    for_both_indexes(|index| {
+        let (vault, store) = bare_folder_link_vault(&index);
+        write_raw(
+            vault.path(),
+            "notes/h.md",
+            "---\ntype: concept\naliases: [x]\n---\n\n# H\n",
+        );
+        reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+        assert_eq!(
+            outgoing_resolution(&index, "journal/a.md", "x"),
+            Some(vp("notes/h.md"))
+        );
+    });
+}

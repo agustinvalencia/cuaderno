@@ -54,7 +54,9 @@ impl Vault {
     /// (`<target>/_index.md`, for a folder-backed note like a portfolio or
     /// expanded stewardship), then a unique file-stem (last path segment)
     /// match, and, only when no note has that stem, a slug-shaped alias
-    /// exactly one note declares (`via_alias` is then set). **Ambiguity
+    /// exactly one note declares (`via_alias` is then set), and, last of all,
+    /// a bare target (no `/`) naming the folder of exactly one folder note
+    /// (`<dir>/<target>/_index.md`; a shared alias stops short of it). **Ambiguity
     /// resolves to `None`**: when two or more notes share the stem the
     /// target names, or the alias, the link is left unresolved rather than
     /// guessing — resolution stays *sound* (a collision never navigates to
