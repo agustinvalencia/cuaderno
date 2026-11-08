@@ -42,6 +42,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   case-insensitively, so `NOTE.MD` is indexed; nothing else changes.
 
 - **Typst parser in the build** (RFC 0008 T5, #933). `cdno-core` gains `typst-syntax` (pinned `=0.15.1`) behind a single module, `typst`, with `has_label` (the cheap `<cdno>` byte search) and `parses` (one definition of "does not parse", with the first error's line).
+- **The Typst metadata block reader** (RFC 0008 §5.3, #934). `typst::metadata_block` reads a `.typ` file's `#metadata((…)) <cdno>` block as JSON with its source spans, with no evaluation, and names every way it can be wrong with its line.
 
 ## [0.44.0] - 2026-11-06
 
