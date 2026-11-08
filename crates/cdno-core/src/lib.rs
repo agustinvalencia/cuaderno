@@ -23,4 +23,5 @@ pub mod slug;
 pub mod store;
 pub mod template;
 pub mod transaction;
+pub mod typst;
 pub mod watcher;

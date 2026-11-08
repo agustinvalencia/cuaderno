@@ -47,6 +47,10 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # only variant we use; feature-gating keeps compile time down.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
+# Typst syntax tree, for the Typst note format (RFC 0008). Exact pin: the
+# parser must postdate the syntax it reads. Only cdno-core names it.
+typst-syntax = "=0.15.1"
+
 # CLI parsing
 clap = { version = "4.5", features = ["derive"] }
 
