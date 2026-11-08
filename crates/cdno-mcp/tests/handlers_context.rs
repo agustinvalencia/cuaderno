@@ -1729,6 +1729,40 @@ async fn list_note_types_reports_builtins_and_custom_with_schemas() {
 }
 
 #[tokio::test]
+async fn list_note_types_reports_admits_typst() {
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "concept".to_owned(),
+        CustomNoteType {
+            folder: "concepts".to_owned(),
+            required: vec![],
+            optional: vec![],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    let server = server_with_config(config);
+    let result = server
+        .list_note_types(Parameters(EmptyInput {}))
+        .await
+        .expect("list_note_types");
+    let json = decode_json(&result);
+    let types = json["note_types"].as_array().expect("note_types array");
+    let admits = |name: &str| {
+        types
+            .iter()
+            .find(|t| t["name"] == name)
+            .unwrap_or_else(|| panic!("{name} present"))["admits_typst"]
+            .clone()
+    };
+    assert_eq!(admits("evidence"), true);
+    assert_eq!(admits("concept"), true);
+    assert_eq!(admits("project"), false);
+}
+
+#[tokio::test]
 async fn get_stewardship_tracking_returns_the_declared_contract() {
     // Agent discovery (#487): the contract comes back with the entries, so a
     // caller can learn the record key, the group field and each metric's

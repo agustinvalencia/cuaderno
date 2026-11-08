@@ -1152,6 +1152,8 @@ pub struct NoteTypeInfoDto {
     pub date_field: Option<String>,
     pub append_only: bool,
     pub supplied_placeholders: Vec<String>,
+    /// Whether notes of this type may be written in Typst (`format: typst`).
+    pub admits_typst: bool,
 }
 
 impl From<cdno_domain::NoteTypeInfo> for NoteTypeInfoDto {
@@ -1172,6 +1174,7 @@ impl From<cdno_domain::NoteTypeInfo> for NoteTypeInfoDto {
             date_field: info.date_field,
             append_only: info.append_only,
             supplied_placeholders: info.supplied_placeholders,
+            admits_typst: info.admits_typst,
         }
     }
 }

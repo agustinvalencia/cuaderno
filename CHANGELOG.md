@@ -32,6 +32,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   (extension-only, ASCII case-insensitive), `note_address` and `note_candidates`; nothing calls
   them yet.
 
+- **The `[typst]` config table** (RFC 0008 T11, part of #927). `[typst] note_types` lists the note
+  types whose notes may be written in Typst; absent means `evidence` plus `concept` when the vault
+  declares it, and `[]` turns the feature off. An explicit list is validated at open: every name
+  must be a known type, and `daily`, `weekly`, `monthly`, `project`, `action`, `commitment`,
+  `inbox`, `tracking`, `stewardship`, `portfolio` and `question` are refused. `list_note_types` reports `admits_typst` for
+  each type. Nothing reads Typst notes yet.
+
 ## [0.44.0] - 2026-11-06
 
 ### Added

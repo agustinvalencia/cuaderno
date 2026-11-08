@@ -144,7 +144,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Discover the vault's note types and their schemas: every built-in type plus any user-defined `[note_types.*]` custom type, each with its folder, required/optional fields, typed field specs (name, type, default, allowed values), template, title/date fields, append-only flag, and the `{{placeholders}}` its create path supplies. Call this before `create_custom_note` so you supply the right `fields` -- the create tool's schema can't enumerate a vault's custom types, this can."
+        description = "Discover the vault's note types and their schemas: every built-in type plus any user-defined `[note_types.*]` custom type, each with its folder, required/optional fields, typed field specs (name, type, default, allowed values), template, title/date fields, append-only flag, whether it admits Typst (`admits_typst`: may a note of this type be written with `format: typst`), and the `{{placeholders}}` its create path supplies. Call this before `create_custom_note` so you supply the right `fields` -- the create tool's schema can't enumerate a vault's custom types, this can."
     )]
     pub async fn list_note_types(
         &self,

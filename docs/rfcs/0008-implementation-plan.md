@@ -722,7 +722,7 @@ see a note path move to `parse_note`: `reconcile.rs` (2), `transaction.rs` (1), 
 implicit default of §5.9; `Some(vec![])` turns the feature off. In `type_registry.rs`:
 
 ```rust
-pub const TYPST_REFUSED_TYPES: &[&str] = &["daily","weekly","monthly","project","action","commitment","inbox","tracking","stewardship"];
+pub const TYPST_REFUSED_TYPES: &[&str] = &["daily","weekly","monthly","project","action","commitment","inbox","tracking","stewardship","portfolio","question"];
 impl TypeRegistry<'_> {
     /// `evidence`, plus `concept` when declared, unless `[typst] note_types` says otherwise.
     pub fn typst_types(&self) -> Vec<&str>;
