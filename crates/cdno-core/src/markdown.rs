@@ -53,6 +53,7 @@ impl MarkdownDocument {
     pub fn parse(raw: impl Into<String>) -> Result<Self, ParseError> {
         let raw: String = raw.into();
 
+        // Markdown on purpose: a MarkdownDocument is a Markdown document, whatever its caller.
         // Frontmatter::parse borrows `raw`; we compute the body
         // offset from the returned body slice, then immediately drop
         // the borrow so we can move `raw` into the struct.

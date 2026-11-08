@@ -631,6 +631,7 @@ fn parse_block(block: &str, which: DriftSide) -> Result<serde_json::Value, Front
         "\n"
     };
     let doc = format!("---\n{block}{eol}---\n");
+    // YAML on purpose: `doc` is built here as a Markdown frontmatter block.
     Frontmatter::parse(&doc)
         .map(|(fm, _)| fm.as_json())
         .map_err(|e| FrontmatterDrift::Unparsable {

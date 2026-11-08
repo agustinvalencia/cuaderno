@@ -75,6 +75,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   or with a link needing an escape is refused with its line) and `assemble_typst_note`. Nine
   `DomainError` variants with remedies and their MCP rejection codes are added ahead of the verbs
   that raise them; nothing calls the writer yet.
+- **One door for reading a note** (RFC 0008 T10, part of #927). `cdno-core` gains `parse_note`
+  and `parse_note_spanned`, which read a note by its format (Markdown frontmatter, or a Typst
+  `<cdno>` block with the bytes after it as the body), `Frontmatter::from_typst`, and
+  `note_headings`; reconciliation, the transaction's search mirror and the attachment-stub check
+  read through it. A Markdown note reads exactly as before.
 
 ## [0.44.0] - 2026-11-06
 

@@ -30,7 +30,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::classify::{NoteScope, classify};
 use crate::error::IndexError;
 use crate::extractors::AliasMap;
-use crate::frontmatter::Frontmatter;
 use crate::hash::content_hash;
 use crate::index::{
     DeadlineEntry, LinkResolution, LinkResolutionUpdate, MilestoneEntry, NoteEntry, VaultIndex,
@@ -358,8 +357,8 @@ fn backfill_fts_one(
     let content = store
         .read_file(path)
         .map_err(|e| format!("read failed: {e}"))?;
-    let (_frontmatter, body) =
-        Frontmatter::parse(&content).map_err(|e| format!("frontmatter parse failed: {e}"))?;
+    let (_frontmatter, body) = crate::frontmatter::parse_note(path, &content)
+        .map_err(|e| format!("frontmatter parse failed: {e}"))?;
     let title = crate::extractors::first_h1(body);
 
     let mut tx = VaultTransaction::new(store.clone(), index.clone())
@@ -460,8 +459,8 @@ fn reconcile_one(
     let mtime_ns = meta.mtime_ns();
     let indexed_at_ns = system_time_to_ns(SystemTime::now());
 
-    let (frontmatter, body) =
-        Frontmatter::parse(&content).map_err(|e| format!("frontmatter parse failed: {e}"))?;
+    let (frontmatter, body) = crate::frontmatter::parse_note(path, &content)
+        .map_err(|e| format!("frontmatter parse failed: {e}"))?;
     let note_type = frontmatter
         .require_field::<String>("type")
         .map_err(|e| format!("missing or invalid `type` field: {e}"))?;
