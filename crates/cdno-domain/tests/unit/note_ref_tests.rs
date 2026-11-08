@@ -149,6 +149,13 @@ fn parses_path_shaped_references() {
         NoteRef::parse("CLAUDE.md", TYPES),
         NoteRef::Path("CLAUDE.md")
     );
+    // Case is not a contract: `NOTE.MD` is a note (RFC 0008 5.1).
+    assert_eq!(NoteRef::parse("NOTE.MD", TYPES), NoteRef::Path("NOTE.MD"));
+    // A bare `.typ` stays a slug until Typst notes are indexed.
+    assert_eq!(
+        NoteRef::parse("draft.typ", TYPES),
+        NoteRef::Bare("draft.typ")
+    );
 }
 
 #[test]
