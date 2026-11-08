@@ -51,10 +51,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   row. A Markdown file imported as an attachment or moved with its folder no
   longer triggers a link re-resolution pass. `VaultTransaction::note_delta` exposes the sets.
 - **The metadata block can be written and edited in place** (RFC 0008 T8, #936). `typst` gains
-  `write_block`, `rewrite_scalar`, `append_list_value`, `remove_list_value`, `scalar_span` and
-  `changed_only_at`: a value is rewritten at its span, a missing key is inserted where the
+  `write_block`, `rewrite_scalar`, `append_list_value`, `remove_list_value`, and `scalar_span`: a value is rewritten at its span, a missing key is inserted where the
   dictionary closes (replacing the `:` of `(:)`), and a comment or key order inside the block
-  survives. Typst keywords are written as string keys. The block's literal rule now also admits
+  survives (except inside an array being edited). Typst keywords are written as string keys. The block's literal rule now also admits
   integer and float literals with an optional leading `-`. Nothing calls them yet.
 
 ## [0.44.0] - 2026-11-06
