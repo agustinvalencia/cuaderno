@@ -50,6 +50,11 @@ pub enum ConfigError {
     #[error("invalid focus configuration: {0}")]
     InvalidFocus(String),
 
+    /// A `[typst] note_types` list names an unknown or refused type. Raised by
+    /// the type registry in `cdno-domain`, which owns the refusal list.
+    #[error("invalid typst configuration: {0}")]
+    InvalidTypst(String),
+
     /// `[vault] method_version` could not be read from the config file's text
     /// by [`crate::config::method_version_from_str`]: the text is not TOML, or
     /// the value is not `major.minor`. The message itself names the file, the

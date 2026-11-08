@@ -1509,3 +1509,45 @@ fn holder_sentinels_must_be_strings() {
     let err = error_chain(&VaultConfig::load(dir.path()).unwrap_err());
     assert!(err.contains("holder_sentinels"), "{err}");
 }
+
+#[test]
+fn typst_table_parses_and_rejects_unknown_keys() {
+    let dir = TempDir::new().unwrap();
+    write_config(dir.path(), "[vault]\nname = \"Test\"\n");
+    assert_eq!(
+        VaultConfig::load(dir.path()).unwrap().typst.note_types,
+        None
+    );
+
+    write_config(
+        dir.path(),
+        "[vault]\nname = \"Test\"\n\n[typst]\nnote_types = [\"evidence\", \"concept\"]\n",
+    );
+    assert_eq!(
+        VaultConfig::load(dir.path()).unwrap().typst.note_types,
+        Some(vec!["evidence".to_owned(), "concept".to_owned()])
+    );
+
+    write_config(
+        dir.path(),
+        "[vault]\nname = \"Test\"\n\n[typst]\nnote_types = []\n",
+    );
+    assert_eq!(
+        VaultConfig::load(dir.path()).unwrap().typst.note_types,
+        Some(vec![])
+    );
+
+    write_config(
+        dir.path(),
+        "[vault]\nname = \"Test\"\n\n[typst]\noutput = \"pdf\"\n",
+    );
+    let err = VaultConfig::load(dir.path()).expect_err("unknown key");
+    use std::error::Error;
+    let mut chain = vec![err.to_string()];
+    let mut cur = err.source();
+    while let Some(e) = cur {
+        chain.push(e.to_string());
+        cur = e.source();
+    }
+    assert!(chain.iter().any(|m| m.contains("output")), "{chain:?}");
+}

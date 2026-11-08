@@ -18,6 +18,7 @@
 use std::str::FromStr;
 
 use cdno_core::config::{CustomNoteType, FieldType, VaultConfig};
+use cdno_core::error::ConfigError;
 
 use crate::error::DomainError;
 use crate::note_type::NoteType;
@@ -27,6 +28,27 @@ use crate::note_type::NoteType;
 /// creation date (`created` and `date` share one value), and its `body`
 /// (RFC 0002 §6.2 — empty when the caller supplies none).
 pub const CUSTOM_SUPPLIED_PLACEHOLDERS: &[&str] = &["title", "slug", "created", "date", "body"];
+
+/// Built-in types that never admit Typst: their section machinery is
+/// Markdown's, or that Typst does not apply to (RFC 0008 §5.9, §9 D1). An explicit `[typst] note_types` naming
+/// one fails validation.
+pub const TYPST_REFUSED_TYPES: &[&str] = &[
+    "daily",
+    "weekly",
+    "monthly",
+    "project",
+    "action",
+    "commitment",
+    "inbox",
+    "tracking",
+    "stewardship",
+    "portfolio",
+    "question",
+];
+
+/// The custom type the implicit `[typst]` default adds to `evidence` when the
+/// vault declares it.
+const TYPST_DEFAULT_CUSTOM: &str = "concept";
 
 /// A resolved note type — either one of the built-in [`NoteType`] variants or a
 /// user-defined config type. Borrows from the [`VaultConfig`] it was resolved
@@ -187,6 +209,9 @@ pub struct NoteTypeInfo {
     pub append_only: bool,
     /// The `{{placeholders}}` this type's create path supplies to a template.
     pub supplied_placeholders: Vec<String>,
+    /// Whether notes of this type may be written in Typst (`[typst] note_types`,
+    /// RFC 0008 §5.9).
+    pub admits_typst: bool,
 }
 
 /// A borrowing view over the vault's note-type declarations. Built-in types
@@ -216,6 +241,7 @@ impl<'a> TypeRegistry<'a> {
         config.validate_schemas()?;
         config.validate_tracking()?;
         config.validate_focus()?;
+        Self::validate_typst(config)?;
         for name in config.note_types.keys() {
             // Case-insensitive: `from_str` is exact-match, so `[note_types.Project]`
             // would otherwise slip past and resolve as a *distinct* type from the
@@ -230,6 +256,72 @@ impl<'a> TypeRegistry<'a> {
         }
         Self::validate_reserved_schema_fields(config)?;
         Ok(())
+    }
+
+    /// Validate an **explicit** `[typst] note_types`: every name must be a
+    /// known type and none may be in [`TYPST_REFUSED_TYPES`]. The implicit
+    /// default is never validated, so a vault that never declared `concept`
+    /// opens clean.
+    fn validate_typst(config: &VaultConfig) -> Result<(), DomainError> {
+        let Some(names) = &config.typst.note_types else {
+            return Ok(());
+        };
+        let registry = TypeRegistry::new(config);
+        for name in names {
+            if TYPST_REFUSED_TYPES.contains(&name.as_str()) {
+                return Err(DomainError::Config(ConfigError::InvalidTypst(format!(
+                    "`{name}` cannot be written in Typst: Typst is admitted for evidence \
+                     and custom types only (refused: {}); remove it from the list",
+                    TYPST_REFUSED_TYPES.join(", ")
+                ))));
+            }
+            if !registry.is_known(name) {
+                return Err(DomainError::Config(ConfigError::InvalidTypst(format!(
+                    "`{name}` is not a known note type; remove it from the list"
+                ))));
+            }
+        }
+        Ok(())
+    }
+
+    /// The types whose notes may be written in Typst: an explicit
+    /// `[typst] note_types` as written, else `evidence` plus `concept` when the
+    /// vault declares it. `[]` is the feature off.
+    pub fn typst_types(&self) -> Vec<&str> {
+        match &self.config.typst.note_types {
+            Some(names) => names.iter().map(String::as_str).collect(),
+            None => {
+                let mut types = vec![NoteType::Evidence.as_str()];
+                if self.config.note_types.contains_key(TYPST_DEFAULT_CUSTOM) {
+                    types.push(TYPST_DEFAULT_CUSTOM);
+                }
+                types
+            }
+        }
+    }
+
+    /// Whether notes of `type_name` may be written in Typst.
+    pub fn admits_typst(&self, type_name: &str) -> bool {
+        self.typst_types().contains(&type_name)
+    }
+
+    /// The folders the Typst-admitting types live in: `portfolios` for
+    /// evidence, a custom type's `folder` otherwise. Sorted and de-duplicated.
+    pub fn typst_folders(&self) -> Vec<String> {
+        let mut folders: Vec<String> = self
+            .typst_types()
+            .into_iter()
+            .filter_map(|name| match self.resolve(name)? {
+                NoteTypeDescriptor::Builtin(NoteType::Evidence) => {
+                    Some(cdno_core::paths::PORTFOLIOS.to_owned())
+                }
+                NoteTypeDescriptor::Builtin(_) => None,
+                NoteTypeDescriptor::Custom { def, .. } => Some(def.folder.clone()),
+            })
+            .collect();
+        folders.sort();
+        folders.dedup();
+        folders
     }
 
     /// Reject (or warn on) a `[schemas.<builtin>.fields.<name>]` that collides
@@ -380,6 +472,7 @@ impl<'a> TypeRegistry<'a> {
                 NoteTypeDescriptor::Custom { def, .. } => def.append_only,
             },
             supplied_placeholders: descriptor.supplied_placeholders(),
+            admits_typst: self.admits_typst(note_type),
         })
     }
 

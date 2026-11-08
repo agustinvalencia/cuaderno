@@ -4,7 +4,7 @@
 
 use cdno_core::config::{CustomNoteType, FieldSpec, FieldType, SchemaExtension, VaultConfig};
 use cdno_domain::note_type::NoteType;
-use cdno_domain::{NoteTypeDescriptor, NoteTypeKind, TypeRegistry};
+use cdno_domain::{NoteTypeDescriptor, NoteTypeKind, TYPST_REFUSED_TYPES, TypeRegistry};
 
 /// A minimal `string` field spec (no default/values) for the reserved-field
 /// tests — enough to place a declared field under a built-in type's schema.
@@ -529,4 +529,123 @@ fn a_placeholder_field_declaring_a_default_warns_once() {
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(warnings[0].contains("note_type=commitment"), "{warnings:?}");
     assert!(warnings[0].contains("field=due"), "{warnings:?}");
+}
+
+fn with_typst(mut config: VaultConfig, names: Option<&[&str]>) -> VaultConfig {
+    config.typst.note_types = names.map(|n| n.iter().map(|s| (*s).to_owned()).collect());
+    config
+}
+
+fn config_with_concept() -> VaultConfig {
+    let mut config = VaultConfig::default();
+    config
+        .note_types
+        .insert("concept".to_owned(), custom("concepts", &[], &[]));
+    config
+}
+
+#[test]
+fn typst_default_is_evidence_plus_concept_when_declared() {
+    let plain = VaultConfig::default();
+    assert_eq!(TypeRegistry::new(&plain).typst_types(), vec!["evidence"]);
+
+    let with_concept = config_with_concept();
+    let registry = TypeRegistry::new(&with_concept);
+    assert_eq!(registry.typst_types(), vec!["evidence", "concept"]);
+    assert!(registry.admits_typst("evidence"));
+    assert!(registry.admits_typst("concept"));
+    assert!(!registry.admits_typst("project"));
+}
+
+#[test]
+fn a_vault_without_concept_opens_with_no_typst_table() {
+    let mut config = VaultConfig::default();
+    assert!(config.typst.note_types.is_none());
+    assert!(TypeRegistry::validate(&mut config).is_ok());
+}
+
+#[test]
+fn an_empty_list_turns_typst_off() {
+    let mut config = with_typst(config_with_concept(), Some(&[]));
+    assert!(TypeRegistry::validate(&mut config).is_ok());
+    let registry = TypeRegistry::new(&config);
+    assert!(registry.typst_types().is_empty());
+    assert!(!registry.admits_typst("evidence"));
+    assert!(!registry.admits_typst("concept"));
+    assert!(registry.typst_folders().is_empty());
+}
+
+#[test]
+fn the_refused_set_is_every_builtin_but_evidence() {
+    let mut refused: Vec<&str> = TYPST_REFUSED_TYPES.to_vec();
+    refused.sort_unstable();
+    let mut expected: Vec<&str> = NoteType::ALL
+        .iter()
+        .map(|t| t.as_str())
+        .filter(|n| *n != "evidence")
+        .collect();
+    expected.sort_unstable();
+    assert_eq!(refused, expected);
+}
+
+#[test]
+fn an_empty_name_is_unknown() {
+    let mut config = with_typst(VaultConfig::default(), Some(&[""]));
+    let err = TypeRegistry::validate(&mut config).expect_err("empty name");
+    assert!(
+        err.to_string().contains("is not a known note type"),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_explicit_list_naming_a_refused_type_fails_validation() {
+    for refused in TYPST_REFUSED_TYPES {
+        let mut config = with_typst(VaultConfig::default(), Some(&["evidence", refused]));
+        let err = TypeRegistry::validate(&mut config)
+            .expect_err(&format!("`{refused}` should be refused"));
+        let msg = err.to_string();
+        assert!(msg.contains(&format!("`{refused}`")), "{msg}");
+        assert!(msg.contains("evidence and custom types only"), "{msg}");
+    }
+}
+
+#[test]
+fn an_explicit_list_naming_an_unknown_type_fails_validation() {
+    let mut config = with_typst(VaultConfig::default(), Some(&["concept"]));
+    let err = TypeRegistry::validate(&mut config).expect_err("unknown type");
+    assert!(
+        err.to_string().contains("`concept` is not a known"),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_explicit_list_naming_known_types_validates() {
+    let mut config = with_typst(config_with_person(), Some(&["evidence", "person"]));
+    assert!(TypeRegistry::validate(&mut config).is_ok());
+    assert!(TypeRegistry::new(&config).admits_typst("person"));
+}
+
+#[test]
+fn typst_folders_follow_the_types() {
+    let config = config_with_concept();
+    assert_eq!(
+        TypeRegistry::new(&config).typst_folders(),
+        vec!["concepts".to_owned(), "portfolios".to_owned()]
+    );
+    let only_concept = with_typst(config_with_concept(), Some(&["concept"]));
+    assert_eq!(
+        TypeRegistry::new(&only_concept).typst_folders(),
+        vec!["concepts".to_owned()]
+    );
+}
+
+#[test]
+fn describe_reports_admits_typst() {
+    let config = config_with_concept();
+    let registry = TypeRegistry::new(&config);
+    assert!(registry.describe("evidence").unwrap().admits_typst);
+    assert!(registry.describe("concept").unwrap().admits_typst);
+    assert!(!registry.describe("project").unwrap().admits_typst);
 }

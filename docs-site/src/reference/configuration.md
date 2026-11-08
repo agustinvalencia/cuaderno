@@ -376,6 +376,25 @@ it. A `held_by:` that is not a plain name (an unquoted `[[people/ana]]`, a numbe
 or not) also reads as no holder; quote a wikilink (`held_by: "[[people/ana]]"`) for it to count as a
 name.
 
+## Typst
+
+The `[typst]` section says which note types may be written in Typst rather than Markdown. Its one
+key, `note_types`, is optional. Leave it out and the default applies: `evidence`, plus `concept`
+when the vault declares that type. A vault that never declared `concept` opens as before. An
+unknown key in the section is a hard error, as in `[focus]`.
+
+```toml
+[typst]
+note_types = ["evidence", "concept"]
+```
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `note_types` | `evidence`, plus `concept` when declared | The types whose notes may be Typst. `[]` turns the feature off. An explicit list is checked when the vault opens: each name must be a built-in or a declared type, and `daily`, `weekly`, `monthly`, `project`, `action`, `commitment`, `inbox`, `tracking`, `stewardship`, `portfolio` and `question` are refused: their section machinery is Markdown's, or (portfolio, question) they are not note types Typst applies to. |
+
+`list_note_types` reports `admits_typst` for every type, so an agent can tell which types take
+`format: typst`. Nothing machine-specific (a compiler path, a package root, fonts) belongs here.
+
 ## Templates
 
 Templates live in `.cuaderno/templates/` and are pure variable substitution. `cdno init` writes two
