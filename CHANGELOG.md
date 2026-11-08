@@ -43,6 +43,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 - **Typst parser in the build** (RFC 0008 T5, #933). `cdno-core` gains `typst-syntax` (pinned `=0.15.1`) behind a single module, `typst`, with `has_label` (the cheap `<cdno>` byte search) and `parses` (one definition of "does not parse", with the first error's line).
 
+- **A commit's added and removed notes come from its index ops** (RFC 0008 T3, #931). The
+  transaction no longer takes a `.md` extension for a note: a path is added when a write created
+  it and it has an `UpsertNote` or a note extension, or a move reached it and an `UpsertNote` names
+  it; it is removed when a deleted or moved-away path was named by a `RemoveNote` or held an index
+  row. A Markdown file imported as an attachment or moved with its folder no
+  longer triggers a link re-resolution pass. `VaultTransaction::note_delta` exposes the sets.
+
 ## [0.44.0] - 2026-11-06
 
 ### Added
