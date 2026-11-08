@@ -137,6 +137,7 @@ pub fn projects_done_dir(year: i32) -> String {
 /// `journal/<year>/daily/YYYY-MM-DD.md`.
 pub fn daily_note_relpath(date: NaiveDate) -> String {
     format!(
+        // Markdown on purpose: the journal is machine-written Markdown.
         "{}/{}.md",
         journal_daily_dir(date.year()),
         date.format("%Y-%m-%d")
@@ -148,6 +149,7 @@ pub fn daily_note_relpath(date: NaiveDate) -> String {
 pub fn weekly_note_relpath(date: NaiveDate) -> String {
     let iso = date.iso_week();
     format!(
+        // Markdown on purpose: the journal is machine-written Markdown.
         "{}/{}-W{:02}.md",
         journal_weekly_dir(iso.year()),
         iso.year(),
@@ -163,6 +165,7 @@ pub fn weekly_note_relpath(date: NaiveDate) -> String {
 /// never straddle years, unlike ISO weeks).
 pub fn monthly_note_relpath(date: NaiveDate) -> String {
     format!(
+        // Markdown on purpose: the journal is machine-written Markdown.
         "{}/{}.md",
         journal_monthly_dir(date.year()),
         date.format("%Y-%m")
@@ -258,6 +261,7 @@ pub fn note_format_candidates(address: &str) -> Vec<VaultPath> {
 /// format the folder's other notes have.
 pub fn note_candidates(address: &str) -> Vec<VaultPath> {
     let mut all = note_format_candidates(address);
+    // Markdown on purpose: a folder note is `_index.md` whatever its siblings are.
     all.extend(VaultPath::new(format!("{address}/_index.md")).ok());
     all
 }
