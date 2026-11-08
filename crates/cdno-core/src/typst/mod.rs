@@ -21,6 +21,10 @@ use typst_syntax::{Lines, SyntaxKind, SyntaxNode, parse};
 
 pub use metadata::{EntrySpan, MetadataBlock, TypstError, metadata_block};
 
+mod paths;
+
+pub use paths::{PathArg, PathLiteral, path_args};
+
 /// The label that marks a Typst file as a note.
 pub const CDNO_LABEL: &str = "<cdno>";
 
