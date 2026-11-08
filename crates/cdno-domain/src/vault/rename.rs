@@ -1281,6 +1281,13 @@ impl Vault {
                     }
                     _ => raw.to_owned(),
                 };
+                // The exact path first: `x.MD` names that file, and its address
+                // `x` must not reach a sibling `x/_index.md` instead.
+                if let Ok(exact) = VaultPath::new(raw)
+                    && snapshot.paths.contains(&exact)
+                {
+                    return Ok(ResolvedNote::direct(exact));
+                }
                 if let Some(path) = paths::note_candidates(&address)
                     .into_iter()
                     .find(|path| snapshot.paths.contains(path))

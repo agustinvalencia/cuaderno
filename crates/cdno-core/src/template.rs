@@ -175,6 +175,7 @@ impl TemplateEngine {
         }
 
         // 2. Custom type-level template (e.g. `project.md`)
+        // Markdown on purpose: template files are Markdown.
         if let Some(content) = (self.loader)(&format!("{note_type}.md"))? {
             return Ok((Template { content }, TemplateSource::CustomBase));
         }

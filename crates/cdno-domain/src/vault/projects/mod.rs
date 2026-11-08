@@ -385,6 +385,7 @@ impl Vault {
                     == VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?
             }
             ProjectStatus::Parked => {
+                // Markdown on purpose: project maps are machine-written Markdown.
                 location.path
                     == VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?
             }

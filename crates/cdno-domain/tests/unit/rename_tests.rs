@@ -566,6 +566,38 @@ fn a_folder_note_named_like_the_target_is_not_a_shared_stem() {
     );
 }
 
+/// An upper-case `.MD` note is renamed by its exact path.
+#[test]
+fn an_upper_case_md_note_is_renamable_by_its_path() {
+    let f = fixture();
+    f.write("projects/other.MD", PROJECT);
+    let plan = f.plan("projects/other.MD", "new").expect("plan");
+    assert!(
+        plan.moves
+            .iter()
+            .any(|(from, _)| *from == vp("projects/other.MD")),
+        "moves: {:?}",
+        plan.moves
+    );
+}
+
+/// `x.MD` names that file, not the folder note its address `x` also reaches.
+#[test]
+fn an_upper_case_md_path_does_not_plan_the_sibling_folder_note() {
+    let f = fixture();
+    f.write("portfolios/surrogate-model/_index.md", PORTFOLIO);
+    f.write("portfolios/surrogate-model.MD", PROJECT);
+    if let Ok(plan) = f.plan("portfolios/surrogate-model.MD", "new") {
+        assert!(
+            plan.moves
+                .iter()
+                .all(|(from, _)| *from != vp("portfolios/surrogate-model/_index.md")),
+            "moves: {:?}",
+            plan.moves
+        );
+    }
+}
+
 #[test]
 fn a_dangling_portfolio_field_is_not_rewritten_on_a_question_rename() {
     let f = fixture();

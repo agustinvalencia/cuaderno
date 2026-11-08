@@ -240,7 +240,7 @@ impl Vault {
         // the named project note doesn't exist; the frontmatter link
         // (already in `content`) still stands.
         if let Some(project_target) = project {
-            // Markdown on purpose: portfolio and evidence notes are machine-written Markdown.
+            // Markdown on purpose: a project map is Markdown.
             let project_path = VaultPath::new(format!("{project_target}.md"))?;
             if self.store.exists(&project_path)? {
                 self.stage_project_link(&project_path, &path, &mut tx)?;
@@ -308,7 +308,7 @@ impl Vault {
                 self.available_portfolios_hint()
             ))));
         }
-        // Markdown on purpose: portfolio and evidence notes are machine-written Markdown.
+        // Markdown on purpose: a project map is Markdown.
         let project_path = VaultPath::new(format!("{project}.md"))?;
         if !self.store.exists(&project_path)? {
             return Err(DomainError::Store(StoreError::NotFound(
@@ -542,7 +542,7 @@ impl Vault {
 
         let created = at.date();
         let source_slug = slugify(source);
-        // Markdown on purpose: portfolio and evidence notes are machine-written Markdown.
+        // Markdown on purpose: the Markdown evidence verb; Typst has its own in T19.
         let filename = format!("{}-{source_slug}.md", created.format("%Y-%m-%d"));
         let path = VaultPath::new(format!(
             "{}/{portfolio}/{filename}",
@@ -623,7 +623,7 @@ impl Vault {
         let created = at.date();
         let evidence_slug = format!("{}-{}", created.format("%Y-%m-%d"), slugify(source));
         let stub_path = VaultPath::new(format!(
-            // Markdown on purpose: portfolio and evidence notes are machine-written Markdown.
+            // Markdown on purpose: the Markdown evidence verb; Typst has its own in T19.
             "{}/{portfolio}/{evidence_slug}.md",
             cdno_core::paths::PORTFOLIOS
         ))?;

@@ -164,6 +164,7 @@ impl Vault {
             return Ok(first);
         }
         for n in 2..COLLISION_LIMIT {
+            // Markdown on purpose: machine-written capture notes are Markdown.
             let candidate = VaultPath::new(format!("{base}-{n}.md"))?;
             if !self.store.exists(&candidate)? {
                 return Ok(candidate);
