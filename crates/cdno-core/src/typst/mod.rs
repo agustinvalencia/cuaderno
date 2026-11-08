@@ -46,6 +46,19 @@ pub fn has_label(source: &str) -> bool {
     source.contains(CDNO_LABEL)
 }
 
+/// Whether the tree holds a `<cdno>` Label node: the label as the parser reads it, so one in a
+/// comment, a raw block or a string does not count. A parser that cannot start answers `true`.
+pub fn has_label_node(source: &str) -> bool {
+    with_tree(source, label_node_in).unwrap_or(true)
+}
+
+fn label_node_in(node: &SyntaxNode) -> bool {
+    if node.kind() == SyntaxKind::Label && node.leaf_text() == CDNO_LABEL {
+        return true;
+    }
+    node.children().any(label_node_in)
+}
+
 /// P8: `Ok(())` when the tree holds no Error node; else the first one's line and message.
 pub fn parses(source: &str) -> Result<(), SyntaxFault> {
     with_tree(source, |root| {
