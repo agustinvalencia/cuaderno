@@ -102,7 +102,10 @@ fn func_call(source: &str, call: ast::FuncCall, node: &LinkedNode, out: &mut Vec
         Arg::Pos(e) => Some(e),
         _ => None,
     });
-    let Some(first) = first else { return };
+    let Some(first) = first else {
+        out.push(not_literal(source, name, node));
+        return;
+    };
     if name == "bibliography" {
         match unparen(first) {
             Expr::Array(items) => {

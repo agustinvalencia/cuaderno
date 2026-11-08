@@ -119,3 +119,21 @@ fn the_span_covers_an_escaped_value_as_written() {
     assert_eq!(l.value, "a\"b.png");
     assert_eq!(&src[l.span.clone()], "a\\\"b.png");
 }
+
+#[test]
+fn a_listed_call_without_a_positional_argument_is_reported_not_literal() {
+    let src = "#image(path: \"a.png\")\n#read(..args)\n";
+    assert_eq!(
+        path_args(src),
+        vec![
+            PathArg::NotLiteral {
+                call: "image".into(),
+                line: 1
+            },
+            PathArg::NotLiteral {
+                call: "read".into(),
+                line: 2
+            },
+        ]
+    );
+}
