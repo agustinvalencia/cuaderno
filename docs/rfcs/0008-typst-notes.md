@@ -266,29 +266,39 @@ their literal with a comment stating why.
 A `.typ` file is a Typst note when **all three** hold, checked **in this order**:
 
 1. It lies in the folder of a type that admits Typst (§5.9): under `portfolios/<slug>/` for
-   evidence, under the declared folder for concept. A `.typ` anywhere else is never read.
-2. It is not inside an attachment's folder or a Typst note's assets folder (§3.2, §5.7). Ownership
-   is checked **first**, from the owner: a file inside an owned folder is an attachment and is
-   **never read**, label or no label.
+   evidence, under the declared folder for concept.
+2. It is not inside an attachment's folder or a Typst note's assets folder (§3.2, §5.7). This is
+   settled from the owner, before the file itself is opened: a file inside an owned folder is an
+   attachment and is **never read**, label or no label.
 3. Its source contains a metadata block (§4) at the top level of the document.
 
-Condition 3 is the only one that reads the file, and the classifier does so with a **byte search
-for `<cdno>` before any parse**: a `.typ` without the label is never parsed. That matters because
-a Markdown note pays its parse once and then rides the index row's fast path, while a `.typ` that
-is not a note has no row and is re-examined on every `Vault::new`, which is every CLI invocation.
-The residual cost is one read per loose unlabelled `.typ` per command. S0 measured it (warm page
-cache, release build): `typst_syntax::parse` takes 24.9 µs on 2 KB, 226 µs on 20 KB and 2.2 ms on
-200 KB; the byte search 0.04 µs, 0.58 µs and 12.9 µs; a read about 11 µs (33 µs at 200 KB).
-Reading and searching 58 files of 20 KB raised `open_vault` from about 5 ms to about 6 ms, the
-upper bound for 58 loose files; owned attachments cost nothing, since they are not read.
+**The promise is "never parsed".** A `.typ` is parsed only when it is a candidate note: in an
+admitted folder, not owned, and carrying the label. Short of that, the one thing that can happen to
+it is a **byte search for `<cdno>`**, which runs on every non-owned `.typ` under `portfolios/` and
+under every custom type's folder, **whether or not the type admits Typst**, so that a labelled file
+in a folder the switch excludes can be reported (§5.9). A `.typ` anywhere else is never touched.
+That matters because a Markdown note pays its parse once and then rides the index row's fast path,
+while a `.typ` that is not a note has no row and is re-examined on every `Vault::new`, which is
+every CLI invocation. The residual cost is one read per non-owned unlabelled `.typ` per command.
+S0 measured it (warm page cache, release build): `typst_syntax::parse` takes 24.9 µs on 2 KB,
+226 µs on 20 KB and 2.2 ms on 200 KB; the byte search 0.04 µs, 0.58 µs and 12.9 µs; a read about
+11 µs (33 µs at 200 KB). Reading and searching 58 files of 20 KB raised `open_vault` from about
+5 ms to about 6 ms, the upper bound for 58 loose files; owned attachments cost nothing.
 
 A `.typ` that satisfies 1 and 2 but not 3, a loose `.typ` under a permitted folder with neither
 label nor owner, is reported by the classifier as a **Warning** ("Typst file is neither a note nor
-an attachment") and not indexed. A `.typ` that satisfies 1 and 2 and whose source holds `#metadata`,
-optional whitespace, `((` and a `type` key (a whitespace-tolerant byte check, since nothing has
-been parsed and §5.3's own form spans lines), but whose label is missing, mistyped (`<cdn>`) or not
-at top level is reported as an **Error** on the file (§9 D6): it was meant to be a note, and the
-one visible trace of a note that fell out of the index must be loud.
+an attachment") and not indexed. A `.typ` that satisfies 1 and 2, has no `<cdno>`, and whose bytes
+hold `#metadata(`, optional whitespace including newlines, `(`, and later a `type` or `"type"` key
+is reported as an **Error** on the file (§9 D6): it was meant to be a note, with a missing or
+mistyped (`<cdn>`) label, and the one visible trace of a note that fell out of the index must be
+loud. `#metadata ((` is not a call in Typst and does not match. The check is a byte search, so it
+also fires on such a call inside a comment, which errs on the loud side. A label that is present
+but is not the call's sibling, or a block not at top level, is found by the parse and reported on
+the note (§5.3).
+
+A labelled `.typ` under an owned folder stays an invisible attachment, with no row, Warning or
+Error. This is accepted: the folder belongs to its owner, and opening every owned file to look for
+a label would cost the read that ownership-first exists to avoid.
 
 The detection is **by content, not by convention**, for the same reason `artefacts.rs` reads the
 stub rather than trusting the path: a wrong answer in the "is a note" direction indexes a file as
@@ -362,7 +372,7 @@ and it is defined structurally so that no character list has to be maintained:
 - **Where links are read.** In markup, at any nesting (a content block inside a `#figure(…)` call
   is markup), over **contiguous runs of inline leaves** read from the source bytes — Text, Escape,
   Shorthand, SmartQuote and Space (the `[` and `]` of a link are Text leaves of their own) — because the lexer splits a plain run like
-  `[[2026-11-08-error-budget]]` into a dozen leaves with shorthands among them. Not in raw blocks
+  `[[2026-11-08-error-budget]]` into several leaves whenever it holds a `--` or a `'`, with shorthands and smart quotes among them. Not in raw blocks
   or inline raw, line or block comments, code-mode expressions, labels, references (`@x`) or
   maths. **And in the string values of the `<cdno>` dictionary**, with the span inside the quotes,
   so that `origin: "[[projects/surrogate-model]]"` is an edge and a rename of the project rewrites
@@ -373,9 +383,12 @@ and it is defined structurally so that no character list has to be maintained:
   **writers**, one line in LINKING-RULES: *inside `[[…]]` in a `.typ` body, put a backslash before
   any Typst markup character; over-escaping is harmless.* The characters met in practice are `#`,
   `_`, `*`, `$`, a backtick, `<`, `@`, `~`, `//` (so also the `://` of a URL, which otherwise
-  lexes as a Link) and `/*`, and `:` in the head of a term-list item. The rule for the **machine**: the bytes
+  lexes as a Link) and `/*`, and `:` in the head of a term-list item. And *put a space before `[[` when it follows a `#…`
+  expression*: `#emph[a][[x]]` is a trailing content-block argument, so it holds no link at all. The rule for the **machine**: the bytes
   between `[[` and `]]` must lex as one inline run of the leaf kinds above; any other leaf kind
-  inside the brackets is a lint **Error**. The scanner decodes
+  inside the brackets is a lint **Error**, as is a `[[` with no `]]` in its run (a stray `[[` in
+  prose, unlike Markdown) and a link that spans a line (a Space leaf can hold a newline; the
+  Markdown scanner refuses the same). The scanner decodes
   every **Escape** leaf by its lexed value (`\#` → `#`, `\u{2013}` → the character); Shorthand and
   SmartQuote leaves keep their **source bytes**, so `--` in a slug and a date's hyphens match as
   written. Lint *finds* `[[` as two adjacent Text leaves `[` in a markup node, so a run the lexer
@@ -388,8 +401,9 @@ and it is defined structurally so that no character list has to be maintained:
   a heading is never matched by its rendered text (`--` matches `--`, not an en dash).
 - **Renames.** `rewrite_wikilink_addresses` rewrites addresses in a Typst note over the spans the
   Typst scanner reports, writing the new address escaped by the same rule, and `differs_only_by`
-  verifies the result as for Markdown. The address span covers the unescaped address; S0 confirms
-  the round trip keeps the backslashes out of the span.
+  verifies the result as for Markdown. The address span holds the raw bytes of the address, any
+  escape inside it included (`a\_b`), and ends before the backslash of an escaped anchor; S0
+  confirmed the round trip.
 
 How a `[[slug]]` *looks* when compiled is a rendering question for the template (a `show regex`
 rule in a template can turn it into a link or a margin note) and is not the engine's concern.
@@ -497,7 +511,8 @@ note_types = ["evidence", "concept"]
 
 - **The default is `evidence`, plus `concept` when the vault declares it.** The implicit default is
   never validated against, so a vault that never declared `concept` opens as before. `[]` turns the
-  feature off: no `.typ` is read, every one is an attachment.
+  feature off: no `.typ` is parsed, a labelled one gets the Warning below, and the rest stay
+  attachments.
 - An **explicit** list is validated: a name must exist (built-in or declared), and the registry
   refuses `daily`, `weekly`, `monthly`, `project`, `action`, `commitment`, `inbox`, `tracking` and
   `stewardship`, whose section machinery is Markdown's (§9 D1). The refusal list and the
@@ -521,7 +536,8 @@ from the classifier's report (§5.1), since the lint walk is index-driven:
 | metadata block missing a required key | Error | `type` absent, or `title` absent on a type that requires it |
 | metadata block not literal | Error | any value outside strings, string arrays, booleans |
 | metadata block not first or not top-level | Error | anything but whitespace or comments before it, or nested |
-| metadata present, label missing, mistyped or not top-level | Error, *classifier* | §5.2 |
+| metadata present, label missing or mistyped | Error, *classifier* | §5.2 |
+| `<cdno>` present but not the call's sibling | Error | §5.2; found by the parse |
 | link interior not one inline run | Error | an unescaped markup character inside `[[…]]` (§5.5) |
 | Typst note does not parse | Warning | an Error node anywhere in the tree; creation already refuses it, so this catches a later hand edit; a Warning by the lint convention, since nothing downstream trips on it in v1 |
 | stem shared between `.md` and `.typ` | Error | §5.7; the message names the Obsidian cause |
@@ -804,7 +820,8 @@ Raised as open by the review; the maintainer's positions, 2026-11-08:
   as a note with a parse error and one lint Error naming the rule; never silently an attachment.
   With the label mistyped or missing: one classifier Error on the file.
 - A `.typ` under `portfolios/` without the label and with an owning stub: an attachment, as before;
-  without a stub: a lint Warning, not indexed, and never parsed (the byte search decides).
+  without a stub: a lint Warning, not indexed, and never parsed (the byte search decides). Inside
+  an owned folder a `.typ` is never read, labelled or not.
 - A rename of the concept the evidence note links to, and a rename of the project named in its
   `origin`: afterwards both addresses are rewritten, a byte comparison shows changes only inside
   the two references, and `cdno lint` is clean on this clone and on a clone that only pulled.
@@ -824,7 +841,7 @@ Raised as open by the review; the maintainer's positions, 2026-11-08:
 - `revise_note` whole-body on a Typst concept: logged `revised [[concepts/<slug>]] — <reason>`,
   the block untouched; by section: refused with the named rejection; on a Typst evidence note:
   refused as for Markdown.
-- `[typst] note_types = []`: no `.typ` is read, every existing attachment behaves as before, and
-  each labelled `.typ` gets one Warning. A vault with no `concept` type and no table opens clean.
+- `[typst] note_types = []`: no `.typ` is parsed, every existing attachment behaves as before, and
+  each labelled `.typ` not in an owned folder gets one Warning. A vault with no `concept` type and no table opens clean.
 - After S1, `grep` for `OsStr::new("md")` and `".md"` in non-test source finds only the three
   helpers, the classifier, and the annotated Markdown-on-purpose sites.
