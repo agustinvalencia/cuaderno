@@ -186,7 +186,8 @@ Notes and limits:
   `.cuaderno/templates/<type>.md` that references `{{<name>}}`.
 - **A create-path value wins over a declared default** — if the note type's create path already
   supplies a value for that name (an engine-supplied placeholder), that value takes precedence and
-  the declared default does not apply. Likewise a `[variables]` static var of the same name wins over
+  the declared default does not apply (declaring such a `default` logs a warning at startup; a field
+  declaring only `type` and `settable` does not). Likewise a `[variables]` static var of the same name wins over
   a schema default.
 - **A `[variables.prompt]` name is owned by the prompt** — if a field name is also a prompted
   variable, its value is collected via the prompt (from `--var`, an interactive prompt, or a static

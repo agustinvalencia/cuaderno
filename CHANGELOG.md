@@ -8,6 +8,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+- **No shadow warning for a field that declares no value** (closes #778). Declaring
+  `[schemas.commitment.fields.due]` with only `type` and `settable` is how a built-in's field is
+  made settable, and it no longer logs "schema field shadows an engine-supplied placeholder" at
+  startup. The warning now appears only when the field declares a `default`, the one key whose
+  value the engine-supplied placeholder would override.
 - **A folder note answers to its folder name** (closes #538). A bare `[[surrogate-model]]` now
   resolves to `portfolios/surrogate-model/_index.md`, and an expanded stewardship answers to its
   folder name the same way, instead of being a broken link. The rule is the last one tried, so a

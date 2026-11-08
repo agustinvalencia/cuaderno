@@ -17,7 +17,7 @@
 
 use std::str::FromStr;
 
-use cdno_core::config::{CustomNoteType, FieldType, VaultConfig};
+use cdno_core::config::{CustomNoteType, FieldSpec, FieldType, VaultConfig};
 
 use crate::error::DomainError;
 use crate::note_type::NoteType;
@@ -266,13 +266,17 @@ impl<'a> TypeRegistry<'a> {
                     });
                 }
                 if nt.supplied_placeholders().contains(&field_name.as_str()) {
-                    tracing::warn!(
-                        note_type = %type_name,
-                        field = %field_name,
-                        "schema field shadows an engine-supplied placeholder; the \
-                         engine-supplied value wins, so the declared default/value will \
-                         not take effect"
-                    );
+                    let overridden = overridden_value_keys(&schema.fields[field_name]);
+                    if !overridden.is_empty() {
+                        tracing::warn!(
+                            note_type = %type_name,
+                            field = %field_name,
+                            declared = %overridden.join(", "),
+                            "schema field shadows an engine-supplied placeholder; the \
+                             engine-supplied value wins, so the declared value will not \
+                             take effect"
+                        );
+                    }
                 }
             }
         }
@@ -409,4 +413,18 @@ pub(crate) fn hard_reserved_fields(nt: NoteType) -> Vec<&'static str> {
         reserved.push(period_key);
     }
     reserved
+}
+
+/// The keys of a schema field that carry a value the engine would supply
+/// anyway, and so lose to an engine-supplied placeholder of the same name.
+/// Only `default` carries a value; `type`, `settable`, `required`, `values`,
+/// `list` and `log_on_change` describe the field without supplying one, so a
+/// field declaring only those (the usual way to make a built-in's field
+/// settable) is not shadowed in any way that matters.
+pub fn overridden_value_keys(spec: &FieldSpec) -> Vec<&'static str> {
+    let mut keys = Vec::new();
+    if spec.default.is_some() {
+        keys.push("default");
+    }
+    keys
 }

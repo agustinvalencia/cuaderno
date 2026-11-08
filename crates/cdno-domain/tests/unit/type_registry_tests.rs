@@ -443,3 +443,52 @@ fn describe_renders_a_bool_default_and_preserves_allowed_values() {
         Some(vec!["draft".to_owned(), "final".to_owned()])
     );
 }
+
+#[test]
+fn shadow_check_ignores_a_field_declaring_only_type_and_settable() {
+    use cdno_domain::type_registry::overridden_value_keys;
+    let spec = FieldSpec {
+        ty: FieldType::Date,
+        settable: Some(true),
+        ..string_field()
+    };
+    assert!(overridden_value_keys(&spec).is_empty());
+}
+
+#[test]
+fn shadow_check_ignores_keys_that_carry_no_value() {
+    use cdno_domain::type_registry::overridden_value_keys;
+    let specs = [
+        FieldSpec {
+            required: true,
+            ..string_field()
+        },
+        FieldSpec {
+            values: Some(vec!["a".into()]),
+            ..string_field()
+        },
+        FieldSpec {
+            list: Some(false),
+            ..string_field()
+        },
+        FieldSpec {
+            log_on_change: Some(true),
+            ..string_field()
+        },
+    ];
+    for spec in &specs {
+        assert!(overridden_value_keys(spec).is_empty(), "{spec:?}");
+    }
+}
+
+#[test]
+fn shadow_check_reports_a_declared_default() {
+    use cdno_domain::type_registry::overridden_value_keys;
+    let spec = FieldSpec {
+        default: Some(toml::Value::String("2026-01-01".into())),
+        ty: FieldType::Date,
+        settable: Some(true),
+        ..string_field()
+    };
+    assert_eq!(overridden_value_keys(&spec), vec!["default"]);
+}
