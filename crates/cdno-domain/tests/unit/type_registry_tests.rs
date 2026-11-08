@@ -444,51 +444,89 @@ fn describe_renders_a_bool_default_and_preserves_allowed_values() {
     );
 }
 
-#[test]
-fn shadow_check_ignores_a_field_declaring_only_type_and_settable() {
-    use cdno_domain::type_registry::overridden_value_keys;
-    let spec = FieldSpec {
-        ty: FieldType::Date,
-        settable: Some(true),
-        ..string_field()
-    };
-    assert!(overridden_value_keys(&spec).is_empty());
-}
+/// Captures every `tracing` event as its message plus `name=value` fields.
+#[derive(Clone, Default)]
+struct Captured(std::sync::Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>);
 
-#[test]
-fn shadow_check_ignores_keys_that_carry_no_value() {
-    use cdno_domain::type_registry::overridden_value_keys;
-    let specs = [
-        FieldSpec {
-            required: true,
-            ..string_field()
-        },
-        FieldSpec {
-            values: Some(vec!["a".into()]),
-            ..string_field()
-        },
-        FieldSpec {
-            list: Some(false),
-            ..string_field()
-        },
-        FieldSpec {
-            log_on_change: Some(true),
-            ..string_field()
-        },
-    ];
-    for spec in &specs {
-        assert!(overridden_value_keys(spec).is_empty(), "{spec:?}");
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Captured {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        struct Text(String);
+        impl tracing::field::Visit for Text {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                self.0.push_str(&format!("{}={value:?} ", field.name()));
+            }
+        }
+        let mut text = Text(String::new());
+        event.record(&mut text);
+        self.0
+            .lock()
+            .unwrap()
+            .push((*event.metadata().level(), text.0));
     }
 }
 
+/// Validate a config declaring `commitment.due` as `spec`, returning the
+/// WARN events logged. Thread-local subscriber, so parallel tests don't mix.
+fn shadow_warnings(spec: FieldSpec) -> Vec<String> {
+    use tracing_subscriber::layer::SubscriberExt;
+    let mut config = VaultConfig::default();
+    config
+        .schemas
+        .entry("commitment".to_owned())
+        .or_default()
+        .fields
+        .insert("due".to_owned(), spec);
+    let captured = Captured::default();
+    let subscriber = tracing_subscriber::registry().with(captured.clone());
+    tracing::subscriber::with_default(subscriber, || {
+        TypeRegistry::validate(&mut config).expect("config is valid");
+    });
+    let events = captured.0.lock().unwrap();
+    events
+        .iter()
+        .filter(|(l, _)| *l == tracing::Level::WARN)
+        .map(|(_, m)| m.clone())
+        .collect()
+}
+
 #[test]
-fn shadow_check_reports_a_declared_default() {
-    use cdno_domain::type_registry::overridden_value_keys;
+fn a_placeholder_field_declaring_only_type_and_settable_does_not_warn() {
     let spec = FieldSpec {
-        default: Some(toml::Value::String("2026-01-01".into())),
         ty: FieldType::Date,
         settable: Some(true),
         ..string_field()
     };
-    assert_eq!(overridden_value_keys(&spec), vec!["default"]);
+    assert!(shadow_warnings(spec).is_empty());
+}
+
+#[test]
+fn a_placeholder_field_declaring_only_required_or_values_does_not_warn() {
+    let required = FieldSpec {
+        required: true,
+        ..string_field()
+    };
+    let values = FieldSpec {
+        values: Some(vec!["a".into()]),
+        ..string_field()
+    };
+    assert!(shadow_warnings(required).is_empty());
+    assert!(shadow_warnings(values).is_empty());
+}
+
+#[test]
+fn a_placeholder_field_declaring_a_default_warns_once() {
+    let spec = FieldSpec {
+        ty: FieldType::Date,
+        default: Some(toml::Value::String("2026-01-01".into())),
+        settable: Some(true),
+        ..string_field()
+    };
+    let warnings = shadow_warnings(spec);
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("note_type=commitment"), "{warnings:?}");
+    assert!(warnings[0].contains("field=due"), "{warnings:?}");
 }

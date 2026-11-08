@@ -17,7 +17,7 @@
 
 use std::str::FromStr;
 
-use cdno_core::config::{CustomNoteType, FieldSpec, FieldType, VaultConfig};
+use cdno_core::config::{CustomNoteType, FieldType, VaultConfig};
 
 use crate::error::DomainError;
 use crate::note_type::NoteType;
@@ -243,10 +243,13 @@ impl<'a> TypeRegistry<'a> {
     ///   [`NoteType::frontmatter_order`] (position 1 for the calendar types,
     ///   which are exactly the types the engine keys and scaffolds by period),
     ///   so the *name* is derived, not hardcoded.
-    /// - **Warn** (don't block) on a field colliding with any other supplied
-    ///   placeholder ([`NoteType::supplied_placeholders`]): the value tiering
-    ///   already shadows engine-owned defaults, so this is footgun-prevention
-    ///   with a good message, not a correctness backstop.
+    /// - **Warn** (don't block) on a field that collides with any other supplied
+    ///   placeholder ([`NoteType::supplied_placeholders`]) *and* declares a
+    ///   `default`, which the engine-supplied value would override. A colliding
+    ///   field declaring only `type`/`settable`/etc. is how a built-in's field
+    ///   is made settable and does not warn. The value tiering already shadows
+    ///   engine-owned defaults, so this is footgun-prevention with a good
+    ///   message, not a correctness backstop.
     ///
     /// Only the explicit typed `fields` block is checked — `extra_required` is
     /// legacy lint-only and unaffected.
@@ -265,18 +268,16 @@ impl<'a> TypeRegistry<'a> {
                         field: field_name.clone(),
                     });
                 }
-                if nt.supplied_placeholders().contains(&field_name.as_str()) {
-                    let overridden = overridden_value_keys(&schema.fields[field_name]);
-                    if !overridden.is_empty() {
-                        tracing::warn!(
-                            note_type = %type_name,
-                            field = %field_name,
-                            declared = %overridden.join(", "),
-                            "schema field shadows an engine-supplied placeholder; the \
-                             engine-supplied value wins, so the declared value will not \
-                             take effect"
-                        );
-                    }
+                if nt.supplied_placeholders().contains(&field_name.as_str())
+                    && schema.fields[field_name].default.is_some()
+                {
+                    tracing::warn!(
+                        note_type = %type_name,
+                        field = %field_name,
+                        "schema field declares a default that an engine-supplied \
+                         placeholder of the same name overrides; the engine-supplied \
+                         value wins, so the declared default will not take effect"
+                    );
                 }
             }
         }
@@ -413,18 +414,4 @@ pub(crate) fn hard_reserved_fields(nt: NoteType) -> Vec<&'static str> {
         reserved.push(period_key);
     }
     reserved
-}
-
-/// The keys of a schema field that carry a value the engine would supply
-/// anyway, and so lose to an engine-supplied placeholder of the same name.
-/// Only `default` carries a value; `type`, `settable`, `required`, `values`,
-/// `list` and `log_on_change` describe the field without supplying one, so a
-/// field declaring only those (the usual way to make a built-in's field
-/// settable) is not shadowed in any way that matters.
-pub fn overridden_value_keys(spec: &FieldSpec) -> Vec<&'static str> {
-    let mut keys = Vec::new();
-    if spec.default.is_some() {
-        keys.push("default");
-    }
-    keys
 }
