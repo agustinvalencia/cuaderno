@@ -36,7 +36,6 @@ impl Vault {
     /// report rather than aborting, so one unparseable note does not stop
     /// the rest of the vault being indexed.
     pub fn reconcile(&self) -> Result<ReconciliationReport, DomainError> {
-        let ignore = self.config.ignore_set()?;
-        Ok(reconcile(&self.store, &self.index, &ignore)?)
+        Ok(reconcile(&self.store, &self.index, &self.note_scope()?)?)
     }
 }

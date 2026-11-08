@@ -76,7 +76,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use cdno_core::config::IgnoreSet;
+use cdno_core::classify::NoteScope;
 use cdno_core::index::VaultIndex;
 use cdno_core::reconcile::reconcile;
 use cdno_core::store::VaultStore;
@@ -365,7 +365,7 @@ async fn serve() -> Result<()> {
             spawn_reconcile_loop(
                 opened.store.clone(),
                 opened.index.clone(),
-                opened.ignore.clone(),
+                opened.scope.clone(),
                 Duration::from_secs(args.reconcile_interval_secs),
             );
         } else {
@@ -519,7 +519,7 @@ fn vault_root(flag: Option<PathBuf>) -> Result<PathBuf> {
 fn spawn_reconcile_loop(
     store: Arc<dyn VaultStore>,
     index: Arc<dyn VaultIndex>,
-    ignore: Arc<IgnoreSet>,
+    scope: Arc<NoteScope>,
     every: Duration,
 ) {
     tokio::spawn(async move {
@@ -530,7 +530,7 @@ fn spawn_reconcile_loop(
         interval.tick().await;
         loop {
             interval.tick().await;
-            let (s, i, g) = (store.clone(), index.clone(), ignore.clone());
+            let (s, i, g) = (store.clone(), index.clone(), scope.clone());
             match tokio::task::spawn_blocking(move || reconcile(&s, &i, &g)).await {
                 Ok(Ok(report)) => {
                     let changed = report.added + report.updated + report.removed;
