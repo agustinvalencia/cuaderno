@@ -4135,7 +4135,6 @@ fn lint_reads_a_typst_note_without_a_frontmatter_error() {
     assert!(broken[0].message.contains("bias-variance-split"));
 }
 
-
 #[test]
 fn a_pdf_beside_a_typst_note_is_not_an_orphan() {
     let vault = vault_with_notes(
