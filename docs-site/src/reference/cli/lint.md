@@ -22,9 +22,12 @@ told to use the folder form, which names the note unambiguously.
 
 A bare link to a folder note's own name resolves: `[[surrogate-model]]` reaches
 `portfolios/surrogate-model/_index.md`, and an expanded stewardship answers to its folder name the
-same way, so lint does not report it. It is the last rule tried: a note with that file name keeps the bare link (several such notes leave
-it unresolved), so does the one note holding that alias, and an alias two notes share leaves it
-unresolved. Two folder notes with one name leave it unresolved too. The folder form
+same way, so lint does not report it. It is the last rule tried: a note with that file name keeps
+the bare link (several such notes leave it unresolved), so does the one note holding that alias, and
+an alias two notes share leaves it unresolved. Two folder notes with one name leave it unresolved
+too. A folder note at the vault root is an exact path match for its name, so none of this applies
+to it. A portfolio that lists its own folder name in `aliases:` is followed through the alias, and
+a bare link to it is reported as a renamed-note link. The folder form
 `[[portfolios/surrogate-model]]` is the one that is always right.
 
 It also reports lines that were plainly meant to be structured but will never be read as such,

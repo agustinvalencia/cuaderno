@@ -1142,3 +1142,23 @@ fn a_shared_alias_does_not_fall_through_to_a_folder_note() {
     ]);
     assert_eq!(resolve_bare("surrogate-model", &vault, &aliases), None);
 }
+
+#[test]
+fn is_bare_folder_name_link_pins_each_condition() {
+    use cdno_core::extractors::is_bare_folder_name_link as f;
+    let folder = vp("portfolios/surrogate-model/_index.md");
+    assert!(f(&folder, "surrogate-model"));
+    assert!(f(&folder, "surrogate-model#Evidence"));
+    assert!(f(&folder, "surrogate-model "));
+    // Not an `_index.md`.
+    assert!(!f(
+        &vp("portfolios/surrogate-model/notes.md"),
+        "surrogate-model"
+    ));
+    // Qualified, or a different folder name.
+    assert!(!f(&folder, "portfolios/surrogate-model"));
+    assert!(!f(&folder, "other"));
+    // A vault-root `_index.md` has no folder name.
+    assert!(!f(&vp("_index.md"), "_index"));
+    assert!(!f(&vp("_index.md"), ""));
+}

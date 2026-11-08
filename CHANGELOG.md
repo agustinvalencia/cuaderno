@@ -13,11 +13,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   folder name the same way, instead of being a broken link. The rule is the last one tried, so a
   link that resolves today does not move: a note with that file name keeps the bare link
   (several such notes leave it unresolved), one alias holder keeps it, an alias two notes share
-  leaves it unresolved, two folder notes with one name leave it unresolved, and only a bare target is
-  affected (`[[other/surrogate-model]]` gains nothing). A flat note and a folder note sharing a name
+  leaves it unresolved, two folder notes with one name leave it unresolved, and only a bare
+  target is affected (`[[other/surrogate-model]]` gains nothing). A flat note and a folder note sharing a name
   is still not an error; the flat note keeps the bare name. Backlinks, lint and a rename's reference
-  rewriting follow the resolver. An index built before this release keeps such a link's backlink missing until the linking note is
-  next rewritten; run `cdno reindex` once to pick them all up.
+  rewriting follow the resolver. A folder note at the vault root is an exact path match for its
+  name, so the precedence above does not apply to it. An index built before this release heals an
+  old row when the linking note is reindexed, or when a reconcile pass adds or removes a note or
+  changes an alias; run `cdno reindex` once to pick them all up immediately.
 
 ## [0.44.0] - 2026-11-06
 

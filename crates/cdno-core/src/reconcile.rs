@@ -366,9 +366,11 @@ pub fn reconcile(
 ///   and accepts every target: a pass sees the whole filesystem, and its
 ///   Phase 1 resolved against the alias map from before the pass.
 /// - `VaultTransaction::commit` passes a predicate true for the paths the
-///   commit deleted or moved away from, and for a row resolved through an
+///   commit deleted or moved away from, for a row resolved through an
 ///   alias when its holder's aliases changed or its target could name a
-///   path or alias the commit changed; it accepts only unresolved targets
+///   path or alias the commit changed, and for a row that
+///   [`crate::extractors::is_bare_folder_name_link`] holds of when its
+///   target could name such a path or alias; it accepts only unresolved targets
 ///   that could name such a path or alias
 ///   ([`crate::extractors::target_may_name`]). Its path set is the index's,
 ///   which omits notes present on disk but unparseable, so treating every

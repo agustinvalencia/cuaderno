@@ -771,7 +771,8 @@ impl Vault {
             if let Some(moved) = under_folder(address) {
                 return moved;
             }
-            // A link reaching the portfolio another way (through an alias).
+            // A link reaching the portfolio another way (through an alias, or
+            // a bare link by its folder name).
             if let Some(folder) = &folder_form {
                 return folder.clone();
             }

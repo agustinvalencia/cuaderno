@@ -3120,8 +3120,9 @@ fn an_archived_action_can_be_the_target_of_a_relink() {
 
 #[test]
 fn a_bare_link_to_a_folder_notes_own_name_is_relinked_to_its_folder_form() {
-    // The link half of the same shape: `[[new]]` reaches the portfolio only
-    // through the alias rule (its stem is `_index`), lint reports it, and
+    // The link half of the same shape: `[[new]]` reaches the portfolio
+    // through the alias rule (its stem is `_index`; the alias outranks the
+    // bare folder-name rule), lint reports it, and
     // its folder form is a real change. The `portfolio: new` field is left.
     let index = "---\ntype: portfolio\nquestion: \"How large is the error?\"\ncreated: 2026-05-01\naliases:\n  - new\n---\n\n# How large is the error?\n";
     let evidence = "---\ntype: evidence\ncreated: 2026-05-02\nsource: \"Baseline sweep\"\nportfolio: new\n---\n\n# Baseline sweep\n";
