@@ -36,7 +36,7 @@
 //! So relevance is decided on the FILES that can actually change the
 //! index: a path under `.cuaderno/` is ignored (our own writes, and
 //! template edits that the index does not care about), and everything
-//! else must be a `.md` file. A directory event carries no `.md`
+//! else must be a note file. A directory event carries no note
 //! extension, so the walk's own footprints are filtered by the same rule
 //! rather than by a special case.
 //!
@@ -45,9 +45,16 @@
 //! process writes nothing but the index, so it needs no journal — but it
 //! does need to not hear its own reads, which the journal never covered.
 //!
-//! ## What the `.md`-only rule gives up
+//! ## A `.typ` file is read on every pass
 //!
-//! Only markdown is indexed, so a PDF appearing changes no row by itself.
+//! The classifier reads each loose `.typ` to look for its label, and
+//! inotify reports that read as a change to the file, so a `.typ` event
+//! cannot be taken at its word the way a `.md` one is. [`TypstEchoFilter`]
+//! lets through only one whose mtime or size moved.
+//!
+//! ## What the note-only rule gives up
+//!
+//! Only notes are indexed, so a PDF appearing changes no row by itself.
 //! Filing an attachment writes or updates its `.md` stub as well, and
 //! that is caught. A directory removed takes its notes with it, and each
 //! of those arrives as a `Removed` `.md` path in the same batch. The case
@@ -71,13 +78,16 @@
 //! passes at once (#459 is about passes interleaving; this loop is
 //! single-threaded and synchronous, so it cannot race itself).
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::mpsc::channel;
 
 use anyhow::{Context, Result, bail};
 
+use cdno_core::path::VaultPath;
 use cdno_core::paths::{self, NoteFormat, note_format};
 use cdno_core::reconcile::ReconciliationReport;
+use cdno_core::store::{FsVaultStore, VaultStore};
 use cdno_core::watcher::{FileEvent, FileWatcher, FsFileWatcher};
 
 use crate::bootstrap;
@@ -104,13 +114,34 @@ pub fn is_relevant(event: &FileEvent) -> bool {
             if path.as_path().starts_with(paths::CUADERNO_DIR) {
                 return false;
             }
-            // Markdown only (until Typst notes are indexed, a `.typ` file
-            // is an attachment and changes nothing). This is what stops the
-            // walk's own directory reads from re-triggering the pass that
-            // made them — see the module docs; a directory event has no
-            // note extension, so it falls out here rather than needing a
-            // rule of its own.
-            note_format(path) == Some(NoteFormat::Markdown)
+            // Note files only. This is what stops the walk's own directory
+            // reads from re-triggering the pass that made them — see the
+            // module docs; a directory event has no note extension, so it
+            // falls out here rather than needing a rule of its own.
+            note_format(path).is_some()
+        }
+    }
+}
+
+/// Tells a real change to a `.typ` from the classifier's own read of it, by
+/// the mtime and size last seen for the path. A path seen for the first time
+/// passes, so the worst a read can cost is one extra pass per file.
+#[derive(Debug, Default)]
+pub struct TypstEchoFilter {
+    seen: HashMap<VaultPath, (u64, u64)>,
+}
+
+impl TypstEchoFilter {
+    /// Whether `event` still warrants a pass. `stamp` is the path's current
+    /// `(mtime_ns, size)`, `None` when it cannot be had; only a `Changed`
+    /// event on a `.typ` that matches the last stamp is an echo.
+    pub fn is_news(&mut self, event: &FileEvent, stamp: Option<(u64, u64)>) -> bool {
+        match event {
+            FileEvent::Changed(path) if note_format(path) == Some(NoteFormat::Typst) => {
+                let Some(stamp) = stamp else { return true };
+                self.seen.insert(path.clone(), stamp) != Some(stamp)
+            }
+            _ => true,
         }
     }
 }
@@ -169,6 +200,21 @@ pub fn run(root: &Path) -> Result<()> {
     // stop story: nothing here needs unwinding. A pass interrupted partway
     // leaves the index incomplete, and that is safe — it is a cache, the
     // markdown is untouched, and the next open reconciles it back.
+    let store = FsVaultStore::new(root);
+    let mut echoes = TypstEchoFilter::default();
+    let mut warrants_pass = |event: &FileEvent| {
+        if !is_relevant(event) {
+            return false;
+        }
+        let stamp = match event {
+            FileEvent::Changed(path) => store
+                .metadata(path)
+                .ok()
+                .map(|meta| (meta.mtime_ns(), meta.size)),
+            _ => None,
+        };
+        echoes.is_news(event, stamp)
+    };
     loop {
         // `recv` fails only when every sender is gone, and this process
         // never drops its own: that means the debouncer's worker thread
@@ -184,13 +230,13 @@ pub fn run(root: &Path) -> Result<()> {
             ),
         };
         {
-            let mut relevant = batch.iter().any(is_relevant);
+            let mut relevant = batch.iter().fold(false, |any, e| warrants_pass(e) | any);
             // Drain whatever else is already queued so a burst becomes one
             // pass. `try_recv` is non-blocking, so this stops as soon as the
             // channel is empty rather than waiting for a quiet period the
             // debouncer has already waited for.
             while let Ok(extra) = receiver.try_recv() {
-                relevant |= extra.iter().any(is_relevant);
+                relevant = extra.iter().fold(relevant, |any, e| warrants_pass(e) | any);
             }
             if !relevant {
                 continue;

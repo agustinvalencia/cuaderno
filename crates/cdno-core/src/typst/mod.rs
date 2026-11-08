@@ -46,6 +46,33 @@ pub fn has_label(source: &str) -> bool {
     source.contains(CDNO_LABEL)
 }
 
+/// The 1-based line of the first `#metadata((` call followed, anywhere later, by a `type` key: a
+/// note whose `<cdno>` is missing or mistyped. A byte search (§5.2), so `#metadata ((`, which is
+/// not a call, does not match, and a call inside a comment does.
+pub fn broken_label_line(source: &str) -> Option<usize> {
+    const CALL: &str = "#metadata(";
+    let call = source
+        .match_indices(CALL)
+        .map(|(at, _)| at)
+        .find(|at| source[at + CALL.len()..].trim_start().starts_with('('))?;
+    has_type_key(&source[call + CALL.len()..]).then(|| line_of(source, call))
+}
+
+fn has_type_key(text: &str) -> bool {
+    let continues_identifier =
+        |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b >= 0x80;
+    text.match_indices("type").any(|(at, word)| {
+        let before = text.as_bytes()[..at].last().copied();
+        let after = &text[at + word.len()..];
+        let after = match before {
+            Some(b'"') => after.strip_prefix('"'),
+            Some(b) if continues_identifier(b) => None,
+            _ => Some(after),
+        };
+        after.is_some_and(|after| after.trim_start().starts_with(':'))
+    })
+}
+
 /// P8: `Ok(())` when the tree holds no Error node; else the first one's line and message.
 pub fn parses(source: &str) -> Result<(), SyntaxFault> {
     with_tree(source, |root| {

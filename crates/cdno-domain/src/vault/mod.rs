@@ -187,7 +187,12 @@ pub struct Vault {
 
 /// The one way a [`NoteScope`] is built from a vault's config.
 fn note_scope_for(config: &VaultConfig) -> Result<NoteScope, DomainError> {
-    Ok(NoteScope::new(config.ignore_set()?))
+    let registry = crate::type_registry::TypeRegistry::new(config);
+    Ok(NoteScope {
+        ignore: config.ignore_set()?,
+        typst_folders: registry.typst_folders(),
+        typst_excluded_folders: registry.typst_excluded_folders(),
+    })
 }
 
 impl Vault {

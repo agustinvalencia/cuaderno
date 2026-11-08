@@ -1273,12 +1273,11 @@ impl Vault {
             }
             NoteRef::Path(raw) => {
                 let raw = raw.trim_end_matches('/');
-                // Only a Markdown extension is stripped, as before: `x.typ`
-                // names that file, not `x`.
+                // A named extension keeps its format: `x.typ` never reaches
+                // `x.md`, nor `x.md` an `x.typ`.
+                let named = VaultPath::new(raw).ok().and_then(|p| note_format(&p));
                 let address = match VaultPath::new(raw) {
-                    Ok(path) if note_format(&path) == Some(NoteFormat::Markdown) => {
-                        paths::note_address(&path)
-                    }
+                    Ok(path) if named.is_some() => paths::note_address(&path),
                     _ => raw.to_owned(),
                 };
                 // The exact path first: `x.MD` names that file, and its address
@@ -1290,6 +1289,7 @@ impl Vault {
                 }
                 if let Some(path) = paths::note_candidates(&address)
                     .into_iter()
+                    .filter(|path| named.is_none_or(|format| note_format(path) == Some(format)))
                     .find(|path| snapshot.paths.contains(path))
                 {
                     return Ok(ResolvedNote::direct(path));
