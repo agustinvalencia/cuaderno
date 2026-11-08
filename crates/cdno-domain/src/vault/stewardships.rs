@@ -132,7 +132,9 @@ impl Vault {
         // later action/project suffixes off it via `unique_slug`), and an
         // expanded stewardship's file stem is `_index`, which is also how
         // the resolver keys it — so it never occupies the slug's stem-space
-        // in the first place.
+        // in the first place. Its folder name does answer a bare `[[slug]]`
+        // (the last resolution rule), unless a portfolio or another folder
+        // note shares the name, which leaves that bare link unresolved.
         let (slug, flat_path, expanded_path) = self.stewardship_paths(name, slug)?;
         if self.store.exists(&flat_path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(

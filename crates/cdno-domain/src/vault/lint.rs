@@ -340,8 +340,9 @@ impl Vault {
             {
                 if let Some(resolved) = &link.resolved_path {
                     if link.via_alias {
-                        // A folder note is followed by its folder form: a
-                        // bare `[[new]]` would not reach `new/_index.md`.
+                        // A folder note is followed by its folder form, which
+                        // is always right: a bare `[[new]]` can be taken by a
+                        // note with that file name or an alias.
                         let now = if resolved.as_path().file_stem().and_then(|s| s.to_str())
                             == Some("_index")
                         {

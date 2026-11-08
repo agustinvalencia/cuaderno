@@ -447,8 +447,10 @@ pub fn extract_frontmatter_wikilinks(frontmatter: &serde_json::Value) -> Vec<Wik
 ///    that path exists in `vault_paths`.
 /// 2. Folder-index match: `[[portfolios/foo]]` → `portfolios/foo/_index.md`
 ///    if that path exists — a folder-backed note (a portfolio, an expanded
-///    stewardship) is named by its folder, so a bare link to it resolves to
-///    its `_index.md`. Ordered before the fuzzy stem match so a folder link
+///    stewardship) is named by its folder path. A folder note at the vault
+///    root is an exact path match for its bare name, so the precedence of
+///    rule 5 does not apply to it; a bare link to a nested folder note
+///    belongs to rule 5. Ordered before the fuzzy stem match so a folder link
 ///    can't be hijacked by an unrelated note sharing its last segment.
 /// 3. Last-segment match: the target's final path segment against note
 ///    stems — `[[foo]]` or `[[actions/foo]]` → `*/foo.md` if exactly
@@ -463,7 +465,16 @@ pub fn extract_frontmatter_wikilinks(frontmatter: &serde_json::Value) -> Vec<Wik
 ///    `vault_paths` declares it ([`AliasMap::unique`]). A stem match, unique
 ///    or ambiguous, always wins over an alias, and an alias two notes share
 ///    resolves to nothing. The entry is marked [`LinkEntry::via_alias`].
-/// 5. Otherwise `resolved_path` is `None` and the link is recorded as
+/// 5. Bare folder-note name (#538), after every rule above: a target with no
+///    `/` (anchor stripped) resolves to `<dir>/<target>/_index.md` when
+///    exactly one such folder note exists, so `[[<portfolio-slug>]]` reaches
+///    its portfolio. A stem or alias match always wins, so only a link that
+///    resolved to nothing changes; a flat note and a folder note sharing a
+///    name is not an error (a question and its portfolio share a slug), the
+///    flat note keeps the bare name. Direct, not `via_alias`. A folder note
+///    at the vault root is an exact path match (rule 1b) for its name, so
+///    this precedence does not apply to it.
+/// 6. Otherwise `resolved_path` is `None` and the link is recorded as
 ///    broken — `cdno lint` surfaces it as a warning.
 pub fn resolve_wikilinks(
     raws: Vec<WikilinkRaw>,
@@ -521,6 +532,11 @@ impl AliasMap {
     /// does or when two or more share it.
     pub fn unique(&self, name: &str) -> Option<&VaultPath> {
         self.0.get(name).and_then(Option::as_ref)
+    }
+
+    /// Whether two or more notes declare `name`, so it resolves to nothing.
+    pub fn is_shared(&self, name: &str) -> bool {
+        matches!(self.0.get(name), Some(None))
     }
 
     /// Whether no note declares any alias.
@@ -641,20 +657,65 @@ pub(crate) fn resolve_one(
     // to nothing. The holder must be in the path set, like every other
     // rule's answer, so a map read moments apart from the paths cannot
     // resolve to a note the set no longer has.
-    aliases
+    // An alias two notes share resolves to nothing, and does not fall
+    // through to the folder-note rule below.
+    if aliases.is_shared(needle) {
+        return None;
+    }
+    if let Some(holder) = aliases
         .unique(needle)
         .filter(|holder| vault_paths.contains(*holder))
-        .map(|holder| Resolution {
+    {
+        return Some(Resolution {
             path: holder.clone(),
             via_alias: true,
-        })
+        });
+    }
+
+    // 4. Bare folder-note name (#538): a target with no `/` resolves to the
+    // one folder note `<dir>/<target>/_index.md`, so `[[<portfolio-slug>]]`
+    // and `[[<stewardship-slug>]]` reach the note they are called. Last, so
+    // only a link that resolves to nothing today can change: a stem match
+    // (unique or ambiguous, returned above) and an alias both win. A
+    // qualified target gains nothing; rule 1b already covers real paths.
+    // Two folder notes with the name leave the link unresolved. The
+    // predicate is shared with re-resolution (`is_bare_folder_name_link`).
+    let mut folders = vault_paths
+        .iter()
+        .filter(|p| is_bare_folder_name_link(p, target));
+    if let Some(only) = folders.next()
+        && folders.next().is_none()
+    {
+        return Some(Resolution::direct(only.clone()));
+    }
+    None
+}
+
+/// Whether a link row resolved to `path` is a bare link to that folder note
+/// by its folder name (the last rule of [`resolve_wikilinks`], #538). Such a
+/// row ranks below the stem and alias rules but is recorded as a direct
+/// resolution, so re-resolution has to reconsider it explicitly when a
+/// path or an alias appears or goes. Anchor stripped, like the rule.
+pub fn is_bare_folder_name_link(path: &VaultPath, target_raw: &str) -> bool {
+    let p = path.as_path();
+    if p.file_name().and_then(|f| f.to_str()) != Some("_index.md") {
+        return false;
+    }
+    let target = target_raw.split_once('#').map_or(target_raw, |(t, _)| t);
+    let target = target.trim_end();
+    // A qualified target contains a `/`, which no single folder name does.
+    p.parent()
+        .and_then(|d| d.file_name())
+        .and_then(|f| f.to_str())
+        == Some(target)
 }
 
 /// The names a note answers to under [`resolve_wikilinks`]'s rules: its
 /// file stem always (the exact rule, e.g. `[[portfolios/<slug>/_index]]`,
 /// and the stem rule), and for a folder note (`<dir>/_index.md`) also the
 /// folder's name, when it has one (the folder-index rule, e.g.
-/// `[[portfolios/<slug>]]`). Every rule that can resolve a target to
+/// `[[portfolios/<slug>]]`, and the bare-folder-name rule, `[[<slug>]]`).
+/// Every rule that can resolve a target to
 /// `path` compares the target's last segment with one of these (see
 /// [`target_may_name`]).
 pub fn note_link_names(path: &VaultPath) -> Vec<&str> {
@@ -680,7 +741,7 @@ pub fn note_link_names(path: &VaultPath) -> Vec<&str> {
 /// [`resolve_wikilinks`] could match to such a note. The exact rule (with
 /// or without the anchor) and the stem rule all end on the note's stem
 /// (`_index` for an explicit `[[<dir>/_index]]`), the folder-index rule on
-/// its folder's name, and a stem ambiguity is
+/// its folder's name (also the bare-folder-name rule's), and a stem ambiguity is
 /// only cleared by removing a note with the same stem. The alias rule ends
 /// on the same anchor-stripped last segment, so an alias name in `names`
 /// (one whose holder changed) admits every target that rule could resolve
