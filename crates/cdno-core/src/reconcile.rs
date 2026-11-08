@@ -128,7 +128,14 @@ pub fn reconcile(
     // exact-then-basename lookup without extra index calls.
     for path in &classified.notes {
         report.scanned += 1;
-        match reconcile_one(store, index, path, &fs_set, &aliases_before, &scope.typst_types) {
+        match reconcile_one(
+            store,
+            index,
+            path,
+            &fs_set,
+            &aliases_before,
+            &scope.typst_types,
+        ) {
             Ok(Outcome::Added) => report.added += 1,
             Ok(Outcome::Updated) => report.updated += 1,
             Ok(Outcome::Skipped) => {}
