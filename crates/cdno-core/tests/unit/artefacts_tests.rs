@@ -6,7 +6,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use cdno_core::artefacts::{attachment_stubs, is_attachment_stub, owning_artefact_stub};
+use cdno_core::artefacts::{folder_owners, is_attachment_stub, owning_note};
+use cdno_core::classify::NoteScope;
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 
@@ -17,8 +18,10 @@ fn vp(p: &str) -> VaultPath {
 /// Resolve against a fixed set of paths already known to be attachment
 /// stubs, as reconciliation does once it has read them.
 fn owner(path: &str, stubs: &[&str]) -> Option<String> {
-    owning_artefact_stub(&vp(path), |stub| stubs.iter().any(|s| vp(s) == *stub))
-        .map(|s| s.to_string())
+    owning_note(&vp(path), &NoteScope::empty(), |stub| {
+        stubs.iter().any(|s| vp(s) == *stub)
+    })
+    .map(|s| s.to_string())
 }
 
 #[test]
@@ -97,15 +100,15 @@ fn ownership_reaches_through_nesting_inside_the_artefact_folder() {
 }
 
 #[test]
-fn nearest_owning_ancestor_wins() {
-    // Both an inner and an outer candidate stub exist; the inner one is
-    // the owner, so the artefact is attributed to the closest stub.
+fn outermost_owning_ancestor_wins() {
+    // Owners resolve shallow-first: an inner candidate inside an owned
+    // folder owns nothing, so it is not even probed.
     assert_eq!(
         owner(
             "portfolios/demo/outer/inner/file.txt",
             &["portfolios/demo/outer.md", "portfolios/demo/outer/inner.md"],
         ),
-        Some("portfolios/demo/outer/inner.md".to_string()),
+        Some("portfolios/demo/outer.md".to_string()),
     );
 }
 
@@ -230,11 +233,14 @@ fn a_plain_note_never_owns_its_namesake_folder() {
         .map(|p| vp(p))
         .collect();
 
-    let stubs = attachment_stubs(&store, &md, &dirs);
+    let stubs = folder_owners(&store, &md, &dirs, &NoteScope::empty());
     assert!(stubs.is_empty(), "stubs: {stubs:?}");
     assert_eq!(
-        owning_artefact_stub(&vp("portfolios/demo/2026-Q2/first.md"), |s| stubs
-            .contains(s)),
+        owning_note(
+            &vp("portfolios/demo/2026-Q2/first.md"),
+            &NoteScope::empty(),
+            |s| stubs.contains(s)
+        ),
         None,
     );
 }
@@ -268,7 +274,7 @@ fn attachment_stubs_finds_only_folder_owning_evidence_stubs() {
     .map(|p| vp(p))
     .collect();
 
-    let stubs = attachment_stubs(&store, &md, &dirs);
+    let stubs = folder_owners(&store, &md, &dirs, &NoteScope::empty());
     assert_eq!(
         stubs,
         [vp("portfolios/demo/2026-07-03-paper.md")]
@@ -288,4 +294,205 @@ fn an_outer_stub_still_owns_past_a_non_stub_candidate() {
         ),
         Some("portfolios/demo/bundle.md".to_string()),
     );
+}
+
+// ---------------------------------------------------------------------
+// A Typst note owns its sibling folder (RFC 0008 §5.7).
+// ---------------------------------------------------------------------
+
+const TYPST_NOTE: &str = "#metadata((type: \"evidence\")) <cdno>\n\nBody.\n";
+const TYPST_UNLABELLED: &str = "= A loose sheet\n\nNo metadata here.\n";
+
+/// Owners as the classifier resolves them, then ownership of every file.
+fn scope_of(admitted: &[&str], excluded: &[&str]) -> NoteScope {
+    let mut scope = NoteScope::empty();
+    scope.typst_folders = admitted.iter().map(|f| f.to_string()).collect();
+    scope.typst_excluded_folders = excluded.iter().map(|f| f.to_string()).collect();
+    scope
+}
+
+fn owners_of(
+    files: &[(&str, &str)],
+    typst_folders: &[&str],
+    probe: &[&str],
+) -> Vec<Option<String>> {
+    owners_in(files, &scope_of(typst_folders, &[]), probe)
+}
+
+fn owners_in(files: &[(&str, &str)], scope: &NoteScope, probe: &[&str]) -> Vec<Option<String>> {
+    let store = store_with(files);
+    let all: HashSet<VaultPath> = files.iter().map(|(p, _)| vp(p)).collect();
+    let dirs: HashSet<VaultPath> = all
+        .iter()
+        .flat_map(|p| p.as_path().ancestors().skip(1))
+        .filter_map(|d| VaultPath::new(d).ok())
+        .collect();
+    let owners = folder_owners(&store, &all, &dirs, scope);
+    probe
+        .iter()
+        .map(|p| owning_note(&vp(p), scope, |o| owners.contains(o)).map(|o| o.to_string()))
+        .collect()
+}
+
+#[test]
+fn a_typst_note_owns_its_sibling_folder() {
+    let got = owners_of(
+        &[
+            ("portfolios/demo/x.typ", TYPST_NOTE),
+            ("portfolios/demo/x/figs/a.png", "png"),
+            ("portfolios/demo/x/refs.bib", "@article{}"),
+            ("portfolios/demo/x/notes.md", "# Not a note\n"),
+        ],
+        &["portfolios"],
+        &[
+            "portfolios/demo/x/figs/a.png",
+            "portfolios/demo/x/refs.bib",
+            "portfolios/demo/x/notes.md",
+        ],
+    );
+    assert_eq!(got, vec![Some("portfolios/demo/x.typ".to_string()); 3]);
+}
+
+#[test]
+fn a_concept_folder_can_be_owned_by_a_typst_note() {
+    let got = owners_of(
+        &[
+            ("concepts/bias-variance-split.typ", TYPST_NOTE),
+            ("concepts/bias-variance-split/fig.svg", "<svg/>"),
+        ],
+        &["concepts"],
+        &["concepts/bias-variance-split/fig.svg"],
+    );
+    assert_eq!(
+        got,
+        vec![Some("concepts/bias-variance-split.typ".to_string())]
+    );
+}
+
+#[test]
+fn an_unlabelled_typ_owns_nothing() {
+    // Load-bearing: owning by path shape would drop the folder's notes
+    // from the index silently.
+    let got = owners_of(
+        &[
+            ("portfolios/demo/x.typ", TYPST_UNLABELLED),
+            ("portfolios/demo/x/notes.md", "# A note\n"),
+        ],
+        &["portfolios"],
+        &["portfolios/demo/x/notes.md"],
+    );
+    assert_eq!(got, vec![None]);
+}
+
+#[test]
+fn a_typ_in_a_folder_outside_the_scope_owns_nothing() {
+    let got = owners_of(
+        &[
+            ("concepts/x.typ", TYPST_NOTE),
+            ("concepts/x/notes.md", "# A note\n"),
+        ],
+        &["portfolios"],
+        &["concepts/x/notes.md"],
+    );
+    assert_eq!(got, vec![None]);
+}
+
+#[test]
+fn a_labelled_file_inside_an_owned_folder_is_never_opened() {
+    // Shallow-first: `x/y.typ` is inside the folder `x.typ` owns, so it
+    // is not read as a candidate owner of `x/y/`.
+    let store = store_with(&[
+        ("portfolios/demo/x.typ", TYPST_NOTE),
+        ("portfolios/demo/x/y.typ", TYPST_NOTE),
+        ("portfolios/demo/x/y/a.png", "png"),
+    ]);
+    let all: HashSet<VaultPath> = [
+        "portfolios/demo/x.typ",
+        "portfolios/demo/x/y.typ",
+        "portfolios/demo/x/y/a.png",
+    ]
+    .iter()
+    .map(|p| vp(p))
+    .collect();
+    let dirs: HashSet<VaultPath> = [
+        "portfolios/demo",
+        "portfolios/demo/x",
+        "portfolios/demo/x/y",
+    ]
+    .iter()
+    .map(|p| vp(p))
+    .collect();
+    let owners = folder_owners(&store, &all, &dirs, &scope_of(&["portfolios"], &[]));
+    assert_eq!(
+        owners,
+        [vp("portfolios/demo/x.typ")]
+            .into_iter()
+            .collect::<HashSet<_>>(),
+    );
+}
+
+#[test]
+fn a_stub_and_a_typst_note_sharing_a_stem_both_claim_the_folder() {
+    // The §5.7 clash. Both are owners; the stub is asked first, so it is
+    // the one reported, whichever order the files were written in.
+    let got = owners_of(
+        &[
+            ("portfolios/demo/x.typ", TYPST_NOTE),
+            ("portfolios/demo/x.md", STUB_MD),
+            ("portfolios/demo/x/a.png", "png"),
+        ],
+        &["portfolios"],
+        &["portfolios/demo/x/a.png"],
+    );
+    assert_eq!(got, vec![Some("portfolios/demo/x.md".to_string())]);
+
+    let store = store_with(&[
+        ("portfolios/demo/x.typ", TYPST_NOTE),
+        ("portfolios/demo/x.md", STUB_MD),
+    ]);
+    let all: HashSet<VaultPath> = ["portfolios/demo/x.typ", "portfolios/demo/x.md"]
+        .iter()
+        .map(|p| vp(p))
+        .collect();
+    let dirs: HashSet<VaultPath> = ["portfolios/demo/x"].iter().map(|p| vp(p)).collect();
+    assert_eq!(
+        folder_owners(&store, &all, &dirs, &scope_of(&["portfolios"], &[])).len(),
+        2
+    );
+}
+
+#[test]
+fn a_typ_under_a_nested_excluded_type_owns_nothing() {
+    // Deepest wins: `concepts/drafts` is excluded inside admitted `concepts`.
+    let scope = scope_of(&["concepts"], &["concepts/drafts"]);
+    let got = owners_in(
+        &[
+            ("concepts/drafts/x.typ", TYPST_NOTE),
+            ("concepts/drafts/x/notes.md", "# A note\n"),
+            ("concepts/y.typ", TYPST_NOTE),
+            ("concepts/y/fig.svg", "<svg/>"),
+        ],
+        &scope,
+        &["concepts/drafts/x/notes.md", "concepts/y/fig.svg"],
+    );
+    assert_eq!(got, vec![None, Some("concepts/y.typ".to_string())]);
+}
+
+#[test]
+fn another_types_root_folder_is_never_owned() {
+    // `areas/x.typ` is labelled, but `areas/x` is the root of another type.
+    for scope in [
+        scope_of(&["areas", "areas/x"], &[]),
+        scope_of(&["areas"], &["areas/x"]),
+    ] {
+        let got = owners_in(
+            &[
+                ("areas/x.typ", TYPST_NOTE),
+                ("areas/x/notes.md", "# A note\n"),
+            ],
+            &scope,
+            &["areas/x/notes.md"],
+        );
+        assert_eq!(got, vec![None]);
+    }
 }

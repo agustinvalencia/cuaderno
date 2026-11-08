@@ -94,6 +94,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   broken-link check uses the same scanner. A Markdown note reads and renames exactly as before.
   A labelled `.typ` whose block `type` does not admit Typst is kept out of the index and reported
   by reconciliation.
+- **A Typst note owns its sibling folder** (RFC 0008 T14, part of #927). `owning_artefact_stub`
+  becomes `owning_note` and `attachment_stubs` becomes `folder_owners`: a folder beside a labelled
+  `<stem>.typ`, under `portfolios/` or a Typst-admitting type's folder, holds attachments, never
+  notes, and lint no longer calls it an orphan. Owners resolve shallow-first, so a labelled file
+  inside an owned folder is not read; a stub and a Typst note sharing a stem resolve to the stub.
 
 ## [0.44.0] - 2026-11-06
 

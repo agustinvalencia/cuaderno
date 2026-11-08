@@ -386,7 +386,12 @@ impl Vault {
         // from the same config reconciliation used, so lint and the index
         // agree on what is not a note.
         let ignore = self.config.ignore_set()?;
-        issues.extend(orphan_artefact_issues(&self.store, &path_set, &ignore)?);
+        issues.extend(orphan_artefact_issues(
+            &self.store,
+            &path_set,
+            &ignore,
+            &self.note_scope()?,
+        )?);
         issues.extend(self.stewardship_dashboard_issues()?);
         issues.extend(self.tracking_record_order_issues()?);
         issues.extend(self.focus_marker_issues()?);
@@ -1045,7 +1050,7 @@ fn periodic_line_hint(line: &str) -> &'static str {
 /// Walks the files under `portfolios/` and reports any subfolder holding
 /// files that are neither notes nor claimed by an evidence stub — the
 /// mirror of the forward check above. Reconciliation excludes a stub's
-/// artefacts from the index ([`cdno_core::artefacts::owning_artefact_stub`]),
+/// artefacts from the index ([`cdno_core::artefacts::owning_note`]),
 /// so this filesystem walk is the only way to catch a folder whose stub was
 /// hand-deleted or moved, leaving evidence invisible to every structural
 /// retrieval.
@@ -1168,6 +1173,7 @@ fn orphan_artefact_issues(
     store: &Arc<dyn VaultStore>,
     notes: &HashSet<VaultPath>,
     ignore: &IgnoreSet,
+    scope: &cdno_core::classify::NoteScope,
 ) -> Result<Vec<LintIssue>, DomainError> {
     let Ok(root) = VaultPath::new(cdno_core::paths::PORTFOLIOS) else {
         return Ok(Vec::new());
@@ -1206,10 +1212,11 @@ fn orphan_artefact_issues(
         if notes.contains(file) || ignore.is_match(file.as_path()) {
             continue;
         }
-        let owned = cdno_core::artefacts::owning_artefact_stub(file, |stub| {
-            *stub_cache
-                .entry(stub.clone())
-                .or_insert_with(|| cdno_core::artefacts::is_attachment_stub(store, stub))
+        let owned = cdno_core::artefacts::owning_note(file, scope, |owner| {
+            *stub_cache.entry(owner.clone()).or_insert_with(|| {
+                cdno_core::artefacts::is_attachment_stub(store, owner)
+                    || cdno_core::artefacts::is_typst_note(store, owner)
+            })
         })
         .is_some();
         if owned {
