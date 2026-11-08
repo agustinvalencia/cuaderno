@@ -102,11 +102,85 @@ fn check_refuses_a_body_carrying_the_label() {
 }
 
 #[test]
+fn a_label_mentioned_in_a_comment_raw_or_string_is_fine() {
+    for body in [
+        "// the <cdno> label is the engine's\nText.\n",
+        "`<cdno>` is the label.\n",
+        "#let s = \"<cdno>\"\nText.\n",
+    ] {
+        assert_eq!(check_typst_body(body), Ok(()), "{body}");
+    }
+}
+
+#[test]
+fn a_real_label_node_is_refused_wherever_it_sits() {
+    assert_eq!(
+        check_typst_body("= Setting <cdno>\n"),
+        Err(BodyRejection::CarriesBlock)
+    );
+}
+
+#[test]
+fn a_shebang_line_is_refused_because_the_note_will_not_parse() {
+    let body = "#!/usr/bin/env typst\nText.\n";
+    match check_typst_body(body) {
+        Err(BodyRejection::DoesNotParse { line, .. }) => assert_eq!(line, 1),
+        other => panic!("{other:?}"),
+    }
+    let note = assemble_typst_note("#metadata((:)) <cdno>", body);
+    assert!(cdno_core::typst::parses(&note).is_err());
+}
+
+#[test]
+fn link_faults_are_counted_in_the_body_after_the_separator() {
+    assert_eq!(
+        check_typst_body("Text.\n[[a *b* c]]\n"),
+        Err(BodyRejection::LinkNeedsEscape {
+            line: 2,
+            leaf: "Strong".to_string()
+        })
+    );
+}
+
+#[test]
+fn the_link_message_and_remedy_fit_each_kind_of_fault() {
+    let texts = |leaf: &str| {
+        let e = DomainError::LinkNeedsEscape {
+            line: 1,
+            leaf: leaf.into(),
+        };
+        (e.to_string(), e.remedy().unwrap())
+    };
+    let (m, r) = texts("end of run");
+    assert!(
+        m.contains("never closed") && r.contains("Close the link"),
+        "{m} {r}"
+    );
+    let (m, r) = texts("Space");
+    assert!(
+        m.contains("wraps across a line") && r.contains("one line"),
+        "{m} {r}"
+    );
+    let (m, r) = texts("Hash");
+    assert!(
+        m.contains("`Hash`") && r.contains("Backslash-escape"),
+        "{m} {r}"
+    );
+    assert_eq!(
+        check_typst_body("[[a\nb]]\n"),
+        Err(BodyRejection::LinkNeedsEscape {
+            line: 1,
+            leaf: "Space".into()
+        })
+    );
+}
+
+#[test]
 fn check_refuses_a_body_that_does_not_parse_with_its_line() {
     let body = "= Setting\n\nFine so far.\n\n#let x = (1 +\n";
     match check_typst_body(body) {
         Err(BodyRejection::DoesNotParse { line, message }) => {
-            assert!(line >= 5, "line {line}");
+            assert_eq!(line, 5);
             assert!(!message.is_empty());
         }
         other => panic!("{other:?}"),

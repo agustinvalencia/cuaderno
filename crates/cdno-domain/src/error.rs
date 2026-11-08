@@ -4,6 +4,15 @@ use cdno_core::error::{
 };
 use cdno_core::path::VaultPath;
 
+/// Why a link's interior broke, by the leaf that broke it (RFC 0008 §5.5).
+fn link_fault_reason(leaf: &str) -> String {
+    match leaf {
+        "end of run" => "it is never closed with `]]` before the text around it ends".to_string(),
+        "Space" | "Parbreak" | "Escape" => "it wraps across a line".to_string(),
+        other => format!("`{other}` inside it is markup, not part of the address"),
+    }
+}
+
 /// What a caller does about a [`DomainError::FocusOpen`]: the one rule,
 /// shared by every surface that names a remedy (the CLI's refusal text and
 /// JSON, the MCP rejection).
@@ -77,9 +86,17 @@ impl DomainError {
             DomainError::BodyDoesNotParse { .. } => Some(
                 "Fix the Typst at that line (an unescaped `#`, an unclosed `_` or `*`, a raw block left open) and send the whole body again.",
             ),
-            DomainError::LinkNeedsEscape { .. } => Some(
-                "Backslash-escape every markup character inside the `[[…]]`, such as `\\#` for an anchor, and send the body again.",
-            ),
+            DomainError::LinkNeedsEscape { leaf, .. } => Some(match leaf.as_str() {
+                "end of run" => {
+                    "Close the link with `]]` on the same line, or backslash-escape the `[[` if it is not a link, and send the body again."
+                }
+                "Space" | "Parbreak" | "Escape" => {
+                    "Keep the whole `[[…]]` on one line, with no line break inside it, and send the body again."
+                }
+                _ => {
+                    "Backslash-escape the markup character inside the `[[…]]`, such as `\\#` for an anchor, and send the body again."
+                }
+            }),
             DomainError::FormatUnsupportedForType { .. } => {
                 Some("Omit `format` to write Markdown, or choose a note type that admits Typst.")
             }
@@ -87,7 +104,7 @@ impl DomainError {
                 Some("Drop `vars`: put what the template would have filled into the Typst body.")
             }
             DomainError::StemTakenByOtherFormat { .. } => Some(
-                "Choose another slug, or open the existing note; Obsidian creates an `.md` beside a `.typ` when a link to it is clicked.",
+                "If that is the note you meant, use it; otherwise ask the person for another name, do not suffix it yourself.",
             ),
             DomainError::SectionRevisionUnavailableForTypst => Some(
                 "Revise the whole body instead: read the note, change the Typst, and send all of it.",
@@ -516,9 +533,7 @@ pub enum DomainError {
 
     /// A `[[` in a Typst body whose interior is not one inline run (RFC 0008
     /// §5.5); `leaf` names what broke it.
-    #[error(
-        "line {line}: the link interior is broken by {leaf}; a markup character inside `[[…]]` needs a backslash"
-    )]
+    #[error("line {line}: the link is not one inline run ({})", link_fault_reason(.leaf))]
     LinkNeedsEscape { line: usize, leaf: String },
 
     /// `format: typst` for a note type that does not admit Typst (RFC 0008

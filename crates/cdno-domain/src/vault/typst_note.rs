@@ -1,8 +1,8 @@
 //! The Typst note writer's shared parts (RFC 0008 §5.7): the metadata block from the engine's
 //! fields, the one check a body passes before it is written, and the assembly of the file.
 //!
-//! Public so the integration suite can reach it; the verbs that call it (T19, T23, T26) live in
-//! sibling files.
+//! Public so the integration suite can reach it. The verbs that write a note (T19, T23, T26) call
+//! it; lint (T15) reads the same facts through the core `typst` primitives, not through here.
 
 use cdno_core::typst::{self, TypstError};
 use serde_json::Value;
@@ -62,19 +62,27 @@ impl From<BodyRejection> for DomainError {
     }
 }
 
-/// The pure check shared with lint: the body must not carry `<cdno>`, must parse, and must hold
-/// no link whose interior is not one inline run. Lines count in the body.
+/// The lines [`assemble_typst_note`] puts between the block and the body.
+const SEPARATOR: &str = "\n\n";
+const SEPARATOR_LINES: usize = 2;
+
+/// The check a body passes before it is written: no `<cdno>` Label node, it parses, and no link
+/// has an interior that is not one inline run. The body is parsed as it will sit, after the
+/// separating newlines, so something only valid at the start of a file (a `#!` line) is refused;
+/// reported lines are still counted in the body.
 pub fn check_typst_body(body: &str) -> Result<(), BodyRejection> {
-    if typst::has_label(body) {
+    let sat = format!("{SEPARATOR}{body}");
+    let line_in_body = |line: usize| line.saturating_sub(SEPARATOR_LINES).max(1);
+    if typst::has_label_node(&sat) {
         return Err(BodyRejection::CarriesBlock);
     }
-    typst::parses(body).map_err(|f| BodyRejection::DoesNotParse {
-        line: f.line,
+    typst::parses(&sat).map_err(|f| BodyRejection::DoesNotParse {
+        line: line_in_body(f.line),
         message: f.message,
     })?;
-    if let Some(fault) = typst::wikilink_spans(body).faults.into_iter().next() {
+    if let Some(fault) = typst::wikilink_spans(&sat).faults.into_iter().next() {
         return Err(BodyRejection::LinkNeedsEscape {
-            line: fault.line,
+            line: line_in_body(fault.line),
             leaf: fault.leaf,
         });
     }
@@ -85,7 +93,7 @@ pub fn check_typst_body(body: &str) -> Result<(), BodyRejection> {
 pub fn assemble_typst_note(block: &str, body: &str) -> String {
     let mut out = String::with_capacity(block.len() + body.len() + 2);
     out.push_str(block);
-    out.push_str("\n\n");
+    out.push_str(SEPARATOR);
     out.push_str(body);
     if !out.ends_with('\n') {
         out.push('\n');

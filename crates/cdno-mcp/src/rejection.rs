@@ -736,6 +736,10 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         ),
     };
 
+    let mut details = details;
+    if let (Some(remedy), Some(map)) = (e.remedy(), details.as_object_mut()) {
+        map.insert("remedy".to_string(), json!(remedy));
+    }
     let message = rejection_message(code, e);
     Some(json!({ "code": code, "message": message, "details": details }))
 }
@@ -1088,6 +1092,7 @@ mod tests {
 
     #[test]
     fn the_typst_refusals_classify_with_their_remedy_in_the_message() {
+        let vp = |p: &str| cdno_core::path::VaultPath::new(p).unwrap();
         let cases = [
             (
                 DomainError::BodyCarriesMetadataBlock,
@@ -1108,15 +1113,48 @@ mod tests {
                 "link_needs_escape",
             ),
             (
+                DomainError::FormatUnsupportedForType {
+                    note_type: "project".into(),
+                },
+                "format_unsupported_for_type",
+            ),
+            (
                 DomainError::VarsUnsupportedForTypst,
                 "vars_unsupported_for_typst",
+            ),
+            (
+                DomainError::StemTakenByOtherFormat {
+                    stem: "bias-variance-split".into(),
+                    holder: vp("concepts/bias-variance-split.md"),
+                },
+                "stem_taken_by_other_format",
+            ),
+            (
+                DomainError::SectionRevisionUnavailableForTypst,
+                "section_revision_unavailable_for_typst",
+            ),
+            (
+                DomainError::AssetPathOutsideFolder {
+                    path: "../a.png".into(),
+                    line: 4,
+                },
+                "asset_path_outside_folder",
+            ),
+            (
+                DomainError::AssetPathNotLiteral {
+                    call: "image".into(),
+                    line: 4,
+                },
+                "asset_path_not_literal",
             ),
         ];
         for (e, code) in cases {
             let payload = classify(&e).expect("a rejection");
             assert_eq!(payload["code"], code);
+            let remedy = e.remedy().unwrap();
             let message = payload["message"].as_str().unwrap();
-            assert!(message.ends_with(e.remedy().unwrap()), "{message}");
+            assert!(message.ends_with(remedy), "{message}");
+            assert_eq!(payload["details"]["remedy"], remedy, "{code}");
         }
     }
 
