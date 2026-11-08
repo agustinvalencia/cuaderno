@@ -236,6 +236,54 @@ impl VaultTransaction {
         paths
     }
 
+    /// Whether the index holds a note row at `path` right now.
+    fn indexed(&self, path: &VaultPath) -> bool {
+        matches!(self.index.find_by_path(path), Ok(Some(_)))
+    }
+
+    /// The notes this transaction would add and remove, derived from its
+    /// buffered ops without applying them: a path is *added* when an
+    /// `UpsertNote` names it and a file op creates it or moves to it, and
+    /// *removed* when a file op deletes it or moves from it, the index holds
+    /// a row for it and no `UpsertNote` names it. Whether a write creates
+    /// its path is read from the store.
+    pub fn note_delta(&self) -> (Vec<VaultPath>, HashSet<VaultPath>) {
+        let mut present: HashMap<VaultPath, bool> = HashMap::new();
+        let exists = |p: &VaultPath, present: &mut HashMap<VaultPath, bool>| {
+            *present
+                .entry(p.clone())
+                .or_insert_with(|| self.store.exists(p).unwrap_or(false))
+        };
+        let mut effects: Vec<FileEffect> = Vec::new();
+        for op in &self.file_ops {
+            match op {
+                FileOp::Write { path, .. } | FileOp::Append { path, .. } => {
+                    if !exists(path, &mut present) {
+                        effects.push(FileEffect::Created(path.clone()));
+                    }
+                    present.insert(path.clone(), true);
+                }
+                FileOp::Import { dest, .. } => {
+                    effects.push(FileEffect::Created(dest.clone()));
+                    present.insert(dest.clone(), true);
+                }
+                FileOp::Move { src, dest } => {
+                    effects.push(FileEffect::Moved {
+                        src: src.clone(),
+                        dest: dest.clone(),
+                    });
+                    present.insert(src.clone(), false);
+                    present.insert(dest.clone(), true);
+                }
+                FileOp::Delete { path } => {
+                    effects.push(FileEffect::Deleted(path.clone()));
+                    present.insert(path.clone(), false);
+                }
+            }
+        }
+        note_delta_from(&effects, &self.index_ops, &|p| self.indexed(p))
+    }
+
     // ---- commit -----------------------------------------------------
 
     /// Apply every buffered operation. File ops run first, in
@@ -269,34 +317,28 @@ impl VaultTransaction {
             }
         }
 
-        // The markdown paths this commit added (created, or moved to) and
-        // removed (deleted, or moved away from). Only a change to this set
-        // can change the answer for a link held by some *other* note, so
-        // only then does the re-resolution below run (#640).
-        let is_md = |p: &VaultPath| p.as_path().extension() == Some(std::ffi::OsStr::new("md"));
-        let mut added_paths: Vec<VaultPath> = Vec::new();
-        let mut removed_paths: HashSet<VaultPath> = HashSet::new();
+        // The notes this commit added and removed, as its index ops say
+        // (see `note_delta_from`). Only a change to these sets can change the
+        // answer for a link held by some *other* note, so only then does the
+        // re-resolution below run (#640).
+        let mut effects: Vec<FileEffect> = Vec::new();
         for undo in &applied {
             match undo {
-                Undo::DeleteCreated { path } if is_md(path) => added_paths.push(path.clone()),
-                Undo::MoveBack { src, dest } => {
-                    if is_md(src) {
-                        removed_paths.insert(src.clone());
-                    }
-                    if is_md(dest) {
-                        added_paths.push(dest.clone());
-                    }
-                }
-                _ => {}
+                Undo::DeleteCreated { path } => effects.push(FileEffect::Created(path.clone())),
+                Undo::MoveBack { src, dest } => effects.push(FileEffect::Moved {
+                    src: src.clone(),
+                    dest: dest.clone(),
+                }),
+                Undo::Restore { .. } => {}
             }
         }
         for op in &self.file_ops {
-            if let FileOp::Delete { path } = op
-                && is_md(path)
-            {
-                removed_paths.insert(path.clone());
+            if let FileOp::Delete { path } = op {
+                effects.push(FileEffect::Deleted(path.clone()));
             }
         }
+        let (added_paths, removed_paths) =
+            note_delta_from(&effects, &self.index_ops, &|p| self.indexed(p));
 
         // The files are now on disk, so each note write's real mtime is
         // knowable. The domain stamps `NoteEntry::mtime_ns` with the
@@ -334,7 +376,7 @@ impl VaultTransaction {
         // their path set is mid-walk, and Phase 2b re-resolves against the
         // whole pass instead.
         let mut aliases_before: Vec<(VaultPath, BTreeSet<String>)> = Vec::new();
-        for path in touched.iter().filter(|p| is_md(p)) {
+        for path in &touched {
             if !pending_aliases.contains_key(path) {
                 continue;
             }
@@ -421,11 +463,16 @@ impl VaultTransaction {
                 // (FTS above is equally best-effort); a failed path query
                 // does too, and is reported as `IndexStale`.
                 if let Some((fm, body)) = &parsed {
-                    let inputs = link_targets_for(&mut link_targets, &*self.index, &self.file_ops)
-                        .and_then(|targets| {
-                            link_aliases_for(&mut link_aliases, &*self.index, &pending_aliases)
-                                .map(|aliases| (targets, aliases))
-                        });
+                    let inputs = link_targets_for(
+                        &mut link_targets,
+                        &*self.index,
+                        &self.file_ops,
+                        &self.index_ops,
+                    )
+                    .and_then(|targets| {
+                        link_aliases_for(&mut link_aliases, &*self.index, &pending_aliases)
+                            .map(|aliases| (targets, aliases))
+                    });
                     match inputs {
                         Err(e) => {
                             link_inputs_failed = true;
@@ -513,15 +560,20 @@ impl VaultTransaction {
                 .flat_map(crate::extractors::note_link_names)
                 .chain(changed_alias_names.iter().map(String::as_str))
                 .collect();
-            let healed = link_targets_for(&mut link_targets, &*self.index, &self.file_ops)
-                .and_then(|targets| {
-                    let aliases = AliasMap::from_rows(self.index.list_aliases()?);
-                    crate::reconcile::reresolve_stale_links(
-                        &*self.index,
-                        targets,
-                        &aliases,
-                        |p, row| {
-                            removed_paths.contains(p)
+            let healed = link_targets_for(
+                &mut link_targets,
+                &*self.index,
+                &self.file_ops,
+                &self.index_ops,
+            )
+            .and_then(|targets| {
+                let aliases = AliasMap::from_rows(self.index.list_aliases()?);
+                crate::reconcile::reresolve_stale_links(
+                    &*self.index,
+                    targets,
+                    &aliases,
+                    |p, row| {
+                        removed_paths.contains(p)
                                 || (row.via_alias
                                     && (alias_changed_paths.contains(p)
                                         || crate::extractors::target_may_name(
@@ -539,10 +591,10 @@ impl VaultTransaction {
                                     &row.target_raw,
                                     &names,
                                 ))
-                        },
-                        |t| crate::extractors::target_may_name(t, &names),
-                    )
-                });
+                    },
+                    |t| crate::extractors::target_may_name(t, &names),
+                )
+            });
             if let Err(e) = healed {
                 index_errors.push(e);
             }
@@ -578,6 +630,57 @@ fn latest_write_content<'a>(file_ops: &'a [FileOp], path: &VaultPath) -> Option<
     })
 }
 
+/// What one applied file op did to the tree, for [`note_delta_from`].
+enum FileEffect {
+    Created(VaultPath),
+    Moved { src: VaultPath, dest: VaultPath },
+    Deleted(VaultPath),
+}
+
+fn upserted_paths(index_ops: &[IndexOp]) -> HashSet<&VaultPath> {
+    index_ops
+        .iter()
+        .filter_map(|op| match op {
+            IndexOp::UpsertNote(entry) => Some(&entry.path),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The notes a commit added and removed. A path is a note because the
+/// index says so (an `UpsertNote` for an addition, an existing index row for
+/// a removal), never because of its extension: a Markdown file moved or
+/// imported as bytes (an attachment) is no delta. A `RemoveNote` with no file
+/// op beside it (reconcile's orphan removal) is not a delta: reconcile's own
+/// Phase 2b re-resolves against the whole pass.
+fn note_delta_from(
+    effects: &[FileEffect],
+    index_ops: &[IndexOp],
+    indexed: &dyn Fn(&VaultPath) -> bool,
+) -> (Vec<VaultPath>, HashSet<VaultPath>) {
+    let upserted = upserted_paths(index_ops);
+    let mut added: Vec<VaultPath> = Vec::new();
+    let mut removed: HashSet<VaultPath> = HashSet::new();
+    for effect in effects {
+        match effect {
+            FileEffect::Created(path) if upserted.contains(path) => added.push(path.clone()),
+            FileEffect::Moved { src, dest } => {
+                if !upserted.contains(src) && indexed(src) {
+                    removed.insert(src.clone());
+                }
+                if upserted.contains(dest) {
+                    added.push(dest.clone());
+                }
+            }
+            FileEffect::Deleted(path) if !upserted.contains(path) && indexed(path) => {
+                removed.insert(path.clone());
+            }
+            _ => {}
+        }
+    }
+    (added, removed)
+}
+
 /// The note paths a wikilink written in this transaction resolves
 /// against: every note the index holds, adjusted by this transaction's
 /// file ops so a note created (or deleted) alongside the linking note is
@@ -591,10 +694,13 @@ fn link_targets_for<'a>(
     cache: &'a mut Option<HashSet<VaultPath>>,
     index: &dyn VaultIndex,
     file_ops: &[FileOp],
+    index_ops: &[IndexOp],
 ) -> Result<&'a HashSet<VaultPath>, IndexError> {
     if cache.is_none() {
         let mut paths: HashSet<VaultPath> = index.list_all_paths()?.into_iter().collect();
-        let is_md = |p: &VaultPath| p.as_path().extension() == Some(std::ffi::OsStr::new("md"));
+        // A written path is a note only if the index is told so.
+        let upserted = upserted_paths(index_ops);
+        let is_md = |p: &VaultPath| upserted.contains(p);
         for op in file_ops {
             match op {
                 FileOp::Write { path, .. } | FileOp::Append { path, .. } if is_md(path) => {

@@ -1266,3 +1266,94 @@ fn a_shared_alias_unresolves_a_bare_folder_link() {
         assert_eq!(resolution_of(&index, DAILY, "x"), None);
     });
 }
+
+// ---------------------------------------------------------------------
+// Note delta (RFC 0008 T3)
+// ---------------------------------------------------------------------
+
+fn delta_tx(store: &Arc<MemoryVaultStore>, index: &Arc<MemoryIndex>) -> VaultTransaction {
+    VaultTransaction::new(
+        store.clone() as Arc<dyn VaultStore>,
+        index.clone() as Arc<dyn VaultIndex>,
+    )
+    .expect("write lock")
+}
+
+#[test]
+fn importing_a_markdown_attachment_adds_no_note() {
+    let store = Arc::new(MemoryVaultStore::new());
+    let index = Arc::new(MemoryIndex::new());
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("doc.md");
+    std::fs::write(&src, "attachment").unwrap();
+
+    let stub = "portfolios/surrogate-model/stub.md";
+    let mut tx = delta_tx(&store, &index);
+    tx.write_file(vp(stub), "stub\n");
+    tx.import_external(src, vp("portfolios/surrogate-model/stub/doc.md"));
+    tx.upsert_note(sample_note(stub, "evidence"));
+
+    let (added, removed) = tx.note_delta();
+    assert_eq!(added, vec![vp(stub)]);
+    assert!(removed.is_empty());
+}
+
+#[test]
+fn moving_a_non_note_file_is_not_a_note_delta() {
+    let store = Arc::new(MemoryVaultStore::new());
+    let index = Arc::new(MemoryIndex::new());
+    store
+        .write_file(&vp("portfolios/surrogate-model/stub/inner.md"), "x")
+        .unwrap();
+    store.write_file(&vp("assets/figure.pdf"), "x").unwrap();
+
+    let mut tx = delta_tx(&store, &index);
+    tx.move_file(
+        vp("portfolios/surrogate-model/stub/inner.md"),
+        vp("portfolios/surrogate-model/renamed/inner.md"),
+    );
+    tx.move_file(vp("assets/figure.pdf"), vp("assets/moved.pdf"));
+
+    let (added, removed) = tx.note_delta();
+    assert!(added.is_empty());
+    assert!(removed.is_empty());
+}
+
+#[test]
+fn a_removed_note_is_one_the_ops_removed() {
+    let store = Arc::new(MemoryVaultStore::new());
+    let index = Arc::new(MemoryIndex::new());
+    let old = "evidence/surrogate-error-budget.md";
+    let new = "evidence/bias-variance-split.md";
+    store.write_file(&vp(old), "x").unwrap();
+    index.upsert_note(&sample_note(old, "evidence")).unwrap();
+
+    let mut tx = delta_tx(&store, &index);
+    tx.write_file(vp(new), "x");
+    tx.delete_file(vp(old));
+    tx.upsert_note(sample_note(new, "evidence"));
+    tx.remove_note(vp(old));
+
+    let (added, removed) = tx.note_delta();
+    assert_eq!(added, vec![vp(new)]);
+    assert_eq!(removed.len(), 1);
+    assert!(removed.contains(&vp(old)));
+
+    // `remove_note` alone is reconcile's orphan removal, not a delta.
+    let mut tx = delta_tx(&store, &index);
+    tx.remove_note(vp(old));
+    assert!(tx.note_delta().1.is_empty());
+}
+
+#[test]
+fn a_commit_without_a_paired_remove_still_removes_an_indexed_note() {
+    let store = Arc::new(MemoryVaultStore::new());
+    let index = Arc::new(MemoryIndex::new());
+    let old = "evidence/surrogate-error-budget.md";
+    store.write_file(&vp(old), "x").unwrap();
+    index.upsert_note(&sample_note(old, "evidence")).unwrap();
+
+    let mut tx = delta_tx(&store, &index);
+    tx.delete_file(vp(old));
+    assert!(tx.note_delta().1.contains(&vp(old)));
+}
