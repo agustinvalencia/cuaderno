@@ -67,7 +67,8 @@ pub struct Classified {
     pub notes: BTreeSet<VaultPath>,
     /// Every walked path outside `.cuaderno/`, whatever its extension.
     pub files: BTreeSet<VaultPath>,
-    /// Attachments and ignored files are counted below, not listed here.
+    /// Files left out and why. Ignored files are listed as well as counted;
+    /// attachments are only counted.
     pub skipped: Vec<Skipped>,
     /// Markdown files owned by an attachment stub.
     pub artefacts: usize,
@@ -121,6 +122,10 @@ pub fn classify(store: &Arc<dyn VaultStore>, scope: &NoteScope) -> Result<Classi
         // evicting notes from retrieval has to be observable.
         if scope.ignore.is_match(path.as_path()) {
             classified.ignored += 1;
+            classified.skipped.push(Skipped {
+                path: path.clone(),
+                reason: SkipReason::Ignored,
+            });
         } else {
             classified.notes.insert(path.clone());
         }

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use cdno_core::classify::{NoteScope, classify};
+use cdno_core::classify::{NoteScope, SkipReason, Skipped, classify};
 use cdno_core::config::IgnoreSet;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
@@ -129,4 +129,24 @@ fn a_typst_file_is_listed_but_is_no_note_yet() {
         paths(&["concepts/bias-variance-split.typ"])
     );
     assert_eq!(classified.artefacts + classified.ignored, 0);
+}
+
+#[test]
+fn ownership_outranks_a_glob_that_matches_stub_and_artefact_alike() {
+    let stub = "portfolios/surrogate-model/surrogate-error-budget.md";
+    let inner = "portfolios/surrogate-model/surrogate-error-budget/appendix.md";
+    let store = store_with(&[(stub, STUB), (inner, DOCUMENT)]);
+
+    let classified = classify(&store, &ignoring("portfolios/**")).unwrap();
+
+    assert!(classified.notes.is_empty(), "{:?}", classified.notes);
+    assert_eq!(classified.artefacts, 1);
+    assert_eq!(classified.ignored, 1);
+    assert_eq!(
+        classified.skipped,
+        vec![Skipped {
+            path: vp(stub),
+            reason: SkipReason::Ignored,
+        }]
+    );
 }

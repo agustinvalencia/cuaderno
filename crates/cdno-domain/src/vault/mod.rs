@@ -185,6 +185,11 @@ pub struct Vault {
     method_notice: method_status::MethodNotice,
 }
 
+/// The one way a [`NoteScope`] is built from a vault's config.
+fn note_scope_for(config: &VaultConfig) -> Result<NoteScope, DomainError> {
+    Ok(NoteScope::new(config.ignore_set()?))
+}
+
 impl Vault {
     /// Construct a vault and run startup reconciliation. The returned
     /// [`ReconciliationReport`] lets callers surface scan counts or
@@ -197,13 +202,13 @@ impl Vault {
         // Compile the config `ignore` globs once and hand the matcher to
         // reconciliation. A malformed pattern surfaces here, at vault
         // open, rather than silently skipping the rule.
-        let ignore = config.ignore_set()?;
+        config.ignore_set()?;
         // Validate `[note_types.*]` at vault-open so a malformed or built-in-
         // shadowing custom type fails fast, not mid-operation. This also
         // normalises each custom type's `folder` in place, so the `config`
         // stored on `Vault` below already carries the canonical form.
         crate::type_registry::TypeRegistry::validate(&mut config)?;
-        let report = reconcile(&store, &index, &NoteScope::new(ignore))?;
+        let report = reconcile(&store, &index, &note_scope_for(&config)?)?;
         let method_notice = method_status::MethodNotice::default();
         method_notice.record(config.vault.method_version);
         let holder_sentinels = HolderSentinels::from_config(&config);
@@ -225,7 +230,7 @@ impl Vault {
     /// What reconciliation and any other caller of the classifier need to
     /// know about this vault, compiled from the config it was opened with.
     pub fn note_scope(&self) -> Result<NoteScope, DomainError> {
-        Ok(NoteScope::new(self.config.ignore_set()?))
+        note_scope_for(&self.config)
     }
 
     pub fn config(&self) -> &VaultConfig {
