@@ -15,7 +15,11 @@
 //!   101 lines, 24 crates added (typst-syntax, -timing, -utils, ecow, rayon, parking_lot,
 //!   unicode-* and their dependencies).
 
+mod metadata;
+
 use typst_syntax::{Lines, SyntaxKind, SyntaxNode, parse};
+
+pub use metadata::{EntrySpan, MetadataBlock, TypstError, metadata_block};
 
 /// The label that marks a Typst file as a note.
 pub const CDNO_LABEL: &str = "<cdno>";
