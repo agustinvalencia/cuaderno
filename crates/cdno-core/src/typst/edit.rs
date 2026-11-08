@@ -6,6 +6,8 @@ use std::ops::Range;
 use serde_json::Value;
 use typst_syntax::is_ident;
 
+use crate::extractors::AddressEdit;
+
 use super::metadata::{MetadataBlock, TypstError, metadata_block};
 
 /// Typst's keywords: an identifier the parser reads as a keyword is no dictionary key.
@@ -19,8 +21,15 @@ const INDENT: &str = "  ";
 /// The block for `fields`, in the given order: one key per line, `<cdno>` after the closing
 /// parentheses. No trailing newline. Strings take Typst's string escapes, never the markup
 /// escape rule. Fails on a value the reader would refuse: null, an object, a nested array, an
-/// array item that is not a string, or an integer outside `i64::MIN + 1..=i64::MAX` (Typst reads a wider literal as a float).
+/// array item that is not a string, a repeated key, or an integer outside `i64::MIN + 1..=i64::MAX` (Typst reads a wider literal as a float).
 pub fn write_block(fields: &[(String, Value)]) -> Result<String, TypstError> {
+    for (i, (key, _)) in fields.iter().enumerate() {
+        if fields[..i].iter().any(|(k, _)| k == key) {
+            return Err(TypstError::Unwritable {
+                what: format!("the key `{key}` appears twice"),
+            });
+        }
+    }
     if fields.is_empty() {
         return Ok("#metadata((:)) <cdno>".to_string());
     }
@@ -46,17 +55,18 @@ pub fn scalar_span(block: &MetadataBlock, key: &str) -> Option<Range<usize>> {
 }
 
 /// Set `key` to `value`: the value's span is replaced, or the key inserted where the dictionary
-/// closes. Returns the new source and the range of the text written, in the new source.
+/// closes. Returns the new source and the edit made (a range of `source` and its replacement),
+/// which `differs_only_by` checks exactly.
 pub fn rewrite_scalar(
     source: &str,
     key: &str,
     value: &Value,
-) -> Result<(String, Range<usize>), TypstError> {
+) -> Result<(String, Vec<AddressEdit>), TypstError> {
     let block = metadata_block(source)?;
     let text = literal(value)?;
     match scalar_span(&block, key) {
-        Some(span) => Ok(splice(source, span, &text)),
-        None => Ok(insert_entry(source, &block, key, &text)),
+        Some(span) => Ok(applied(splice(source, span, &text))),
+        None => Ok(applied(insert_entry(source, &block, key, &text))),
     }
 }
 
@@ -67,18 +77,18 @@ pub fn append_list_value(
     source: &str,
     key: &str,
     item: &str,
-) -> Result<(String, Range<usize>), TypstError> {
+) -> Result<(String, Vec<AddressEdit>), TypstError> {
     let block = metadata_block(source)?;
     let Some(span) = scalar_span(&block, key) else {
         let text = literal(&Value::Array(vec![Value::String(item.to_string())]))?;
-        return Ok(insert_entry(source, &block, key, &text));
+        return Ok(applied(insert_entry(source, &block, key, &text)));
     };
     let mut items = items_of(&block, key)?;
     if items.iter().any(|i| i == item) {
-        return Ok((source.to_string(), span.start..span.start));
+        return Ok((source.to_string(), Vec::new()));
     }
     items.push(item.to_string());
-    Ok(splice(source, span, &array_literal(&items)))
+    Ok(applied(splice(source, span, &array_literal(&items))))
 }
 
 /// Remove `item` from the array at `key`; the last one leaves `()`. Nothing changes (the range is
@@ -87,59 +97,17 @@ pub fn remove_list_value(
     source: &str,
     key: &str,
     item: &str,
-) -> Result<(String, Range<usize>), TypstError> {
+) -> Result<(String, Vec<AddressEdit>), TypstError> {
     let block = metadata_block(source)?;
     let Some(span) = scalar_span(&block, key) else {
-        return Ok((source.to_string(), block.insert_at..block.insert_at));
+        return Ok((source.to_string(), Vec::new()));
     };
     let mut items = items_of(&block, key)?;
     if !items.iter().any(|i| i == item) {
-        return Ok((source.to_string(), span.start..span.start));
+        return Ok((source.to_string(), Vec::new()));
     }
     items.retain(|i| i != item);
-    Ok(splice(source, span, &array_literal(&items)))
-}
-
-/// Whether `after` differs from `before` only inside `spans`, which are ranges of `after`, in
-/// order. Exact for one span; for several, the stretches between them must appear in `before` in
-/// the same order.
-pub fn changed_only_at(before: &str, after: &str, spans: &[Range<usize>]) -> bool {
-    let mut gaps = Vec::new();
-    let mut at = 0;
-    for span in spans {
-        let (Some(gap), true) = (after.get(at..span.start), span.start <= span.end) else {
-            return false;
-        };
-        gaps.push(gap);
-        at = span.end;
-    }
-    let Some(last) = after.get(at..) else {
-        return false;
-    };
-    gaps.push(last);
-
-    let (first, rest) = (gaps[0], &gaps[1..]);
-    if rest.is_empty() {
-        return before == first;
-    }
-    let Some(mut remaining) = before.strip_prefix(first) else {
-        return false;
-    };
-    let tail = rest[rest.len() - 1];
-    let Some(middle_end) = remaining.len().checked_sub(tail.len()) else {
-        return false;
-    };
-    if remaining.get(middle_end..) != Some(tail) {
-        return false;
-    }
-    remaining = &remaining[..middle_end];
-    for gap in &rest[..rest.len() - 1] {
-        match remaining.find(gap) {
-            Some(i) => remaining = &remaining[i + gap.len()..],
-            None => return false,
-        }
-    }
-    true
+    Ok(applied(splice(source, span, &array_literal(&items))))
 }
 
 fn items_of(block: &MetadataBlock, key: &str) -> Result<Vec<String>, TypstError> {
@@ -156,12 +124,22 @@ fn items_of(block: &MetadataBlock, key: &str) -> Result<Vec<String>, TypstError>
         .collect()
 }
 
-fn splice(source: &str, span: Range<usize>, text: &str) -> (String, Range<usize>) {
+fn splice(source: &str, span: Range<usize>, text: &str) -> (String, AddressEdit) {
     let mut out = String::with_capacity(source.len() + text.len());
     out.push_str(&source[..span.start]);
     out.push_str(text);
     out.push_str(&source[span.end..]);
-    (out, span.start..span.start + text.len())
+    (
+        out,
+        AddressEdit {
+            range: span,
+            replacement: text.to_string(),
+        },
+    )
+}
+
+fn applied((source, edit): (String, AddressEdit)) -> (String, Vec<AddressEdit>) {
+    (source, vec![edit])
 }
 
 /// Insert `key: text` as a new entry, in the layout the dictionary already has.
@@ -170,16 +148,25 @@ fn insert_entry(
     block: &MetadataBlock,
     key: &str,
     text: &str,
-) -> (String, Range<usize>) {
+) -> (String, AddressEdit) {
+    let eol = if source.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
     let entry = format!("{}: {}", key_token(key), text);
     if let Some(colon) = &block.empty_colon {
-        return splice(source, colon.clone(), &format!("\n{INDENT}{entry},\n"));
+        return splice(
+            source,
+            colon.clone(),
+            &format!("{eol}{INDENT}{entry},{eol}"),
+        );
     }
     let Some(last) = block.entries.last() else {
         return splice(
             source,
             block.insert_at..block.insert_at,
-            &format!("\n{INDENT}{entry},\n"),
+            &format!("{eol}{INDENT}{entry},{eol}"),
         );
     };
     let before_close = &source[..block.insert_at];
@@ -190,7 +177,7 @@ fn insert_entry(
         (true, true) => splice(
             source,
             line_start..line_start,
-            &format!("{indent}{entry},\n"),
+            &format!("{indent}{entry},{eol}"),
         ),
         (true, false) => splice(
             source,
@@ -200,7 +187,7 @@ fn insert_entry(
         (false, true) => splice(
             source,
             last.value_span.end..last.value_span.end,
-            &format!(",\n{indent}{entry}"),
+            &format!(",{eol}{indent}{entry}"),
         ),
         (false, false) => splice(
             source,

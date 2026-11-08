@@ -295,8 +295,9 @@ fn read_value(source: &str, node: &LinkedNode) -> Result<Value, TypstError> {
     }
 }
 
-/// An integer or float literal as a JSON number. The parser's own `Int::get` turns an overflowing
-/// literal into 0, so the text is parsed here, where overflow and a non-finite float are refused.
+/// An integer or float literal as a JSON number. The parser's `Int::get` returns 0 for text it
+/// cannot parse, so the text is parsed here. A decimal integer beyond `i64` is already a `Float`
+/// node (Typst's lexer decides), and a float that is not finite is refused.
 fn number(source: &str, node: &LinkedNode, negative: bool) -> Result<Value, TypstError> {
     let text = node.get().leaf_text().as_str();
     let sign = if negative { "-" } else { "" };

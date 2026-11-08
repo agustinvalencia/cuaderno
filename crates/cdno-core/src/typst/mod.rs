@@ -20,9 +20,7 @@ mod metadata;
 
 use typst_syntax::{Lines, SyntaxKind, SyntaxNode, parse};
 
-pub use edit::{
-    append_list_value, changed_only_at, remove_list_value, rewrite_scalar, scalar_span, write_block,
-};
+pub use edit::{append_list_value, remove_list_value, rewrite_scalar, scalar_span, write_block};
 pub use metadata::{EntrySpan, MetadataBlock, TypstError, metadata_block};
 
 /// The label that marks a Typst file as a note.

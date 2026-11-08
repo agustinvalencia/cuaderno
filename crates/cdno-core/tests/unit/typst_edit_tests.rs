@@ -1,6 +1,7 @@
+use cdno_core::extractors::differs_only_by;
 use cdno_core::typst::{
-    TypstError, append_list_value, changed_only_at, metadata_block, remove_list_value,
-    rewrite_scalar, scalar_span, write_block,
+    TypstError, append_list_value, metadata_block, remove_list_value, rewrite_scalar, scalar_span,
+    write_block,
 };
 use proptest::prelude::*;
 use serde_json::{Map, Value, json};
@@ -176,14 +177,14 @@ proptest! {
         value in value_strategy(),
     ) {
         let source = format!("{}\n\n= Body\n", write_block(&pairs).unwrap());
-        let (after, span) = rewrite_scalar(&source, &key, &value).unwrap();
+        let (after, edits) = rewrite_scalar(&source, &key, &value).unwrap();
         let mut expected = pairs.clone();
         match expected.iter_mut().find(|(k, _)| *k == key) {
             Some(slot) => slot.1 = value,
             None => expected.push((key, value)),
         }
         prop_assert_eq!(read(&after), as_object(&expected));
-        prop_assert!(changed_only_at(&source, &after, &[span]));
+        prop_assert!(differs_only_by(&source, &after, &edits));
     }
 }
 
@@ -191,9 +192,12 @@ proptest! {
 
 #[test]
 fn rewrite_scalar_changes_only_the_value_span() {
-    let (after, span) = rewrite_scalar(NOTE, "title", &json!("Bias–variance split")).unwrap();
-    assert!(changed_only_at(NOTE, &after, std::slice::from_ref(&span)));
-    assert_eq!(&after[span], "\"Bias–variance split\"");
+    let (after, edits) = rewrite_scalar(NOTE, "title", &json!("Bias–variance split")).unwrap();
+    let before_span = scalar_span(&metadata_block(NOTE).unwrap(), "title").unwrap();
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].range, before_span);
+    assert_eq!(edits[0].replacement, "\"Bias–variance split\"");
+    assert!(differs_only_by(NOTE, &after, &edits));
     assert!(after.contains("  // kept as written\n"));
     assert!(after.starts_with("// the surrogate model's note\n"));
     assert_eq!(read(&after)["title"], json!("Bias–variance split"));
@@ -201,16 +205,23 @@ fn rewrite_scalar_changes_only_the_value_span() {
 }
 
 #[test]
-fn changed_only_at_rejects_a_change_outside_its_spans() {
-    let (after, span) = rewrite_scalar(NOTE, "draft", &json!(true)).unwrap();
-    assert!(changed_only_at(NOTE, &after, std::slice::from_ref(&span)));
+fn a_same_line_comment_survives_a_rewrite() {
+    let source = "#metadata((\n  type: \"x\", // keep\n  n: 1, // and this\n)) <cdno>\n";
+    let (after, edits) = rewrite_scalar(source, "type", &json!("y")).unwrap();
+    assert_eq!(
+        after,
+        "#metadata((\n  type: \"y\", // keep\n  n: 1, // and this\n)) <cdno>\n"
+    );
+    assert_eq!(edits[0].range, 20..23);
+    assert!(differs_only_by(source, &after, &edits));
+}
+
+#[test]
+fn the_exact_check_rejects_a_change_outside_the_edit() {
+    let (after, edits) = rewrite_scalar(NOTE, "draft", &json!(true)).unwrap();
+    assert!(differs_only_by(NOTE, &after, &edits));
     let moved = after.replacen("= Surrogate model", "= Other", 1);
-    assert!(!changed_only_at(NOTE, &moved, &[span]));
-    assert!(!changed_only_at(
-        "abc",
-        "abc",
-        std::slice::from_ref(&(5..9))
-    ));
+    assert!(!differs_only_by(NOTE, &moved, &edits));
 }
 
 #[test]
@@ -223,12 +234,12 @@ fn a_value_can_change_kind() {
 
 #[test]
 fn rewrite_scalar_inserts_a_missing_key_before_the_close() {
-    let (after, span) = rewrite_scalar(NOTE, "owner", &json!("me")).unwrap();
+    let (after, edits) = rewrite_scalar(NOTE, "owner", &json!("me")).unwrap();
     assert!(
         after.contains("  draft: false,\n  owner: \"me\",\n)) <cdno>"),
         "{after}"
     );
-    assert!(changed_only_at(NOTE, &after, &[span]));
+    assert!(differs_only_by(NOTE, &after, &edits));
     assert_eq!(read(&after)["owner"], json!("me"));
 }
 
@@ -255,11 +266,11 @@ fn inserting_into_an_empty_dictionary_replaces_the_colon() {
         "#metadata((: )) <cdno>\n",
         "#metadata((\n  :\n)) <cdno>\n",
     ] {
-        let (after, span) = rewrite_scalar(source, "type", &json!("evidence")).unwrap();
+        let (after, edits) = rewrite_scalar(source, "type", &json!("evidence")).unwrap();
         assert_eq!(read(&after), json!({"type": "evidence"}), "{after}");
         assert!(!after.contains(":)") && !after.contains("(:"), "{after}");
         assert!(after.ends_with(")) <cdno>\n"));
-        assert!(span.end <= after.len());
+        assert!(differs_only_by(source, &after, &edits));
     }
     let (after, _) = rewrite_scalar("#metadata((:)) <cdno>\n", "type", &json!("e")).unwrap();
     assert_eq!(after, "#metadata((\n  type: \"e\",\n)) <cdno>\n");
@@ -291,9 +302,9 @@ fn scalar_span_addresses_the_value() {
 
 #[test]
 fn append_to_a_one_element_array_keeps_it_an_array() {
-    let (after, span) = append_list_value(NOTE, "tags", "error-budget").unwrap();
-    assert_eq!(&after[span.clone()], "(\"surrogate\", \"error-budget\")");
-    assert!(changed_only_at(NOTE, &after, &[span]));
+    let (after, edits) = append_list_value(NOTE, "tags", "error-budget").unwrap();
+    assert_eq!(edits[0].replacement, "(\"surrogate\", \"error-budget\")");
+    assert!(differs_only_by(NOTE, &after, &edits));
 
     let parenthesised = NOTE.replace("(\"surrogate\",)", "(\"surrogate\")");
     let (after, _) = append_list_value(&parenthesised, "tags", "b").unwrap();
@@ -307,9 +318,9 @@ fn append_inserts_an_absent_key_and_skips_a_present_item() {
     assert_eq!(read(&after)["aliases"], json!(["sm"]));
     assert!(after.contains("aliases: (\"sm\",),"));
 
-    let (same, span) = append_list_value(NOTE, "tags", "surrogate").unwrap();
+    let (same, edits) = append_list_value(NOTE, "tags", "surrogate").unwrap();
     assert_eq!(same, NOTE);
-    assert!(span.is_empty());
+    assert!(edits.is_empty());
 }
 
 #[test]
@@ -322,10 +333,10 @@ fn append_to_a_value_that_is_not_a_list_is_refused() {
 
 #[test]
 fn remove_last_item_leaves_the_empty_array() {
-    let (after, span) = remove_list_value(NOTE, "tags", "surrogate").unwrap();
-    assert_eq!(&after[span.clone()], "()");
+    let (after, edits) = remove_list_value(NOTE, "tags", "surrogate").unwrap();
+    assert_eq!(edits[0].replacement, "()");
     assert_eq!(read(&after)["tags"], json!([]));
-    assert!(changed_only_at(NOTE, &after, &[span]));
+    assert!(differs_only_by(NOTE, &after, &edits));
 }
 
 #[test]
@@ -334,8 +345,36 @@ fn remove_leaves_the_others_and_ignores_a_missing_item_or_key() {
     let (after, _) = remove_list_value(source, "tags", "b").unwrap();
     assert_eq!(read(&after)["tags"], json!(["a", "c"]));
     for (key, item) in [("tags", "z"), ("other", "a")] {
-        let (same, span) = remove_list_value(source, key, item).unwrap();
+        let (same, edits) = remove_list_value(source, key, item).unwrap();
         assert_eq!(same, source);
-        assert!(span.is_empty());
+        assert!(edits.is_empty());
     }
+}
+
+#[test]
+fn a_crlf_source_gets_crlf_line_endings_on_insertion() {
+    let with_comma = "#metadata((\r\n  type: \"x\",\r\n)) <cdno>\r\n";
+    let (after, edits) = rewrite_scalar(with_comma, "k", &json!(1)).unwrap();
+    assert_eq!(
+        after,
+        "#metadata((\r\n  type: \"x\",\r\n  k: 1,\r\n)) <cdno>\r\n"
+    );
+    assert!(differs_only_by(with_comma, &after, &edits));
+
+    let no_comma = "#metadata((\r\n  type: \"x\"\r\n)) <cdno>\r\n";
+    let (after, _) = rewrite_scalar(no_comma, "k", &json!(1)).unwrap();
+    assert_eq!(
+        after,
+        "#metadata((\r\n  type: \"x\",\r\n  k: 1\r\n)) <cdno>\r\n"
+    );
+
+    let empty = "#metadata((:)) <cdno>\r\n";
+    let (after, _) = rewrite_scalar(empty, "k", &json!(1)).unwrap();
+    assert_eq!(after, "#metadata((\r\n  k: 1,\r\n)) <cdno>\r\n");
+}
+
+#[test]
+fn write_block_refuses_a_repeated_key() {
+    let result = write_block(&fields(&[("a", json!("x")), ("a", json!("y"))]));
+    assert!(matches!(result, Err(TypstError::Unwritable { .. })));
 }
