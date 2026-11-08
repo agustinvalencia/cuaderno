@@ -50,6 +50,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   it; it is removed when a deleted or moved-away path was named by a `RemoveNote` or held an index
   row. A Markdown file imported as an attachment or moved with its folder no
   longer triggers a link re-resolution pass. `VaultTransaction::note_delta` exposes the sets.
+- **Path arguments of a Typst document** (RFC 0008 T9, part of #927). `cdno-core` gains
+  `typst::path_args`, which lists every path argument of `image`, `read`, `json`, `csv`, `yaml`,
+  `toml`, `xml`, `cbor`, `bibliography`, `include` and a path `import`, as a literal with its span
+  inside the quotes or as not-literal; `@preview` imports and URLs are left out. Nothing calls it yet.
 
 ## [0.44.0] - 2026-11-06
 
