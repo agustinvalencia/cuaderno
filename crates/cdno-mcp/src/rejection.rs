@@ -103,6 +103,10 @@ pub(crate) enum RejectionCode {
     AmbiguousSection,
     AmbiguousSlug,
     AmbiguousWaitingOn,
+    AssetPathNotLiteral,
+    AssetPathOutsideFolder,
+    BodyCarriesMetadataBlock,
+    BodyDoesNotParse,
     BehindUpstream,
     BuiltinTypeNotCustom,
     BulletMissingEnergy,
@@ -111,12 +115,14 @@ pub(crate) enum RejectionCode {
     EmptyField,
     FieldNotSettable,
     FocusOpen,
+    FormatUnsupportedForType,
     GitOperationInProgress,
     HardMilestoneRequiresDate,
     ImplausibleDate,
     InvalidField,
     InvalidFieldValue,
     InvalidSlug,
+    LinkNeedsEscape,
     MalformedWikilink,
     MilestoneNotFound,
     MissingField,
@@ -145,12 +151,14 @@ pub(crate) enum RejectionCode {
     ReservedTypeName,
     RevisionInvalid,
     SectionNotFound,
+    SectionRevisionUnavailableForTypst,
     SlugGivenTwice,
     SlugTaken,
     StalePlan,
     StaleRevision,
     StateTooLong,
     StemShared,
+    StemTakenByOtherFormat,
     TemplateAlreadyExists,
     TrackingOnFlatStewardship,
     UndeclaredSchemaField,
@@ -159,6 +167,7 @@ pub(crate) enum RejectionCode {
     UnknownTemplateVariant,
     UnrepresentableFrontmatterValue,
     UnresolvedPrompts,
+    VarsUnsupportedForTypst,
     WaitingOnNotFound,
 }
 
@@ -191,6 +200,19 @@ fn rejection_message(code: RejectionCode, e: &DomainError) -> String {
         RejectionCode::SlugTaken => format!(
             "{e}; if that is the note you meant, use it; otherwise ask the person for another name, do not suffix it yourself"
         ),
+        // The Typst creation refusals end on their remedy (RFC 0008 §6.4).
+        RejectionCode::AssetPathNotLiteral
+        | RejectionCode::AssetPathOutsideFolder
+        | RejectionCode::BodyCarriesMetadataBlock
+        | RejectionCode::BodyDoesNotParse
+        | RejectionCode::FormatUnsupportedForType
+        | RejectionCode::LinkNeedsEscape
+        | RejectionCode::SectionRevisionUnavailableForTypst
+        | RejectionCode::StemTakenByOtherFormat
+        | RejectionCode::VarsUnsupportedForTypst => match e.remedy() {
+            Some(remedy) => format!("{e}. {remedy}"),
+            None => e.to_string(),
+        },
         _ => e.to_string(),
     }
 }
@@ -678,8 +700,46 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         DomainError::SlugGivenTwice { field } => {
             (RejectionCode::SlugGivenTwice, json!({ "field": field }))
         }
+
+        // The Typst creation refusals (RFC 0008 §5.7, §6.4). Each carries its
+        // `remedy` in the message; the details hold the facts to branch on.
+        DomainError::BodyCarriesMetadataBlock => {
+            (RejectionCode::BodyCarriesMetadataBlock, json!({}))
+        }
+        DomainError::BodyDoesNotParse { line, message } => (
+            RejectionCode::BodyDoesNotParse,
+            json!({ "line": line, "message": message }),
+        ),
+        DomainError::LinkNeedsEscape { line, leaf } => (
+            RejectionCode::LinkNeedsEscape,
+            json!({ "line": line, "leaf": leaf }),
+        ),
+        DomainError::FormatUnsupportedForType { note_type } => (
+            RejectionCode::FormatUnsupportedForType,
+            json!({ "note_type": note_type }),
+        ),
+        DomainError::VarsUnsupportedForTypst => (RejectionCode::VarsUnsupportedForTypst, json!({})),
+        DomainError::StemTakenByOtherFormat { stem, holder } => (
+            RejectionCode::StemTakenByOtherFormat,
+            json!({ "stem": stem, "holder": holder.to_string() }),
+        ),
+        DomainError::SectionRevisionUnavailableForTypst => {
+            (RejectionCode::SectionRevisionUnavailableForTypst, json!({}))
+        }
+        DomainError::AssetPathOutsideFolder { path, line } => (
+            RejectionCode::AssetPathOutsideFolder,
+            json!({ "path": path, "line": line }),
+        ),
+        DomainError::AssetPathNotLiteral { call, line } => (
+            RejectionCode::AssetPathNotLiteral,
+            json!({ "call": call, "line": line }),
+        ),
     };
 
+    let mut details = details;
+    if let (Some(remedy), Some(map)) = (e.remedy(), details.as_object_mut()) {
+        map.insert("remedy".to_string(), json!(remedy));
+    }
     let message = rejection_message(code, e);
     Some(json!({ "code": code, "message": message, "details": details }))
 }
@@ -1028,6 +1088,74 @@ mod tests {
             payload["details"]["reason"], "entries use h3",
             "the reason is the recovery data — without it an agent can only guess"
         );
+    }
+
+    #[test]
+    fn the_typst_refusals_classify_with_their_remedy_in_the_message() {
+        let vp = |p: &str| cdno_core::path::VaultPath::new(p).unwrap();
+        let cases = [
+            (
+                DomainError::BodyCarriesMetadataBlock,
+                "body_carries_metadata_block",
+            ),
+            (
+                DomainError::BodyDoesNotParse {
+                    line: 3,
+                    message: "unclosed".into(),
+                },
+                "body_does_not_parse",
+            ),
+            (
+                DomainError::LinkNeedsEscape {
+                    line: 2,
+                    leaf: "Hash".into(),
+                },
+                "link_needs_escape",
+            ),
+            (
+                DomainError::FormatUnsupportedForType {
+                    note_type: "project".into(),
+                },
+                "format_unsupported_for_type",
+            ),
+            (
+                DomainError::VarsUnsupportedForTypst,
+                "vars_unsupported_for_typst",
+            ),
+            (
+                DomainError::StemTakenByOtherFormat {
+                    stem: "bias-variance-split".into(),
+                    holder: vp("concepts/bias-variance-split.md"),
+                },
+                "stem_taken_by_other_format",
+            ),
+            (
+                DomainError::SectionRevisionUnavailableForTypst,
+                "section_revision_unavailable_for_typst",
+            ),
+            (
+                DomainError::AssetPathOutsideFolder {
+                    path: "../a.png".into(),
+                    line: 4,
+                },
+                "asset_path_outside_folder",
+            ),
+            (
+                DomainError::AssetPathNotLiteral {
+                    call: "image".into(),
+                    line: 4,
+                },
+                "asset_path_not_literal",
+            ),
+        ];
+        for (e, code) in cases {
+            let payload = classify(&e).expect("a rejection");
+            assert_eq!(payload["code"], code);
+            let remedy = e.remedy().unwrap();
+            let message = payload["message"].as_str().unwrap();
+            assert!(message.ends_with(remedy), "{message}");
+            assert_eq!(payload["details"]["remedy"], remedy, "{code}");
+        }
     }
 
     /// Guards the `rename_all` derive, which is now the only thing turning a
