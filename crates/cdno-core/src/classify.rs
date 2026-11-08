@@ -16,7 +16,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::artefacts::{attachment_stubs, owning_artefact_stub};
+use crate::artefacts::{folder_owners, owning_note};
 use crate::config::IgnoreSet;
 use crate::error::StoreError;
 use crate::path::VaultPath;
@@ -51,9 +51,18 @@ impl NoteScope {
         Self::new(IgnoreSet::empty())
     }
 
+    /// Whether `dir` is itself the folder of a declared type, in either list.
+    /// No note owns such a folder: it is another type's root, not an attachment folder.
+    pub(crate) fn is_type_root(&self, dir: &std::path::Path) -> bool {
+        self.typst_folders
+            .iter()
+            .chain(&self.typst_excluded_folders)
+            .any(|folder| std::path::Path::new(folder) == dir)
+    }
+
     /// `Some(admitted)` for a path under either Typst list, `None` for a path
     /// under neither. Where the lists nest, the deepest folder decides.
-    fn typst_admission(&self, path: &VaultPath) -> Option<bool> {
+    pub(crate) fn typst_admission(&self, path: &VaultPath) -> Option<bool> {
         let depth = |folders: &[String]| {
             folders
                 .iter()
@@ -129,19 +138,15 @@ pub fn classify(store: &Arc<dyn VaultStore>, scope: &NoteScope) -> Result<Classi
         .filter(|p| !p.as_path().starts_with(CUADERNO_DIR))
         .collect();
 
-    // Over the full Markdown set, ignored files included: an ignored stub
-    // still owns its folder.
-    let markdown: HashSet<VaultPath> = files
-        .iter()
-        .filter(|p| note_format(p) == Some(NoteFormat::Markdown))
-        .cloned()
-        .collect();
-    let stubs = attachment_stubs(store, &markdown, &dirs);
+    // Over every file, ignored ones included: an ignored stub still owns its
+    // folder.
+    let all: HashSet<VaultPath> = files.iter().cloned().collect();
+    let owners = folder_owners(store, &all, &dirs, scope);
 
     let mut classified = Classified::default();
     for path in &files {
         let format = note_format(path);
-        if owning_artefact_stub(path, |stub| stubs.contains(stub)).is_some() {
+        if owning_note(path, scope, |owner| owners.contains(owner)).is_some() {
             classified.artefacts += usize::from(format == Some(NoteFormat::Markdown));
             continue;
         }
