@@ -80,6 +80,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `<cdno>` block with the bytes after it as the body), `Frontmatter::from_typst`, and
   `note_headings`; reconciliation, the transaction's search mirror and the attachment-stub check
   read through it. A Markdown note reads exactly as before.
+- **Typst notes are indexed** (RFC 0008 T12, part of #927). A `.typ` with a `<cdno>` block under
+  `portfolios/` or a Typst-admitting custom type's folder is now a note: reconciliation and the
+  transaction index its block, its body as full text, its links and its block `title`, and a loose,
+  mistyped or switched-off `.typ` is named in the classifier's report rather than dropped silently.
+  `cdno watch` and note references accept `.typ` paths. A file inside an attachment's folder is
+  never read.
 
 ## [0.44.0] - 2026-11-06
 

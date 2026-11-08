@@ -219,7 +219,7 @@ impl<'a> NoteRef<'a> {
             return Self::Period(PeriodRef::Month(month));
         }
 
-        if trimmed.contains('/') || ends_in_markdown_extension(trimmed) {
+        if trimmed.contains('/') || ends_in_note_extension(trimmed) {
             return Self::Path(trimmed);
         }
 
@@ -227,11 +227,9 @@ impl<'a> NoteRef<'a> {
     }
 }
 
-/// Whether `raw` ends in a Markdown note extension, ASCII case-insensitively.
-/// Markdown only until Typst notes are indexed: a `.typ` reference keeps its
-/// bare-slug shape and its miss wording, as it had before the format helpers.
-fn ends_in_markdown_extension(raw: &str) -> bool {
-    VaultPath::new(raw).is_ok_and(|p| note_format(&p) == Some(NoteFormat::Markdown))
+/// Whether `raw` ends in a note extension, ASCII case-insensitively.
+fn ends_in_note_extension(raw: &str) -> bool {
+    VaultPath::new(raw).is_ok_and(|p| note_format(&p).is_some())
 }
 
 /// `YYYY-Www` → any date inside that ISO week (the Monday).
@@ -335,7 +333,7 @@ impl super::Vault {
         // already name a `.md` file), and a trailing `/` names a directory,
         // not a note. The miss still reports the reference as typed.
         if matches!(parsed, NoteRef::Path(_))
-            && !ends_in_markdown_extension(&relpath)
+            && !ends_in_note_extension(&relpath)
             && !relpath.ends_with('/')
         {
             for with_extension in note_format_candidates(&relpath) {

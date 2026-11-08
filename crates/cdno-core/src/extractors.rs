@@ -31,6 +31,8 @@ use crate::error::ValidationError;
 use crate::frontmatter::Frontmatter;
 use crate::index::LinkEntry;
 use crate::path::VaultPath;
+use crate::paths::{NoteFormat, note_format};
+use crate::typst;
 
 /// A note's derived `tags` and `links` facets, ready for
 /// `VaultIndex::replace_tags` / `VaultIndex::replace_links`.
@@ -68,6 +70,7 @@ pub struct NoteFacets {
 /// references too (#395). Deduped by `(target, label)`, body first so its
 /// position wins, then resolved against `vault_paths` and `aliases`.
 pub fn extract_note_facets(
+    path: &VaultPath,
     frontmatter: &Frontmatter,
     frontmatter_json: &serde_json::Value,
     body: &str,
@@ -79,17 +82,44 @@ pub fn extract_note_facets(
         .map(|frontmatter_tags| {
             let mut tag_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
             tag_set.extend(frontmatter_tags.unwrap_or_default());
-            tag_set.extend(extract_inline_tags(body));
+            tag_set.extend(note_inline_tags(path, body));
             tag_set.into_iter().collect()
         });
 
-    let mut raw_links = extract_wikilinks(body);
+    let mut raw_links = note_body_links(path, body);
     raw_links.extend(extract_frontmatter_wikilinks(frontmatter_json));
     let mut seen = HashSet::new();
     raw_links.retain(|l| seen.insert((l.target.clone(), l.label.clone())));
     let links = resolve_wikilinks(raw_links, vault_paths, aliases);
 
     NoteFacets { tags, links }
+}
+
+/// A note's inline tags, by format. Typst text carries none: a `#` there is
+/// code, and tags come from the metadata block alone (RFC 0008 §5.4).
+pub fn note_inline_tags(path: &VaultPath, body: &str) -> Vec<String> {
+    match note_format(path) {
+        Some(NoteFormat::Typst) => Vec::new(),
+        _ => extract_inline_tags(body),
+    }
+}
+
+fn note_body_links(path: &VaultPath, body: &str) -> Vec<WikilinkRaw> {
+    if note_format(path) != Some(NoteFormat::Typst) {
+        return extract_wikilinks(body);
+    }
+    let links = typst::wikilink_spans(body);
+    links
+        .spans
+        .iter()
+        .zip(links.targets)
+        .zip(links.labels)
+        .map(|((span, target), label)| WikilinkRaw {
+            target,
+            label,
+            is_embed: span.is_embed,
+        })
+        .collect()
 }
 
 /// Tag pattern is ASCII-only by design: `#[a-zA-Z0-9][a-zA-Z0-9_/-]*`,

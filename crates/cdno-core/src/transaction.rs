@@ -422,16 +422,17 @@ impl VaultTransaction {
             // is the content past the frontmatter; if the content has none
             // (malformed, or a non-note write), index it whole rather than
             // failing the commit — FTS is best-effort and reconcile re-heals.
-            // The FTS title comes from the body's H1, not `entry.title`:
-            // notes carry their title as the H1, so that's what earns the
-            // bm25 title weight (see `extractors::first_h1`).
+            // The FTS title earns the bm25 title weight: the body's H1 for
+            // Markdown (not `entry.title`), the block's `title` for Typst
+            // (see `note::fts_title`).
             if op_ok
                 && let IndexOp::UpsertNote(entry) = op
                 && let Some(content) = latest_write_content(&self.file_ops, &entry.path)
             {
                 let parsed = crate::frontmatter::parse_note(&entry.path, content).ok();
                 let body = parsed.as_ref().map_or(content, |(_, body)| *body);
-                let title = crate::extractors::first_h1(body);
+                let title =
+                    crate::note::fts_title(&entry.path, parsed.as_ref().map(|(fm, _)| fm), body);
                 if let Err(e) = self.index.replace_fts(&entry.path, title.as_deref(), body) {
                     index_errors.push(e);
                 }
@@ -471,15 +472,16 @@ impl VaultTransaction {
                         }
                         Ok((targets, aliases)) => {
                             let facets = crate::extractors::extract_note_facets(
+                                &entry.path,
                                 fm,
                                 &fm.as_json(),
                                 body,
                                 targets,
                                 aliases,
                             );
-                            let tags = facets
-                                .tags
-                                .unwrap_or_else(|_| crate::extractors::extract_inline_tags(body));
+                            let tags = facets.tags.unwrap_or_else(|_| {
+                                crate::extractors::note_inline_tags(&entry.path, body)
+                            });
                             if let Err(e) = self.index.replace_tags(&entry.path, &tags) {
                                 index_errors.push(e);
                             }

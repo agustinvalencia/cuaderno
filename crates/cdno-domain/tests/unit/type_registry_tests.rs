@@ -642,6 +642,24 @@ fn typst_folders_follow_the_types() {
 }
 
 #[test]
+fn typst_excluded_folders_are_the_types_the_switch_leaves_out() {
+    let on = config_with_concept();
+    assert!(TypeRegistry::new(&on).typst_excluded_folders().is_empty());
+
+    let off = with_typst(config_with_concept(), Some(&[]));
+    assert_eq!(
+        TypeRegistry::new(&off).typst_excluded_folders(),
+        vec!["concepts".to_owned(), "portfolios".to_owned()]
+    );
+
+    let only_concept = with_typst(config_with_concept(), Some(&["concept"]));
+    assert_eq!(
+        TypeRegistry::new(&only_concept).typst_excluded_folders(),
+        vec!["portfolios".to_owned()]
+    );
+}
+
+#[test]
 fn describe_reports_admits_typst() {
     let config = config_with_concept();
     let registry = TypeRegistry::new(&config);

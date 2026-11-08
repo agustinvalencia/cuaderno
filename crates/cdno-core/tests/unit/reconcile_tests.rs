@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use cdno_core::classify::NoteScope;
+use cdno_core::classify::{NoteScope, SkipReason, classify};
 use cdno_core::config::IgnoreSet;
 use cdno_core::error::{IndexError, StoreError};
 use cdno_core::file_meta::FileMeta;
@@ -889,6 +889,7 @@ impl VaultIndex for ProbeIndex {
 struct CountingStore {
     inner: Arc<MemoryVaultStore>,
     reads: AtomicUsize,
+    typ_reads: AtomicUsize,
 }
 
 impl CountingStore {
@@ -896,6 +897,7 @@ impl CountingStore {
         Self {
             inner,
             reads: AtomicUsize::new(0),
+            typ_reads: AtomicUsize::new(0),
         }
     }
     fn reads(&self) -> usize {
@@ -909,9 +911,15 @@ impl CountingStore {
 impl VaultStore for CountingStore {
     fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
         self.reads.fetch_add(1, Ordering::Relaxed);
+        if path.as_path().extension().is_some_and(|e| e == "typ") {
+            self.typ_reads.fetch_add(1, Ordering::Relaxed);
+        }
         self.inner.read_file(path)
     }
     fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        if path.as_path().extension().is_some_and(|e| e == "typ") {
+            self.typ_reads.fetch_add(1, Ordering::Relaxed);
+        }
         self.inner.read_bytes(path)
     }
     fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
@@ -2228,4 +2236,488 @@ fn reconcile_gives_a_bare_folder_link_to_an_alias_that_appears() {
             Some(vp("notes/h.md"))
         );
     });
+}
+
+// --- Typst notes (RFC 0008 §5.2, §5.4, §5.9) ---
+
+const CONCEPT_MD: &str =
+    "---\ntype: concept\ntitle: Bias-variance split\n---\n# Bias-variance split\n";
+const EVIDENCE_TYP: &str = "#metadata((\n  type: \"evidence\",\n  source: \"arxiv:2401.00001\",\n  portfolio: \"surrogate-error-budget\",\n  created: \"2026-11-08\",\n  tags: (\"sharedblocktag\",),\n)) <cdno>\n\n= Derivation\n\nThe residual telescopes.\n";
+const TYP_NOTE: &str = "portfolios/surrogate-error-budget/2026-11-08-derivation.typ";
+const LOOSE_TYP: &str = "portfolios/surrogate-error-budget/template.typ";
+const STUB_MD: &str = "---\ntype: evidence\nkind: pdf\ntitle: Error budget\n---\n# Error budget\n";
+
+fn typst_scope() -> NoteScope {
+    NoteScope {
+        typst_folders: vec!["concepts".to_owned(), "portfolios".to_owned()],
+        ..NoteScope::empty()
+    }
+}
+
+fn typst_off_scope() -> NoteScope {
+    NoteScope {
+        typst_excluded_folders: vec!["concepts".to_owned(), "portfolios".to_owned()],
+        ..NoteScope::empty()
+    }
+}
+
+struct TypstVault {
+    dir: TempDir,
+    store: Arc<dyn VaultStore>,
+    index: Arc<dyn VaultIndex>,
+}
+
+impl TypstVault {
+    fn with(files: &[(&str, &str)]) -> Self {
+        let dir = TempDir::new().unwrap();
+        let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(dir.path()));
+        let index: Arc<dyn VaultIndex> =
+            Arc::new(SqliteIndex::open(dir.path().join("index.sqlite")).unwrap());
+        for (path, content) in files {
+            store.write_file(&vp(path), content).unwrap();
+        }
+        Self { dir, store, index }
+    }
+
+    fn reconcile(&self, scope: &NoteScope) -> cdno_core::reconcile::ReconciliationReport {
+        reconcile(&self.store, &self.index, scope).unwrap()
+    }
+
+    fn db(&self) -> rusqlite::Connection {
+        rusqlite::Connection::open(self.dir.path().join("index.sqlite")).unwrap()
+    }
+
+    fn fts_title(&self, path: &str) -> Option<String> {
+        self.db()
+            .query_row("SELECT title FROM notes_fts WHERE path = ?1", [path], |r| {
+                r.get(0)
+            })
+            .unwrap()
+    }
+
+    fn links(&self, path: &str) -> Vec<(String, Option<String>, Option<String>)> {
+        let db = self.db();
+        let mut stmt = db
+            .prepare(
+                "SELECT target_raw, resolved_path, label FROM links \
+                 WHERE source_path = ?1 ORDER BY target_raw",
+            )
+            .unwrap();
+        stmt.query_map([path], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    }
+
+    fn tags(&self, path: &str) -> Vec<String> {
+        let db = self.db();
+        let mut stmt = db
+            .prepare("SELECT tag FROM note_tags WHERE note_path = ?1 ORDER BY tag")
+            .unwrap();
+        stmt.query_map([path], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    }
+
+    fn skipped(&self, scope: &NoteScope) -> Vec<(String, SkipReason)> {
+        classify(&self.store, scope)
+            .unwrap()
+            .skipped
+            .into_iter()
+            .map(|s| (s.path.as_path().display().to_string(), s.reason))
+            .collect()
+    }
+}
+
+#[test]
+fn a_labelled_typ_under_portfolios_is_indexed_with_its_block() {
+    let vault = TypstVault::with(&[(TYP_NOTE, EVIDENCE_TYP)]);
+    let report = vault.reconcile(&typst_scope());
+    assert_eq!((report.added, report.errors.len()), (1, 0));
+
+    let row = vault.index.find_by_path(&vp(TYP_NOTE)).unwrap().unwrap();
+    assert_eq!(row.note_type, "evidence");
+    assert_eq!(row.title, None);
+    assert_eq!(row.frontmatter["source"], "arxiv:2401.00001");
+    assert_eq!(row.frontmatter["portfolio"], "surrogate-error-budget");
+    assert_eq!(row.frontmatter["created"], "2026-11-08");
+    assert_eq!(row.content_hash, content_hash(EVIDENCE_TYP));
+    assert_eq!(vault.tags(TYP_NOTE), vec!["sharedblocktag".to_owned()]);
+}
+
+#[test]
+fn a_labelled_typ_concept_has_the_blocks_title_as_row_and_fts_title() {
+    let path = "concepts/bias-variance-split.typ";
+    let source = "#metadata((type: \"concept\", title: \"Bias variance split\")) <cdno>\n\n= A heading that is not the title\n";
+    let vault = TypstVault::with(&[(path, source)]);
+    vault.reconcile(&typst_scope());
+
+    let row = vault.index.find_by_path(&vp(path)).unwrap().unwrap();
+    assert_eq!(row.title.as_deref(), Some("Bias variance split"));
+    assert_eq!(
+        vault.fts_title(path).as_deref(),
+        Some("Bias variance split")
+    );
+}
+
+#[test]
+fn the_fts_backfill_takes_a_typst_note_title_from_its_block() {
+    let path = "concepts/bias-variance-split.typ";
+    let source = "#metadata((type: \"concept\", title: \"Bias variance split\")) <cdno>\n\n= Not the title\n";
+    let vault = TypstVault::with(&[(path, source)]);
+    vault.reconcile(&typst_scope());
+    vault
+        .db()
+        .execute("DELETE FROM notes_fts WHERE path = ?1", [path])
+        .unwrap();
+
+    let report = vault.reconcile(&typst_scope());
+
+    assert_eq!(report.fts_built, 1);
+    assert_eq!(
+        vault.fts_title(path).as_deref(),
+        Some("Bias variance split")
+    );
+}
+
+#[test]
+fn the_body_is_the_full_text_and_the_block_is_not() {
+    let vault = TypstVault::with(&[(TYP_NOTE, EVIDENCE_TYP)]);
+    vault.reconcile(&typst_scope());
+    assert!(vault.index.search("sharedblocktag", 10).unwrap().is_empty());
+    assert_eq!(vault.index.search("telescopes", 10).unwrap().len(), 1);
+}
+
+#[test]
+fn body_links_and_block_links_are_edges() {
+    let concept = "concepts/bias-variance-split.md";
+    let project = "projects/surrogate-model.md";
+    let source = "#metadata((type: \"evidence\", origin: \"[[projects/surrogate-model]]\")) <cdno>\n\nSee [[concepts/bias-variance-split|the split]].\n";
+    let vault = TypstVault::with(&[
+        (concept, CONCEPT_MD),
+        (project, "---\ntype: project\ntitle: Surrogate model\n---\n"),
+        (TYP_NOTE, source),
+    ]);
+    vault.reconcile(&typst_scope());
+    assert_eq!(
+        vault.links(TYP_NOTE),
+        vec![
+            (
+                "concepts/bias-variance-split".to_owned(),
+                Some(concept.to_owned()),
+                Some("the split".to_owned()),
+            ),
+            (
+                "projects/surrogate-model".to_owned(),
+                Some(project.to_owned()),
+                None,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn an_escaped_link_resolves_to_the_decoded_address() {
+    let concept = "concepts/bias-variance-split.md";
+    let source = "#metadata((type: \"evidence\")) <cdno>\n\nSee [[concepts/bias-variance-split\\#Definition]].\n";
+    let vault = TypstVault::with(&[(concept, CONCEPT_MD), (TYP_NOTE, source)]);
+    vault.reconcile(&typst_scope());
+    assert_eq!(
+        vault.links(TYP_NOTE),
+        vec![(
+            "concepts/bias-variance-split#Definition".to_owned(),
+            Some(concept.to_owned()),
+            None,
+        )]
+    );
+}
+
+#[test]
+fn inline_tags_are_not_read_from_typst_text() {
+    let source = "#metadata((type: \"evidence\", tags: (\"blocktag\",))) <cdno>\n\n#notatag and #emph[text]\n";
+    let vault = TypstVault::with(&[(TYP_NOTE, source)]);
+    vault.reconcile(&typst_scope());
+    assert_eq!(vault.tags(TYP_NOTE), vec!["blocktag".to_owned()]);
+}
+
+#[test]
+fn an_owned_typ_is_an_attachment_and_never_read() {
+    let mem = Arc::new(MemoryVaultStore::new());
+    mem.write_file(&vp("portfolios/surrogate-error-budget/deck.md"), STUB_MD)
+        .unwrap();
+    mem.write_file(
+        &vp("portfolios/surrogate-error-budget/deck/labelled.typ"),
+        EVIDENCE_TYP,
+    )
+    .unwrap();
+    mem.write_file(
+        &vp("portfolios/surrogate-error-budget/deck/slides.typ"),
+        "= Slides\n",
+    )
+    .unwrap();
+    let counting = Arc::new(CountingStore::new(mem));
+    let store: Arc<dyn VaultStore> = counting.clone();
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+
+    let report = reconcile(&store, &index, &typst_scope()).unwrap();
+
+    assert_eq!(counting.typ_reads.load(Ordering::Relaxed), 0);
+    assert_eq!(report.artefacts, 0, "a .typ is not a Markdown artefact");
+    assert_eq!(index.list_all_paths().unwrap().len(), 1, "the stub alone");
+}
+
+#[test]
+fn a_typ_under_neither_list_is_never_read() {
+    let mem = Arc::new(MemoryVaultStore::new());
+    mem.write_file(&vp("scratch/labelled.typ"), EVIDENCE_TYP)
+        .unwrap();
+    let counting = Arc::new(CountingStore::new(mem));
+    let store: Arc<dyn VaultStore> = counting.clone();
+
+    let classified = classify(&store, &typst_scope()).unwrap();
+
+    assert_eq!(counting.typ_reads.load(Ordering::Relaxed), 0);
+    assert!(classified.notes.is_empty() && classified.skipped.is_empty());
+}
+
+#[test]
+fn an_ignored_typ_is_counted_and_never_read() {
+    let mem = Arc::new(MemoryVaultStore::new());
+    mem.write_file(&vp(TYP_NOTE), EVIDENCE_TYP).unwrap();
+    let counting = Arc::new(CountingStore::new(mem));
+    let store: Arc<dyn VaultStore> = counting.clone();
+    let scope = NoteScope {
+        ignore: IgnoreSet::compile(&["portfolios/**".to_owned()]).unwrap(),
+        ..typst_scope()
+    };
+
+    let classified = classify(&store, &scope).unwrap();
+
+    assert_eq!(counting.typ_reads.load(Ordering::Relaxed), 0);
+    assert!(classified.notes.is_empty());
+    assert_eq!(classified.ignored, 1);
+}
+
+#[test]
+fn a_loose_unlabelled_typ_is_skipped_unlabelled() {
+    let vault = TypstVault::with(&[(LOOSE_TYP, "= Just a template\n")]);
+    let report = vault.reconcile(&typst_scope());
+    assert_eq!((report.added, report.errors.len()), (0, 0));
+    assert!(vault.index.list_all_paths().unwrap().is_empty());
+    assert_eq!(
+        vault.skipped(&typst_scope()),
+        vec![(LOOSE_TYP.to_owned(), SkipReason::TypstUnlabelled)]
+    );
+}
+
+#[test]
+fn a_labelled_typ_outside_scope_is_skipped() {
+    let vault = TypstVault::with(&[(TYP_NOTE, EVIDENCE_TYP), (LOOSE_TYP, "= Template\n")]);
+    let report = vault.reconcile(&typst_off_scope());
+    assert_eq!((report.added, report.errors.len()), (0, 0));
+    assert_eq!(
+        vault.skipped(&typst_off_scope()),
+        vec![(TYP_NOTE.to_owned(), SkipReason::TypstOutsideScope)]
+    );
+}
+
+#[test]
+fn an_ignored_typ_under_an_excluded_folder_is_not_counted() {
+    let vault = TypstVault::with(&[(TYP_NOTE, EVIDENCE_TYP)]);
+    let scope = NoteScope {
+        ignore: IgnoreSet::compile(&["portfolios/**".to_owned()]).unwrap(),
+        ..typst_off_scope()
+    };
+    let classified = classify(&vault.store, &scope).unwrap();
+    assert_eq!(classified.ignored, 0);
+    assert_eq!(classified.skipped[0].reason, SkipReason::TypstOutsideScope);
+}
+
+#[test]
+fn undecodable_bytes_count_as_no_label() {
+    let vault = TypstVault::with(&[]);
+    let full = vault.dir.path().join(LOOSE_TYP);
+    std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+    std::fs::write(&full, b"#metadata((type: \"x\")) <cdno>\n\xff\xfe\n").unwrap();
+
+    let report = vault.reconcile(&typst_scope());
+
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    assert!(vault.index.list_all_paths().unwrap().is_empty());
+    assert_eq!(
+        vault.skipped(&typst_scope()),
+        vec![(LOOSE_TYP.to_owned(), SkipReason::TypstUnlabelled)]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_typ_stays_in_notes_and_is_reported() {
+    use std::os::unix::fs::PermissionsExt;
+    let vault = TypstVault::with(&[(TYP_NOTE, EVIDENCE_TYP)]);
+    let full = vault.dir.path().join(TYP_NOTE);
+    std::fs::set_permissions(&full, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let report = vault.reconcile(&typst_scope());
+
+    std::fs::set_permissions(&full, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+    assert!(report.errors[0].reason.contains("read failed"));
+}
+
+#[test]
+fn the_deepest_typst_folder_decides() {
+    let vault = TypstVault::with(&[("notes/secret/a.typ", EVIDENCE_TYP)]);
+    let scope = NoteScope {
+        typst_folders: vec!["notes".to_owned()],
+        typst_excluded_folders: vec!["notes/secret".to_owned()],
+        ..NoteScope::empty()
+    };
+    assert_eq!(
+        vault.skipped(&scope),
+        vec![(
+            "notes/secret/a.typ".to_owned(),
+            SkipReason::TypstOutsideScope
+        )]
+    );
+}
+
+#[test]
+fn a_broken_label_is_skipped_with_its_line() {
+    let source = "// a comment\n\n#metadata((type: \"evidence\"))\n\nBody.\n";
+    let vault = TypstVault::with(&[(LOOSE_TYP, source)]);
+    assert_eq!(
+        vault.skipped(&typst_scope()),
+        vec![(
+            LOOSE_TYP.to_owned(),
+            SkipReason::TypstLabelBroken { line: 3 }
+        )]
+    );
+    assert!(vault.reconcile(&typst_scope()).errors.is_empty());
+}
+
+#[test]
+fn a_mistyped_label_is_broken_not_unlabelled() {
+    let mistyped = TypstVault::with(&[(LOOSE_TYP, "#metadata((type: \"evidence\")) <cdn>\n")]);
+    assert_eq!(
+        mistyped.skipped(&typst_scope())[0].1,
+        SkipReason::TypstLabelBroken { line: 1 }
+    );
+    let multi_line =
+        TypstVault::with(&[(LOOSE_TYP, "#metadata(\n  (\"type\" : \"evidence\")\n)\n")]);
+    assert_eq!(
+        multi_line.skipped(&typst_scope())[0].1,
+        SkipReason::TypstLabelBroken { line: 1 }
+    );
+}
+
+#[test]
+fn a_spaced_metadata_call_is_not_broken() {
+    let vault = TypstVault::with(&[(LOOSE_TYP, "#metadata ((type: \"x\"))\n")]);
+    assert_eq!(
+        vault.skipped(&typst_scope())[0].1,
+        SkipReason::TypstUnlabelled
+    );
+}
+
+#[test]
+fn a_key_that_merely_ends_in_type_is_not_broken() {
+    let vault = TypstVault::with(&[(LOOSE_TYP, "#metadata((subtype: \"x\"))\n")]);
+    assert_eq!(
+        vault.skipped(&typst_scope())[0].1,
+        SkipReason::TypstUnlabelled
+    );
+}
+
+fn assert_reported_not_demoted(source: &str, rule: &str) {
+    let vault = TypstVault::with(&[(TYP_NOTE, source)]);
+    for _ in 0..2 {
+        let report = vault.reconcile(&typst_scope());
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        assert_eq!(report.errors[0].path, vp(TYP_NOTE));
+        assert!(
+            report.errors[0].reason.contains(rule),
+            "{}",
+            report.errors[0].reason
+        );
+        assert_eq!(report.artefacts, 0);
+    }
+    assert!(vault.index.list_all_paths().unwrap().is_empty());
+}
+
+#[test]
+fn a_label_that_is_not_the_siblings_is_a_reconcile_issue() {
+    assert_reported_not_demoted(
+        "#metadata((type: \"evidence\"))\n\n= Heading <cdno>\n",
+        "not labelled",
+    );
+}
+
+#[test]
+fn a_nested_block_is_reported_not_demoted() {
+    assert_reported_not_demoted(
+        "#[#metadata((type: \"evidence\")) <cdno>]\n",
+        "not at the top level",
+    );
+}
+
+#[test]
+fn typst_off_parses_no_typ() {
+    let stub = "portfolios/surrogate-error-budget/deck.md";
+    let owned = "portfolios/surrogate-error-budget/deck/slides.typ";
+    let nested = "portfolios/surrogate-error-budget/nested.typ";
+    let vault = TypstVault::with(&[
+        (stub, STUB_MD),
+        (owned, EVIDENCE_TYP),
+        // Would be a reconcile issue if anything parsed it.
+        (nested, "#[#metadata((type: \"evidence\")) <cdno>]\n"),
+        (TYP_NOTE, EVIDENCE_TYP),
+        (LOOSE_TYP, "= Template\n"),
+    ]);
+
+    let report = vault.reconcile(&typst_off_scope());
+
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    assert_eq!(report.artefacts, 0);
+    assert_eq!(vault.index.list_all_paths().unwrap(), vec![vp(stub)]);
+    assert_eq!(
+        vault.skipped(&typst_off_scope()),
+        vec![
+            (TYP_NOTE.to_owned(), SkipReason::TypstOutsideScope),
+            (nested.to_owned(), SkipReason::TypstOutsideScope),
+        ]
+    );
+}
+
+#[test]
+fn a_typst_note_written_through_a_transaction_indexes_as_a_reconciled_one() {
+    let concept = "concepts/bias-variance-split.md";
+    let path = "concepts/error-budget.typ";
+    let source = "#metadata((type: \"concept\", title: \"Error budget\", tags: (\"blocktag\",), origin: \"[[concepts/bias-variance-split]]\")) <cdno>\n\n= Heading\n\n#notatag [[concepts/bias-variance-split|the split]]\n";
+
+    let reconciled = TypstVault::with(&[(concept, CONCEPT_MD), (path, source)]);
+    reconciled.reconcile(&typst_scope());
+
+    let written = TypstVault::with(&[(concept, CONCEPT_MD)]);
+    written.reconcile(&typst_scope());
+    let mut tx = VaultTransaction::new(written.store.clone(), written.index.clone()).unwrap();
+    tx.write_file(vp(path), source);
+    tx.upsert_note(NoteEntry {
+        path: vp(path),
+        note_type: "concept".to_owned(),
+        title: Some("Error budget".to_owned()),
+        content_hash: content_hash(source),
+        mtime_ns: 0,
+        size: source.len() as u64,
+        frontmatter: json!({}),
+        indexed_at_ns: 0,
+    });
+    tx.commit().unwrap();
+
+    assert_eq!(written.links(path), reconciled.links(path));
+    assert_eq!(written.tags(path), vec!["blocktag".to_owned()]);
+    assert_eq!(written.tags(path), reconciled.tags(path));
+    assert_eq!(written.fts_title(path).as_deref(), Some("Error budget"));
+    assert_eq!(written.fts_title(path), reconciled.fts_title(path));
 }
