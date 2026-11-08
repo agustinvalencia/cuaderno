@@ -26,6 +26,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   old row when the linking note is reindexed, or when a reconcile pass adds or removes a note or
   changes an alias; run `cdno reindex` once to pick them all up immediately.
 
+### Added
+
 ## [0.44.0] - 2026-11-06
 
 ### Added
