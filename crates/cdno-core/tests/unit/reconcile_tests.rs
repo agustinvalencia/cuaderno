@@ -917,6 +917,9 @@ impl VaultStore for CountingStore {
         self.inner.read_file(path)
     }
     fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        if path.as_path().extension().is_some_and(|e| e == "typ") {
+            self.typ_reads.fetch_add(1, Ordering::Relaxed);
+        }
         self.inner.read_bytes(path)
     }
     fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
@@ -2517,6 +2520,50 @@ fn a_labelled_typ_outside_scope_is_skipped() {
         vault.skipped(&typst_off_scope()),
         vec![(TYP_NOTE.to_owned(), SkipReason::TypstOutsideScope)]
     );
+}
+
+#[test]
+fn an_ignored_typ_under_an_excluded_folder_is_not_counted() {
+    let vault = TypstVault::with(&[(TYP_NOTE, EVIDENCE_TYP)]);
+    let scope = NoteScope {
+        ignore: IgnoreSet::compile(&["portfolios/**".to_owned()]).unwrap(),
+        ..typst_off_scope()
+    };
+    let classified = classify(&vault.store, &scope).unwrap();
+    assert_eq!(classified.ignored, 0);
+    assert_eq!(classified.skipped[0].reason, SkipReason::TypstOutsideScope);
+}
+
+#[test]
+fn undecodable_bytes_count_as_no_label() {
+    let vault = TypstVault::with(&[]);
+    let full = vault.dir.path().join(LOOSE_TYP);
+    std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+    std::fs::write(&full, b"#metadata((type: \"x\")) <cdno>\n\xff\xfe\n").unwrap();
+
+    let report = vault.reconcile(&typst_scope());
+
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    assert!(vault.index.list_all_paths().unwrap().is_empty());
+    assert_eq!(
+        vault.skipped(&typst_scope()),
+        vec![(LOOSE_TYP.to_owned(), SkipReason::TypstUnlabelled)]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_typ_stays_in_notes_and_is_reported() {
+    use std::os::unix::fs::PermissionsExt;
+    let vault = TypstVault::with(&[(TYP_NOTE, EVIDENCE_TYP)]);
+    let full = vault.dir.path().join(TYP_NOTE);
+    std::fs::set_permissions(&full, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let report = vault.reconcile(&typst_scope());
+
+    std::fs::set_permissions(&full, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+    assert!(report.errors[0].reason.contains("read failed"));
 }
 
 #[test]

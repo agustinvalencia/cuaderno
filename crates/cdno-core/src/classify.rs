@@ -183,11 +183,11 @@ fn classify_typst(
     let Some(admitted) = scope.typst_admission(path) else {
         return;
     };
-    if scope.ignore.is_match(path.as_path()) {
+    if admitted && scope.ignore.is_match(path.as_path()) {
         classified.candidate(path, scope);
         return;
     }
-    let Ok(source) = store.read_file(path) else {
+    let Ok(bytes) = store.read_bytes(path) else {
         // Left to reconciliation, which reports the failed read and leaves
         // any existing row in place. Dropping it here would lose it silently.
         if admitted {
@@ -195,14 +195,16 @@ fn classify_typst(
         }
         return;
     };
-    let reason = match (admitted, typst::has_label(&source)) {
+    // Typst source is UTF-8, so bytes that do not decode hold no label.
+    let source = std::str::from_utf8(&bytes).unwrap_or_default();
+    let reason = match (admitted, typst::has_label(source)) {
         (true, true) => {
             classified.notes.insert(path.clone());
             return;
         }
         (false, true) => SkipReason::TypstOutsideScope,
         (false, false) => return,
-        (true, false) => match typst::broken_label_line(&source) {
+        (true, false) => match typst::broken_label_line(source) {
             Some(line) => SkipReason::TypstLabelBroken { line },
             None => SkipReason::TypstUnlabelled,
         },

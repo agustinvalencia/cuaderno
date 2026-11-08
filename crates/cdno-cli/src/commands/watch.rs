@@ -141,6 +141,10 @@ impl TypstEchoFilter {
                 let Some(stamp) = stamp else { return true };
                 self.seen.insert(path.clone(), stamp) != Some(stamp)
             }
+            FileEvent::Removed(path) => {
+                self.seen.remove(path);
+                true
+            }
             _ => true,
         }
     }
