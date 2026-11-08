@@ -107,9 +107,11 @@ fn an_image_inside_a_figure_is_found() {
 }
 
 #[test]
-fn urls_remote_imports_and_unrelated_calls_are_ignored() {
-    let src = "#image(\"https://example.org/a.png\")\n#import \"@preview/p:1.0.0\"\n#import mod: f\n#text(\"x.png\")\n#json.decode(\"{}\")\n";
-    assert_eq!(path_args(src), vec![]);
+fn package_imports_and_unrelated_calls_are_ignored() {
+    let src = "#import \"@preview/p:1.0.0\"\n#include \"@preview/q:1.0.0\"\n#text(\"x.png\")\n#json.decode(\"{}\")\n#raw(\"code\")\n#bibliography(\"r.bib\", style: \"ieee\")\n";
+    let got: Vec<String> = literals(src).into_iter().map(|l| l.value).collect();
+    assert_eq!(got, vec!["r.bib"]);
+    assert_eq!(path_args(src).len(), 1);
 }
 
 #[test]
@@ -136,4 +138,95 @@ fn a_listed_call_without_a_positional_argument_is_reported_not_literal() {
             },
         ]
     );
+}
+
+fn values(src: &str) -> Vec<(String, String)> {
+    literals(src)
+        .into_iter()
+        .map(|l| (l.call, l.value))
+        .collect()
+}
+
+fn pair(c: &str, v: &str) -> (String, String) {
+    (c.to_string(), v.to_string())
+}
+
+#[test]
+fn a_string_with_a_scheme_or_an_at_is_a_local_path_outside_import_and_include() {
+    let src = "#read(\"x://../../k\")\n#image(\"@2x.png\")\n#image(\"https://a/b.png\")\n";
+    assert_eq!(
+        values(src),
+        vec![
+            pair("read", "x://../../k"),
+            pair("image", "@2x.png"),
+            pair("image", "https://a/b.png")
+        ]
+    );
+}
+
+#[test]
+fn the_callee_may_be_std_with_or_parenthesised() {
+    let src = "#std.image(\"a.png\")\n#let f = image.with(\"b.png\")\n#(image)(\"c.png\")\n#std.read.with(\"d.txt\")\n#image.with(width: 1pt)(\"e.png\")\n#image.with(width: 1pt)\n#pdf.attach(\"f.csv\")\n#std.pdf.attach(\"g.csv\")\n";
+    assert_eq!(
+        values(src),
+        vec![
+            pair("image", "a.png"),
+            pair("image", "b.png"),
+            pair("image", "c.png"),
+            pair("read", "d.txt"),
+            pair("image", "e.png"),
+            pair("pdf.attach", "f.csv"),
+            pair("pdf.attach", "g.csv"),
+        ]
+    );
+    assert_eq!(
+        path_args(src).len(),
+        7,
+        "a .with that adds no path adds nothing"
+    );
+}
+
+#[test]
+fn an_import_from_a_name_or_field_is_reported_not_literal() {
+    let src = "#import mod: f\n#import cfg.path: g\n";
+    assert_eq!(
+        path_args(src),
+        vec![
+            PathArg::NotLiteral {
+                call: "import".into(),
+                line: 1
+            },
+            PathArg::NotLiteral {
+                call: "import".into(),
+                line: 2
+            },
+        ]
+    );
+}
+
+#[test]
+fn the_widened_list_is_found() {
+    let src = "#plugin(\"p.wasm\")\n#bibliography(\"r.bib\", style: \"my.csl\")\n#cite(<k>, style: \"other.csl\")\n#cite(<k>, style: \"ieee\")\n#set raw(theme: \"t.tmTheme\", syntaxes: (\"a.sublime-syntax\", \"b.sublime-syntax\"))\n#image(\"a.jpg\", icc: \"p.icc\")\n#raw(\"x\", theme: none)\n";
+    assert_eq!(
+        values(src),
+        vec![
+            pair("plugin", "p.wasm"),
+            pair("bibliography", "r.bib"),
+            pair("bibliography", "my.csl"),
+            pair("cite", "other.csl"),
+            pair("raw", "t.tmTheme"),
+            pair("raw", "a.sublime-syntax"),
+            pair("raw", "b.sublime-syntax"),
+            pair("image", "a.jpg"),
+            pair("image", "p.icc"),
+        ]
+    );
+    assert_eq!(path_args(src).len(), 9);
+}
+
+#[test]
+fn a_computed_named_path_is_reported_not_literal() {
+    let src = "#bibliography(\"r.bib\", style: s)\n";
+    assert_eq!(path_args(src).len(), 2);
+    assert!(matches!(path_args(src)[1], PathArg::NotLiteral { .. }));
 }

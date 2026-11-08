@@ -7,18 +7,47 @@ use typst_syntax::{LinkedNode, SyntaxKind, SyntaxNode};
 
 use super::{line_of, with_tree};
 
-/// Calls whose first positional argument is a file path.
-const PATH_CALLS: &[&str] = &[
-    "image",
-    "read",
-    "json",
-    "csv",
-    "yaml",
-    "toml",
-    "xml",
-    "cbor",
-    "bibliography",
-];
+/// What a named argument holds.
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    /// Any string is a path.
+    Path,
+    /// A string is a path only when it ends in `.csl`; other strings are built-in style names.
+    Style,
+}
+
+/// A listed function: whether its first positional is a path, and its path-valued named arguments.
+struct Spec {
+    positional: bool,
+    named: &'static [(&'static str, Kind)],
+}
+
+fn spec(name: &str) -> Option<Spec> {
+    const P: Spec = Spec {
+        positional: true,
+        named: &[],
+    };
+    Some(match name {
+        "read" | "json" | "csv" | "yaml" | "toml" | "xml" | "cbor" | "plugin" | "pdf.attach" => P,
+        "image" => Spec {
+            positional: true,
+            named: &[("icc", Kind::Path)],
+        },
+        "bibliography" => Spec {
+            positional: true,
+            named: &[("style", Kind::Style)],
+        },
+        "cite" => Spec {
+            positional: false,
+            named: &[("style", Kind::Style)],
+        },
+        "raw" => Spec {
+            positional: false,
+            named: &[("theme", Kind::Path), ("syntaxes", Kind::Path)],
+        },
+        _ => return None,
+    })
+}
 
 /// A path written as a string literal.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,7 +96,12 @@ fn walk(source: &str, node: &LinkedNode, out: &mut Vec<PathArg>) {
     match node.kind() {
         SyntaxKind::FuncCall => {
             if let Some(call) = node.cast::<ast::FuncCall>() {
-                func_call(source, call, node, out);
+                func_call(source, call.callee(), call.args(), false, node, out);
+            }
+        }
+        SyntaxKind::SetRule => {
+            if let Some(set) = node.cast::<ast::SetRule>() {
+                func_call(source, set.target(), set.args(), true, node, out);
             }
         }
         SyntaxKind::ModuleInclude => {
@@ -77,10 +111,7 @@ fn walk(source: &str, node: &LinkedNode, out: &mut Vec<PathArg>) {
         }
         SyntaxKind::ModuleImport => {
             if let Some(imp) = node.cast::<ast::ModuleImport>() {
-                let src = imp.source();
-                if !matches!(src, Expr::Ident(_) | Expr::FieldAccess(_)) {
-                    path_expr(source, "import", src, node, out);
-                }
+                path_expr(source, "import", imp.source(), node, out);
             }
         }
         _ => {}
@@ -90,37 +121,109 @@ fn walk(source: &str, node: &LinkedNode, out: &mut Vec<PathArg>) {
     }
 }
 
-fn func_call(source: &str, call: ast::FuncCall, node: &LinkedNode, out: &mut Vec<PathArg>) {
-    let Expr::Ident(name) = call.callee() else {
-        return;
+/// The listed function a callee names, and whether it was reached through `.with(...)`, which may
+/// have supplied the path already. Accepts `name`, `std.name`, `pdf.attach`, `std.pdf.attach`,
+/// `name.with(..)` and a parenthesised callee.
+fn resolve(callee: Expr) -> Option<(&'static str, bool)> {
+    let canon = |n: &str| -> Option<&'static str> {
+        [
+            "image",
+            "read",
+            "json",
+            "csv",
+            "yaml",
+            "toml",
+            "xml",
+            "cbor",
+            "bibliography",
+            "cite",
+            "raw",
+            "plugin",
+            "pdf.attach",
+        ]
+        .into_iter()
+        .find(|k| *k == n)
     };
-    let name = name.as_str();
-    if !PATH_CALLS.contains(&name) {
-        return;
-    }
-    let first = call.args().items().find_map(|a| match a {
-        Arg::Pos(e) => Some(e),
-        _ => None,
-    });
-    let Some(first) = first else {
-        out.push(not_literal(source, name, node));
-        return;
-    };
-    if name == "bibliography" {
-        match unparen(first) {
-            Expr::Array(items) => {
-                for item in items.items() {
-                    match item {
-                        ArrayItem::Pos(e) => path_expr(source, name, e, node, out),
-                        ArrayItem::Spread(_) => out.push(not_literal(source, name, node)),
-                    }
+    match unparen(callee) {
+        Expr::Ident(i) => canon(i.as_str()).map(|n| (n, false)),
+        Expr::FuncCall(c) => resolve(c.callee()).map(|(n, _)| (n, true)),
+        Expr::FieldAccess(a) => {
+            let field = a.field().as_str();
+            let target = unparen(a.target());
+            match (&target, field) {
+                (_, "with") => resolve(target).map(|(n, _)| (n, true)),
+                (Expr::Ident(t), f) if t.as_str() == "std" => canon(f).map(|n| (n, false)),
+                (Expr::Ident(t), "attach") if t.as_str() == "pdf" => Some(("pdf.attach", false)),
+                (Expr::FieldAccess(t), "attach")
+                    if t.field().as_str() == "pdf"
+                        && matches!(unparen(t.target()), Expr::Ident(s) if s.as_str() == "std") =>
+                {
+                    Some(("pdf.attach", false))
                 }
-                return;
+                _ => None,
             }
-            e => return path_expr(source, name, e, node, out),
+        }
+        _ => None,
+    }
+}
+
+/// `is_set`: a `set` rule never supplies a positional, so only the named arguments are read.
+fn func_call(
+    source: &str,
+    callee: Expr,
+    args: ast::Args,
+    is_set: bool,
+    node: &LinkedNode,
+    out: &mut Vec<PathArg>,
+) {
+    let Some((name, via_with)) = resolve(callee) else {
+        return;
+    };
+    let via_with = via_with || is_set;
+    let Some(spec) = spec(name) else { return };
+    if spec.positional {
+        let first = args.items().find_map(|a| match a {
+            Arg::Pos(e) => Some(e),
+            _ => None,
+        });
+        match first {
+            Some(e) => path_value(source, name, e, Kind::Path, node, out),
+            None if !via_with => out.push(not_literal(source, name, node)),
+            None => {}
         }
     }
-    path_expr(source, name, first, node, out);
+    for arg in args.items() {
+        if let Arg::Named(n) = arg
+            && let Some((_, kind)) = spec.named.iter().find(|(k, _)| *k == n.name().as_str())
+        {
+            path_value(source, name, n.expr(), *kind, node, out);
+        }
+    }
+}
+
+/// A path value: a string, or an array of them. `none` and `auto` name no file.
+fn path_value(
+    source: &str,
+    call: &str,
+    expr: Expr,
+    kind: Kind,
+    anchor: &LinkedNode,
+    out: &mut Vec<PathArg>,
+) {
+    match unparen(expr) {
+        Expr::Array(items) => {
+            for item in items.items() {
+                match item {
+                    ArrayItem::Pos(e) => path_value(source, call, e, kind, anchor, out),
+                    ArrayItem::Spread(_) => out.push(not_literal(source, call, anchor)),
+                }
+            }
+        }
+        Expr::None(_) | Expr::Auto(_)
+            if kind == Kind::Style || call == "raw" || call == "image" => {}
+        Expr::Str(s) if kind == Kind::Style && !s.get().ends_with(".csl") => {}
+        e => path_expr(source, call, e, anchor, out),
+    }
 }
 
 fn unparen(mut e: Expr) -> Expr {
@@ -135,7 +238,7 @@ fn path_expr(source: &str, call: &str, expr: Expr, anchor: &LinkedNode, out: &mu
     match unparen(expr) {
         Expr::Str(s) => {
             let value = s.get().to_string();
-            if is_remote(&value) {
+            if value.starts_with('@') && (call == "import" || call == "include") {
                 return;
             }
             let range = locate(anchor, s.to_untyped());
@@ -151,10 +254,6 @@ fn path_expr(source: &str, call: &str, expr: Expr, anchor: &LinkedNode, out: &mu
         }
         _ => out.push(not_literal(source, call, anchor)),
     }
-}
-
-fn is_remote(value: &str) -> bool {
-    value.starts_with('@') || value.contains("://")
 }
 
 fn not_literal(source: &str, call: &str, anchor: &LinkedNode) -> PathArg {
