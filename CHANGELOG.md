@@ -56,6 +56,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   walks through `classify`. `NOTE.MD` is now a note in the watcher and the rename snapshot as well
   as in reconciliation. Sites that stay Markdown carry a `Markdown on purpose` comment. Nothing
   else a person sees changes.
+- **The metadata block can be written and edited in place** (RFC 0008 T8, #936). `typst` gains
+  `write_block`, `rewrite_scalar`, `append_list_value`, `remove_list_value`, and `scalar_span`: a value is rewritten at its span, a missing key is inserted where the
+  dictionary closes (replacing the `:` of `(:)`), and a comment or key order inside the block
+  survives (except inside an array being edited). Typst keywords are written as string keys. The block's literal rule now also admits
+  integer and float literals with an optional leading `-`. Nothing calls them yet.
 - **Headings and wikilinks read from Typst markup** (RFC 0008 T7, #935). `cdno_core::typst` gains `headings` (each heading's source text and level) and `wikilink_spans` (links over inline runs and the `<cdno>` block's strings, with raw byte spans, decoded addresses and targets, and a named fault for every `[[` that is not a link); nothing calls them yet.
 - **Path arguments of a Typst document** (RFC 0008 T9, part of #927). `cdno-core` gains
   `typst::path_args`, which lists the files a Typst source reaches for: `image` (and `icc:`),
