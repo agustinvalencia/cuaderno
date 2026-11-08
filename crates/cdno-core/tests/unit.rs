@@ -24,6 +24,7 @@ mod unit {
     mod store_tests;
     mod template_tests;
     mod transaction_tests;
+    mod typst_links_tests;
     mod typst_metadata_tests;
     mod typst_paths_tests;
     mod typst_tests;

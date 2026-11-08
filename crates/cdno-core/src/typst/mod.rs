@@ -15,7 +15,10 @@
 //!   101 lines, 24 crates added (typst-syntax, -timing, -utils, ecow, rayon, parking_lot,
 //!   unicode-* and their dependencies).
 
+mod links;
 mod metadata;
+
+pub use links::{LinkFault, TypstLinks, headings, wikilink_spans};
 
 use typst_syntax::{Lines, SyntaxKind, SyntaxNode, parse};
 
@@ -99,11 +102,16 @@ fn with_tree<R: Send>(
 /// The 1-based line of a byte offset, by Typst's own line rules (`\n`, `\r`, VT, FF, U+0085,
 /// U+2028, U+2029). Never slices `source`, so an offset inside a character cannot panic.
 fn line_of(source: &str, offset: usize) -> usize {
-    let lines = Lines::new(source);
+    line_in(&Lines::new(source), offset)
+}
+
+/// [`line_of`] against a line table already built, for a caller with many offsets to place.
+fn line_in(lines: &Lines<&str>, offset: usize) -> usize {
     lines
-        .byte_to_line(offset.min(source.len()))
+        .byte_to_line(offset.min(lines.text().len()))
         .map_or(1, |l| l + 1)
 }
+
 fn first_error_offset(node: &SyntaxNode, start: usize) -> Option<usize> {
     if node.kind() == SyntaxKind::Error {
         return Some(start);

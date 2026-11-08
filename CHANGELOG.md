@@ -50,6 +50,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   it; it is removed when a deleted or moved-away path was named by a `RemoveNote` or held an index
   row. A Markdown file imported as an attachment or moved with its folder no
   longer triggers a link re-resolution pass. `VaultTransaction::note_delta` exposes the sets.
+- **Headings and wikilinks read from Typst markup** (RFC 0008 T7, #935). `cdno_core::typst` gains `headings` (each heading's source text and level) and `wikilink_spans` (links over inline runs and the `<cdno>` block's strings, with raw byte spans, decoded addresses and targets, and a named fault for every `[[` that is not a link); nothing calls them yet.
 - **Path arguments of a Typst document** (RFC 0008 T9, part of #927). `cdno-core` gains
   `typst::path_args`, which lists the files a Typst source reaches for: `image` (and `icc:`),
   `read`, the data loaders, `plugin`, `pdf.attach`, `bibliography`, `include`, a path `import`,
