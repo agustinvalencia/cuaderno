@@ -4089,3 +4089,31 @@ fn an_upper_case_md_stub_owns_nothing_and_lint_agrees_with_the_classifier() {
         report.issues[0].message
     );
 }
+
+#[test]
+fn a_pdf_beside_a_typst_note_is_not_an_orphan() {
+    let vault = vault_with_notes(
+        &[
+            (
+                "portfolios/surrogate-error-budget/bias-variance-split.typ",
+                "#metadata((type: \"evidence\")) <cdno>\n\nBody.\n",
+            ),
+            (
+                "portfolios/surrogate-error-budget/bias-variance-split/figure.pdf",
+                "%PDF-1.7 fake bytes",
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+
+    assert!(
+        !report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("orphaned attachment")),
+        "issues: {:?}",
+        report.issues
+    );
+}
