@@ -1,7 +1,7 @@
 # RFC 0008 — Implementation plan
 
-Companion to [RFC 0008 — Typst notes](0008-typst-notes.md) (PR #925). Each task below is meant to
-be one issue and one pull request: small enough to review in one sitting, independent where the
+Companion to [RFC 0008 — Typst notes](0008-typst-notes.md) (PR #925); tracked by epic #927, with
+T0–T31 filed as #928–#959 in order. Each task below is meant to be one issue and one pull request: small enough to review in one sitting, independent where the
 dependency graph allows, and **done only when its probe passes**. The rules carried over from the
 RFC 0002, 0004, 0005 and 0007 plans hold: a green suite is not a probe (a probe asserts the
 specific new behaviour, and where it guards a regression the breaking mutation is shown to fail);
