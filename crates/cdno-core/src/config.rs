@@ -48,6 +48,19 @@ impl Default for FocusConfig {
     }
 }
 
+/// The `[typst]` section: which note types may be written in Typst (RFC 0008
+/// §5.9). Denies unknown fields, as `[focus]` does. Core only parses it; the
+/// type registry in `cdno-domain` owns the default and the refusal list.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TypstConfig {
+    /// The types whose notes may be Typst. `None` is the implicit default
+    /// (`evidence`, plus `concept` when declared); `Some(vec![])` turns the
+    /// feature off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note_types: Option<Vec<String>>,
+}
+
 /// The default `[projects] holder_sentinels`: the values of a project map's
 /// `held_by:` that name the person (`me`, `I`, `myself`, and `(mine)`, the
 /// stand-in a `holder on` log entry prints for an absent holder) or nobody
@@ -140,6 +153,9 @@ pub struct VaultConfig {
     /// Policy for project maps, `[projects]` (RFC 0006 §8.2).
     #[serde(default)]
     pub projects: ProjectsConfig,
+    /// Which note types may be written in Typst, `[typst]` (RFC 0008 §5.9).
+    #[serde(default)]
+    pub typst: TypstConfig,
 }
 
 /// The `[vault]` section — basic vault metadata.

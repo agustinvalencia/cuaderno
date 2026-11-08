@@ -490,8 +490,9 @@ note_types = ["evidence", "concept"]
   never validated against, so a vault that never declared `concept` opens as before. `[]` turns the
   feature off: no `.typ` is read, every one is an attachment.
 - An **explicit** list is validated: a name must exist (built-in or declared), and the registry
-  refuses `daily`, `weekly`, `monthly`, `project`, `action`, `commitment`, `inbox`, `tracking` and
-  `stewardship`, whose section machinery is Markdown's (§9 D1). The refusal list and the
+  refuses `daily`, `weekly`, `monthly`, `project`, `action`, `commitment`, `inbox`, `tracking`,
+  `stewardship`, `portfolio` and `question`: Typst is admitted for evidence and custom types only
+  (§9 D1). The refusal list and the
   `admits_typst` check live on the **type registry** in `cdno-domain` — a custom type such as
   `concept` is not a `NoteType` variant — and the engine stays ignorant of it.
 - A labelled `.typ` in a folder the switch **excludes** is reported by the classifier as a
