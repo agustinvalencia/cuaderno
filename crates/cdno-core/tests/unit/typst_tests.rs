@@ -65,3 +65,14 @@ fn parses_reports_the_first_error_not_a_later_one() {
         fault.message
     );
 }
+
+#[test]
+fn parses_survives_a_deep_chain_that_carries_errors() {
+    let src = format!("$#(1 +){}$", "!".repeat(50_000));
+    let outcome = std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || parses(&src).is_ok())
+        .unwrap()
+        .join();
+    assert!(outcome.is_ok());
+}

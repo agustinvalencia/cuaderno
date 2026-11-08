@@ -56,10 +56,12 @@ pub fn parses(source: &str) -> Result<(), SyntaxFault> {
 /// stack that is an abort, not a panic. So the parse, the walk `f` and the drop of the tree all
 /// run on a scoped thread whose stack grows with the source.
 ///
-/// The stack is `max(8 MiB, 256 * source.len())`: 256 bytes is a generous bound on the frame
-/// cost of one level (a level costs at least one source byte, and the recursive frames here are
-/// well under that). The stack is reserved address space, not committed memory, so the
-/// allowance costs nothing until a deep tree uses it.
+/// The stack is `max(8 MiB, 1024 * source.len())`. Measured on the worst input found, an
+/// error-carrying chain (`$#(1 +)!!!...$`), one level costs 208 bytes of stack per source byte in
+/// a release build and 480 in a dev build; 1024 leaves a margin of about twofold over the dev
+/// figure. The stack is reserved address space, not committed memory, so the allowance costs
+/// nothing until a deep tree uses it. On a very large file the reservation itself may fail; that
+/// surfaces as a fault from the spawn, not an abort.
 ///
 /// Unlike the bare `R` one might expect, this returns a `Result`: if the thread cannot be
 /// spawned, the caller gets a fault rather than a panic.
@@ -67,7 +69,7 @@ fn with_tree<R: Send>(
     source: &str,
     f: impl FnOnce(&SyntaxNode) -> R + Send,
 ) -> Result<R, SyntaxFault> {
-    let stack = (256 * source.len()).max(8 * 1024 * 1024);
+    let stack = (1024 * source.len()).max(8 * 1024 * 1024);
     std::thread::scope(|scope| {
         let handle = std::thread::Builder::new()
             .stack_size(stack)
