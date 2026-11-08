@@ -51,9 +51,18 @@ impl NoteScope {
         Self::new(IgnoreSet::empty())
     }
 
+    /// Whether `dir` is itself the folder of a declared type, in either list.
+    /// No note owns such a folder: it is another type's root, not an attachment folder.
+    pub(crate) fn is_type_root(&self, dir: &std::path::Path) -> bool {
+        self.typst_folders
+            .iter()
+            .chain(&self.typst_excluded_folders)
+            .any(|folder| std::path::Path::new(folder) == dir)
+    }
+
     /// `Some(admitted)` for a path under either Typst list, `None` for a path
     /// under neither. Where the lists nest, the deepest folder decides.
-    fn typst_admission(&self, path: &VaultPath) -> Option<bool> {
+    pub(crate) fn typst_admission(&self, path: &VaultPath) -> Option<bool> {
         let depth = |folders: &[String]| {
             folders
                 .iter()
@@ -132,12 +141,12 @@ pub fn classify(store: &Arc<dyn VaultStore>, scope: &NoteScope) -> Result<Classi
     // Over every file, ignored ones included: an ignored stub still owns its
     // folder.
     let all: HashSet<VaultPath> = files.iter().cloned().collect();
-    let owners = folder_owners(store, &all, &dirs, &scope.typst_folders);
+    let owners = folder_owners(store, &all, &dirs, scope);
 
     let mut classified = Classified::default();
     for path in &files {
         let format = note_format(path);
-        if owning_note(path, &scope.typst_folders, |owner| owners.contains(owner)).is_some() {
+        if owning_note(path, scope, |owner| owners.contains(owner)).is_some() {
             classified.artefacts += usize::from(format == Some(NoteFormat::Markdown));
             continue;
         }

@@ -386,7 +386,7 @@ impl Vault {
             &self.store,
             &path_set,
             &ignore,
-            &crate::type_registry::TypeRegistry::new(&self.config).typst_folders(),
+            &self.note_scope()?,
         )?);
         issues.extend(self.stewardship_dashboard_issues()?);
         issues.extend(self.tracking_record_order_issues()?);
@@ -1169,7 +1169,7 @@ fn orphan_artefact_issues(
     store: &Arc<dyn VaultStore>,
     notes: &HashSet<VaultPath>,
     ignore: &IgnoreSet,
-    typst_folders: &[String],
+    scope: &cdno_core::classify::NoteScope,
 ) -> Result<Vec<LintIssue>, DomainError> {
     let Ok(root) = VaultPath::new(cdno_core::paths::PORTFOLIOS) else {
         return Ok(Vec::new());
@@ -1208,7 +1208,7 @@ fn orphan_artefact_issues(
         if notes.contains(file) || ignore.is_match(file.as_path()) {
             continue;
         }
-        let owned = cdno_core::artefacts::owning_note(file, typst_folders, |owner| {
+        let owned = cdno_core::artefacts::owning_note(file, scope, |owner| {
             *stub_cache.entry(owner.clone()).or_insert_with(|| {
                 cdno_core::artefacts::is_attachment_stub(store, owner)
                     || cdno_core::artefacts::is_typst_note(store, owner)

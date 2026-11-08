@@ -37,6 +37,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use crate::classify::NoteScope;
 use crate::path::VaultPath;
 use crate::paths::PORTFOLIOS;
 use crate::paths::{NoteFormat, note_format};
@@ -112,17 +113,21 @@ pub fn folder_owners(
     store: &Arc<dyn VaultStore>,
     files: &HashSet<VaultPath>,
     dirs: &HashSet<VaultPath>,
-    typst_folders: &[String],
+    scope: &NoteScope,
 ) -> HashSet<VaultPath> {
     let mut candidates: Vec<&VaultPath> = dirs.iter().collect();
     candidates.sort_by_key(|dir| dir.as_path().components().count());
 
-    let mut owned_dirs: Vec<&VaultPath> = Vec::new();
+    let mut owned_dirs: HashSet<&VaultPath> = HashSet::new();
     let mut owners = HashSet::new();
     for dir in candidates {
-        if owned_dirs
-            .iter()
-            .any(|owned| dir.as_path().starts_with(owned.as_path()))
+        if scope.is_type_root(dir.as_path())
+            || dir
+                .as_path()
+                .ancestors()
+                .skip(1)
+                .filter_map(|a| VaultPath::new(a).ok())
+                .any(|a| owned_dirs.contains(&a))
         {
             continue;
         }
@@ -135,8 +140,9 @@ pub fn folder_owners(
             owners.insert(stub);
             claimed = true;
         }
-        if typst_depth_ok(dir.as_path(), typst_folders)
+        if typst_depth_ok(dir.as_path(), &scope.typst_folders)
             && let Some(note) = sibling_with(dir.as_path(), "typ")
+            && scope.typst_admission(&note) == Some(true)
             && files.contains(&note)
             && is_typst_note(store, &note)
         {
@@ -144,7 +150,7 @@ pub fn folder_owners(
             claimed = true;
         }
         if claimed {
-            owned_dirs.push(dir);
+            owned_dirs.insert(dir);
         }
     }
     owners
@@ -163,7 +169,9 @@ pub fn folder_owners(
 /// is `stewardships/<slug>/` and a flat one is `stewardships/<slug>.md`, so a
 /// vault holding both spellings of one slug would see the expanded folder's
 /// notes silently vanish from the index. A Typst note owns a folder only
-/// under `portfolios/` or `typst_folders`, for the same reason.
+/// under `portfolios/` or `typst_folders`, for the same reason, and only
+/// where the scope's deepest-folder rule admits the note's own path. A
+/// declared type's folder is never an attachment folder.
 ///
 /// Within one folder the `.md` candidate is asked first, so a stub and a
 /// Typst note sharing a stem resolve to the stub, deterministically.
@@ -173,20 +181,24 @@ pub fn folder_owners(
 /// passes a set resolved once by [`folder_owners`].
 pub fn owning_note(
     path: &VaultPath,
-    typst_folders: &[String],
+    scope: &NoteScope,
     mut is_owner: impl FnMut(&VaultPath) -> bool,
 ) -> Option<VaultPath> {
     let mut ancestors: Vec<&std::path::Path> = path.as_path().ancestors().skip(1).collect();
     ancestors.reverse();
     for dir in ancestors {
+        if scope.is_type_root(dir) {
+            continue;
+        }
         if stub_depth_ok(dir)
             && let Some(stub) = sibling_with(dir, "md")
             && is_owner(&stub)
         {
             return Some(stub);
         }
-        if typst_depth_ok(dir, typst_folders)
+        if typst_depth_ok(dir, &scope.typst_folders)
             && let Some(note) = sibling_with(dir, "typ")
+            && scope.typst_admission(&note) == Some(true)
             && is_owner(&note)
         {
             return Some(note);
