@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Amended after review — 2026-11-08 (three-seat review, three rounds, on PR #925; no seat holds a blocking point; §9 D13 and D16 are the maintainer's). Implementation plan to follow once accepted, as RFC 0004, 0005 and 0007 had. |
+| **Status** | Accepted — 2026-11-08, after a three-seat review (three rounds, on PR #925; no seat held a blocking point). The maintainer's decisions on D13, D16 and O1–O4 are recorded in §9. Implementation plan: [0008-implementation-plan.md](0008-implementation-plan.md). |
 | **Tracked by** | PR #925 |
 | **Affects** | `cdno-core` (a new `typst.rs`, `paths.rs`, `extractors.rs`, `frontmatter.rs`, `frontmatter_edit.rs`, `artefacts.rs`, `reconcile.rs`, `transaction.rs`, `config.rs`), `cdno-domain` (`type_registry.rs`, `vault/portfolios.rs`, `vault/custom_notes.rs`, `vault/revise.rs`, `vault/set_frontmatter.rs`, `vault/lint.rs`, `vault/rename.rs`, `vault/note_ref.rs`, `vault/notes.rs`, `vault/search.rs`, `vault/log.rs`), `cdno-cli` (`--format` on `cdno file` and `cdno note create`, the watcher), `cdno-mcp` (one field on two tools, `read_note`, rejection codes, server instructions), `docs/design.md`, `CLAUDE.md`, `docs-site`, the `file-to-portfolio` and `concept` skills |
 | **Related** | #154 and #183 (attachments), RFC 0002 (concept notes), RFC 0007 (renames rewrite references; slugs at creation), #225 (globally unique stems), #215 (last-segment resolution), #211 (`cdno lint --fix`) |
@@ -111,7 +111,7 @@ something". Measurements taken on 2026-11-08 over one working vault:
 | Measurement | Count |
 |---|---|
 | Typst-built documents filed as attachments, by month (Jul, Sep, Oct 2026) | 1, 5, 13 |
-| of which evidence (a dated record bearing on a question) rather than a project's deliverable | not counted; the review asks that the next count record the split (§9 O4) |
+| of which evidence (a dated record bearing on a question) rather than a project's deliverable | to be counted before adoption is built (§9 O4; plan T32) |
 | Attachment stubs whose `kind` records the derived PDF rather than the Typst source | 13 of 14 |
 | `.typ` files in the vault, all under `portfolios/` | 58 |
 | Evidence notes whose content is a reusable concept, and that need Typst's mathematics | 2 of the 8 strongest candidates |
@@ -629,7 +629,7 @@ compiler, which is the rendering phase.
 - `CLAUDE.md`: the invariant "Markdown is the source of truth" becomes "plain text on disk is the
   source of truth"; the classifier named as the one place that decides what is a note.
 - `docs-site`: a *Typst notes* page under the reference; `cli/file.md`, `cli/note.md`,
-  `configuration.md`, the method page (§9 D13).
+  `configuration.md`, the method page's changelog of practices (RLM 1.3, §9 D13).
 - `examples/skills/references/LINKING-RULES.md`: the one-line escape rule and the no-inline-tags
   rule.
 - `cuaderno-flow`: `file-to-portfolio` (when to choose `format: typst`; "is this the thing you
@@ -687,7 +687,10 @@ Each stage is a PR on its own, green and reviewed before the next.
   `revise_note` with the body slice; the section refusal; `set_frontmatter` on the block; the
   `concept` skill.
 - **S6 — documentation and method.** `design.md`, `CLAUDE.md`, the docs-site page, the method page
-  if §9 D13 says so, LINKING-RULES, the server instructions.
+  (RLM 1.3, §9 D13), LINKING-RULES, the server instructions.
+
+The task breakdown — thirty-three tasks with deliverables, probes, dependencies and the tracks
+that run in parallel — is the [implementation plan](0008-implementation-plan.md).
 - **Later, separate RFC — rendering.** `cdno render`, the `typst` binary on `$PATH` with a minimum
   version, output folder, targets, "does not compile" and "package missing" as lint Warnings, the
   `imports` column, the preamble verb of D16, `read_note` pointing at a compiled PDF, serving PDFs
@@ -740,7 +743,10 @@ Proposed by the draft and settled by the review:
 - **D13 — method version.** The method page says the notes are Markdown; "plain text" with Typst
   admitted for two types is a change to the method's text. Proposed: a minor method version with
   one sentence on the method page, as RFC 0007 did; the sentence also keeps deliverables out of
-  portfolios. Two seats agree, one is indifferent. **For the maintainer.**
+  portfolios. Two seats agreed, one was indifferent. **Decided 2026-11-08: the minor version.**
+  RLM 1.3, one sentence in the method page's changelog of practices, stamped last among the code
+  changes (plan T31). The deliverable sentence belongs on the method page whatever the format
+  question, and that alone changes the method's text.
 - **D14 — full text indexed raw in v1 (§5.4), block excluded.** Agreed.
 - **D15 — the `imports` column.** The draft proposed it now; the review deferred it to the
   rendering RFC: nothing reads it in v1, and the parse is cheap enough to run on demand.
@@ -754,18 +760,28 @@ Raised by the review:
   nothing observed, so they are appearance under D3. Another: the version string of a top-level
   `#import` only, because a `show` rule can change the text a reader sees. One rule is shared and
   written now: **`#let` is content, and no verb on evidence ever touches it.** "File it again" is
-  rejected as a remedy: it costs a slug and splits the backlinks. **The choice is the
-  maintainer's, in the rendering RFC.**
+  rejected as a remedy: it costs a slug and splits the backlinks. **The maintainer's lean,
+  recorded 2026-11-08 for the rendering RFC: the narrow scope first** — the version string of a
+  top-level `#import` — because widening a verb's scope later is reversible and narrowing it
+  after notes have been rewritten is not. The rendering RFC may widen it with the first
+  position's argument; `preamble_span` is exposed either way, so neither choice costs a second
+  parse.
 
-Open, not proposed:
+Raised as open by the review; the maintainer's positions, 2026-11-08:
 
 - **O1** — whether `read_note` should return a text-only projection beside the source for agents
-  that do not read Typst well.
+  that do not read Typst well. **Deferred until S4 has shipped** and an agent is seen to stumble;
+  decided on evidence, not in advance. Needs no schema change when it comes.
 - **O2** — whether a Typst evidence note's appended revision should use a heading of a fixed form
   (`= Revision <date>`) so the index can list revisions, or stay free-form as Markdown's is.
-- **O3** — whether `cdno lint --fix` should learn any Typst repair in v1 (none is proposed).
+  **Free-form in both formats in v1.** Parity between the formats matters more than the listing;
+  a cross-format revision heading is a small RFC of its own if the index ever needs it.
+- **O3** — whether `cdno lint --fix` should learn any Typst repair in v1. **No.** The candidates
+  (adding a missing label, escaping a character inside a link) each guess at intent on a note
+  that may be frozen.
 - **O4** — whether the next count of Typst filings should record evidence and deliverables
-  separately, so §2.1's second row has a number.
+  separately, so §2.1's second row has a number. **Yes, before adoption is built** (plan T32), so
+  S4b is sized on the filings that are evidence.
 
 ## 10. Verification
 
