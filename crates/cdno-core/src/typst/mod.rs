@@ -16,12 +16,19 @@
 //!   unicode-* and their dependencies).
 
 mod edit;
+mod links;
 mod metadata;
+
+pub use links::{LinkFault, TypstLinks, headings, wikilink_spans};
 
 use typst_syntax::{Lines, SyntaxKind, SyntaxNode, parse};
 
 pub use edit::{append_list_value, remove_list_value, rewrite_scalar, scalar_span, write_block};
 pub use metadata::{EntrySpan, MetadataBlock, TypstError, metadata_block};
+
+mod paths;
+
+pub use paths::{PathArg, PathLiteral, path_args};
 
 /// The label that marks a Typst file as a note.
 pub const CDNO_LABEL: &str = "<cdno>";
@@ -97,11 +104,16 @@ fn with_tree<R: Send>(
 /// The 1-based line of a byte offset, by Typst's own line rules (`\n`, `\r`, VT, FF, U+0085,
 /// U+2028, U+2029). Never slices `source`, so an offset inside a character cannot panic.
 fn line_of(source: &str, offset: usize) -> usize {
-    let lines = Lines::new(source);
+    line_in(&Lines::new(source), offset)
+}
+
+/// [`line_of`] against a line table already built, for a caller with many offsets to place.
+fn line_in(lines: &Lines<&str>, offset: usize) -> usize {
     lines
-        .byte_to_line(offset.min(source.len()))
+        .byte_to_line(offset.min(lines.text().len()))
         .map_or(1, |l| l + 1)
 }
+
 fn first_error_offset(node: &SyntaxNode, start: usize) -> Option<usize> {
     if node.kind() == SyntaxKind::Error {
         return Some(start);

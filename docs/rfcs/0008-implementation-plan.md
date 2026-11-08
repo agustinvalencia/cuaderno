@@ -720,13 +720,13 @@ proof that nothing else moved.
 pub struct PathLiteral { pub span: Range<usize> /* inside the quotes */, pub value: String, pub call: String, pub line: usize }
 pub enum PathArg { Literal(PathLiteral), NotLiteral { call: String, line: usize } }
 /// Every path argument of `image`, `read`, `json`, `csv`, `yaml`, `toml`, `xml`, `cbor`,
-/// `bibliography`, `include` and a path `import` (§5.7). `@preview` imports and URLs are not
+/// `bibliography`, `include` and a path `import` (§5.7). `@preview` package imports and includes are not
 /// returned.
 pub fn path_args(source: &str) -> Vec<PathArg>;
 ```
 
 `bibliography` takes a string or an array of strings; both forms are returned one literal each.
-A path argument that is not a string literal (a variable, a concatenation) is `NotLiteral` so
+A path argument that is not a string literal (a variable, a concatenation, an import from a name) is `NotLiteral` so
 adoption can refuse it with a `remedy` (`asset_path_not_literal`).
 
 **Deliverable.** The function, tests.
@@ -740,7 +740,9 @@ adoption can refuse it with a `remedy` (`asset_path_not_literal`).
   `path_args_finds_every_listed_call` (one of each call in a fixture; the span is inside the
   quotes; `include "chapter.typ"` and `import "lib.typ": f` are found, `import
   "@preview/x:0.1.0"` is not), `bibliography_with_an_array_yields_one_literal_per_item`,
-  `a_variable_path_is_reported_not_literal`, `an_image_inside_a_figure_is_found` (nesting).
+  `a_variable_path_is_reported_not_literal`, `an_image_inside_a_figure_is_found` (nesting). The list also covers `plugin`, `pdf.attach`, styles with an extension of `bibliography`/`cite`,
+  `raw(theme:, syntaxes:)`, `image(icc:)`, and the callee forms `std.name`, `name.with(..)` and
+  `(name)`; a string with `://` is a local path, and `@` is skipped only for `import`/`include`.
 - Mutation: drop `include`; the first test fails.
 
 **Correct means.** Adoption can see every file the document reaches for, or say which one it
@@ -1297,7 +1299,9 @@ in `typst_note.rs` (P7). Steps, in order, nothing staged before the last refusal
 validation of T19; read the file (the domain takes the **contents** as `&str` from the interface
 layer too, to keep "no file I/O" literal — so the signature takes `file_contents: &str` and
 `file_name: &str`); refuse `has_label` (`BodyCarriesMetadataBlock`); refuse `parses` failure
-(`BodyDoesNotParse`); `path_args` (T9): every `NotLiteral` → `AssetPathNotLiteral`; every
+(`BodyDoesNotParse`); `path_args` (T9): every `NotLiteral` → `AssetPathNotLiteral` (the remedy says the path must be a plain string
+literal; it does not say "variable", since `image(read(...))` and `image(bytes(...))` are also
+`NotLiteral`); every
 literal resolved against the source directory (`Path::new(dir).join(value)` normalised) must
 land inside the assets folder being copied, else `AssetPathOutsideFolder` (a `/`-rooted path is
 outside by definition; `..` that climbs out is outside); the `assets` list must contain every
@@ -1341,9 +1345,10 @@ says exactly which path it cannot bring.
 ### T24 — Adoption on the CLI and the server
 
 **What.** `cdno file --format typst --attach <file>.typ`: the CLI reads the file, enumerates the
-folder beside it (every regular file under `<dir>/`, excluding the `.typ` itself and any other
-`.typ` at the top level — a sibling source is not an asset; subfolders included, relative names
-preserved) into the `(PathBuf, String)` list, calls `adopt_typst_evidence`, prints the path and
+folder beside it (every regular file under `<dir>/`, excluding only the `.typ` itself;
+subfolders included, relative names preserved; a sibling `.typ` is an asset like any other, so a
+chapter reached by `include` is copied and its own relative paths stay valid, since the folder
+moves whole) into the `(PathBuf, String)` list, calls `adopt_typst_evidence`, prints the path and
 the rewrites (one line each, or `rewrites` in `--json`). `--move` relocates the source as it does
 for an attachment today. The server does the same from `FileToPortfolioInput { format: "typst",
 attach }`, under the existing "the file must be on the server" limit (§6.4); the tool's result
