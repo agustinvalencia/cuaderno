@@ -58,7 +58,8 @@ not improvise; any can be overturned on the plan's issue.
   Vec<String> }`; the domain builds it in `Vault::new` after `TypeRegistry::validate`, from the
   registry's `admits_typst` answers and each type's folder, and passes it where `IgnoreSet` is
   passed today (`vault/mod.rs:205`, `bootstrap.rs:43`, `bin/server.rs:522`, the CLI watcher).
-  Until S3 the list is empty and the classifier never reads a `.typ`.
+  Until S3 the list is empty and the classifier never reads a `.typ`. T12 adds
+  `typst_excluded_folders`, the folders of types the switch leaves out.
 - **P3 — `typst-syntax = "=0.15.1"`.** The newest release when this plan was written; an exact
   pin per §6.1. The machine this is developed on has the `typst` binary 0.14.2, and the parser
   must postdate the syntax it reads, so the pin is newer than the binary, never older. Bumping
@@ -83,7 +84,7 @@ not improvise; any can be overturned on the plan's issue.
   the adopted file and pass `Vec<(PathBuf, String)>`; the domain maps each to
   `portfolios/<slug>/<stem>/<relative_name>` and refuses a `relative_name` that escapes
   (`..`, absolute).
-- **P8 — "does not parse" means `typst_syntax::parse(source).erroneous()`.** One definition
+- **P8 — "does not parse" means `typst_syntax::parse(source).diagnosis().errors`.** One definition
   for creation (refuse) and lint (Warning), with the first Error node's line in the message.
 
 ## Dependency graph
@@ -445,6 +446,54 @@ walk, and nothing a person sees has changed.
 
 ---
 
+## typst-syntax 0.15.1 facts (from the spike)
+
+Measured by T0 on the pinned crate; T5–T9 are written against these.
+
+- **Entry.** `typst_syntax::parse(&str) -> SyntaxNode`, root kind `Markup`. `SyntaxNode` has
+  `kind()`, `children()`, `leaf_text()`, `full_text()`, `len()`, `diagnosis()` (`.errors`) and
+  `errors_and_warnings()`. There is no `text()`, `errors()` or `erroneous()`.
+- **Offsets.** `LinkedNode::new(&root)`, then `children()`, `offset()`, `range()`, `get()`,
+  `parent()`, `cast::<T>()`, `next_sibling()` and `prev_sibling()`, which skip trivia.
+  `SyntaxKind::is_trivia` is Shebang, LineComment, BlockComment, Space and Parbreak; Shebang is not
+  in §5.3's "whitespace and comments", so "first" needs its own check.
+- **The block.** At top level the root `Markup` holds the siblings `Hash`, `FuncCall`, trivia,
+  `Label`. Same line, next line, glued, a comment between and a blank line between all give
+  `func.next_sibling()` the `Label`, and the compiler attaches it in each case. The leaf text keeps
+  the angle brackets: `"<cdno>"`. The block's span runs from `prev_sibling()` (the `Hash`) to the
+  label's end. A nested block sits in a `Markup` under a `ContentBlock`, so finding one for
+  `Nested` takes a descent.
+- **Values.** `ast::FuncCall::{callee, args}`; `Expr::Ident(i).as_str()`; `args.items()` gives
+  `Arg::Pos(expr)`; `Expr::Dict(d).items()` gives `DictItem::{Named, Keyed, Spread}`;
+  `Named::{name, expr}`, `Keyed::{key, expr}`. `Expr::Str(s).get()` decodes (`\#` stays a literal
+  backslash and hash), `Expr::Bool(b).get()`, `Expr::Array(a).items()` gives `ArrayItem::{Pos,
+  Spread}`. `("x",)` is `Array`, `("x")` is `Parenthesized` (`.expr()`).
+- **Link runs.** Recurse over all nodes, stopping at `Raw` (it holds `Text` leaves) and `Equation`.
+  At a `Markup`, gather consecutive Text, Escape, Shorthand, SmartQuote and Space children into a
+  run, and on any other child flush and recurse. Match the brackets on Text leaves equal to `[` or
+  `]`: `LeftBracket`/`RightBracket` occur only as `ContentBlock` delimiters. A content block's
+  interior is its own `Markup`, so a figure caption needs no special case.
+- **Leaves.** `[[2026-11-08-error-budget--v2]]` is Text, Text, Text, Shorthand `--`, Text, Text,
+  Text; `'` is SmartQuote; `\#` is Escape. 200,000 generated slug paths held only Text and Space.
+  Interior leaves that break a run: `#x` Hash+Ident, word-start `*`/`_` Strong/Emph, `//` a
+  LineComment that swallows `]]`, `http://…` Link, `<b>` Label, `@b` Ref. `-1` at a word start is
+  Shorthand `-`; in a word it stays Text, and so do `a_b` and `a*b`. A `Space` can carry `\n`.
+- **Decoding.** `ast::Escape::get() -> char`. For Shorthand and SmartQuote use `leaf_text()`: their
+  `get()` is the rendered form.
+- **Headings.** `Heading` has `HeadingMarker`, `Space`, `Markup`. A trailing ` <sec>` is a sibling
+  of the `Heading` in the parent, so the heading's `Markup` already excludes it.
+- **`typst::with_tree` (T5, #965) is the only way to parse.** Deep trees overflow the stack in
+  recursive walks and in `Drop`, so no other code calls `parse` directly.
+- **Offsets are not source bytes on odd inputs.** Tree offsets can drift, so never slice with
+  `source[range]`: use `source.get(range)` and treat `None` as a fault.
+- **Lines.** From `line_of` (`Lines`), never by counting `\n`.
+- **Errors.** `diagnosis().errors` is a `bool`. After a bare `parse()` the spans are detached, so
+  `errors_and_warnings()` gives no position: walk `LinkedNode`s for `SyntaxKind::Error` and take
+  `offset()`.
+- **Never run the Markdown scanner on Typst.** On `[[x\#y]]` it yields the address `x\`.
+
+---
+
 ## Stage S2 — the Typst reader (no caller yet)
 
 ### T5 — The dependency, `has_label`, `parses`
@@ -497,7 +546,7 @@ pub struct MetadataBlock {
 }
 pub enum TypstError {
     NoBlock,                                   // no `#metadata((…)) <cdno>` at top level
-    LabelBroken { line: usize },               // `#metadata((type:` present; label missing, mistyped, or not its sibling
+    LabelBroken { line: usize },               // `#metadata` block with a `type` key present; label missing, mistyped, or not its sibling
     Nested { line: usize },                    // the block is inside a content block or function body
     NotFirst { line: usize },                  // something other than whitespace/comments precedes it
     Duplicate { line: usize },                 // a second `<cdno>` block
@@ -511,7 +560,7 @@ Rules from §5.3: top level, first, exactly one; the argument a literal dictiona
 `Str`, `Array` of `Str` (`("x",)` and `("x")` both read as one string — the latter is a
 parenthesised string, accepted on read), `Bool`; keys identifiers or string keys; string escapes
 decoded by the parser's own `Str::get`. Anything else is `NotLiteral` with `what` naming the node
-kind. `LabelBroken` is the §5.2 Error: the text holds `#metadata((` and a `type:` key but the
+kind. `LabelBroken` is the §5.2 Error: the text holds a `#metadata((` call with a `type` key but the
 `<cdno>` label is absent, mistyped or not the call's next non-trivia sibling.
 
 **Deliverable.** The reader, the error enum, tests: one accepting fixture and one per error
@@ -551,21 +600,27 @@ has a name and a line.
 pub fn headings(source: &str) -> Vec<(u8, String)>;
 pub struct TypstLinks {
     pub spans: Vec<crate::extractors::WikilinkSpan>,   // raw byte ranges, as the Markdown scanner's
-    pub addresses: Vec<String>,                          // decoded address per span (Escape leaves decoded)
+    pub addresses: Vec<String>,                          // decoded address per span, no anchor
+    pub targets: Vec<String>,                            // decoded target per span, anchor included: what the resolver sees
     pub faults: Vec<LinkFault { open: usize, line: usize, leaf: String }>, // interior not one inline run
 }
 pub fn wikilink_spans(source: &str) -> TypstLinks;
 ```
 
 Rules from §5.5: links are read in markup at any nesting, over contiguous runs of inline leaves
-(Text, Escape, Shorthand, SmartQuote, the bracket leaves, Space), **and** in the string values of
+(Text, Escape, Shorthand, SmartQuote, Space; the `[` and `]` of a link are Text leaves of their
+own, and `Raw` holds Text leaves too, so the `Raw` subtree is skipped), **and** in the string values of
 the `<cdno>` block (span inside the quotes, address the decoded string's `[[…]]` contents); never
-in raw, comments, code-mode expressions, labels, refs or maths. Lint's *finder* is a byte scan of
-the markup regions for `[[` (so a run the lexer broke cannot hide a link), and every `[[` found
-whose interior does not lex as one inline run is a `LinkFault`. `WikilinkSpan`'s ranges are
-**raw bytes, backslashes included**; `addresses[i]` is the decoded form the resolver sees. The
-rewrite in T17 writes the new address escaped into the raw span, and `differs_only_by` compares
-raw bytes, which is the round trip S0 confirms.
+in raw, comments, code-mode expressions, labels, refs or maths. Lint's *finder* takes `[[` as two adjacent Text
+leaves `[` in a `Markup` (so a run the lexer broke cannot hide a link, and the content-block bracket
+of `#foo[[x]]` is not an opening), and every `[[` found whose interior does not lex as one inline
+run is a `LinkFault`, as is one whose decoded target spans a line and one with no `]]` in its run
+(a line comment swallowing the close, a plain unclosed `[[`). A `[[` glued after a `#…` expression
+(`#emph[a][[x]]`) is a content-block argument and simply not a link: no span, no fault. `WikilinkSpan`'s ranges are
+**raw bytes**: `target` includes the backslash of an escaped anchor, and `address` ends before it
+(it holds a backslash only for an escape inside the address, `a\_b`); `addresses[i]` is the decoded
+address and `targets[i]` the decoded target with its anchor, the form the resolver sees. The rewrite in T17 writes the new address escaped into the raw span, and
+`differs_only_by` compares raw bytes, which is the round trip S0 confirmed.
 
 **Deliverable.** The two functions, `TypstLinks`, tests.
 
@@ -581,9 +636,9 @@ from S0 and the probes below pin them.
   `links_in_a_plain_run` (`[[concepts/bias-variance-split]]` → one span, address equal),
   `links_split_by_the_lexer_are_whole` (`[[2026-11-08-error-budget--v2]]`, `[[it's-done]]`,
   `[[a/b.c|label]]` → one span each, address exact, label excluded),
-  `an_escaped_hash_is_decoded_in_the_address_and_kept_in_the_span`
-  (`[[concepts/x\#Statement]]` → address `concepts/x#Statement`; `source[span.address]` contains
-  the backslash),
+  `an_escaped_hash_is_decoded_in_the_target_and_kept_out_of_the_address`
+  (`[[concepts/x\#Statement]]` → `targets[0]` is `concepts/x#Statement`, `addresses[0]` is
+  `concepts/x`; `source[span.target]` contains the backslash, `source[span.address]` is `concepts/x`),
   `an_unescaped_hash_is_a_fault_not_a_link` (`[[concepts/x#Statement]]` → zero spans, one fault
   naming the `Hash`/code leaf and its line),
   `links_inside_a_figure_caption_are_read` (markup nested in `#figure(caption: [see [[x]]])`),
@@ -591,7 +646,11 @@ from S0 and the probes below pin them.
   `links_in_the_block_strings_are_read` (`origin: "[[projects/surrogate-model]]"` → one span
   inside the quotes; a `[[x]]` in a non-metadata string literal → none),
   `a_bracket_run_the_lexer_broke_is_still_found_by_lint` (a `[[a *b* c]]`: zero spans, one
-  fault — the byte finder saw it).
+  fault — the finder saw it),
+  `a_content_block_bracket_is_not_a_link_opening` (`#foo[[x]]`: zero spans, zero faults),
+  `a_link_glued_after_a_hash_expression_is_not_one` (`#emph[a][[x]]`: zero spans, zero faults),
+  `a_link_spanning_a_line_is_a_fault` (`[[a` newline `b]]`: zero spans, one fault),
+  `an_unclosed_opening_is_a_fault` (`[[x` with no close: zero spans, one fault).
 - `proptest`: for slugs generated by the slug grammar (`[a-z0-9]+(-[a-z0-9]+)*`, up to 50 chars)
   and paths of ≤3 such segments, `[[<path>]]` in a body yields exactly one span with that address.
 - Mutation: drop `Shorthand` from the leaf set; `links_split_by_the_lexer_are_whole` fails on the
@@ -762,18 +821,30 @@ take `format: typst`.
 ### T12 — The classifier reads `.typ`; reconcile indexes Typst notes
 
 **What.** `classify.rs` gains the `.typ` arm (§5.2): a `NoteFormat::Typst` path under one of
-`scope.typst_folders`, not inside an owned folder, is read; `has_label` false → `Skipped
-{ TypstUnlabelled }` unless a stub or (T14) a Typst note owns its folder, in which case it is an
-attachment as today; `has_label` true → in `notes`. A labelled `.typ` outside the folders →
-`Skipped { TypstOutsideScope }`. A file whose text holds `#metadata((` and `type:` but whose
-`metadata_block` is `LabelBroken` → `Skipped { TypstLabelBroken { line } }`. Only the byte search
-runs in the classifier; the parse runs in `reconcile_one`, which goes through `parse_note` and
-reports `Nested`/`NotFirst`/`NotLiteral`/missing `type` as a per-file reconciliation issue
+`scope.typst_folders` or the new `scope.typst_excluded_folders`. T12 adds that second field to
+`NoteScope` and owns the registry helper, `TypeRegistry::typst_excluded_folders()`: `portfolios` if
+evidence is not admitted, and the folder of each custom type not admitted. A `.typ` under neither
+list is never touched. For the rest, in order:
+
+1. Inside a folder owned by a stub or (T14) a Typst note → an attachment, never read.
+2. The file is read and searched. Under an excluded folder: `has_label` true → `Skipped
+   { TypstOutsideScope }` (the Warning); false → nothing, an attachment as today.
+3. Under an admitted folder: `has_label` true → in `notes`.
+4. Otherwise, the broken-label check: the bytes hold `#metadata(`, optional whitespace including
+   newlines, `(`, and later `type` or `"type"` followed by optional whitespace and `:` →
+   `Skipped { TypstLabelBroken { line } }`, `line` from the match's offset. `#metadata ((` is not
+   a call and does not match. So `<cdn>` lands here, not in step 5. This is a byte search, never
+   `metadata_block`.
+5. Otherwise → `Skipped { TypstUnlabelled }`.
+
+Only byte searches
+run in the classifier; the parse runs in `reconcile_one`, which goes through `parse_note` and
+reports `LabelBroken` (a `<cdno>` that is not the call's sibling)/`Nested`/`NotFirst`/`NotLiteral`/missing `type` as a per-file reconciliation issue
 exactly as malformed YAML is reported today (the note is indexed with its error; never demoted).
 In `reconcile_one`: `title` from the block's `title` (`:527` already reads the field), the FTS
 title is the block's `title` for Typst (`:575` uses `first_h1` for Markdown), full text is the
 body after the block (§5.4), facets through `extract_note_facets` with a format dispatch: body
-links via `typst::wikilink_spans` (addresses, decoded) and block links via the existing
+links via `typst::wikilink_spans` (`targets`, decoded) and block links via the existing
 `extract_frontmatter_wikilinks` over the JSON (they coincide with the block-string spans of T7;
 the facet extractor needs only the targets). Inline tags are not read from Typst text (§5.4).
 `typst::headings` is not stored (the index keeps no headings; `read_note` computes them, T16).
@@ -796,18 +867,22 @@ has a different cost (§5.2); the probes below check both directions.
   `body_links_and_block_links_are_edges` (`[[concepts/bias-variance-split]]` in the body and
   `origin: "[[projects/surrogate-model]]"` → two `links` rows, resolved),
   `an_escaped_link_resolves_to_the_decoded_address`,
-  `an_unlabelled_typ_with_a_stub_is_an_attachment_and_never_parsed` (count parses with a
-  counting store wrapper: zero reads past the byte search is not observable, so assert the row
-  count and `artefacts`),
+  `an_owned_typ_is_an_attachment_and_never_read` (a counting store wrapper sees zero reads of a
+  `.typ` inside a stub's folder, labelled or not; assert the row count and `artefacts`),
   `a_loose_unlabelled_typ_is_skipped_unlabelled`, `a_labelled_typ_outside_scope_is_skipped`,
-  `a_broken_label_is_skipped_with_its_line`, `a_nested_block_is_reported_not_demoted` (a note
+  `a_broken_label_is_skipped_with_its_line`,
+  `a_mistyped_label_is_broken_not_unlabelled` (`<cdn>`, and the multi-line `#metadata(\n  (type:`
+  form), `a_spaced_metadata_call_is_not_broken` (`#metadata ((type: "x"))` → `TypstUnlabelled`),
+  `a_label_that_is_not_the_siblings_is_a_reconcile_issue`, `a_nested_block_is_reported_not_demoted` (a note
   whose metadata fails to parse follows the malformed-YAML path today: no row, one entry in
   `report.issues` naming the rule, retried every pass — and never counted in `artefacts`),
-  `typst_off_reads_no_typ` (`typst_folders` empty: every labelled `.typ` is `TypstOutsideScope`
-  and the attachments are unchanged).
+  `typst_off_parses_no_typ` (`typst_folders` empty: every labelled `.typ` is `TypstOutsideScope`,
+  nothing is parsed, and the attachments are unchanged).
 - Differential: the dev vault, which holds no labelled `.typ`, reindexes to an identical `notes`
   table; a copy with three fixture Typst notes dropped in gains exactly three rows.
-- Mutation: index an unlabelled `.typ` in scope; the attachment test fails. Mutation: read the
+- Mutation: index an unlabelled `.typ` in scope; `a_loose_unlabelled_typ_is_skipped_unlabelled`
+  fails. Mutation: read the file before the ownership check;
+  `an_owned_typ_is_an_attachment_and_never_read` fails. Mutation: read the
   FTS title from `first_h1`; the concept title test fails.
 
 **Correct means.** A `.typ` is in the index exactly when §5.2's three conditions hold, and the
@@ -866,7 +941,9 @@ directory `portfolios/<p>/<stem>/` (or `<concept-folder>/<stem>/`, §5.7) is own
 is a Typst note (`has_label` and `note_format == Typst`). `attachment_stubs` → `folder_owners`,
 still resolved once per walk and positively by reading the file. `MIN_OWNER_DEPTH` and the
 `portfolios` prefix generalise to "a folder of a type in scope"; the classifier passes
-`scope.typst_folders` so a `concepts/<stem>/` folder can be owned too. The lint orphan check
+`scope.typst_folders` so a `concepts/<stem>/` folder can be owned too. Owners resolve
+**shallow-first**, and a candidate inside an already owned folder owns nothing, so a labelled file
+inside an assets folder is not opened as a candidate owner. The lint orphan check
 (`lint.rs:1162`, `orphan_artefact_issues`) uses the same helper, so a figures folder beside a
 Typst note is not an orphan, and a PDF inside it is not warned about (§5.7).
 
