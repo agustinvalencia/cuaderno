@@ -71,6 +71,7 @@ mod tags;
 mod template_sync;
 mod templating;
 mod tracking;
+pub mod typst_note;
 mod weekly;
 mod weekly_context;
 mod write_outcome;

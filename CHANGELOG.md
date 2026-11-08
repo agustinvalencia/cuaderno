@@ -69,6 +69,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   inside the quotes or as not-literal. The callee may be `std.`-qualified, parenthesised or
   `.with(..)`. `@` packages and standard-library imports are left out; a `://` string is a local
   path. Nothing calls it yet.
+- **The Typst block writer and the creation-time body check** (RFC 0008 T18, #946). `cdno-domain`
+  gains `vault::typst_note`: `render_metadata_block` (the engine's fields first, every value a
+  string unless an array is supplied), `check_typst_body` (a body carrying `<cdno>`, not parsing,
+  or with a link needing an escape is refused with its line) and `assemble_typst_note`. Nine
+  `DomainError` variants with remedies and their MCP rejection codes are added ahead of the verbs
+  that raise them; nothing calls the writer yet.
 - **One door for reading a note** (RFC 0008 T10, part of #927). `cdno-core` gains `parse_note`
   and `parse_note_spanned`, which read a note by its format (Markdown frontmatter, or a Typst
   `<cdno>` block with the bytes after it as the body), `Frontmatter::from_typst`, and
