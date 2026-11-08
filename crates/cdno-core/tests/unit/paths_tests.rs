@@ -1,6 +1,8 @@
 use chrono::{Datelike, NaiveDate};
 
-use cdno_core::paths;
+use cdno_core::path::VaultPath;
+use cdno_core::paths::{self, NoteFormat, note_address, note_candidates, note_format};
+use proptest::prelude::*;
 
 #[test]
 fn journal_daily_dir_uses_calendar_year() {
@@ -114,4 +116,69 @@ fn init_dirs_includes_projects_done_for_the_current_year() {
         1,
         "init_dirs must list {projects_done} exactly once: {dirs:?}"
     );
+}
+
+fn vp(s: &str) -> VaultPath {
+    VaultPath::new(s).unwrap()
+}
+
+#[test]
+fn note_format_reads_the_extension_case_insensitively() {
+    assert_eq!(note_format(&vp("a.md")), Some(NoteFormat::Markdown));
+    assert_eq!(note_format(&vp("a.MD")), Some(NoteFormat::Markdown));
+    assert_eq!(note_format(&vp("a.typ")), Some(NoteFormat::Typst));
+    assert_eq!(note_format(&vp("a.TYP")), Some(NoteFormat::Typst));
+    assert_eq!(note_format(&vp("a.pdf")), None);
+    assert_eq!(note_format(&vp("a")), None);
+    // `VaultPath` normalises a trailing slash away, so `a.md/` reaches
+    // `note_format` as `a.md`; the directory case it stands for is a path
+    // whose last component is not a file name ending in the extension.
+    assert_eq!(note_format(&vp("a.md/b")), None);
+    assert_eq!(note_format(&vp(".md")), None);
+}
+
+#[test]
+fn note_address_strips_only_the_note_extension() {
+    assert_eq!(note_address(&vp("run-v1.2.md")), "run-v1.2");
+    assert_eq!(note_address(&vp("x.typ")), "x");
+    assert_eq!(note_address(&vp("x.TYP")), "x");
+    assert_eq!(note_address(&vp("x.pdf")), "x.pdf");
+    assert_eq!(note_address(&vp("p/_index.md")), "p/_index");
+    assert_eq!(note_address(&vp("p/noext")), "p/noext");
+}
+
+#[test]
+fn note_candidates_lists_both_formats_then_the_folder_index() {
+    let got: Vec<String> = note_candidates("portfolios/surrogate-model")
+        .iter()
+        .map(|p| p.to_string())
+        .collect();
+    assert_eq!(
+        got,
+        [
+            "portfolios/surrogate-model.md",
+            "portfolios/surrogate-model.typ",
+            "portfolios/surrogate-model/_index.md",
+        ]
+    );
+}
+
+proptest! {
+    #[test]
+    fn note_address_then_candidates_round_trips(
+        stem in "[a-z][a-z0-9-]{0,12}(\\.[a-z0-9]{1,3})?",
+        dir in "([a-z]{1,8}/){0,3}",
+        ext in prop::sample::select(vec!["md", "typ", "MD"]),
+    ) {
+        let path = vp(&format!("{dir}{stem}.{ext}"));
+        let candidates = note_candidates(&note_address(&path));
+        if ext.eq_ignore_ascii_case("md") && ext != "md" {
+            // Candidates are lower-case; a shouting extension is the same note
+            // format, not the same path.
+            let lowered = vp(&format!("{}{}.md", dir, stem));
+            prop_assert!(candidates.contains(&lowered));
+        } else {
+            prop_assert!(candidates.contains(&path));
+        }
+    }
 }

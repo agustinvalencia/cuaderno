@@ -22,6 +22,8 @@
 
 use chrono::{Datelike, NaiveDate};
 
+use crate::path::VaultPath;
+
 // Journal — daily, weekly, and monthly notes, year-partitioned. Use the
 // helper functions below to build the actual paths.
 pub const JOURNAL: &str = "journal";
@@ -193,4 +195,59 @@ pub fn init_dirs(today: NaiveDate) -> Vec<String> {
         CUADERNO_DIR.into(),
         TEMPLATES_DIR.into(),
     ]
+}
+
+/// The on-disk format of a note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NoteFormat {
+    Markdown,
+    Typst,
+}
+
+impl NoteFormat {
+    /// Every format, in note-resolution order.
+    pub const ALL: [NoteFormat; 2] = [NoteFormat::Markdown, NoteFormat::Typst];
+
+    /// The file extension, without the dot.
+    pub const fn extension(self) -> &'static str {
+        match self {
+            NoteFormat::Markdown => "md",
+            NoteFormat::Typst => "typ",
+        }
+    }
+}
+
+/// The format a path would have as a note, from its extension alone,
+/// ASCII case-insensitively. Says nothing about whether it is a note.
+pub fn note_format(path: &VaultPath) -> Option<NoteFormat> {
+    let ext = path.as_path().extension()?.to_str()?;
+    NoteFormat::ALL
+        .into_iter()
+        .find(|f| ext.eq_ignore_ascii_case(f.extension()))
+}
+
+/// The path without its note extension: `concepts/x.md` becomes
+/// `concepts/x`, `portfolios/p/_index.md` becomes `portfolios/p/_index`.
+/// A path with no note extension is returned unchanged.
+pub fn note_address(path: &VaultPath) -> String {
+    let text = path.to_string();
+    match note_format(path) {
+        Some(format) => text[..text.len() - format.extension().len() - 1].to_string(),
+        None => text,
+    }
+}
+
+/// The paths an address may name, in resolution order: `<a>.md`,
+/// `<a>.typ`, `<a>/_index.md`. Pure; the caller filters against the index
+/// (a `.typ` that is not indexed is not a note).
+pub fn note_candidates(address: &str) -> Vec<VaultPath> {
+    let mut names: Vec<String> = NoteFormat::ALL
+        .iter()
+        .map(|f| format!("{address}.{}", f.extension()))
+        .collect();
+    names.push(format!("{address}/_index.md"));
+    names
+        .into_iter()
+        .filter_map(|name| VaultPath::new(name).ok())
+        .collect()
 }
