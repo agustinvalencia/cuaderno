@@ -167,6 +167,7 @@ impl Vault {
             });
         }
 
+        // Markdown on purpose: the Typst reader and writer land in T27; a Typst note is refused here as before.
         let (fm, body) = Frontmatter::parse(&raw)?;
         let note_type = fm.require_field::<String>("type")?;
         self.ensure_revisable(path, &note_type)?;

@@ -3316,3 +3316,114 @@ fn a_non_utf8_loose_typ_does_not_fail_a_rename() {
 
     assert!(dir.path().join("projects/surrogate-model-v2.md").exists());
 }
+
+// ---------------------------------------------------------------------
+// A Typst note as a referrer (RFC 0008 T13)
+// ---------------------------------------------------------------------
+
+const SURROGATE: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nCalibrating.\n";
+
+const BUDGET_INDEX: &str = "---\ntype: portfolio\nquestion: \"How large is the error?\"\ncreated: 2026-05-01\nproject: null\n---\n\n# How large is the error?\n";
+
+const TYPST_EVIDENCE_PATH: &str = "portfolios/surrogate-error-budget/2026-11-08-error-budget.typ";
+
+const TYPST_EVIDENCE: &str = "#metadata((
+  type: \"evidence\",
+  created: \"2026-11-08\",
+  source: \"Error budget derivation\",
+  portfolio: \"surrogate-error-budget\",
+  origin: \"[[projects/surrogate-model]]\",
+)) <cdno>
+
+= Setting
+
+The fit lives in [[surrogate-model]] and, under [[surrogate-model\\#Current State|its state]],
+is still calibrating. A link in `[[surrogate-model]]` raw text is not one.
+";
+
+fn typst_referrer_fixture() -> Fixture {
+    let mem = Arc::new(MemoryVaultStore::new());
+    let mem_index = Arc::new(MemoryIndex::new());
+    let store: Arc<dyn VaultStore> = mem.clone();
+    for (path, content) in [
+        ("projects/surrogate-model.md", SURROGATE),
+        ("portfolios/surrogate-error-budget/_index.md", BUDGET_INDEX),
+        (TYPST_EVIDENCE_PATH, TYPST_EVIDENCE),
+    ] {
+        store.write_file(&vp(path), content).unwrap();
+    }
+    let index: Arc<dyn VaultIndex> = mem_index.clone();
+    let vault = open(Arc::clone(&store), index);
+    Fixture {
+        store,
+        mem,
+        index: mem_index,
+        vault,
+    }
+}
+
+#[test]
+fn a_typst_referrer_is_read_by_the_snapshot() {
+    let f = typst_referrer_fixture();
+    let plan = f.plan("surrogate-model", "surrogate-model-v2").unwrap();
+
+    let edit = plan
+        .edits
+        .iter()
+        .find(|e| e.path == vp(TYPST_EVIDENCE_PATH))
+        .expect("the Typst note is a referrer");
+    assert_eq!(edit.before, TYPST_EVIDENCE);
+    assert_eq!(
+        edit.changes,
+        vec![Change::Address { count: 3 }],
+        "the block string and two markup links; the raw text is not a link"
+    );
+    assert!(differs_only_by(&edit.before, &edit.after, &edit.edits));
+    assert_eq!(
+        edit.after,
+        TYPST_EVIDENCE
+            .replace("[[surrogate-model]] and", "[[surrogate-model-v2]] and")
+            .replace(
+                "[[surrogate-model\\#Current",
+                "[[surrogate-model-v2\\#Current"
+            )
+            .replace(
+                "\"[[projects/surrogate-model]]\"",
+                "\"[[projects/surrogate-model-v2]]\""
+            ),
+    );
+}
+
+#[test]
+fn a_rename_of_the_project_in_a_typst_origin_rewrites_the_block_string() {
+    let f = typst_referrer_fixture();
+    let plan = f
+        .plan("projects/surrogate-model", "surrogate-model-v2")
+        .unwrap();
+    let edit = plan
+        .edits
+        .iter()
+        .find(|e| e.path == vp(TYPST_EVIDENCE_PATH))
+        .unwrap();
+    assert!(
+        edit.after
+            .contains("origin: \"[[projects/surrogate-model-v2]]\",\n)) <cdno>"),
+        "{}",
+        edit.after
+    );
+    // Only the three addresses moved: every other byte, the block included, is as written.
+    assert!(differs_only_by(&edit.before, &edit.after, &edit.edits));
+    assert_eq!(edit.edits.len(), 3);
+}
+
+#[test]
+fn a_typst_note_is_left_alone_when_it_links_nothing_renamed() {
+    let f = typst_referrer_fixture();
+    f.write("projects/other.md", SURROGATE);
+    let plan = f.plan("other", "other-v2").unwrap();
+    assert!(
+        plan.edits.iter().all(|e| e.path != vp(TYPST_EVIDENCE_PATH)),
+        "{:?}",
+        plan.edits.iter().map(|e| &e.path).collect::<Vec<_>>()
+    );
+}

@@ -237,6 +237,7 @@ impl Vault {
             1 => {
                 let path = hits.remove(0);
                 let raw = self.store.read_file(&path)?;
+                // Markdown on purpose: project maps are machine-written Markdown.
                 let (fm, _body) = Frontmatter::parse(&raw)?;
                 let frontmatter = ProjectFrontmatter::try_from(fm)?;
                 Ok(ProjectLocation {

@@ -48,7 +48,7 @@ pub fn merge_fields_into_frontmatter(
         return Ok(raw.to_owned());
     }
 
-    // Locate the frontmatter region. `Frontmatter::parse` accepts both `\n`
+    // Locate the frontmatter region. The frontmatter parser accepts both `\n`
     // and `\r\n`, so a merge that only understood LF would report "missing
     // frontmatter" for a note the parser reads fine — and a template file is
     // exactly the sort of thing that arrives CRLF-terminated.

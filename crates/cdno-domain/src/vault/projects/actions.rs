@@ -1018,6 +1018,7 @@ impl Vault {
                             return Ok(None);
                         }
                         let raw = self.store.read_file(&note_path)?;
+                        // Markdown on purpose: action notes are machine-written Markdown.
                         let (fm, _body) = Frontmatter::parse(&raw)?;
                         let af = ActionFrontmatter::try_from(fm)?;
                         Ok(Some(AttachedAction {

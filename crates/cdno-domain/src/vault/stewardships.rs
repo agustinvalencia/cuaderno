@@ -396,6 +396,7 @@ impl Vault {
     ) -> Result<(StewardshipFrontmatter, String, StewardshipVariant), DomainError> {
         let (ResolvedNote { path, .. }, variant) = self.resolve_stewardship_with_variant(slug)?;
         let raw = self.store.read_file(&path)?;
+        // Markdown on purpose: stewardship notes are machine-written Markdown.
         let (fm, body) = Frontmatter::parse(&raw)?;
         let typed = StewardshipFrontmatter::try_from(fm)?;
         Ok((typed, body.to_owned(), variant))
@@ -425,6 +426,7 @@ impl Vault {
         let mut by_stewardship: HashMap<String, (usize, Option<NaiveDate>)> = HashMap::new();
         for entry in &tracking_entries {
             let raw = self.store.read_file(&entry.path)?;
+            // Markdown on purpose: stewardship notes are machine-written Markdown.
             let (fm, _body) = Frontmatter::parse(&raw)?;
             let tf = TrackingFrontmatter::try_from(fm)?;
             let bucket = by_stewardship
@@ -440,6 +442,7 @@ impl Vault {
         let mut out = Vec::with_capacity(stewardship_entries.len());
         for s_entry in stewardship_entries {
             let raw = self.store.read_file(&s_entry.path)?;
+            // Markdown on purpose: stewardship notes are machine-written Markdown.
             let (fm, body) = Frontmatter::parse(&raw)?;
             let sf = StewardshipFrontmatter::try_from(fm)?;
             let slug = stewardship_slug_from_path(&s_entry.path);

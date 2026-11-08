@@ -79,6 +79,7 @@ impl Vault {
         let mut out = Vec::with_capacity(entries.len());
         for entry in entries {
             let raw = self.store.read_file(&entry.path)?;
+            // Markdown on purpose: inbox items are machine-written Markdown.
             let (_fm, body) = Frontmatter::parse(&raw)?;
             out.push(InboxItem {
                 slug: inbox_slug_from_path(&entry.path),
@@ -119,6 +120,7 @@ impl Vault {
         // from the daily log after the note is deleted. Collapse
         // whitespace so a multi-line capture stays a single log line.
         let raw = self.store.read_file(&path)?;
+        // Markdown on purpose: inbox items are machine-written Markdown.
         let (fm, body) = Frontmatter::parse(&raw)?;
         let text = flatten_for_log(body);
         // Copied from the item, not the current focus: the tag outlives the

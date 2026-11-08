@@ -308,6 +308,7 @@ impl Vault {
         let mut reported: BTreeSet<String> = BTreeSet::new();
         for entry in entries {
             let raw = self.store.read_file(&entry.path)?;
+            // Markdown on purpose: action, project and tracking notes are machine-written Markdown.
             let (fm, body) = Frontmatter::parse(&raw)?;
             let af = ActionFrontmatter::try_from(fm)?;
             if af.status != ActionStatus::Completed {
@@ -432,6 +433,7 @@ impl Vault {
                 continue;
             }
             let raw = self.store.read_file(&entry.path)?;
+            // Markdown on purpose: action, project and tracking notes are machine-written Markdown.
             let (fm, _body) = Frontmatter::parse(&raw)?;
             let pf = ProjectFrontmatter::try_from(fm)?;
             if pf.status != ProjectStatus::Active {
@@ -473,6 +475,7 @@ impl Vault {
                 continue;
             }
             let raw = self.store.read_file(&entry.path)?;
+            // Markdown on purpose: action, project and tracking notes are machine-written Markdown.
             let (fm, _body) = Frontmatter::parse(&raw)?;
             let pf = ProjectFrontmatter::try_from(fm)?;
             if pf.status != ProjectStatus::Active {
@@ -503,6 +506,7 @@ impl Vault {
         today: NaiveDate,
     ) -> Result<ProjectFull, DomainError> {
         let location = self.locate_project(slug)?;
+        // Markdown on purpose: action, project and tracking notes are machine-written Markdown.
         let (_fm, body) = Frontmatter::parse(&location.raw)?;
         let last_paused = self.last_paused(today)?.get(&location.slug).cloned();
         Ok(ProjectFull {
@@ -669,6 +673,7 @@ impl Vault {
         let mut out = Vec::new();
         for entry in entries {
             let raw = self.store.read_file(&entry.path)?;
+            // Markdown on purpose: action, project and tracking notes are machine-written Markdown.
             let (fm, body) = Frontmatter::parse(&raw)?;
             let tf = TrackingFrontmatter::try_from(fm)?;
             if tf.stewardship != stewardship {
@@ -741,6 +746,7 @@ impl Vault {
         let mut by_name: BTreeMap<String, Vec<TrackingPoint>> = BTreeMap::new();
         for entry in self.index.list_by_type(NoteType::Tracking.as_str())? {
             let raw = self.store.read_file(&entry.path)?;
+            // Markdown on purpose: action, project and tracking notes are machine-written Markdown.
             let (fm, body) = Frontmatter::parse(&raw)?;
             let tf = TrackingFrontmatter::try_from(fm)?;
             if tf.stewardship != stewardship {
@@ -1226,8 +1232,8 @@ fn parse_error_in(path: &VaultPath, e: ParseError) -> DomainError {
         ParseError::InvalidFrontmatter(msg) => ParseError::InvalidFrontmatter(named(msg)),
         ParseError::MissingFrontmatter(msg) => ParseError::MissingFrontmatter(named(msg)),
         ParseError::Yaml(msg) => ParseError::Yaml(named(msg)),
-        // Already carries its line; the caller's path is not in the variant.
-        typst @ ParseError::Typst(_) => typst,
+        // The error carries its line but not the file, which a Typst source needs named.
+        ParseError::Typst(e) => ParseError::InvalidFrontmatter(named(e.to_string())),
     })
 }
 

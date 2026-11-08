@@ -4089,3 +4089,48 @@ fn an_upper_case_md_stub_owns_nothing_and_lint_agrees_with_the_classifier() {
         report.issues[0].message
     );
 }
+
+#[test]
+fn lint_reads_a_typst_note_without_a_frontmatter_error() {
+    let typst = "#metadata((\n  type: \"evidence\",\n  created: \"2026-11-08\",\n  source: \"Error budget derivation\",\n  portfolio: \"surrogate-error-budget\",\n  origin: \"[[projects/surrogate-model]]\",\n)) <cdno>\n\n= Setting\n\nSee [[projects/surrogate-model]] and [[bias-variance-split]].\n";
+    let vault = vault_with_notes(
+        &[
+            (
+                "portfolios/surrogate-error-budget/_index.md",
+                "---\ntype: portfolio\nquestion: \"How large is the error?\"\ncreated: 2026-05-01\nproject: null\n---\n\n# How large is the error?\n",
+            ),
+            (
+                "projects/surrogate-model.md",
+                "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n",
+            ),
+            (
+                "portfolios/surrogate-error-budget/2026-11-08-error-budget.typ",
+                typst,
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+
+    assert!(
+        !report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("malformed frontmatter")),
+        "{:?}",
+        report.issues
+    );
+    let broken: Vec<_> = report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("broken wikilink"))
+        .collect();
+    assert_eq!(
+        broken.len(),
+        1,
+        "only the dangling link in the Typst body is reported: {:?}",
+        report.issues
+    );
+    assert!(broken[0].message.contains("bias-variance-split"));
+}
