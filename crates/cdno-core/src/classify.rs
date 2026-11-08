@@ -34,6 +34,10 @@ pub struct NoteScope {
     /// Folders of the note types the `[typst]` switch leaves out. A labelled
     /// `.typ` here is reported, so turning Typst off hides no note silently.
     pub typst_excluded_folders: Vec<String>,
+    /// The note types that admit Typst. A `.typ` whose block `type` is not listed is kept out of
+    /// the index and reported by reconciliation. Empty means no check, as when no folder admits
+    /// Typst.
+    pub typst_types: Vec<String>,
 }
 
 impl NoteScope {
@@ -43,6 +47,7 @@ impl NoteScope {
             ignore,
             typst_folders: Vec::new(),
             typst_excluded_folders: Vec::new(),
+            typst_types: Vec::new(),
         }
     }
 

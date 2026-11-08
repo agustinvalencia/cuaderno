@@ -768,3 +768,39 @@ fn an_indexed_typst_note_resolves_by_its_path_and_its_address() {
         }
     }
 }
+
+#[test]
+fn a_labelled_typ_of_a_type_that_does_not_admit_typst_is_reported_and_not_indexed() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n";
+    let stray = "#metadata((\n  type: \"project\",\n  status: \"active\",\n  created: \"2026-11-08\",\n)) <cdno>\n\n= Stray\n";
+    let stray_path = "portfolios/surrogate-error-budget/stray.typ";
+    store
+        .write_file(
+            &VaultPath::new("projects/surrogate-model.md").unwrap(),
+            project,
+        )
+        .unwrap();
+    store
+        .write_file(&VaultPath::new(stray_path).unwrap(), stray)
+        .unwrap();
+    let (vault, report) = Vault::new(store, index, VaultConfig::default()).expect("opens");
+
+    let active = vault.active_projects().expect("project list keeps working");
+    assert_eq!(active.len(), 1);
+
+    let issue = report
+        .errors
+        .iter()
+        .find(|e| e.path.to_string() == stray_path)
+        .expect("reported per file");
+    assert!(issue.reason.contains("`project`"), "{}", issue.reason);
+    assert!(
+        vault
+            .active_projects()
+            .unwrap()
+            .iter()
+            .all(|(p, _)| p.to_string() != stray_path)
+    );
+}

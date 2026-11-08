@@ -92,6 +92,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   rename referrer: its `[[…]]` links, markup and `<cdno>` block strings alike, are rewritten over
   the Typst scanner's spans, the new address escaped by where the link sits, and lint's
   broken-link check uses the same scanner. A Markdown note reads and renames exactly as before.
+  A labelled `.typ` whose block `type` does not admit Typst is kept out of the index and reported
+  by reconciliation.
 
 ## [0.44.0] - 2026-11-06
 

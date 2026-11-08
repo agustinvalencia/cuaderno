@@ -3427,3 +3427,41 @@ fn a_typst_note_is_left_alone_when_it_links_nothing_renamed() {
         plan.edits.iter().map(|e| &e.path).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn a_typst_referrer_that_writes_the_slug_only_with_escapes_is_rewritten() {
+    let f = typst_referrer_fixture();
+    f.write(
+        "projects/surrogate_model.md",
+        &SURROGATE.replace("Surrogate model", "Surrogate model underscore"),
+    );
+    f.write("projects/surrogate-model.md", "");
+    f.store
+        .delete_file(&vp("projects/surrogate-model.md"))
+        .unwrap();
+    let escaped = "#metadata((\n  type: \"evidence\",\n  created: \"2026-11-08\",\n  source: \"Escaped link\",\n  portfolio: \"surrogate-error-budget\",\n  origin: \"[[projects/emulator]]\",\n)) <cdno>\n\nSee [[surrogate\\_model]].\n";
+    let path = "portfolios/surrogate-error-budget/2026-11-09-escaped.typ";
+    f.write(path, escaped);
+    f.store.delete_file(&vp(TYPST_EVIDENCE_PATH)).unwrap();
+    let vault = open(Arc::clone(&f.store), Arc::new(MemoryIndex::new()));
+    let plan = vault
+        .plan_rename(
+            &vault.rename_snapshot().unwrap(),
+            "surrogate_model",
+            "surrogate-model",
+            None,
+            at(),
+        )
+        .unwrap();
+    let edit = plan
+        .edits
+        .iter()
+        .find(|e| e.path == vp(path))
+        .expect("the escaped-only referrer is planned");
+    assert!(
+        edit.after.contains("See [[surrogate-model]]."),
+        "{}",
+        edit.after
+    );
+    assert!(differs_only_by(&edit.before, &edit.after, &edit.edits));
+}

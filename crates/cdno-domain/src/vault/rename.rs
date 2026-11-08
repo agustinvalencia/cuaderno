@@ -815,7 +815,10 @@ impl Vault {
         for (path, before) in &snapshot.contents {
             let is_target = *path == target_path;
             let is_daily = *path == daily_path;
-            let mentions = before.contains(old_slug.as_str())
+            // A Typst source may write the slug with escapes (`bias\_split`), which a raw byte
+            // search misses; its scanner decodes, so no prefilter applies.
+            let mentions = note_format(path) == Some(NoteFormat::Typst)
+                || before.contains(old_slug.as_str())
                 || own_aliases.iter().any(|alias| before.contains(alias));
             if !(mentions || is_target || is_daily) {
                 continue;
