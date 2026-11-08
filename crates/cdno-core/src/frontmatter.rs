@@ -1,9 +1,12 @@
 use std::collections::HashMap;
+use std::ops::Range;
 
 use serde::de::DeserializeOwned;
 use serde_yaml::Value;
 
 use crate::error::{ParseError, ValidationError};
+use crate::path::VaultPath;
+use crate::paths::{NoteFormat, note_format};
 
 /// Parsed YAML frontmatter block with typed field access.
 ///
@@ -75,6 +78,20 @@ impl Frontmatter {
         Ok((Self { fields }, body))
     }
 
+    /// The metadata of a Typst note, built into the same type [`Frontmatter::parse`] builds. A
+    /// value that is not an object has no fields.
+    pub fn from_typst(value: serde_json::Value) -> Self {
+        let mut fields = HashMap::new();
+        if let serde_json::Value::Object(map) = value {
+            fields.reserve(map.len());
+            for (key, val) in map {
+                let val = serde_yaml::to_value(val).unwrap_or(Value::Null);
+                fields.insert(key, val);
+            }
+        }
+        Self { fields }
+    }
+
     /// Read a required field as type `T`. Returns
     /// [`ValidationError::MissingField`] if absent, or
     /// [`ValidationError::InvalidField`] if the stored value cannot
@@ -126,6 +143,54 @@ impl Frontmatter {
             map.insert(key.clone(), json_value);
         }
         serde_json::Value::Object(map)
+    }
+}
+
+/// A note read through [`parse_note_spanned`]: the metadata, the body, and where the metadata
+/// sits in the source.
+#[derive(Debug, Clone)]
+pub struct Spanned<'a> {
+    pub frontmatter: Frontmatter,
+    pub body: &'a str,
+    /// For Markdown, the frontmatter block from the opening `---` to the end of the closing
+    /// line; for Typst, the `#metadata((…)) <cdno>` block from `#` to `>`.
+    pub metadata_span: Range<usize>,
+}
+
+/// Read a note by its format (P5): Markdown through [`Frontmatter::parse`], Typst through the
+/// metadata block, the body being the bytes after the `<cdno>` label. A path with no note
+/// extension is a [`ParseError`].
+pub fn parse_note<'a>(
+    path: &VaultPath,
+    raw: &'a str,
+) -> Result<(Frontmatter, &'a str), ParseError> {
+    parse_note_spanned(path, raw).map(|s| (s.frontmatter, s.body))
+}
+
+/// [`parse_note`], also returning the metadata span, for the writers that edit the block. The
+/// Typst source is parsed once.
+pub fn parse_note_spanned<'a>(path: &VaultPath, raw: &'a str) -> Result<Spanned<'a>, ParseError> {
+    match note_format(path) {
+        Some(NoteFormat::Markdown) => {
+            let (frontmatter, body) = Frontmatter::parse(raw)?;
+            Ok(Spanned {
+                frontmatter,
+                body,
+                metadata_span: 0..raw.len() - body.len(),
+            })
+        }
+        Some(NoteFormat::Typst) => {
+            let block = crate::typst::metadata_block(raw)?;
+            let end = block.span.end;
+            Ok(Spanned {
+                frontmatter: Frontmatter::from_typst(block.value),
+                body: &raw[end..],
+                metadata_span: block.span,
+            })
+        }
+        None => Err(ParseError::MissingFrontmatter(format!(
+            "{path} is not a note file (expected .md or .typ)"
+        ))),
     }
 }
 
