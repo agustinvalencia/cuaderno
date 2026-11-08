@@ -725,7 +725,7 @@ adoption can refuse it with a `remedy` (`asset_path_not_literal`).
   `path_args_finds_every_listed_call` (one of each call in a fixture; the span is inside the
   quotes; `include "chapter.typ"` and `import "lib.typ": f` are found, `import
   "@preview/x:0.1.0"` is not), `bibliography_with_an_array_yields_one_literal_per_item`,
-  `a_variable_path_is_reported_not_literal`, `an_image_inside_a_figure_is_found` (nesting). The list also covers `plugin`, `pdf.attach`, `.csl` styles of `bibliography`/`cite`,
+  `a_variable_path_is_reported_not_literal`, `an_image_inside_a_figure_is_found` (nesting). The list also covers `plugin`, `pdf.attach`, styles with an extension of `bibliography`/`cite`,
   `raw(theme:, syntaxes:)`, `image(icc:)`, and the callee forms `std.name`, `name.with(..)` and
   `(name)`; a string with `://` is a local path, and `@` is skipped only for `import`/`include`.
 - Mutation: drop `include`; the first test fails.

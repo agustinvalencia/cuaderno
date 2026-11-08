@@ -436,7 +436,7 @@ One verb per type, as today, with a format switch, and two ways to supply the Ty
   parse holds an Error node or that already carries `<cdno>`; it finds every **literal relative
   path** under `image` (and its `icc:`), `read`, `json`, `csv`, `yaml`, `toml`, `xml`, `cbor`,
   `plugin`, `pdf.attach`, `bibliography`, `include` and a path `import`, and the string values
-  of `bibliography(style:)` and `cite(style:)` when they end in `.csl` (any other string there is
+  of `bibliography(style:)` and `cite(style:)` when they have an extension (any other string there is
   a built-in style name), `raw(theme:)` and `raw(syntaxes:)`, array forms included, whether the
   callee is bare, `std.`-qualified, parenthesised or reached through `.with(...)`, and `set`
   rules, resolves each against the source file's directory, **refuses**

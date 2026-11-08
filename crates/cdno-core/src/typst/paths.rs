@@ -12,7 +12,7 @@ use super::{line_of, with_tree};
 enum Kind {
     /// Any string is a path.
     Path,
-    /// A string is a path only when it ends in `.csl`; other strings are built-in style names.
+    /// A string is a path only when it has an extension (`my.csl`); other strings are built-in style names.
     Style,
 }
 
@@ -72,12 +72,18 @@ pub enum PathArg {
     },
 }
 
-/// Every path argument of `image`, `read`, `json`, `csv`, `yaml`, `toml`, `xml`, `cbor`,
-/// `bibliography`, `include` and a path `import`, in document order. `@preview` imports and URLs
-/// are not returned. `bibliography` yields one entry per item of an array. An `import` whose
-/// source is a name or a field access (a module already in scope) is not a path and is skipped.
-/// If the parser cannot run, one `NotLiteral` is returned rather than an empty list, so a caller
-/// refuses instead of seeing a document with no assets.
+/// Every path argument, in document order, of `image` (and its `icc:`), `read`, `json`, `csv`,
+/// `yaml`, `toml`, `xml`, `cbor`, `plugin`, `pdf.attach`, `bibliography`, `include` and a path
+/// `import`; of `bibliography(style:)` and `cite(style:)` when the string has an extension (any
+/// other string is a built-in style name); and of `raw(theme:, syntaxes:)`. Arrays yield one entry
+/// per item. The callee may be bare, `std.`-qualified, parenthesised or reached through
+/// `.with(..)`; `set` rules are scanned too.
+///
+/// Not returned: an `import` or `include` of an `@` package, and an `import` of a standard-library
+/// module (`calc`, `std`, `sys`, `math`, `pdf`, `sym`, `emoji`, `std.<name>`). A `://` string is an
+/// ordinary local path. Anything whose value cannot be known is `NotLiteral`: a non-string path, an
+/// `import` from any other name, a listed call (or `.with(..)`) with no positional path outside a
+/// `set` rule. If the parser cannot run, one `NotLiteral` is returned rather than an empty list.
 pub fn path_args(source: &str) -> Vec<PathArg> {
     let walked = with_tree(source, |root| {
         let mut out = Vec::new();
@@ -111,7 +117,10 @@ fn walk(source: &str, node: &LinkedNode, out: &mut Vec<PathArg>) {
         }
         SyntaxKind::ModuleImport => {
             if let Some(imp) = node.cast::<ast::ModuleImport>() {
-                path_expr(source, "import", imp.source(), node, out);
+                let src = imp.source();
+                if !is_std_module(src) {
+                    path_expr(source, "import", src, node, out);
+                }
             }
         }
         _ => {}
@@ -121,8 +130,7 @@ fn walk(source: &str, node: &LinkedNode, out: &mut Vec<PathArg>) {
     }
 }
 
-/// The listed function a callee names, and whether it was reached through `.with(...)`, which may
-/// have supplied the path already. Accepts `name`, `std.name`, `pdf.attach`, `std.pdf.attach`,
+/// The listed function a callee names, and whether it was reached through `.with(...)`. Accepts `name`, `std.name`, `pdf.attach`, `std.pdf.attach`,
 /// `name.with(..)` and a parenthesised callee.
 fn resolve(callee: Expr) -> Option<(&'static str, bool)> {
     let canon = |n: &str| -> Option<&'static str> {
@@ -167,7 +175,7 @@ fn resolve(callee: Expr) -> Option<(&'static str, bool)> {
     }
 }
 
-/// `is_set`: a `set` rule never supplies a positional, so only the named arguments are read.
+/// `is_set`: a `set` rule needs no positional path, so a missing one is not reported.
 fn func_call(
     source: &str,
     callee: Expr,
@@ -176,10 +184,9 @@ fn func_call(
     node: &LinkedNode,
     out: &mut Vec<PathArg>,
 ) {
-    let Some((name, via_with)) = resolve(callee) else {
+    let Some((name, _)) = resolve(callee) else {
         return;
     };
-    let via_with = via_with || is_set;
     let Some(spec) = spec(name) else { return };
     if spec.positional {
         let first = args.items().find_map(|a| match a {
@@ -188,7 +195,7 @@ fn func_call(
         });
         match first {
             Some(e) => path_value(source, name, e, Kind::Path, node, out),
-            None if !via_with => out.push(not_literal(source, name, node)),
+            None if !is_set => out.push(not_literal(source, name, node)),
             None => {}
         }
     }
@@ -221,8 +228,22 @@ fn path_value(
         }
         Expr::None(_) | Expr::Auto(_)
             if kind == Kind::Style || call == "raw" || call == "image" => {}
-        Expr::Str(s) if kind == Kind::Style && !s.get().ends_with(".csl") => {}
+        Expr::Str(s)
+            if kind == Kind::Style
+                && std::path::Path::new(s.get().as_str()).extension().is_none() => {}
         e => path_expr(source, call, e, anchor, out),
+    }
+}
+
+/// The standard-library modules an `import` may name; they are not files.
+fn is_std_module(e: Expr) -> bool {
+    const MODULES: &[&str] = &["calc", "std", "sys", "math", "pdf", "sym", "emoji"];
+    match unparen(e) {
+        Expr::Ident(i) => MODULES.contains(&i.as_str()),
+        Expr::FieldAccess(a) => {
+            matches!(unparen(a.target()), Expr::Ident(t) if t.as_str() == "std")
+        }
+        _ => false,
     }
 }
 

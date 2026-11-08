@@ -181,8 +181,8 @@ fn the_callee_may_be_std_with_or_parenthesised() {
     );
     assert_eq!(
         path_args(src).len(),
-        7,
-        "a .with that adds no path adds nothing"
+        9,
+        "a .with that adds no path is NotLiteral"
     );
 }
 
@@ -229,4 +229,35 @@ fn a_computed_named_path_is_reported_not_literal() {
     let src = "#bibliography(\"r.bib\", style: s)\n";
     assert_eq!(path_args(src).len(), 2);
     assert!(matches!(path_args(src)[1], PathArg::NotLiteral { .. }));
+}
+
+#[test]
+fn a_bibliography_style_with_any_extension_is_a_path() {
+    let src = "#bibliography(\"r.bib\", style: \"my.xml\")\n#cite(<k>, style: \"apa\")\n";
+    assert_eq!(
+        values(src),
+        vec![
+            pair("bibliography", "r.bib"),
+            pair("bibliography", "my.xml")
+        ]
+    );
+}
+
+#[test]
+fn a_with_without_a_path_is_not_literal_unless_under_set() {
+    let src =
+        "#let f = image.with(width: 1pt)\n#set raw(theme: none)\n#set image(icc: \"p.icc\")\n";
+    assert_eq!(
+        path_args(src)
+            .iter()
+            .map(|a| matches!(a, PathArg::NotLiteral { .. }))
+            .collect::<Vec<_>>(),
+        vec![true, false]
+    );
+}
+
+#[test]
+fn imports_of_standard_modules_are_not_refused() {
+    let src = "#import calc: pow\n#import std: image\n#import std.math: sin\n#import sys: inputs\n#import pdf: attach\n#import sym: pi\n#import emoji: face\n#import math: cos\n";
+    assert_eq!(path_args(src), vec![]);
 }
