@@ -16,10 +16,13 @@
 //!   unicode-* and their dependencies).
 
 mod links;
+mod metadata;
 
 pub use links::{LinkFault, TypstLinks, headings, wikilink_spans};
 
 use typst_syntax::{Lines, SyntaxKind, SyntaxNode, parse};
+
+pub use metadata::{EntrySpan, MetadataBlock, TypstError, metadata_block};
 
 /// The label that marks a Typst file as a note.
 pub const CDNO_LABEL: &str = "<cdno>";

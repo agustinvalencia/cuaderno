@@ -1778,6 +1778,55 @@ fn a_portfolio_rename_moves_every_file_and_rewrites_the_folder_segment() {
 }
 
 #[test]
+fn a_note_without_an_index_row_still_follows_a_folder_rename() {
+    // `broken-scan` has no frontmatter, so the rename stages no index row
+    // for it; it is still a note in the moved folder, and a link to it
+    // resolves to its new path.
+    let mut files = portfolio_files(P_PDF, "scan.pdf");
+    files.push((
+        "portfolios/old/broken-scan.md".into(),
+        "# Broken scan\n".into(),
+    ));
+    files.push((
+        "projects/bias-variance-split.md".into(),
+        P_PROJECT.replace("Surrogate model", "Bias variance split") + "\nSee [[broken-scan]].\n",
+    ));
+    let p = portfolio_vault_over(Arc::new(MemoryVaultStore::new()), &files);
+    let linker = vp("projects/bias-variance-split.md");
+    let resolved = |p: &PortfolioVault| {
+        p.index
+            .find_outgoing_links(&linker)
+            .unwrap()
+            .into_iter()
+            .find(|l| l.target_raw == "broken-scan")
+            .and_then(|l| l.resolved_path)
+    };
+    assert_eq!(resolved(&p), Some(vp("portfolios/old/broken-scan.md")));
+
+    let preview = p
+        .vault
+        .rename_preview("portfolio:old", "new", None, at())
+        .expect("preview");
+    p.vault
+        .rename_note(
+            "portfolio:old",
+            "new",
+            None,
+            Some(&preview.hash),
+            at(),
+            || Ok(()),
+        )
+        .expect("rename");
+
+    assert!(
+        p.store
+            .exists(&vp("portfolios/new/broken-scan.md"))
+            .unwrap()
+    );
+    assert_eq!(resolved(&p), Some(vp("portfolios/new/broken-scan.md")));
+}
+
+#[test]
 fn a_portfolio_rename_is_refused_while_a_question_shares_its_slug() {
     let p = portfolio_vault();
     p.store
