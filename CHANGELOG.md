@@ -28,6 +28,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Note-format helpers** (RFC 0008 T1, #929). `cdno-core` gains `NoteFormat`, `note_format`
+  (extension-only, ASCII case-insensitive), `note_address` and `note_candidates`; nothing calls
+  them yet.
+
 ## [0.44.0] - 2026-11-06
 
 ### Added
