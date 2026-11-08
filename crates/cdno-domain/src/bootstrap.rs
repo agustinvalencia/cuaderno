@@ -20,7 +20,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use cdno_core::config::{IgnoreSet, VaultConfig};
+use cdno_core::classify::NoteScope;
+use cdno_core::config::VaultConfig;
 use cdno_core::error::{ConfigError, IndexError};
 use cdno_core::index::{SqliteIndex, VaultIndex};
 use cdno_core::paths;
@@ -30,7 +31,7 @@ use cdno_core::store::{FsVaultStore, VaultStore};
 use crate::error::DomainError;
 use crate::vault::Vault;
 
-/// Everything [`open_vault`] produced. The store/index/ignore handles
+/// Everything [`open_vault`] produced. The store/index/scope handles
 /// exist so a long-running caller (an HTTP server's reconciliation
 /// loop, the desktop app's watcher thread) can re-run the pass that
 /// [`Vault::new`] performs once at open — `Vault` deliberately does
@@ -40,7 +41,7 @@ pub struct OpenedVault {
     pub vault: Vault,
     pub store: Arc<dyn VaultStore>,
     pub index: Arc<dyn VaultIndex>,
-    pub ignore: Arc<IgnoreSet>,
+    pub scope: Arc<NoteScope>,
     pub report: ReconciliationReport,
 }
 
@@ -79,10 +80,12 @@ pub fn open_vault(root: &Path) -> Result<OpenedVault, BootstrapError> {
     }
 
     let config = VaultConfig::load(root)?;
-    let ignore = Arc::new(config.ignore_set()?);
+    // A malformed glob is a config error, reported before the index opens.
+    config.ignore_set()?;
     let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(root));
     let index: Arc<dyn VaultIndex> = Arc::new(SqliteIndex::open(root.join(paths::INDEX_DB))?);
     let (vault, report) = Vault::new(store.clone(), index.clone(), config)?;
+    let scope = Arc::new(vault.note_scope()?);
     tracing::debug!(
         scanned = report.scanned,
         added = report.added,
@@ -95,7 +98,7 @@ pub fn open_vault(root: &Path) -> Result<OpenedVault, BootstrapError> {
         vault,
         store,
         index,
-        ignore,
+        scope,
         report,
     })
 }

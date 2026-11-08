@@ -326,7 +326,7 @@ fn upsert_with_paired_write_stages_links_and_tags() {
     // The seam agrees with reconcile: a full reindex of the same files
     // into a fresh index derives exactly the same facet rows.
     let fresh: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
-    cdno_core::reconcile::reconcile(&store, &fresh, &cdno_core::config::IgnoreSet::empty())
+    cdno_core::reconcile::reconcile(&store, &fresh, &cdno_core::classify::NoteScope::empty())
         .unwrap();
     assert_eq!(
         index.find_outgoing_links(&a).unwrap(),

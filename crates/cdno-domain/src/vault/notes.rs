@@ -141,8 +141,7 @@ impl Vault {
     /// new callers.
     pub fn write_note_raw(&self, path: &VaultPath, content: &str) -> Result<(), DomainError> {
         self.store.write_file(path, content)?;
-        let ignore = self.config.ignore_set()?;
-        reconcile(&self.store, &self.index, &ignore)?;
+        reconcile(&self.store, &self.index, &self.note_scope()?)?;
         Ok(())
     }
 }
