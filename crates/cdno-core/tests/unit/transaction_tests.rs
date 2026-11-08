@@ -524,6 +524,8 @@ enum FailPoint {
     AlwaysFail,
     /// Only the `list_all_paths` read fails; every write passes through.
     ListAllPaths,
+    /// Only the `find_by_path` read fails.
+    FindByPath,
 }
 
 struct FailingIndex {
@@ -540,7 +542,7 @@ impl FailingIndex {
         match self.mode {
             FailPoint::UpsertNote => is_upsert_note,
             FailPoint::AlwaysFail => true,
-            FailPoint::ListAllPaths => false,
+            FailPoint::ListAllPaths | FailPoint::FindByPath => false,
         }
     }
 }
@@ -559,6 +561,9 @@ impl VaultIndex for FailingIndex {
         self.inner.remove_note(path)
     }
     fn find_by_path(&self, path: &VaultPath) -> Result<Option<NoteEntry>, IndexError> {
+        if matches!(self.mode, FailPoint::FindByPath) {
+            return Err(IndexError::Query("forced test failure".to_owned()));
+        }
         self.inner.find_by_path(path)
     }
     fn list_by_type(&self, note_type: &str) -> Result<Vec<NoteEntry>, IndexError> {
@@ -1356,4 +1361,67 @@ fn a_commit_without_a_paired_remove_still_removes_an_indexed_note() {
     let mut tx = delta_tx(&store, &index);
     tx.delete_file(vp(old));
     assert!(tx.note_delta().1.contains(&vp(old)));
+}
+
+#[test]
+fn a_failed_row_lookup_keeps_the_removal_trigger() {
+    let store = Arc::new(MemoryVaultStore::new());
+    let backing = Arc::new(MemoryIndex::new());
+    let index: Arc<dyn VaultIndex> =
+        Arc::new(FailingIndex::new(backing.clone(), FailPoint::FindByPath));
+    let old = "evidence/surrogate-error-budget.md";
+    store.write_file(&vp(old), "x").unwrap();
+
+    let mut tx = VaultTransaction::new(store as Arc<dyn VaultStore>, index).expect("write lock");
+    tx.delete_file(vp(old));
+    assert!(tx.note_delta().1.contains(&vp(old)));
+}
+
+#[test]
+fn a_renamed_note_with_no_row_is_still_a_note_delta() {
+    let store = Arc::new(MemoryVaultStore::new());
+    let index = Arc::new(MemoryIndex::new());
+    let old = "portfolios/surrogate-model/broken-scan.md";
+    let new = "portfolios/bias-variance-split/broken-scan.md";
+    store.write_file(&vp(old), "# no frontmatter\n").unwrap();
+
+    let mut tx = delta_tx(&store, &index);
+    tx.write_file(vp(new), "# no frontmatter\n");
+    tx.delete_file(vp(old));
+    tx.remove_note(vp(old));
+
+    let (added, removed) = tx.note_delta();
+    assert_eq!(added, vec![vp(new)]);
+    assert!(removed.contains(&vp(old)));
+}
+
+#[test]
+fn only_a_note_write_joins_the_link_targets() {
+    // `target.txt` is written beside the linking note and is no note: the
+    // link to `target` stays unresolved. A `.md` written without an upsert
+    // is a note, and does resolve.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let mut tx = VaultTransaction::new(store, index.clone()).expect("write lock");
+    tx.write_file(
+        vp("concepts/a.md"),
+        "---\ntype: concept\n---\n\nSee [[target]] and [[bias-variance-split]].\n",
+    );
+    tx.upsert_note(sample_note("concepts/a.md", "concept"));
+    tx.write_file(vp("concepts/target.txt"), "bytes");
+    tx.write_file(vp("concepts/bias-variance-split.md"), "# no row\n");
+    tx.commit().unwrap();
+
+    let links = index.find_outgoing_links(&vp("concepts/a.md")).unwrap();
+    let resolved = |raw: &str| {
+        links
+            .iter()
+            .find(|l| l.target_raw == raw)
+            .and_then(|l| l.resolved_path.clone())
+    };
+    assert_eq!(resolved("target"), None);
+    assert_eq!(
+        resolved("bias-variance-split"),
+        Some(vp("concepts/bias-variance-split.md"))
+    );
 }
