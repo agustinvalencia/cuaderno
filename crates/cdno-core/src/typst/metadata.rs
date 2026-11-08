@@ -2,8 +2,8 @@
 
 use std::ops::Range;
 
-use serde_json::{Map, Value};
-use typst_syntax::ast::{Expr, FuncCall};
+use serde_json::{Map, Number, Value};
+use typst_syntax::ast::{Expr, FuncCall, UnOp};
 use typst_syntax::{LinkedNode, SyntaxKind, SyntaxNode};
 
 use super::{CDNO_LABEL, first_error_offset, line_of, with_tree};
@@ -13,12 +13,16 @@ use super::{CDNO_LABEL, first_error_offset, line_of, with_tree};
 pub struct MetadataBlock {
     /// From the `#` of `#metadata` to the `>` of `<cdno>`, inclusive.
     pub span: Range<usize>,
-    /// The dictionary as JSON: strings, arrays of strings, booleans.
+    /// The dictionary as JSON: strings, arrays of strings, booleans, numbers.
     pub value: Value,
     /// Each key's spans in the source, in source order.
     pub entries: Vec<EntrySpan>,
     /// The offset of the dictionary's closing parenthesis, where a new entry would go.
     pub insert_at: usize,
+    /// The `:` of an empty dictionary, `(:)`: a first entry replaces it.
+    pub empty_colon: Option<Range<usize>>,
+    /// Whether a comma follows the last entry.
+    pub trailing_comma: bool,
 }
 
 /// Where one key and its value sit in the source.
@@ -46,6 +50,9 @@ pub enum TypstError {
     NotLiteral { line: usize, what: String },
     #[error("line {line}: the argument of the `<cdno>` block is not a single dictionary")]
     NotADictionary { line: usize },
+    /// A value or edit the metadata literal rules cannot express.
+    #[error("cannot write the metadata value: {what}")]
+    Unwritable { what: String },
     /// The parser could not run, or its offsets do not match the source.
     #[error("line {line}: {message}")]
     Fault { line: usize, message: String },
@@ -94,7 +101,7 @@ fn read_block(source: &str, root: &SyntaxNode) -> Result<MetadataBlock, TypstErr
 
     let span = checked(source, &hash)?.start..checked(source, label)?.end;
     let dict = single_dictionary(source, call)?;
-    let (value, entries) = read_dictionary(source, &dict)?;
+    let (value, entries, empty_colon, trailing_comma) = read_dictionary(source, &dict)?;
     let closing = dict
         .children()
         .rfind(|n| n.kind() == SyntaxKind::RightParen)
@@ -104,6 +111,8 @@ fn read_block(source: &str, root: &SyntaxNode) -> Result<MetadataBlock, TypstErr
         value,
         entries,
         insert_at: checked(source, &closing)?.start,
+        empty_colon,
+        trailing_comma,
     })
 }
 
@@ -197,12 +206,26 @@ fn is_item(kind: SyntaxKind) -> bool {
         )
 }
 
-fn read_dictionary(source: &str, dict: &LinkedNode) -> Result<(Value, Vec<EntrySpan>), TypstError> {
+type DictionaryRead = (Value, Vec<EntrySpan>, Option<Range<usize>>, bool);
+
+fn read_dictionary(source: &str, dict: &LinkedNode) -> Result<DictionaryRead, TypstError> {
     let mut map = Map::new();
     let mut entries = Vec::new();
-    for entry in dict.children().filter(|n| is_item(n.kind())) {
-        if entry.kind() == SyntaxKind::Colon {
-            continue;
+    let mut empty_colon = None;
+    let mut trailing_comma = false;
+    for entry in dict.children().filter(|n| {
+        !n.kind().is_trivia() && !matches!(n.kind(), SyntaxKind::LeftParen | SyntaxKind::RightParen)
+    }) {
+        match entry.kind() {
+            SyntaxKind::Comma => {
+                trailing_comma = true;
+                continue;
+            }
+            SyntaxKind::Colon => {
+                empty_colon = Some(checked(source, &entry)?);
+                continue;
+            }
+            _ => trailing_comma = false,
         }
         let Some((key_node, value_node)) = key_and_value(&entry) else {
             return Err(not_literal(source, &entry));
@@ -217,7 +240,7 @@ fn read_dictionary(source: &str, dict: &LinkedNode) -> Result<(Value, Vec<EntryS
             value_span: checked(source, &value_node)?,
         });
     }
-    Ok((Value::Object(map), entries))
+    Ok((Value::Object(map), entries, empty_colon, trailing_comma))
 }
 
 /// The key and value nodes of a `Named` or `Keyed` entry; `None` for a spread.
@@ -244,6 +267,16 @@ fn read_value(source: &str, node: &LinkedNode) -> Result<Value, TypstError> {
     match node.cast::<Expr>() {
         Some(Expr::Str(string)) => Ok(Value::String(string.get().to_string())),
         Some(Expr::Bool(boolean)) => Ok(Value::Bool(boolean.get())),
+        Some(Expr::Int(_) | Expr::Float(_)) => number(source, node, false),
+        Some(Expr::Unary(unary)) if unary.op() == UnOp::Neg => {
+            let operand = node
+                .children()
+                .rfind(|n| matches!(n.kind(), SyntaxKind::Int | SyntaxKind::Float));
+            match operand {
+                Some(operand) => number(source, &operand, true),
+                None => Err(not_literal(source, node)),
+            }
+        }
         Some(Expr::Array(_)) => node
             .children()
             .filter(|n| is_item(n.kind()))
@@ -260,6 +293,32 @@ fn read_value(source: &str, node: &LinkedNode) -> Result<Value, TypstError> {
         },
         _ => Err(not_literal(source, node)),
     }
+}
+
+/// An integer or float literal as a JSON number. The parser's own `Int::get` turns an overflowing
+/// literal into 0, so the text is parsed here, where overflow and a non-finite float are refused.
+fn number(source: &str, node: &LinkedNode, negative: bool) -> Result<Value, TypstError> {
+    let text = node.get().leaf_text().as_str();
+    let sign = if negative { "-" } else { "" };
+    let parsed = if node.kind() == SyntaxKind::Float {
+        format!("{sign}{text}")
+            .parse::<f64>()
+            .ok()
+            .and_then(Number::from_f64)
+    } else {
+        let (radix, digits) = match text.get(..2) {
+            Some("0x") => (16, &text[2..]),
+            Some("0o") => (8, &text[2..]),
+            Some("0b") => (2, &text[2..]),
+            _ => (10, text),
+        };
+        i64::from_str_radix(&format!("{sign}{digits}"), radix)
+            .ok()
+            .map(Number::from)
+    };
+    parsed
+        .map(Value::Number)
+        .ok_or_else(|| not_literal(source, node))
 }
 
 fn not_literal(source: &str, node: &LinkedNode) -> TypstError {

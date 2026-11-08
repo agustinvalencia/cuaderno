@@ -537,12 +537,16 @@ and the S0 numbers (parse cost, compile time, crate count) recorded in the modul
 pub struct MetadataBlock {
     /// From the `#` of `#metadata` to the `>` of `<cdno>`, inclusive.
     pub span: Range<usize>,
-    /// The dictionary as JSON: strings, arrays of strings, booleans (§5.3).
+    /// The dictionary as JSON: strings, arrays of strings, booleans, numbers (§5.3).
     pub value: serde_json::Value,
     /// Each key's value span inside the source, for the edit module (T8).
     pub entries: Vec<EntrySpan { key: String, key_span: Range<usize>, value_span: Range<usize> }>,
     /// Where a new entry would be inserted (before the closing `))`).
     pub insert_at: usize,
+    /// The `:` of an empty dictionary `(:)`, which a first entry replaces (T8).
+    pub empty_colon: Option<Range<usize>>,
+    /// Whether a comma follows the last entry (T8).
+    pub trailing_comma: bool,
 }
 pub enum TypstError {
     NoBlock,                                   // no `#metadata((…)) <cdno>` at top level
@@ -558,7 +562,9 @@ pub fn metadata_block(source: &str) -> Result<MetadataBlock, TypstError>;
 
 Rules from §5.3: top level, first, exactly one; the argument a literal dictionary; values
 `Str`, `Array` of `Str` (`("x",)` and `("x")` both read as one string — the latter is a
-parenthesised string, accepted on read), `Bool`; keys identifiers or string keys; string escapes
+parenthesised string, accepted on read), `Bool`, and `Int` or `Float` with an optional leading
+`-` (read into JSON numbers; the parser's `Int::get` turns an overflowing literal into 0, so the
+reader parses the text itself, and a non-finite float is `NotLiteral`); keys identifiers or string keys; string escapes
 decoded by the parser's own `Str::get`. Anything else is `NotLiteral` with `what` naming the node
 kind. `LabelBroken` is the §5.2 Error: the text holds a `#metadata((` call with a `type` key but the
 `<cdno>` label is absent, mistyped or not the call's next non-trivia sibling.
@@ -583,8 +589,9 @@ a file as a note with no metadata.
   `another_metadata_call_before_the_block_is_not_first` (a `#metadata((x: 1)) <other>` ahead of
   the `<cdno>` block is neither whitespace nor a comment, so §5.3 makes it `NotFirst`), and
   `other_metadata_labels_after_the_block_are_ignored`.
-- `proptest`: for a generated dictionary of ≤8 keys with string, string-array and bool values,
-  `write_block` (T8) then `metadata_block` round-trips the JSON exactly.
+- `proptest` (lives in T8's `typst_edit_tests.rs`, where `write_block` exists): for a generated
+  dictionary of ≤8 keys, including Typst keywords, with string, string-array, bool, integer and
+  float values, `write_block` then `metadata_block` round-trips the JSON exactly.
 - Mutation: accept a nested dictionary as a literal; `not_literal_nested_dictionary` fails.
 
 **Correct means.** The block is read without evaluating anything, and every way to get it wrong
@@ -666,7 +673,7 @@ quoting construct is read.
 still the only module naming the crate), mirroring `frontmatter_edit.rs:237–649`:
 
 ```rust
-pub fn write_block(fields: &[(String, serde_json::Value)]) -> String;         // the literal writer: escapes, `("x",)`, `true`/`false`, one key per line, `<cdno>` on the closing line
+pub fn write_block(fields: &[(String, serde_json::Value)]) -> Result<String, TypstError>;  // the literal writer: escapes, `("x",)`, `true`/`false`, numbers, one key per line, `<cdno>` on the closing line; `Unwritable` for null, objects, non-string array items
 pub fn scalar_span(block: &MetadataBlock, key: &str) -> Option<Range<usize>>;
 pub fn rewrite_scalar(source: &str, key: &str, value: &serde_json::Value) -> Result<(String, Range<usize>), TypstError>;  // byte-exact; inserts the key when absent, at `insert_at`
 pub fn append_list_value(source: &str, key: &str, item: &str) -> Result<(String, Range<usize>), TypstError>;  // `("a",)` → `("a", "b")`; absent key inserted
@@ -675,7 +682,7 @@ pub fn changed_only_at(before: &str, after: &str, spans: &[Range<usize>]) -> boo
 ```
 
 The writer emits Typst string escapes only (`"` and `\`), never the markup escape rule (§5.3);
-keys that are not identifiers are written as string keys. Nothing re-serialises the dictionary:
+keys that are not identifiers, and Typst keywords, are written as string keys; inserting a key into `(:)` replaces the `:`. Nothing re-serialises the dictionary:
 a comment inside the block and the writer's key order survive every edit.
 
 **Deliverable.** The module, tests, `proptest` round trips.

@@ -322,9 +322,13 @@ Rules, each enforced at creation and checked by lint:
 - **Exactly one** block per note, at the **top level** of the markup (not inside a content block,
   a function body or a `show` rule), and **first** in the file: only whitespace and comments may
   precede it. The engine writes it there; lint reports an Error when it is elsewhere.
-- The argument is a **literal dictionary** whose values are **strings**, **arrays of strings**, or
-  **booleans**. No identifiers, no function calls, no arithmetic, no nested dictionaries, no
-  string concatenation. Reading it is then a tree walk with no evaluation, and the result maps
+- The argument is a **literal dictionary** whose values are **strings**, **arrays of strings**,
+  **booleans**, or **numbers**. A number is an integer or float literal with an optional leading
+  `-`, read as Typst's parser takes it: an integer too wide for 64 bits is a float, and a float
+  that is not finite is refused. No identifiers, no function calls, no arithmetic, no units, no
+  nested dictionaries, no string concatenation. A key is an identifier or a string; the engine
+  writes a string key for anything that is not an identifier, and for a Typst keyword (`let`,
+  `in`, `none`, `true`, …), which the parser does not take as a bare key. Reading it is then a tree walk with no evaluation, and the result maps
   onto the same `serde_json::Value` shape YAML frontmatter produces today, so everything
   downstream of the parse — the type registry, `extra_required`, schema validation,
   `set_frontmatter` — sees no difference. A block that breaks the rule is a **parse error**: the
@@ -535,7 +539,7 @@ from the classifier's report (§5.1), since the lint walk is index-driven:
 | Row | Level | When |
 |---|---|---|
 | metadata block missing a required key | Error | `type` absent, or `title` absent on a type that requires it |
-| metadata block not literal | Error | any value outside strings, string arrays, booleans |
+| metadata block not literal | Error | any value outside strings, string arrays, booleans, numbers |
 | metadata block not first or not top-level | Error | anything but whitespace or comments before it, or nested |
 | metadata present, label missing or mistyped | Error, *classifier* | §5.2 |
 | `<cdno>` present but not the call's sibling | Error | §5.2; found by the parse |
