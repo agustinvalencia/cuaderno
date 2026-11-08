@@ -243,10 +243,13 @@ impl<'a> TypeRegistry<'a> {
     ///   [`NoteType::frontmatter_order`] (position 1 for the calendar types,
     ///   which are exactly the types the engine keys and scaffolds by period),
     ///   so the *name* is derived, not hardcoded.
-    /// - **Warn** (don't block) on a field colliding with any other supplied
-    ///   placeholder ([`NoteType::supplied_placeholders`]): the value tiering
-    ///   already shadows engine-owned defaults, so this is footgun-prevention
-    ///   with a good message, not a correctness backstop.
+    /// - **Warn** (don't block) on a field that collides with any other supplied
+    ///   placeholder ([`NoteType::supplied_placeholders`]) *and* declares a
+    ///   `default`, which the engine-supplied value would override. A colliding
+    ///   field declaring only `type`/`settable`/etc. is how a built-in's field
+    ///   is made settable and does not warn. The value tiering already shadows
+    ///   engine-owned defaults, so this is footgun-prevention with a good
+    ///   message, not a correctness backstop.
     ///
     /// Only the explicit typed `fields` block is checked — `extra_required` is
     /// legacy lint-only and unaffected.
@@ -265,13 +268,15 @@ impl<'a> TypeRegistry<'a> {
                         field: field_name.clone(),
                     });
                 }
-                if nt.supplied_placeholders().contains(&field_name.as_str()) {
+                if nt.supplied_placeholders().contains(&field_name.as_str())
+                    && schema.fields[field_name].default.is_some()
+                {
                     tracing::warn!(
                         note_type = %type_name,
                         field = %field_name,
-                        "schema field shadows an engine-supplied placeholder; the \
-                         engine-supplied value wins, so the declared default/value will \
-                         not take effect"
+                        "schema field declares a default that an engine-supplied \
+                         placeholder of the same name overrides; the engine-supplied \
+                         value wins, so the declared default will not take effect"
                     );
                 }
             }
