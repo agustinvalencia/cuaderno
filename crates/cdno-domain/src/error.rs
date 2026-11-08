@@ -65,6 +65,44 @@ impl DomainError {
     }
 }
 
+impl DomainError {
+    /// What the caller does about a Typst creation refusal (RFC 0008 §5.7,
+    /// §6.4); `None` for any other error. The MCP and CLI render it beside the
+    /// message, as they do the focus remedy.
+    pub fn remedy(&self) -> Option<&'static str> {
+        match self {
+            DomainError::BodyCarriesMetadataBlock => Some(
+                "Remove the `#metadata(...) <cdno>` block from the body; the engine writes it from the fields.",
+            ),
+            DomainError::BodyDoesNotParse { .. } => Some(
+                "Fix the Typst at that line (an unescaped `#`, an unclosed `_` or `*`, a raw block left open) and send the whole body again.",
+            ),
+            DomainError::LinkNeedsEscape { .. } => Some(
+                "Backslash-escape every markup character inside the `[[…]]`, such as `\\#` for an anchor, and send the body again.",
+            ),
+            DomainError::FormatUnsupportedForType { .. } => {
+                Some("Omit `format` to write Markdown, or choose a note type that admits Typst.")
+            }
+            DomainError::VarsUnsupportedForTypst => {
+                Some("Drop `vars`: put what the template would have filled into the Typst body.")
+            }
+            DomainError::StemTakenByOtherFormat { .. } => Some(
+                "Choose another slug, or open the existing note; Obsidian creates an `.md` beside a `.typ` when a link to it is clicked.",
+            ),
+            DomainError::SectionRevisionUnavailableForTypst => Some(
+                "Revise the whole body instead: read the note, change the Typst, and send all of it.",
+            ),
+            DomainError::AssetPathOutsideFolder { .. } => Some(
+                "Move the file into the folder being adopted, or change the path to one inside it.",
+            ),
+            DomainError::AssetPathNotLiteral { .. } => Some(
+                "Write the path as a string literal, so every file the document reaches for can be found and copied.",
+            ),
+            _ => None,
+        }
+    }
+}
+
 /// Errors from domain-level business logic.
 ///
 /// Wraps core errors via `From` conversions and adds
@@ -465,6 +503,55 @@ pub enum DomainError {
          [schemas.{note_type}.fields.{field}] to allow it"
     )]
     FieldNotSettable { note_type: String, field: String },
+
+    /// A Typst body that already carries a `<cdno>` block (RFC 0008 §5.7):
+    /// the engine writes the block, so a second one is refused.
+    #[error("the Typst body already carries a `<cdno>` metadata block")]
+    BodyCarriesMetadataBlock,
+
+    /// A Typst body whose parse holds an Error node; `line` is the first
+    /// one's, counted in the body (RFC 0008 §5.7, P8).
+    #[error("the Typst body does not parse: line {line}: {message}")]
+    BodyDoesNotParse { line: usize, message: String },
+
+    /// A `[[` in a Typst body whose interior is not one inline run (RFC 0008
+    /// §5.5); `leaf` names what broke it.
+    #[error(
+        "line {line}: the link interior is broken by {leaf}; a markup character inside `[[…]]` needs a backslash"
+    )]
+    LinkNeedsEscape { line: usize, leaf: String },
+
+    /// `format: typst` for a note type that does not admit Typst (RFC 0008
+    /// §5.9).
+    #[error("note type '{note_type}' does not admit Typst notes")]
+    FormatUnsupportedForType { note_type: String },
+
+    /// Template variables were passed with `format: typst`; they belong to
+    /// Markdown templates (RFC 0008 §5.7).
+    #[error("`vars` are template variables and apply to Markdown notes only, not to Typst")]
+    VarsUnsupportedForTypst,
+
+    /// A `.typ` and an `.md` would share a stem in one folder (RFC 0008 §5.7,
+    /// P6); `holder` is the file already there.
+    #[error(
+        "stem '{stem}' is taken by '{holder}', a note of the other format; the two would make `[[{stem}]]` ambiguous"
+    )]
+    StemTakenByOtherFormat { stem: String, holder: VaultPath },
+
+    /// A section revision aimed at a Typst note (RFC 0008 §5.8): only the
+    /// whole body can be revised.
+    #[error("a Typst note is revised as a whole body, not by section")]
+    SectionRevisionUnavailableForTypst,
+
+    /// An adopted file reaches for a path that lands outside the folder being
+    /// copied (RFC 0008 §5.7).
+    #[error("line {line}: the path '{path}' lands outside the folder being adopted")]
+    AssetPathOutsideFolder { path: String, line: usize },
+
+    /// An adopted file's path argument is not a string literal (RFC 0008
+    /// §5.7), so it cannot be resolved or rewritten.
+    #[error("line {line}: the path argument of `{call}` is not a string literal")]
+    AssetPathNotLiteral { call: String, line: usize },
 
     #[error("value for field '{field}' on note type '{note_type}' {reason}")]
     InvalidFieldValue {
