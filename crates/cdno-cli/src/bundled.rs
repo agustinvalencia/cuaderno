@@ -77,6 +77,7 @@ pub const BUNDLED: &[BundledType] = &[BundledType {
     name: "concept",
     purpose: "a library of reusable understanding: theorems, definitions, techniques, procedures",
     block: include_str!("../../../examples/note-types/concept/config.toml"),
+    // Markdown on purpose: template files are Markdown.
     template_filename: "concept.md",
     template: include_str!("../../../examples/note-types/concept/concept.md"),
 }];
@@ -115,6 +116,7 @@ pub fn template_in_force(name: &str, declaration: &CustomNoteType) -> String {
     declaration
         .template
         .clone()
+        // Markdown on purpose: template files are Markdown.
         .unwrap_or_else(|| format!("{name}.md"))
 }
 

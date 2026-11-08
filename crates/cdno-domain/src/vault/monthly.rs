@@ -267,7 +267,9 @@ fn weeks_link_block(date: NaiveDate) -> String {
         .into_iter()
         .map(|monday| {
             let rel = cdno_core::paths::weekly_note_relpath(monday);
-            let target = rel.strip_suffix(".md").unwrap_or(&rel);
+            let target = VaultPath::new(&rel)
+                .map(|p| cdno_core::paths::note_address(&p))
+                .unwrap_or(rel);
             format!("- [[{target}]]")
         })
         .collect::<Vec<_>>()

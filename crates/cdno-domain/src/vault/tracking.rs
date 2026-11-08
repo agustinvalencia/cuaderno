@@ -192,6 +192,7 @@ impl Vault {
         // its folder and names it, never a former name (RFC 0007 §5.5).
         let stewardship = dashboard.slug.as_str();
 
+        // Markdown on purpose: machine-written tracking notes are Markdown.
         let filename = format!("{}-{activity_slug}.md", date.format("%Y-%m-%d"));
         let path = VaultPath::new(format!("stewardships/{stewardship}/tracking/{filename}",))?;
 
@@ -507,8 +508,7 @@ fn format_tracking_log_entry(
     date: NaiveDate,
     today: NaiveDate,
 ) -> String {
-    let link = path.to_string();
-    let link = link.strip_suffix(".md").unwrap_or(&link);
+    let link = cdno_core::paths::note_address(path);
     if date == today {
         format!("Tracked {activity}: [[{link}]]")
     } else {

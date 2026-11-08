@@ -26,6 +26,7 @@ pub const CONCEPT_TYPE_BLOCK: &str =
 /// an `origin: "{{origin}}"` line would leave the placeholder as literal text
 /// in every note created without one.
 pub const CONCEPT_TEMPLATE: &str =
+    // Markdown on purpose: template files are Markdown.
     include_str!("../../../../examples/note-types/concept/concept.md");
 
 /// Default note templates dumped into `.cuaderno/templates/` at init.
@@ -38,6 +39,7 @@ pub const CONCEPT_TEMPLATE: &str =
 ///
 /// Add to this list as Phase 2/3 note types gain concrete schemas.
 const DEFAULT_TEMPLATES: &[(&str, &str)] =
+    // Markdown on purpose: template files are Markdown.
     &[("daily.md", include_str!("../../templates/daily.md"))];
 
 /// Initialise a Cuaderno vault rooted at `target`. The directory

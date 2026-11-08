@@ -392,7 +392,6 @@ fn format_field_change_log_entry(
         Some(v) => display_value(v),
     };
     let new_display = display_value(new);
-    let link = path.to_string();
-    let link = link.strip_suffix(".md").unwrap_or(&link);
+    let link = cdno_core::paths::note_address(path);
     format!("{key}: {old_display} \u{2192} {new_display} on [[{link}]]")
 }

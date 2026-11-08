@@ -134,6 +134,7 @@ pub struct TemplateContent {
     pub source: Option<TemplateSourceKind>,
 }
 
+// Markdown on purpose: template files are Markdown.
 const PROJECT_TEMPLATE: &str = include_str!("../../templates/project.md");
 const ACTION_TEMPLATE: &str = include_str!("../../templates/action.md");
 const QUESTION_TEMPLATE: &str = include_str!("../../templates/question.md");
@@ -141,8 +142,10 @@ const STEWARDSHIP_TEMPLATE: &str = include_str!("../../templates/stewardship.md"
 const PORTFOLIO_TEMPLATE: &str = include_str!("../../templates/portfolio.md");
 const EVIDENCE_TEMPLATE: &str = include_str!("../../templates/evidence.md");
 const COMMITMENT_TEMPLATE: &str = include_str!("../../templates/commitment.md");
+// Markdown on purpose: template files are Markdown.
 const TRACKING_GENERIC_TEMPLATE: &str = include_str!("../../templates/tracking/generic.md");
 const DAILY_TEMPLATE: &str = include_str!("../../templates/daily.md");
+// Markdown on purpose: template files are Markdown.
 const WEEKLY_TEMPLATE: &str = include_str!("../../templates/weekly.md");
 const MONTHLY_TEMPLATE: &str = include_str!("../../templates/monthly.md");
 const INBOX_TEMPLATE: &str = include_str!("../../templates/inbox.md");
@@ -459,6 +462,7 @@ impl Vault {
             },
         })?;
 
+        // Markdown on purpose: template files are Markdown.
         let path = VaultPath::new(format!("{}/{key}.md", cdno_core::paths::TEMPLATES_DIR))?;
         if !force && self.store.exists(&path)? {
             return Err(DomainError::TemplateAlreadyExists {
@@ -505,6 +509,7 @@ impl Vault {
 
         for nt in NoteType::ALL {
             let key = nt.as_str();
+            // Markdown on purpose: template files are Markdown.
             let path = template_path(&format!("{key}.md"))?;
             let has_custom_file = self.store.exists(&path)?;
             // Built-ins always ship a default, so the effective source is the
@@ -625,6 +630,7 @@ impl Vault {
         let filename = match descriptor.as_custom() {
             Some(def) => custom_template_filename(note_type, def),
             None => match variant {
+                // Markdown on purpose: template files are Markdown.
                 Some(v) => format!("{note_type}-{v}.md"),
                 None => format!("{note_type}.md"),
             },
@@ -777,6 +783,7 @@ pub(in crate::vault) fn template_path(filename: &str) -> Result<VaultPath, Domai
 /// resolution so the Templates view reads/writes the same file the create
 /// path renders from.
 pub(in crate::vault) fn custom_template_filename(name: &str, def: &CustomNoteType) -> String {
+    // Markdown on purpose: template files are Markdown.
     def.template.clone().unwrap_or_else(|| format!("{name}.md"))
 }
 

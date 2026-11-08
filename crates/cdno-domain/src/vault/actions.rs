@@ -234,6 +234,7 @@ impl Vault {
 
         let completion = at.date();
         let done_dir = cdno_core::paths::actions_done_dir(completion.year());
+        // Markdown on purpose: machine-written actions notes are Markdown.
         let done = VaultPath::new(format!("{done_dir}/{action_slug}.md"))?;
         if self.store.exists(&done)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
@@ -324,6 +325,7 @@ impl Vault {
 
     /// Vault-relative path of an active action note: `actions/<slug>.md`.
     pub(in crate::vault) fn active_action_path(slug: &str) -> Result<VaultPath, DomainError> {
+        // Markdown on purpose: machine-written actions notes are Markdown.
         VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::ACTIONS))
             .map_err(DomainError::from)
     }

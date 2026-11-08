@@ -1010,6 +1010,7 @@ impl Vault {
                 .map(
                     |action_slug| -> Result<Option<AttachedAction>, DomainError> {
                         let note_path = VaultPath::new(format!(
+                            // Markdown on purpose: machine-written project notes are Markdown.
                             "{}/{action_slug}.md",
                             cdno_core::paths::ACTIONS
                         ))?;

@@ -230,6 +230,7 @@ fn slug_label(p: &ProjectSummary) -> String {
 /// line naming each front with its next action, in list order.
 fn group_card(parent: &GroupParent, members: &[&ProjectSummary]) -> Card {
     let (title, badge) = match parent {
+        // Markdown on purpose: question notes are Markdown.
         GroupParent::Question(path) => (path.strip_suffix(".md").unwrap_or(path), "question"),
     };
     let fronts: Vec<String> = members

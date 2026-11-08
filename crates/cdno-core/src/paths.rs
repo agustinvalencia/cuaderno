@@ -137,6 +137,7 @@ pub fn projects_done_dir(year: i32) -> String {
 /// `journal/<year>/daily/YYYY-MM-DD.md`.
 pub fn daily_note_relpath(date: NaiveDate) -> String {
     format!(
+        // Markdown on purpose: the journal is machine-written Markdown.
         "{}/{}.md",
         journal_daily_dir(date.year()),
         date.format("%Y-%m-%d")
@@ -148,6 +149,7 @@ pub fn daily_note_relpath(date: NaiveDate) -> String {
 pub fn weekly_note_relpath(date: NaiveDate) -> String {
     let iso = date.iso_week();
     format!(
+        // Markdown on purpose: the journal is machine-written Markdown.
         "{}/{}-W{:02}.md",
         journal_weekly_dir(iso.year()),
         iso.year(),
@@ -163,6 +165,7 @@ pub fn weekly_note_relpath(date: NaiveDate) -> String {
 /// never straddle years, unlike ISO weeks).
 pub fn monthly_note_relpath(date: NaiveDate) -> String {
     format!(
+        // Markdown on purpose: the journal is machine-written Markdown.
         "{}/{}.md",
         journal_monthly_dir(date.year()),
         date.format("%Y-%m")
@@ -237,17 +240,28 @@ pub fn note_address(path: &VaultPath) -> String {
     }
 }
 
+/// The paths an address may name as a file of its own, one per format, in
+/// resolution order: `<a>.md`, `<a>.typ`. The folder index is not among
+/// them; a site that never tried `_index.md` must not start to, so it asks
+/// for this rather than [`note_candidates`]. May return fewer entries than
+/// formats (none for an address `VaultPath` refuses, such as `../x`); no
+/// caller indexes `[0]`.
+pub fn note_format_candidates(address: &str) -> Vec<VaultPath> {
+    NoteFormat::ALL
+        .iter()
+        .filter_map(|f| VaultPath::new(format!("{address}.{}", f.extension())).ok())
+        .collect()
+}
+
 /// The paths an address may name, in resolution order: `<a>.md`,
 /// `<a>.typ`, `<a>/_index.md`. Pure; the caller filters against the index
-/// (a `.typ` that is not indexed is not a note).
+/// (a `.typ` that is not indexed is not a note). May return fewer entries
+/// than that (none for an address `VaultPath` refuses, such as `../x`); no
+/// caller indexes `[0]`. The folder index is always `_index.md`, whatever
+/// format the folder's other notes have.
 pub fn note_candidates(address: &str) -> Vec<VaultPath> {
-    let mut names: Vec<String> = NoteFormat::ALL
-        .iter()
-        .map(|f| format!("{address}.{}", f.extension()))
-        .collect();
-    names.push(format!("{address}/_index.md"));
-    names
-        .into_iter()
-        .filter_map(|name| VaultPath::new(name).ok())
-        .collect()
+    let mut all = note_format_candidates(address);
+    // Markdown on purpose: a folder note is `_index.md` whatever its siblings are.
+    all.extend(VaultPath::new(format!("{address}/_index.md")).ok());
+    all
 }

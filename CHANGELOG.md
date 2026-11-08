@@ -50,6 +50,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   it; it is removed when a deleted or moved-away path was named by a `RemoveNote` or held an index
   row. A Markdown file imported as an attachment or moved with its folder no
   longer triggers a link re-resolution pass. `VaultTransaction::note_delta` exposes the sets.
+- **Every note-extension site goes through the helpers** (RFC 0008 T4, #932). The `.md` tests,
+  address-to-path lookups and path-to-address strips in `cdno-core`, `cdno-domain` and the watcher
+  use `note_format`, `note_candidates`, `note_address` and the classifier, and `rename_snapshot`
+  walks through `classify`. `NOTE.MD` is now a note in the watcher and the rename snapshot as well
+  as in reconciliation. Sites that stay Markdown carry a `Markdown on purpose` comment. Nothing
+  else a person sees changes.
 - **The metadata block can be written and edited in place** (RFC 0008 T8, #936). `typst` gains
   `write_block`, `rewrite_scalar`, `append_list_value`, `remove_list_value`, and `scalar_span`: a value is rewritten at its span, a missing key is inserted where the
   dictionary closes (replacing the `:` of `(:)`), and a comment or key order inside the block
