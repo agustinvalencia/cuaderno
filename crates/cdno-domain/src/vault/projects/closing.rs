@@ -186,6 +186,7 @@ impl Vault {
         // files the map by its new closing date. A map closed earlier this
         // year is already there and is rewritten in place.
         let dest = VaultPath::new(format!(
+            // Markdown on purpose: machine-written project notes are Markdown.
             "{}/{slug}.md",
             cdno_core::paths::projects_done_dir(today.year())
         ))?;

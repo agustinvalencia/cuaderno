@@ -177,6 +177,7 @@ impl Vault {
         // Globally-unique stem (#225) so a later move to `_done/` keeps the
         // commitment's backlinks resolvable.
         let slug = self.explicit_or_derived_slug(slug, title)?;
+        // Markdown on purpose: machine-written commitments notes are Markdown.
         let path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::COMMITMENTS))?;
         if self.store.exists(&path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
@@ -278,6 +279,7 @@ impl Vault {
         let completion_date = at.date();
         let year = completion_date.year();
         let done_dir = cdno_core::paths::commitments_done_dir(year);
+        // Markdown on purpose: machine-written commitments notes are Markdown.
         let done_path = VaultPath::new(format!("{done_dir}/{slug}.md"))?;
         if self.store.exists(&done_path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
@@ -369,6 +371,7 @@ impl Vault {
 
         let year = at.date().year();
         let done_dir = cdno_core::paths::commitments_done_dir(year);
+        // Markdown on purpose: machine-written commitments notes are Markdown.
         let done_path = VaultPath::new(format!("{done_dir}/{slug}.md"))?;
         if self.store.exists(&done_path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
@@ -1012,6 +1015,7 @@ impl Vault {
 /// Where an open commitment named `slug` lives: `commitments/<slug>.md`.
 fn open_commitment_path(slug: &str) -> Result<VaultPath, DomainError> {
     Ok(VaultPath::new(format!(
+        // Markdown on purpose: machine-written commitments notes are Markdown.
         "{}/{slug}.md",
         cdno_core::paths::COMMITMENTS
     ))?)

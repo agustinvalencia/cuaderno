@@ -76,8 +76,9 @@ use std::sync::mpsc::channel;
 
 use anyhow::{Context, Result, bail};
 
+use cdno_core::paths::{self, NoteFormat, note_format};
+use cdno_core::reconcile::ReconciliationReport;
 use cdno_core::watcher::{FileEvent, FileWatcher, FsFileWatcher};
-use cdno_core::{paths, reconcile::ReconciliationReport};
 
 use crate::bootstrap;
 
@@ -93,7 +94,6 @@ pub fn is_relevant(event: &FileEvent) -> bool {
         // else is in it.
         FileEvent::Rescan => true,
         FileEvent::Changed(path) | FileEvent::Removed(path) => {
-            let path = path.as_path();
             // `.cuaderno/` holds our own index writes, plus templates
             // whose contents the index does not track. `Path::starts_with`
             // compares whole components, which is why this goes through
@@ -101,15 +101,16 @@ pub fn is_relevant(event: &FileEvent) -> bool {
             // named `.cuadernoX/` shares the textual prefix but is an
             // ordinary part of the vault, and ignoring it would be a
             // missed reconcile.
-            if path.starts_with(paths::CUADERNO_DIR) {
+            if path.as_path().starts_with(paths::CUADERNO_DIR) {
                 return false;
             }
-            // Markdown only. This is what stops the walk's own directory
-            // reads from re-triggering the pass that made them — see the
-            // module docs; a directory event has no `.md` extension, so it
-            // falls out here rather than needing a rule of its own.
-            path.extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+            // Markdown only (until Typst notes are indexed, a `.typ` file
+            // is an attachment and changes nothing). This is what stops the
+            // walk's own directory reads from re-triggering the pass that
+            // made them — see the module docs; a directory event has no
+            // note extension, so it falls out here rather than needing a
+            // rule of its own.
+            note_format(path) == Some(NoteFormat::Markdown)
         }
     }
 }

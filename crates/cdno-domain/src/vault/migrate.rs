@@ -483,6 +483,7 @@ fn frontmatter_type(content: &str) -> Option<String> {
 /// frontmatter declares one. Anything else gets no index row here, and the
 /// next reconciliation indexes it as it would any file.
 fn markdown_note_type(path: &VaultPath, content: &str) -> Option<String> {
+    // Markdown on purpose: a method migration reads and writes Markdown only.
     let is_markdown = path.as_path().extension() == Some(std::ffi::OsStr::new("md"));
     if is_markdown {
         frontmatter_type(content)

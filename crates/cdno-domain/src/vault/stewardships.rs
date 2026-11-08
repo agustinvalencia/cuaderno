@@ -473,6 +473,7 @@ impl Vault {
 /// (`stewardships/<slug>/_index.md`) layouts.
 pub(in crate::vault) fn stewardship_slug_from_path(path: &VaultPath) -> String {
     let p = path.as_path();
+    // Markdown on purpose: stewardship notes are machine-written Markdown.
     if p.file_name().and_then(|s| s.to_str()) == Some("_index.md") {
         return p
             .parent()
@@ -493,6 +494,7 @@ pub(in crate::vault) fn stewardship_slug_from_path(path: &VaultPath) -> String {
 fn is_stewardship_dashboard_path(path: &VaultPath) -> bool {
     let p = path.as_path();
     let root = Some(std::path::Path::new(cdno_core::paths::STEWARDSHIPS));
+    // Markdown on purpose: stewardship notes are machine-written Markdown.
     if p.file_name().and_then(|s| s.to_str()) == Some("_index.md") {
         p.parent().and_then(|d| d.parent()) == root
     } else {
@@ -503,6 +505,7 @@ fn is_stewardship_dashboard_path(path: &VaultPath) -> bool {
 /// Infer the variant from a stewardship's path: `_index.md` filename
 /// signals expanded; anything else signals flat.
 pub(in crate::vault) fn stewardship_variant_from_path(path: &VaultPath) -> StewardshipVariant {
+    // Markdown on purpose: stewardship notes are machine-written Markdown.
     if path.as_path().file_name().and_then(|s| s.to_str()) == Some("_index.md") {
         StewardshipVariant::Expanded
     } else {
@@ -542,6 +545,7 @@ fn require_name(name: &str) -> Result<(), DomainError> {
 
 /// Both on-disk paths for an already-chosen `slug`.
 fn resolve_paths_for(slug: &str) -> Result<(String, VaultPath, VaultPath), DomainError> {
+    // Markdown on purpose: stewardship notes are machine-written Markdown.
     let flat = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::STEWARDSHIPS))?;
     let expanded = VaultPath::new(format!(
         "{}/{slug}/_index.md",

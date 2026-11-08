@@ -307,6 +307,7 @@ impl Vault {
             "ENGINE_SUPPLIED_FIELDS and engine_value must stay in lock-step"
         );
 
+        // Markdown on purpose: becomes format-aware with the custom-note creation path (T26).
         let path = VaultPath::new(format!("{}/{slug}.md", def.folder))?;
         if self.store.exists(&path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(

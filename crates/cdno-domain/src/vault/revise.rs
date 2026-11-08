@@ -171,11 +171,7 @@ impl Vault {
         let note_type = fm.require_field::<String>("type")?;
         self.ensure_revisable(path, &note_type)?;
 
-        let link_target = path
-            .to_string()
-            .strip_suffix(".md")
-            .map(str::to_owned)
-            .unwrap_or_else(|| path.to_string());
+        let link_target = cdno_core::paths::note_address(path);
         let (new_content, anchor) = match &revision {
             Revision::Body(new_body) => {
                 let frontmatter_block = &raw[..raw.len() - body.len()];

@@ -572,8 +572,9 @@ pub(crate) fn resolve_one(
     // reachable through an exact-path link — because rule 0b below would
     // otherwise always treat it as an anchor separator and mis-resolve
     // `notes/c#-notes` to `notes/c` if that also exists.
-    if let Ok(vp) = VaultPath::new(format!("{target}.md"))
-        && vault_paths.contains(&vp)
+    if let Some(vp) = crate::paths::note_format_candidates(target)
+        .into_iter()
+        .find(|vp| vault_paths.contains(vp))
     {
         return Some(Resolution::direct(vp));
     }
@@ -594,12 +595,6 @@ pub(crate) fn resolve_one(
     }
 
     // 1. Exact path match.
-    if let Ok(vp) = VaultPath::new(format!("{target}.md"))
-        && vault_paths.contains(&vp)
-    {
-        return Some(Resolution::direct(vp));
-    }
-
     // 1b. Folder-index match: a target naming a folder resolves to that
     // folder's `_index.md`. A portfolio (and any expanded folder note) is
     // a directory whose canonical note is `_index.md`, so the
@@ -610,8 +605,11 @@ pub(crate) fn resolve_one(
     // explicitly to the index note. Exact and unambiguous like rule 1, and
     // ordered before the fuzzy stem match so a folder link can never be
     // hijacked by an unrelated note that happens to share the last segment.
-    if let Ok(vp) = VaultPath::new(format!("{target}/_index.md"))
-        && vault_paths.contains(&vp)
+    // Rules 1 and 1b are one walk over `note_candidates`, which lists the
+    // formats first and the folder index last.
+    if let Some(vp) = crate::paths::note_candidates(target)
+        .into_iter()
+        .find(|vp| vault_paths.contains(vp))
     {
         return Some(Resolution::direct(vp));
     }
@@ -698,6 +696,7 @@ pub(crate) fn resolve_one(
 /// path or an alias appears or goes. Anchor stripped, like the rule.
 pub fn is_bare_folder_name_link(path: &VaultPath, target_raw: &str) -> bool {
     let p = path.as_path();
+    // Markdown on purpose: a folder note is `_index.md`.
     if p.file_name().and_then(|f| f.to_str()) != Some("_index.md") {
         return false;
     }

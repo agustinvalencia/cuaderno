@@ -566,6 +566,38 @@ fn a_folder_note_named_like_the_target_is_not_a_shared_stem() {
     );
 }
 
+/// An upper-case `.MD` note is renamed by its exact path.
+#[test]
+fn an_upper_case_md_note_is_renamable_by_its_path() {
+    let f = fixture();
+    f.write("projects/other.MD", PROJECT);
+    let plan = f.plan("projects/other.MD", "new").expect("plan");
+    assert!(
+        plan.moves
+            .iter()
+            .any(|(from, _)| *from == vp("projects/other.MD")),
+        "moves: {:?}",
+        plan.moves
+    );
+}
+
+/// `x.MD` names that file, not the folder note its address `x` also reaches.
+#[test]
+fn an_upper_case_md_path_does_not_plan_the_sibling_folder_note() {
+    let f = fixture();
+    f.write("portfolios/surrogate-model/_index.md", PORTFOLIO);
+    f.write("portfolios/surrogate-model.MD", PROJECT);
+    if let Ok(plan) = f.plan("portfolios/surrogate-model.MD", "new") {
+        assert!(
+            plan.moves
+                .iter()
+                .all(|(from, _)| *from != vp("portfolios/surrogate-model/_index.md")),
+            "moves: {:?}",
+            plan.moves
+        );
+    }
+}
+
 #[test]
 fn a_dangling_portfolio_field_is_not_rewritten_on_a_question_rename() {
     let f = fixture();
@@ -3223,4 +3255,29 @@ fn a_portfolio_rename_rewrites_a_bare_link_to_the_folder_note() {
         "{}",
         p.read("journal/2026/daily/2026-05-10.md")
     );
+}
+
+/// The snapshot goes through the classifier, so a reference held in an
+/// upper-case `.MD` note is rewritten like any other.
+#[test]
+fn a_reference_held_in_an_upper_case_md_note_is_rewritten() {
+    let f = fixture();
+    f.write("concepts/NOTE.MD", "# Note\n\nSee [[old]].\n");
+    let plan = f.plan("old", "new").expect("plan");
+    let edit = plan
+        .edits
+        .iter()
+        .find(|e| e.path == vp("concepts/NOTE.MD"))
+        .expect("the upper-case note is planned");
+    assert!(edit.after.contains("[[new]]"), "after: {}", edit.after);
+}
+
+/// A `.typ` attachment is not read as a note by the snapshot.
+#[test]
+fn a_typst_file_is_not_in_the_snapshot() {
+    let f = fixture();
+    f.write("concepts/draft.typ", "See [[old]].\n");
+    let snapshot = f.snapshot();
+    assert!(!snapshot.paths.contains(&vp("concepts/draft.typ")));
+    assert!(snapshot.files.contains(&vp("concepts/draft.typ")));
 }

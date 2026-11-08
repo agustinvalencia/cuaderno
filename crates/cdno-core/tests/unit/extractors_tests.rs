@@ -1162,3 +1162,46 @@ fn is_bare_folder_name_link_pins_each_condition() {
     assert!(!f(&vp("_index.md"), "_index"));
     assert!(!f(&vp("_index.md"), ""));
 }
+
+fn resolve_one_target(vault: &HashSet<VaultPath>, target: &str) -> Option<VaultPath> {
+    resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: target.to_string(),
+            label: None,
+            is_embed: false,
+        }],
+        vault,
+        &AliasMap::default(),
+    )
+    .remove(0)
+    .resolved_path
+}
+
+#[test]
+fn an_address_reaches_an_upper_case_md_note_through_the_stem_rule_only() {
+    // `NOTE.MD` is a note (RFC 0008 5.1), but candidates are lower-case:
+    // the exact-path rules never produce `NOTE.MD`, so `[[dir/NOTE]]`
+    // arrives there by the last-segment match and nothing else does.
+    let vault = paths(&["dir/NOTE.MD"]);
+    assert_eq!(
+        resolve_one_target(&vault, "dir/NOTE"),
+        Some(vp("dir/NOTE.MD"))
+    );
+    assert_eq!(resolve_one_target(&vault, "dir/note"), None);
+    // `_index.MD` is not a folder index.
+    let vault = paths(&["portfolios/p/_index.MD"]);
+    assert_eq!(resolve_one_target(&vault, "portfolios/p"), None);
+}
+
+#[test]
+fn exact_path_candidates_run_markdown_then_typst_then_the_folder_index() {
+    let all = paths(&["a/x.md", "a/x.typ", "a/x/_index.md"]);
+    assert_eq!(resolve_one_target(&all, "a/x"), Some(vp("a/x.md")));
+    let no_md = paths(&["a/x.typ", "a/x/_index.md"]);
+    assert_eq!(resolve_one_target(&no_md, "a/x"), Some(vp("a/x.typ")));
+    let folder = paths(&["a/x/_index.md", "b/x.md"]);
+    assert_eq!(
+        resolve_one_target(&folder, "a/x"),
+        Some(vp("a/x/_index.md"))
+    );
+}

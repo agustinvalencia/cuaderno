@@ -240,3 +240,16 @@ fn the_watcher_does_not_reconcile_when_nothing_is_happening() {
         "an idle vault must provoke no reconcile passes; the earlier build ran 18 in 6 seconds"
     );
 }
+
+#[test]
+fn an_upper_case_md_file_triggers_a_pass() {
+    // One predicate for reconcile and the watcher (RFC 0008 5.1): a file the
+    // classifier reads as a note must wake the watcher.
+    assert!(watch::is_relevant(&changed("inbox/NOTE.MD")));
+    assert!(watch::is_relevant(&removed("inbox/NOTE.Md")));
+}
+
+#[test]
+fn a_typst_file_does_not_trigger_a_pass_until_typst_notes_are_indexed() {
+    assert!(!watch::is_relevant(&changed("concepts/draft.typ")));
+}

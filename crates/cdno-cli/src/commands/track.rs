@@ -139,6 +139,7 @@ pub fn newcomer_template_hint(root: &Path, activity_slug: &str) -> Option<String
 /// Whether the vault has any tracking template — a base `tracking.md` or any
 /// `tracking-<variant>.md`.
 fn vault_has_a_tracking_template(templates_dir: &Path) -> bool {
+    // Markdown on purpose: template files are Markdown.
     if templates_dir.join("tracking.md").exists() {
         return true;
     }
@@ -148,6 +149,7 @@ fn vault_has_a_tracking_template(templates_dir: &Path) -> bool {
     entries.flatten().any(|e| {
         let name = e.file_name();
         let name = name.to_string_lossy();
+        // Markdown on purpose: template files are Markdown.
         name.starts_with("tracking-") && name.ends_with(".md")
     })
 }
