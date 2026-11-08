@@ -51,6 +51,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   row. A Markdown file imported as an attachment or moved with its folder no
   longer triggers a link re-resolution pass. `VaultTransaction::note_delta` exposes the sets.
 - **Headings and wikilinks read from Typst markup** (RFC 0008 T7, #935). `cdno_core::typst` gains `headings` (each heading's source text and level) and `wikilink_spans` (links over inline runs and the `<cdno>` block's strings, with raw byte spans, decoded addresses and targets, and a named fault for every `[[` that is not a link); nothing calls them yet.
+- **Path arguments of a Typst document** (RFC 0008 T9, part of #927). `cdno-core` gains
+  `typst::path_args`, which lists the files a Typst source reaches for: `image` (and `icc:`),
+  `read`, the data loaders, `plugin`, `pdf.attach`, `bibliography`, `include`, a path `import`,
+  `style:` strings with an extension, and `raw` themes and syntaxes, as a literal with its span
+  inside the quotes or as not-literal. The callee may be `std.`-qualified, parenthesised or
+  `.with(..)`. `@` packages and standard-library imports are left out; a `://` string is a local
+  path. Nothing calls it yet.
 
 ## [0.44.0] - 2026-11-06
 
