@@ -31,6 +31,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - **Note-format helpers** (RFC 0008 T1, #929). `cdno-core` gains `NoteFormat`, `note_format`
   (extension-only, ASCII case-insensitive), `note_address` and `note_candidates`; nothing calls
   them yet.
+- **One classifier decides what is a note** (RFC 0008 T2, #930). `cdno-core` gains `classify` and
+  `NoteScope`, and reconciliation goes through them. A note's extension now matches ASCII
+  case-insensitively, so `NOTE.MD` is indexed; nothing else changes.
 
 - **The `[typst]` config table** (RFC 0008 T11, part of #927). `[typst] note_types` lists the note
   types whose notes may be written in Typst; absent means `evidence` plus `concept` when the vault

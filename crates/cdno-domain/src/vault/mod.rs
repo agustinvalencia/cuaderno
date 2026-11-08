@@ -21,6 +21,7 @@
 
 use std::sync::Arc;
 
+use cdno_core::classify::NoteScope;
 use cdno_core::config::VaultConfig;
 use cdno_core::index::VaultIndex;
 use cdno_core::reconcile::{ReconciliationReport, reconcile};
@@ -202,7 +203,7 @@ impl Vault {
         // normalises each custom type's `folder` in place, so the `config`
         // stored on `Vault` below already carries the canonical form.
         crate::type_registry::TypeRegistry::validate(&mut config)?;
-        let report = reconcile(&store, &index, &ignore)?;
+        let report = reconcile(&store, &index, &NoteScope::new(ignore))?;
         let method_notice = method_status::MethodNotice::default();
         method_notice.record(config.vault.method_version);
         let holder_sentinels = HolderSentinels::from_config(&config);
@@ -219,6 +220,12 @@ impl Vault {
         // failure is logged and the vault still opens.
         vault.backfill_masked_snapshots();
         Ok((vault, report))
+    }
+
+    /// What reconciliation and any other caller of the classifier need to
+    /// know about this vault, compiled from the config it was opened with.
+    pub fn note_scope(&self) -> Result<NoteScope, DomainError> {
+        Ok(NoteScope::new(self.config.ignore_set()?))
     }
 
     pub fn config(&self) -> &VaultConfig {

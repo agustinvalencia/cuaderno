@@ -4,11 +4,9 @@
 //! every `Vault::new` (and can be re-run on demand). The algorithm is
 //! simple:
 //!
-//! 1. Walk every `.md` file in the vault, minus attachment artefacts
-//!    (markdown filed *into* a portfolio folder owned by an evidence
-//!    stub — see [`crate::artefacts::owning_artefact_stub`]) and any
-//!    matching the config `ignore` globs (passed in as a compiled
-//!    [`IgnoreSet`]).
+//! 1. Ask [`crate::classify::classify`] which files are notes: every
+//!    `.md` file in the vault, minus attachment artefacts and any matching
+//!    the config `ignore` globs.
 //! 2. For each file: take the fast path (skip on matching mtime + size,
 //!    #94), else read, hash, and compare against the matching index row.
 //!    Reindex if the hash differs or no row exists.
@@ -26,11 +24,10 @@
 //! rebuildable from the filesystem.
 
 use std::collections::HashSet;
-use std::ffi::OsStr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::config::IgnoreSet;
+use crate::classify::{NoteScope, classify};
 use crate::error::IndexError;
 use crate::extractors::AliasMap;
 use crate::frontmatter::Frontmatter;
@@ -109,79 +106,15 @@ pub struct ReconciliationIssue {
 pub fn reconcile(
     store: &Arc<dyn VaultStore>,
     index: &Arc<dyn VaultIndex>,
-    ignore: &IgnoreSet,
+    scope: &NoteScope,
 ) -> Result<ReconciliationReport, IndexError> {
     let mut report = ReconciliationReport::default();
 
-    // Gather the filesystem's current `.md` paths. Non-markdown files
-    // (PDFs, .ipynb attachments) are discoverable via the store but
-    // never indexed — they have no frontmatter contract.
-    let all_fs_paths = store
-        .walk_dir(&VaultPath::root())
+    let classified = classify(store, scope)
         .map_err(|e| IndexError::Query(format!("walk_dir failed during reconcile: {e}")))?;
-    // Every directory on the path to a walked file — the only places an
-    // artefact folder can be, and the filter that keeps the stub lookup
-    // below from reading the whole vault.
-    //
-    // All ancestors, not just immediate parents: a filed directory tree
-    // keeps its internal structure, so an artefact folder may contain no
-    // direct files at all. `portfolios/<p>/bundle/` holding only
-    // `docs/readme.md` would otherwise never be probed, and `bundle.md`
-    // would never be recognised as the stub that owns it. The empty path
-    // that `ancestors` ends on is rejected by `VaultPath::new`.
-    let dirs: HashSet<VaultPath> = all_fs_paths
-        .iter()
-        .flat_map(|p| p.as_path().ancestors().skip(1))
-        .filter_map(|d| VaultPath::new(d).ok())
-        .collect();
-    let all_md_paths: Vec<VaultPath> = all_fs_paths
-        .into_iter()
-        .filter(|p| p.as_path().extension() == Some(OsStr::new("md")))
-        // `.cuaderno/` is the vault's meta directory — config,
-        // templates, index database. Its contents are infrastructure,
-        // not notes; indexing them would mean e.g. the dumped daily
-        // template surfacing in "all daily notes" queries.
-        .filter(|p| !p.as_path().starts_with(crate::paths::CUADERNO_DIR))
-        .collect();
-
-    // Attachment artefacts (#451): a markdown file inside a folder owned
-    // by an evidence stub is a filed *document*, not a note — it has no
-    // frontmatter, so indexing it can only ever fail.
-    //
-    // The owning stubs are identified positively, by reading their
-    // frontmatter, never by the path shape alone: a plain note that merely
-    // shares a name with a sibling folder must not swallow that folder's
-    // real notes out of the index. Only directories that could own
-    // something are probed, so the reads are proportional to the number of
-    // portfolio subfolders, not to the size of the vault.
-    //
-    // Resolved against the full markdown set rather than the post-`ignore`
-    // one, so the two exclusions stay independent: ignoring a stub must not
-    // silently promote its artefacts into notes.
-    let md_set: HashSet<VaultPath> = all_md_paths.iter().cloned().collect();
-    let stubs = crate::artefacts::attachment_stubs(store, &md_set, &dirs);
-    let (artefact_paths, candidate_md_paths): (Vec<VaultPath>, Vec<VaultPath>) =
-        all_md_paths.into_iter().partition(|p| {
-            crate::artefacts::owning_artefact_stub(p, |stub| stubs.contains(stub)).is_some()
-        });
-    report.artefacts = artefact_paths.len();
-    // Config `ignore` globs (#242): user-declared non-vault docs (e.g.
-    // CLAUDE.md, README.md) that live in the vault dir but aren't notes.
-    // Excluding them here is the single enforcement point — a path absent
-    // from the index is also absent from lint (index-driven) and search.
-    // A file that was indexed before becoming ignored falls out via
-    // Phase 2's orphan removal, since it's no longer in `fs_set`.
-    //
-    // Partition rather than filter so the excluded count is reported: an
-    // over-broad pattern silently evicting notes from retrieval is the
-    // feature's sharpest footgun, so the number must be observable. The
-    // files are never touched; clearing the glob and reindexing restores
-    // every row.
-    let (ignored_paths, fs_md_paths): (Vec<VaultPath>, Vec<VaultPath>) = candidate_md_paths
-        .into_iter()
-        .partition(|p| ignore.is_match(p.as_path()));
-    report.ignored = ignored_paths.len();
-    let fs_set: HashSet<VaultPath> = fs_md_paths.iter().cloned().collect();
+    report.artefacts = classified.artefacts;
+    report.ignored = classified.ignored;
+    let fs_set: HashSet<VaultPath> = classified.notes.iter().cloned().collect();
 
     // The alias map as the index held it before this pass (RFC 0007 §5.5).
     // Phase 1 resolves each reindexed note's links against it — the map
@@ -193,7 +126,7 @@ pub fn reconcile(
     // reflected in the index. The full path set is threaded into
     // `reconcile_one` so wikilink resolution can do its
     // exact-then-basename lookup without extra index calls.
-    for path in &fs_md_paths {
+    for path in &classified.notes {
         report.scanned += 1;
         match reconcile_one(store, index, path, &fs_set, &aliases_before) {
             Ok(Outcome::Added) => report.added += 1,

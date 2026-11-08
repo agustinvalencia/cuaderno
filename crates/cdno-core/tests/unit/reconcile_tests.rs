@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use cdno_core::classify::NoteScope;
 use cdno_core::config::IgnoreSet;
 use cdno_core::error::{IndexError, StoreError};
 use cdno_core::file_meta::FileMeta;
@@ -45,7 +46,7 @@ fn as_index(i: &Arc<MemoryIndex>) -> Arc<dyn VaultIndex> {
 #[test]
 fn empty_vault_empty_index_nothing_happens() {
     let (store, index) = fixtures();
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(report.scanned, 0);
     assert_eq!(report.added, 0);
     assert_eq!(report.updated, 0);
@@ -58,7 +59,7 @@ fn new_file_is_added() {
     let (store, index) = fixtures();
     seed_note(&store, "journal/daily/2026-04-19.md", "daily", "");
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(report.scanned, 1);
     assert_eq!(report.added, 1);
     assert_eq!(report.updated, 0);
@@ -84,7 +85,7 @@ fn reconcile_indexes_inline_body_tags_alongside_frontmatter_tags() {
         .write_file(&vp("note.md"), raw)
         .expect("seed mixed-tags note");
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(report.scanned, 1);
 
     let frontmatter_hits = index.find_by_tag("frontmatter-tag").unwrap();
@@ -107,7 +108,7 @@ fn reconcile_indexes_namespaced_action_tags() {
         .write_file(&vp("journal/daily/2026-05-26.md"), raw)
         .expect("seed action-tagged daily note");
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(report.scanned, 1);
 
     let full = index
@@ -130,7 +131,7 @@ fn reconcile_resolves_wikilinks_to_their_target_paths() {
         with label: [[foo|My Foo]]\n";
     store.write_file(&vp("src.md"), raw).unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     let outgoing = index.find_outgoing_links(&vp("src.md")).unwrap();
     assert_eq!(outgoing.len(), 3, "got: {outgoing:?}");
@@ -171,7 +172,7 @@ fn reconcile_backlinks_a_relocated_note_via_last_segment_fallback() {
         .write_file(&vp("journal/2026/daily/2026-05-02.md"), daily)
         .unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     let backlinks = index
         .find_backlinks(&vp("actions/_done/2026/characterise.md"))
@@ -200,7 +201,7 @@ fn reconcile_backlinks_a_frontmatter_wikilink() {
         .write_file(&vp("projects/surrogate.md"), project)
         .unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     let backlinks = index
         .find_backlinks(&vp("questions/research/q.md"))
@@ -219,7 +220,7 @@ fn reconcile_marks_wikilink_unresolved_when_basename_is_ambiguous() {
     let raw = "---\ntype: daily\n---\n\nbody references [[foo]]\n";
     store.write_file(&vp("src.md"), raw).unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     let outgoing = index.find_outgoing_links(&vp("src.md")).unwrap();
     assert_eq!(outgoing.len(), 1);
@@ -241,7 +242,7 @@ fn cuaderno_meta_files_are_excluded_from_scan() {
     // would otherwise match a real note.
     seed_note(&store, ".cuaderno/templates/daily.md", "daily", "");
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     assert_eq!(report.scanned, 1, "only the real note should be scanned");
     assert_eq!(report.added, 1);
@@ -275,7 +276,7 @@ fn stale_cuaderno_index_row_is_removed_as_orphan() {
         })
         .unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     assert_eq!(report.scanned, 0);
     assert_eq!(report.removed, 1);
@@ -292,10 +293,10 @@ fn matching_index_entry_is_skipped() {
     let (store, index) = fixtures();
     seed_note(&store, "note.md", "daily", "");
     // First run indexes the note.
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     // Second run sees the same state — no adds/updates.
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(report.scanned, 1);
     assert_eq!(report.added, 0);
     assert_eq!(report.updated, 0);
@@ -306,7 +307,7 @@ fn matching_index_entry_is_skipped() {
 fn changed_content_triggers_update() {
     let (store, index) = fixtures();
     seed_note(&store, "note.md", "daily", "");
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     // Rewrite with different content → hash changes.
     store
@@ -316,7 +317,7 @@ fn changed_content_triggers_update() {
         )
         .unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(report.scanned, 1);
     assert_eq!(report.added, 0);
     assert_eq!(report.updated, 1);
@@ -331,12 +332,12 @@ fn orphan_index_rows_are_removed() {
     let (store, index) = fixtures();
     seed_note(&store, "keep.md", "daily", "");
     seed_note(&store, "delete-me.md", "daily", "");
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     // Simulate external deletion of delete-me.md.
     store.delete_file(&vp("delete-me.md")).unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(report.scanned, 1);
     assert_eq!(report.removed, 1);
     assert!(index.find_by_path(&vp("delete-me.md")).unwrap().is_none());
@@ -355,7 +356,7 @@ fn non_markdown_files_are_ignored() {
         .write_file(&vp("portfolios/foo/notebook.ipynb"), "{\"cells\": []}")
         .unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(report.scanned, 1);
     assert_eq!(report.added, 1);
     assert!(report.errors.is_empty());
@@ -374,7 +375,7 @@ fn note_without_frontmatter_is_reported_as_error() {
         .write_file(&vp("broken.md"), "# No frontmatter here\nplain body\n")
         .unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(report.scanned, 1);
     assert_eq!(report.added, 0);
     assert_eq!(report.errors.len(), 1);
@@ -389,7 +390,7 @@ fn non_list_tags_field_is_reported_as_error() {
     let (store, index) = fixtures();
     seed_note(&store, "concepts/a.md", "concept", "tags: linalg\n");
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(report.added, 0);
     assert_eq!(report.errors.len(), 1);
     assert_eq!(report.errors[0].path, vp("concepts/a.md"));
@@ -412,7 +413,7 @@ fn one_broken_note_does_not_block_others() {
         .unwrap();
     seed_note(&store, "also-good.md", "daily", "");
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(report.scanned, 3);
     assert_eq!(report.added, 2);
     assert_eq!(report.errors.len(), 1);
@@ -443,7 +444,7 @@ working on it
         .write_file(&vp("projects/surrogate.md"), project)
         .unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     let deadlines = index.deadlines_between("2026-01-01", "2027-01-01").unwrap();
     let titles: Vec<String> = deadlines.iter().map(|(_, d)| d.title.clone()).collect();
@@ -467,7 +468,7 @@ title: 2026-04-19
         .write_file(&vp("journal/daily/2026-04-19.md"), raw)
         .unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     let deadlines = index.deadlines_between("2026-01-01", "2027-01-01").unwrap();
     assert!(deadlines.is_empty(), "daily notes must not spawn deadlines");
@@ -491,7 +492,7 @@ title: Surrogate model
 ";
     store.write_file(&vp("projects/surrogate.md"), raw).unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     // All three milestones land, in source order, queryable by path.
     let all = index
@@ -537,7 +538,7 @@ title: 2026-04-19
         .write_file(&vp("journal/daily/2026-04-19.md"), raw)
         .unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     assert!(
         index
@@ -564,7 +565,7 @@ content
 ";
     store.write_file(&vp("note.md"), raw).unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     let tagged = index.find_by_tag("agustin-valencia").unwrap();
     assert_eq!(tagged, vec![vp("note.md")]);
@@ -581,7 +582,7 @@ fn updating_a_project_replaces_its_deadlines() {
             "---\ntype: project\n---\n# Milestones\n- [ ] first — hard: 2026-05-01\n",
         )
         .unwrap();
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     // Replace the milestone list.
     store
@@ -590,7 +591,7 @@ fn updating_a_project_replaces_its_deadlines() {
             "---\ntype: project\n---\n# Milestones\n- [ ] second — hard: 2026-06-01\n",
         )
         .unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(report.updated, 1);
 
     let deadlines = index.deadlines_between("2026-01-01", "2027-01-01").unwrap();
@@ -611,10 +612,10 @@ tags:
 - [ ] ship — hard: 2026-05-01
 ";
     store.write_file(&vp("projects/p.md"), raw).unwrap();
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     store.delete_file(&vp("projects/p.md")).unwrap();
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     assert!(
         index
@@ -635,7 +636,7 @@ fn orphan_removal_failure_is_reported_as_error() {
     reconcile(
         &as_store(&store),
         &as_index(&backing_index),
-        &IgnoreSet::empty(),
+        &NoteScope::empty(),
     )
     .unwrap();
 
@@ -646,7 +647,7 @@ fn orphan_removal_failure_is_reported_as_error() {
     // fails. The underlying index is still the same backing store.
     let failing: Arc<dyn VaultIndex> = Arc::new(ProbeIndex::new(backing_index.clone(), true));
     let store_arc: Arc<dyn VaultStore> = store.clone();
-    let report = reconcile(&store_arc, &failing, &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&store_arc, &failing, &NoteScope::empty()).unwrap();
 
     assert_eq!(report.removed, 0);
     assert_eq!(report.errors.len(), 1);
@@ -666,7 +667,7 @@ fn reconcile_populates_fts_for_indexed_notes() {
     seed_note(&store, "inbox/a.md", "inbox", "");
     seed_note(&store, "projects/b.md", "project", "status: active\n");
 
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     // reconcile_one wrote the FTS rows alongside the note rows, so the
     // body text ("content for <path>") is searchable.
@@ -706,7 +707,7 @@ fn reconcile_backfills_fts_for_notes_missing_from_search() {
         .unwrap();
     assert!(index.search("searchable", 10).unwrap().is_empty());
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     // Phase 1 skipped the unchanged note; phase 3 backfilled its FTS row.
     assert_eq!(report.added, 0);
@@ -727,7 +728,7 @@ fn reconcile_drops_orphan_fts_rows() {
         .unwrap();
     assert_eq!(index.fts_indexed_paths().unwrap(), vec![vp("gone.md")]);
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     assert_eq!(report.fts_removed, 1);
     assert!(index.fts_indexed_paths().unwrap().is_empty());
@@ -953,14 +954,14 @@ fn second_pass_skips_reading_unchanged_files() {
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
 
     // First pass indexes both files — each is read once.
-    let first = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    let first = reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(first.added, 2);
     assert_eq!(counting.reads(), 2);
 
     // Second pass: nothing changed, so the mtime+size fast path skips both
     // without a single read.
     counting.reset();
-    let second = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    let second = reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(second.added, 0);
     assert_eq!(second.updated, 0);
     assert_eq!(
@@ -979,7 +980,7 @@ fn a_changed_file_is_still_detected_after_the_fast_path() {
     let counting = Arc::new(CountingStore::new(mem.clone()));
     let store: Arc<dyn VaultStore> = counting.clone();
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
-    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    reconcile(&store, &index, &NoteScope::empty()).unwrap();
 
     // Edit one file — write_file bumps its mtime, so the fast path misses it
     // (and only it) on the next pass.
@@ -990,7 +991,7 @@ fn a_changed_file_is_still_detected_after_the_fast_path() {
     .unwrap();
 
     counting.reset();
-    let report = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(report.updated, 1);
     assert_eq!(
         counting.reads(),
@@ -1012,7 +1013,7 @@ fn a_touched_but_unchanged_file_is_restamped_then_fast_paths() {
     let counting = Arc::new(CountingStore::new(mem.clone()));
     let store: Arc<dyn VaultStore> = counting.clone();
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
-    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    reconcile(&store, &index, &NoteScope::empty()).unwrap();
 
     // Rewrite identical bytes — bumps the memory store's mtime, same content.
     mem.write_file(&vp("inbox/a.md"), &raw).unwrap();
@@ -1020,14 +1021,14 @@ fn a_touched_but_unchanged_file_is_restamped_then_fast_paths() {
     // Pass after the touch: fast path misses (mtime drifted), so the file is
     // read once and hash-matched; nothing is reindexed.
     counting.reset();
-    let report = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(report.updated, 0);
     assert_eq!(report.added, 0);
     assert_eq!(counting.reads(), 1, "touched file is read once to confirm");
 
     // Next pass: the re-stamp made mtime match, so it fast-paths — no read.
     counting.reset();
-    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(
         counting.reads(),
         0,
@@ -1076,7 +1077,7 @@ fn commit_stamps_the_real_file_mtime_so_a_written_note_fast_paths() {
     // And so reconcile reads nothing — the note fast-paths immediately.
     let counting = Arc::new(CountingStore::new(mem));
     let store: Arc<dyn VaultStore> = counting.clone();
-    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(
         counting.reads(),
         0,
@@ -1098,7 +1099,12 @@ fn ignore_glob_skips_matching_file_entirely() {
         .unwrap();
 
     let ignore = IgnoreSet::compile(&["CLAUDE.md".to_string()]).unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    let report = reconcile(
+        &as_store(&store),
+        &as_index(&index),
+        &NoteScope::new(ignore),
+    )
+    .unwrap();
 
     // The ignored file never enters the pass: not scanned, no error, no
     // index row. Only the real note is reflected, and the exclusion is
@@ -1128,7 +1134,7 @@ fn without_ignore_a_non_note_file_reconciles_with_an_error() {
         )
         .unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(report.scanned, 1);
     assert_eq!(report.errors.len(), 1);
     assert!(index.find_by_path(&vp("CLAUDE.md")).unwrap().is_none());
@@ -1141,13 +1147,18 @@ fn newly_ignored_file_is_removed_from_index_as_orphan() {
     seed_note(&store, "projects/cuaderno.md", "project", "");
 
     // First pass: nothing ignored, both notes indexed.
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert!(index.find_by_path(&vp("README.md")).unwrap().is_some());
 
     // Add README.md to the ignore list and reconcile again: it falls
     // out of the filesystem set, so Phase 2 drops the now-stale row.
     let ignore = IgnoreSet::compile(&["README.md".to_string()]).unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    let report = reconcile(
+        &as_store(&store),
+        &as_index(&index),
+        &NoteScope::new(ignore),
+    )
+    .unwrap();
     assert_eq!(report.removed, 1);
     assert!(index.find_by_path(&vp("README.md")).unwrap().is_none());
     // Phase 2's remove_note cascades to the FTS row too, so the ignored
@@ -1175,7 +1186,12 @@ fn ignore_glob_matches_nested_paths_with_doublestar() {
     seed_note(&store, "inbox/scratch.draft.md", "zettel", "");
 
     let ignore = IgnoreSet::compile(&["**/*.draft.md".to_string()]).unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    let report = reconcile(
+        &as_store(&store),
+        &as_index(&index),
+        &NoteScope::new(ignore),
+    )
+    .unwrap();
     assert_eq!(report.scanned, 1);
     assert!(report.errors.is_empty());
     assert!(
@@ -1205,7 +1221,12 @@ fn ignore_literal_is_root_anchored_and_does_not_cross_segments() {
 
     // `CLAUDE-notes.md` (root-anchored) + `*.md` (single segment only).
     let ignore = IgnoreSet::compile(&["CLAUDE-notes.md".to_string(), "*.md".to_string()]).unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    let report = reconcile(
+        &as_store(&store),
+        &as_index(&index),
+        &NoteScope::new(ignore),
+    )
+    .unwrap();
 
     // Both root-level files dropped; both nested ones survive — `*.md`
     // and the bare name stayed at the root.
@@ -1240,7 +1261,12 @@ fn ignore_applies_every_pattern_in_the_set() {
     seed_note(&store, "projects/cuaderno.md", "project", "");
 
     let ignore = IgnoreSet::compile(&["CLAUDE.md".to_string(), "README.md".to_string()]).unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    let report = reconcile(
+        &as_store(&store),
+        &as_index(&index),
+        &NoteScope::new(ignore),
+    )
+    .unwrap();
     assert_eq!(report.scanned, 1);
     assert_eq!(report.ignored, 2);
     assert!(index.find_by_path(&vp("CLAUDE.md")).unwrap().is_none());
@@ -1262,7 +1288,12 @@ fn ignore_pattern_matching_nothing_leaves_the_vault_intact() {
     seed_note(&store, "journal/daily/2026-04-19.md", "daily", "");
 
     let ignore = IgnoreSet::compile(&["nonexistent/**".to_string()]).unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    let report = reconcile(
+        &as_store(&store),
+        &as_index(&index),
+        &NoteScope::new(ignore),
+    )
+    .unwrap();
     assert_eq!(report.scanned, 2);
     assert_eq!(report.added, 2);
     assert_eq!(report.ignored, 0);
@@ -1281,12 +1312,12 @@ fn over_broad_ignore_empties_index_but_files_survive_and_recover() {
     seed_note(&store, "inbox/scratch.md", "zettel", "");
 
     // Baseline: everything indexed.
-    let base = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let base = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(base.added, 3);
 
     // `**` matches every path: the index is wiped, the exclusion counted.
     let nuke = IgnoreSet::compile(&["**".to_string()]).unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &nuke).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::new(nuke)).unwrap();
     assert_eq!(report.ignored, 3);
     assert_eq!(report.removed, 3);
     assert!(index.list_all_paths().unwrap().is_empty());
@@ -1296,7 +1327,7 @@ fn over_broad_ignore_empties_index_but_files_survive_and_recover() {
 
     // Recovery: drop the glob and reconcile — every note re-enters the
     // index from the surviving files. Fully recoverable, zero data loss.
-    let restored = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let restored = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(restored.added, 3);
     assert_eq!(restored.ignored, 0);
     assert!(
@@ -1317,7 +1348,12 @@ fn ignore_negation_is_literal_not_re_inclusion() {
     seed_note(&store, "projects/cuaderno.md", "project", "");
 
     let ignore = IgnoreSet::compile(&["*.md".to_string(), "!keep.md".to_string()]).unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    let report = reconcile(
+        &as_store(&store),
+        &as_index(&index),
+        &NoteScope::new(ignore),
+    )
+    .unwrap();
     assert!(index.find_by_path(&vp("keep.md")).unwrap().is_none());
     assert!(
         index
@@ -1337,7 +1373,12 @@ fn root_anchored_and_empty_patterns_exclude_nothing() {
     seed_note(&store, "projects/cuaderno.md", "project", "");
 
     let ignore = IgnoreSet::compile(&["/CLAUDE.md".to_string(), String::new()]).unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    let report = reconcile(
+        &as_store(&store),
+        &as_index(&index),
+        &NoteScope::new(ignore),
+    )
+    .unwrap();
     assert_eq!(report.ignored, 0);
     assert_eq!(report.scanned, 2);
 }
@@ -1380,7 +1421,7 @@ fn markdown_artefact_is_not_indexed_and_is_counted() {
         )
         .unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     // The stub is a note; its artefact is not. No error either way — the
     // artefact never enters the pass, so it cannot fail to parse.
@@ -1411,7 +1452,7 @@ fn markdown_in_a_folder_without_a_stub_is_still_a_note() {
         .write_file(&vp("portfolios/demo/loose/notes.md"), ARTEFACT_MD)
         .unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     assert_eq!(report.artefacts, 0);
     assert_eq!(report.scanned, 1);
@@ -1434,7 +1475,12 @@ fn ignoring_a_stub_does_not_promote_its_artefacts_to_notes() {
         .unwrap();
 
     let ignore = IgnoreSet::compile(&["portfolios/demo/2026-07-03-panel.md".to_string()]).unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    let report = reconcile(
+        &as_store(&store),
+        &as_index(&index),
+        &NoteScope::new(ignore),
+    )
+    .unwrap();
 
     assert_eq!(report.artefacts, 1);
     assert_eq!(report.ignored, 1);
@@ -1457,7 +1503,7 @@ fn artefact_exemption_reaches_through_a_grouping_folder() {
         )
         .unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     assert_eq!(report.artefacts, 1);
     assert_eq!(report.scanned, 1);
@@ -1481,7 +1527,12 @@ fn folder_scoped_glob_with_one_star_matches_at_every_depth_below() {
     seed_note(&store, "projects/alpha.md", "project", "");
 
     let ignore = IgnoreSet::compile(&["portfolios/*/**".to_string()]).unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    let report = reconcile(
+        &as_store(&store),
+        &as_index(&index),
+        &NoteScope::new(ignore),
+    )
+    .unwrap();
 
     // Everything under a portfolio folder goes, at one level and at two.
     assert_eq!(report.ignored, 3);
@@ -1510,7 +1561,12 @@ fn folder_scoped_glob_with_two_stars_spares_the_level_above() {
     seed_note(&store, "portfolios/demo/group/nested.md", "evidence", "");
 
     let ignore = IgnoreSet::compile(&["portfolios/*/*/**".to_string()]).unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    let report = reconcile(
+        &as_store(&store),
+        &as_index(&index),
+        &NoteScope::new(ignore),
+    )
+    .unwrap();
 
     assert_eq!(report.ignored, 1);
     assert_eq!(report.scanned, 2);
@@ -1540,7 +1596,7 @@ fn a_plain_note_beside_a_folder_does_not_evict_that_folders_notes() {
         .write_file(&vp("portfolios/demo/2026-Q2/second.md"), PLAIN_EVIDENCE)
         .unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     assert_eq!(report.artefacts, 0);
     assert_eq!(report.scanned, 3);
@@ -1565,7 +1621,7 @@ fn an_indexed_note_is_not_evicted_when_a_plain_namesake_note_appears() {
     store
         .write_file(&vp("portfolios/demo/2026-Q2/first.md"), PLAIN_EVIDENCE)
         .unwrap();
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert!(
         index
             .find_by_path(&vp("portfolios/demo/2026-Q2/first.md"))
@@ -1576,7 +1632,7 @@ fn an_indexed_note_is_not_evicted_when_a_plain_namesake_note_appears() {
     store
         .write_file(&vp("portfolios/demo/2026-Q2.md"), PLAIN_EVIDENCE)
         .unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     assert_eq!(report.artefacts, 0);
     assert_eq!(report.removed, 0);
@@ -1605,7 +1661,7 @@ fn a_stub_owns_markdown_nested_deeper_inside_its_artefact_folder() {
         )
         .unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     assert_eq!(report.artefacts, 1);
     assert_eq!(report.scanned, 1);
@@ -1653,11 +1709,11 @@ fn late_target_gains_backlink(index: Arc<dyn VaultIndex>) {
     let vault = TempDir::new().unwrap();
     let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(vault.path()));
     write_md(vault.path(), "journal/a.md", "# A\n\nSee [[b]].");
-    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(outgoing_resolution(&index, "journal/a.md", "b"), None);
 
     write_md(vault.path(), "concepts/b.md", "# B");
-    let report = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(report.added, 1, "only B is new; A takes the fast path");
     assert_eq!(report.updated, 0);
     assert_eq!(report.links_reresolved, 1);
@@ -1695,7 +1751,7 @@ fn reconcile_skips_link_reresolution_when_no_note_was_added_or_removed() {
     write_md(vault.path(), "journal/a.md", "# A\n\nSee [[b]].");
     write_md(vault.path(), "concepts/b.md", "# B");
     write_md(vault.path(), "concepts/c.md", "# C");
-    let first = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    let first = reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(first.added, 3);
     assert_eq!(probe.link_scans.load(Ordering::SeqCst), 1);
 
@@ -1713,11 +1769,11 @@ fn reconcile_skips_link_reresolution_when_no_note_was_added_or_removed() {
     probe.link_scans.store(0, Ordering::SeqCst);
 
     // A pass with nothing to do.
-    let idle = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    let idle = reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!((idle.added, idle.updated, idle.removed), (0, 0, 0));
     // A pass that only updates a note (C's content changes; no path does).
     write_md(vault.path(), "concepts/c.md", "# C\n\nEdited, and longer.");
-    let edit = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    let edit = reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!((edit.added, edit.updated, edit.removed), (0, 1, 0));
 
     assert_eq!(probe.link_scans.load(Ordering::SeqCst), 0);
@@ -1739,7 +1795,7 @@ fn reconcile_unresolves_a_link_whose_target_was_renamed_away() {
     let (vault, _db, store, index) = fs_vault();
     write_md(vault.path(), "journal/a.md", "# A\n\nSee [[b]].");
     write_md(vault.path(), "concepts/b.md", "# B");
-    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(
         outgoing_resolution(&index, "journal/a.md", "b"),
         Some(vp("concepts/b.md"))
@@ -1750,7 +1806,7 @@ fn reconcile_unresolves_a_link_whose_target_was_renamed_away() {
         vault.path().join("concepts/c.md"),
     )
     .unwrap();
-    let report = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!((report.added, report.removed), (1, 1));
     assert_eq!(report.links_reresolved, 1);
     assert_eq!(outgoing_resolution(&index, "journal/a.md", "b"), None);
@@ -1776,7 +1832,7 @@ fn reconcile_follows_a_link_whose_target_moved_within_its_tree() {
     let (vault, _db, store, index) = fs_vault();
     write_md(vault.path(), "journal/a.md", "# A\n\nDid [[actions/b]].");
     write_md(vault.path(), "actions/b.md", "# B");
-    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    reconcile(&store, &index, &NoteScope::empty()).unwrap();
 
     std::fs::create_dir_all(vault.path().join("actions/_done/2026")).unwrap();
     std::fs::rename(
@@ -1784,7 +1840,7 @@ fn reconcile_follows_a_link_whose_target_moved_within_its_tree() {
         vault.path().join("actions/_done/2026/b.md"),
     )
     .unwrap();
-    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    reconcile(&store, &index, &NoteScope::empty()).unwrap();
 
     assert_eq!(
         index
@@ -1809,7 +1865,7 @@ fn a_commit_keeps_links_to_an_unparseable_note_resolved() {
         "no frontmatter at all\n",
     )
     .unwrap();
-    let first = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    let first = reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(first.errors.len(), 1, "b.md does not parse");
     assert_eq!(
         outgoing_resolution(&index, "journal/a.md", "b"),
@@ -1835,7 +1891,7 @@ fn a_commit_keeps_links_to_an_unparseable_note_resolved() {
         outgoing_resolution(&index, "journal/a.md", "b"),
         Some(vp("concepts/b.md"))
     );
-    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(
         outgoing_resolution(&index, "journal/a.md", "b"),
         Some(vp("concepts/b.md"))
@@ -1869,7 +1925,7 @@ fn a_link_reresolution_failure_is_reported_and_the_pass_continues() {
     let mut probe = ProbeIndex::new(backing.clone(), false);
     probe.fail_link_resolutions = true;
     let index: Arc<dyn VaultIndex> = Arc::new(probe);
-    let report = reconcile(&as_store(&store), &index, &IgnoreSet::empty())
+    let report = reconcile(&as_store(&store), &index, &NoteScope::empty())
         .expect("a re-resolution failure must not abort the pass");
 
     assert_eq!(report.added, 1);
@@ -1913,13 +1969,13 @@ fn aliases_survive_an_index_rebuild() {
     ];
 
     let index: Arc<dyn VaultIndex> = Arc::new(SqliteIndex::open(&db_path).unwrap());
-    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(index.list_aliases().unwrap(), expected);
     drop(index);
 
     std::fs::remove_file(&db_path).unwrap();
     let index: Arc<dyn VaultIndex> = Arc::new(SqliteIndex::open(&db_path).unwrap());
-    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(index.list_aliases().unwrap(), expected);
 }
 
@@ -1955,7 +2011,7 @@ fn reconciled_vault_with_a_dangling_link() -> (Arc<MemoryVaultStore>, Arc<Memory
             "---\ntype: daily\n---\n\n- picked up [[old-name]] and [[old-name#Plan]]\n",
         )
         .unwrap();
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(
         outgoing(&index, ALIAS_DAILY, "old-name").resolved_path,
         None
@@ -1971,7 +2027,7 @@ fn an_alias_added_outside_the_tool_reresolves_on_startup() {
     store
         .write_file(&vp(ALIAS_HOLDER), &alias_holder(Some("old-name")))
         .unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     assert_eq!((report.added, report.removed, report.updated), (0, 0, 1));
     assert_eq!(report.links_reresolved, 2, "both `[[old-name…]]` rows");
@@ -1992,7 +2048,7 @@ fn an_alias_removed_outside_the_tool_unresolves_on_startup() {
     store
         .write_file(&vp(ALIAS_HOLDER), &alias_holder(Some("old-name")))
         .unwrap();
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(
         index.find_backlinks(&vp(ALIAS_HOLDER)).unwrap(),
         vec![vp(ALIAS_DAILY)]
@@ -2001,7 +2057,7 @@ fn an_alias_removed_outside_the_tool_unresolves_on_startup() {
     store
         .write_file(&vp(ALIAS_HOLDER), &alias_holder(None))
         .unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     assert_eq!(report.links_reresolved, 2);
     assert!(index.find_backlinks(&vp(ALIAS_HOLDER)).unwrap().is_empty());
@@ -2016,11 +2072,11 @@ fn a_stem_appearing_outside_the_tool_outranks_an_alias_on_startup() {
     store
         .write_file(&vp(ALIAS_HOLDER), &alias_holder(Some("old-name")))
         .unwrap();
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert!(outgoing(&index, ALIAS_DAILY, "old-name").via_alias);
 
     seed_note(&store, "notes/old-name.md", "concept", "");
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     let row = outgoing(&index, ALIAS_DAILY, "old-name");
     assert_eq!(row.resolved_path, Some(vp("notes/old-name.md")));
@@ -2035,7 +2091,7 @@ fn an_unchanged_alias_map_does_not_trigger_reresolution() {
     store
         .write_file(&vp(ALIAS_HOLDER), &alias_holder(Some("old-name")))
         .unwrap();
-    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
 
     store
         .write_file(
@@ -2043,7 +2099,7 @@ fn an_unchanged_alias_map_does_not_trigger_reresolution() {
             &format!("{}\nMore prose.\n", alias_holder(Some("old-name"))),
         )
         .unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &NoteScope::empty()).unwrap();
     assert_eq!(report.updated, 1);
     assert_eq!(report.links_reresolved, 0);
     assert!(outgoing(&index, ALIAS_DAILY, "old-name").via_alias);
@@ -2059,7 +2115,7 @@ fn bare_folder_note_gains_backlink(index: Arc<dyn VaultIndex>) {
         "journal/a.md",
         "# A\n\nSee [[surrogate-model]].",
     );
-    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(
         outgoing_resolution(&index, "journal/a.md", "surrogate-model"),
         None
@@ -2068,7 +2124,7 @@ fn bare_folder_note_gains_backlink(index: Arc<dyn VaultIndex>) {
     // The folder note's stem is `_index`; only its folder name admits the
     // dangling bare link to re-resolution.
     write_md(vault.path(), "portfolios/surrogate-model/_index.md", "# P");
-    let report = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    let report = reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(report.links_reresolved, 1);
     assert_eq!(
         index
@@ -2079,7 +2135,7 @@ fn bare_folder_note_gains_backlink(index: Arc<dyn VaultIndex>) {
 
     // And removing it unresolves the link again.
     std::fs::remove_file(vault.path().join("portfolios/surrogate-model/_index.md")).unwrap();
-    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    reconcile(&store, &index, &NoteScope::empty()).unwrap();
     assert_eq!(
         outgoing_resolution(&index, "journal/a.md", "surrogate-model"),
         None
@@ -2112,7 +2168,7 @@ fn bare_folder_link_vault(index: &Arc<dyn VaultIndex>) -> (TempDir, Arc<dyn Vaul
     let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(vault.path()));
     write_md(vault.path(), "portfolios/x/_index.md", "# X");
     write_md(vault.path(), "journal/a.md", "# A\n\nSee [[x]].");
-    reconcile(&store, index, &IgnoreSet::empty()).unwrap();
+    reconcile(&store, index, &NoteScope::empty()).unwrap();
     assert_eq!(
         outgoing_resolution(index, "journal/a.md", "x"),
         Some(vp("portfolios/x/_index.md"))
@@ -2133,7 +2189,7 @@ fn reconcile_gives_a_bare_folder_link_to_a_flat_note_that_appears() {
     for_both_indexes(|index| {
         let (vault, store) = bare_folder_link_vault(&index);
         write_md(vault.path(), "stewardships/x.md", "# Flat");
-        reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+        reconcile(&store, &index, &NoteScope::empty()).unwrap();
         assert_eq!(
             outgoing_resolution(&index, "journal/a.md", "x"),
             Some(vp("stewardships/x.md"))
@@ -2152,7 +2208,7 @@ fn reconcile_unresolves_a_bare_folder_link_when_a_second_folder_note_appears() {
     for_both_indexes(|index| {
         let (vault, store) = bare_folder_link_vault(&index);
         write_md(vault.path(), "stewardships/x/_index.md", "# Other");
-        reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+        reconcile(&store, &index, &NoteScope::empty()).unwrap();
         assert_eq!(outgoing_resolution(&index, "journal/a.md", "x"), None);
     });
 }
@@ -2166,7 +2222,7 @@ fn reconcile_gives_a_bare_folder_link_to_an_alias_that_appears() {
             "notes/h.md",
             "---\ntype: concept\naliases: [x]\n---\n\n# H\n",
         );
-        reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+        reconcile(&store, &index, &NoteScope::empty()).unwrap();
         assert_eq!(
             outgoing_resolution(&index, "journal/a.md", "x"),
             Some(vp("notes/h.md"))
