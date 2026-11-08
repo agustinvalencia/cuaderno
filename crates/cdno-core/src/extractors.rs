@@ -463,7 +463,14 @@ pub fn extract_frontmatter_wikilinks(frontmatter: &serde_json::Value) -> Vec<Wik
 ///    `vault_paths` declares it ([`AliasMap::unique`]). A stem match, unique
 ///    or ambiguous, always wins over an alias, and an alias two notes share
 ///    resolves to nothing. The entry is marked [`LinkEntry::via_alias`].
-/// 5. Otherwise `resolved_path` is `None` and the link is recorded as
+/// 5. Bare folder-note name (#538), after every rule above: a target with no
+///    `/` (anchor stripped) resolves to `<dir>/<target>/_index.md` when
+///    exactly one such folder note exists, so `[[<portfolio-slug>]]` reaches
+///    its portfolio. A stem or alias match always wins, so only a link that
+///    resolved to nothing changes; a flat note and a folder note sharing a
+///    name is not an error (a question and its portfolio share a slug), the
+///    flat note keeps the bare name. Direct, not `via_alias`.
+/// 6. Otherwise `resolved_path` is `None` and the link is recorded as
 ///    broken — `cdno lint` surfaces it as a warning.
 pub fn resolve_wikilinks(
     raws: Vec<WikilinkRaw>,
@@ -641,13 +648,40 @@ pub(crate) fn resolve_one(
     // to nothing. The holder must be in the path set, like every other
     // rule's answer, so a map read moments apart from the paths cannot
     // resolve to a note the set no longer has.
-    aliases
+    if let Some(holder) = aliases
         .unique(needle)
         .filter(|holder| vault_paths.contains(*holder))
-        .map(|holder| Resolution {
+    {
+        return Some(Resolution {
             path: holder.clone(),
             via_alias: true,
-        })
+        });
+    }
+
+    // 4. Bare folder-note name (#538): a target with no `/` resolves to the
+    // one folder note `<dir>/<target>/_index.md`, so `[[<portfolio-slug>]]`
+    // and `[[<stewardship-slug>]]` reach the note they are called. Last, so
+    // only a link that resolves to nothing today can change: a stem match
+    // (unique or ambiguous, returned above) and an alias both win. A
+    // qualified target gains nothing; rule 1b already covers real paths.
+    // Two folder notes with the name leave the link unresolved.
+    if !target.contains('/') {
+        let mut folders = vault_paths.iter().filter(|p| {
+            let path = p.as_path();
+            path.file_name().and_then(|f| f.to_str()) == Some("_index.md")
+                && path
+                    .parent()
+                    .and_then(|d| d.file_name())
+                    .and_then(|f| f.to_str())
+                    == Some(target)
+        });
+        if let Some(only) = folders.next()
+            && folders.next().is_none()
+        {
+            return Some(Resolution::direct(only.clone()));
+        }
+    }
+    None
 }
 
 /// The names a note answers to under [`resolve_wikilinks`]'s rules: its

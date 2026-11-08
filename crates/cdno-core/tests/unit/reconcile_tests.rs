@@ -2048,3 +2048,53 @@ fn an_unchanged_alias_map_does_not_trigger_reresolution() {
     assert_eq!(report.links_reresolved, 0);
     assert!(outgoing(&index, ALIAS_DAILY, "old-name").via_alias);
 }
+
+// ---- #538: a bare link to a folder note, created after the link ----------
+
+fn bare_folder_note_gains_backlink(index: Arc<dyn VaultIndex>) {
+    let vault = TempDir::new().unwrap();
+    let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(vault.path()));
+    write_md(
+        vault.path(),
+        "journal/a.md",
+        "# A\n\nSee [[surrogate-model]].",
+    );
+    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!(
+        outgoing_resolution(&index, "journal/a.md", "surrogate-model"),
+        None
+    );
+
+    // The folder note's stem is `_index`; only its folder name admits the
+    // dangling bare link to re-resolution.
+    write_md(vault.path(), "portfolios/surrogate-model/_index.md", "# P");
+    let report = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!(report.links_reresolved, 1);
+    assert_eq!(
+        index
+            .find_backlinks(&vp("portfolios/surrogate-model/_index.md"))
+            .unwrap(),
+        vec![vp("journal/a.md")]
+    );
+
+    // And removing it unresolves the link again.
+    std::fs::remove_file(vault.path().join("portfolios/surrogate-model/_index.md")).unwrap();
+    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!(
+        outgoing_resolution(&index, "journal/a.md", "surrogate-model"),
+        None
+    );
+}
+
+#[test]
+fn a_bare_link_resolves_once_its_folder_note_is_created_sqlite() {
+    let db = TempDir::new().unwrap();
+    bare_folder_note_gains_backlink(Arc::new(
+        SqliteIndex::open(db.path().join("index.sqlite")).unwrap(),
+    ));
+}
+
+#[test]
+fn a_bare_link_resolves_once_its_folder_note_is_created_memory() {
+    bare_folder_note_gains_backlink(Arc::new(MemoryIndex::new()));
+}

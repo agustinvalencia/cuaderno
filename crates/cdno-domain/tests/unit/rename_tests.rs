@@ -3141,3 +3141,36 @@ fn a_bare_link_to_a_folder_notes_own_name_is_relinked_to_its_folder_form() {
     );
     assert!(plan.edits[0].after.contains("filed in [[portfolios/new]]"));
 }
+
+#[test]
+fn a_portfolio_rename_rewrites_a_bare_link_to_the_folder_note() {
+    // #538: a bare `[[old]]` resolves to the portfolio, so a rename
+    // corrects it like any other reference (to the folder form).
+    let mut files = portfolio_files(P_PDF, "scan.pdf");
+    files.push((
+        "journal/2026/daily/2026-05-10.md".into(),
+        "---\ntype: daily\ndate: 2026-05-10\n---\n\n# Sunday, 10 May 2026\n\n## Logs\n- **09:00**: filed in [[old]]\n"
+            .into(),
+    ));
+    let p = portfolio_vault_over(Arc::new(MemoryVaultStore::new()), &files);
+    let preview = p
+        .vault
+        .rename_preview("portfolio:old", "new", None, at())
+        .expect("preview");
+    p.vault
+        .rename_note(
+            "portfolio:old",
+            "new",
+            None,
+            Some(&preview.hash),
+            at(),
+            || Ok(()),
+        )
+        .expect("rename");
+    assert!(
+        p.read("journal/2026/daily/2026-05-10.md")
+            .contains("filed in [[portfolios/new]]"),
+        "{}",
+        p.read("journal/2026/daily/2026-05-10.md")
+    );
+}

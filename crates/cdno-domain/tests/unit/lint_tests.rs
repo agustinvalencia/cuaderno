@@ -4043,3 +4043,24 @@ fn a_linked_was_under_another_entry_is_left_alone() {
         report.issues
     );
 }
+
+#[test]
+fn lint_stops_reporting_a_bare_link_to_a_folder_note() {
+    // #538: `[[surrogate-model]]` reaches `portfolios/surrogate-model/_index.md`.
+    let body = DAILY_LINKING.replace("{{link}}", "[[surrogate-model]] and [[ghost]]");
+    let vault = vault_with_notes(
+        &[
+            ("journal/2026/daily/2026-05-01.md", &body),
+            (
+                "portfolios/surrogate-model/_index.md",
+                "---\ntype: portfolio\nquestion: \"Q?\"\ncreated: 2026-04-01\n---\n\n# Q?\n",
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+    let broken = broken_link_issues(&report);
+    assert_eq!(broken.len(), 1, "issues: {:?}", report.issues);
+    assert!(broken[0].message.contains("[[ghost]]"));
+}

@@ -312,3 +312,16 @@ fn a_shared_stem_is_not_expanded() {
         "only the literal tag"
     );
 }
+
+#[test]
+fn resolves_a_bare_folder_note_name() {
+    // #538: a portfolio answers to its folder name.
+    let vault = vault_with(&[("portfolios/topology/_index.md", PORTFOLIO_INDEX)]);
+
+    let resolved = vault
+        .resolve_wikilink("topology")
+        .unwrap()
+        .expect("bare folder name resolves");
+    assert_eq!(resolved.path, vp("portfolios/topology/_index.md"));
+    assert!(vault.resolve_wikilink("other/topology").unwrap().is_none());
+}

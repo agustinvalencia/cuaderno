@@ -18,7 +18,13 @@ stem, the stem wins and the alias can never be followed (alias `x` on `<path>` i
 `<other>`). If it equals the folder name of a folder note such as `portfolios/x/_index.md`, the alias
 takes the bare link `[[x]]` (alias `x` on `<path>` takes bare `[[x]]` from folder note `<other>`);
 the folder form `[[portfolios/x]]` still reaches the folder note. A straggler to a folder note is
-told to use the folder form, since a bare link to the new name would not resolve.
+told to use the folder form, which names the note unambiguously.
+
+A bare link to a folder note's own name resolves: `[[surrogate-model]]` reaches
+`portfolios/surrogate-model/_index.md`, and an expanded stewardship answers to its folder name the
+same way, so lint does not report it. It is the last rule tried, so a note whose file name is
+`surrogate-model` or an alias of that name keeps the bare link, and two folder notes with one name
+leave it unresolved (use the folder form).
 
 It also reports lines that were plainly meant to be structured but will never be read as such,
 because the parsers that consume them skip what they cannot parse rather than complaining. That

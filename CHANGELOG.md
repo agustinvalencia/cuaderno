@@ -6,6 +6,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **A folder note answers to its folder name** (closes #538). A bare `[[surrogate-model]]` now
+  resolves to `portfolios/surrogate-model/_index.md`, and an expanded stewardship answers to its
+  folder name the same way, instead of being a broken link. The rule is the last one tried, so a
+  link that resolves today does not move: a note with that file name (unique or ambiguous) and an
+  alias both win, two folder notes with one name leave it unresolved, and only a bare target is
+  affected (`[[other/surrogate-model]]` gains nothing). A flat note and a folder note sharing a name
+  is still not an error; the flat note keeps the bare name. Backlinks, lint and a rename's reference
+  rewriting follow the resolver.
+
 ## [0.44.0] - 2026-11-06
 
 ### Added

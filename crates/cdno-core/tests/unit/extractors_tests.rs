@@ -1034,3 +1034,97 @@ proptest! {
         );
     }
 }
+
+// ── bare folder-note names (#538) ────────────────────────────────────
+
+fn resolve_bare(
+    target: &str,
+    vault: &HashSet<VaultPath>,
+    aliases: &AliasMap,
+) -> Option<(VaultPath, bool)> {
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: target.to_string(),
+            label: None,
+            is_embed: false,
+        }],
+        vault,
+        aliases,
+    );
+    got[0].resolved_path.clone().map(|p| (p, got[0].via_alias))
+}
+
+#[test]
+fn bare_name_resolves_to_a_portfolio_and_an_expanded_stewardship() {
+    let vault = paths(&[
+        "portfolios/surrogate-model/_index.md",
+        "stewardships/lab-equipment/_index.md",
+    ]);
+    let none = AliasMap::default();
+    assert_eq!(
+        resolve_bare("surrogate-model", &vault, &none),
+        Some((vp("portfolios/surrogate-model/_index.md"), false))
+    );
+    assert_eq!(
+        resolve_bare("lab-equipment#Routine", &vault, &none),
+        Some((vp("stewardships/lab-equipment/_index.md"), false))
+    );
+}
+
+#[test]
+fn a_stem_wins_over_a_folder_name() {
+    let vault = paths(&[
+        "questions/research/surrogate-model.md",
+        "portfolios/surrogate-model/_index.md",
+    ]);
+    assert_eq!(
+        resolve_bare("surrogate-model", &vault, &AliasMap::default()),
+        Some((vp("questions/research/surrogate-model.md"), false))
+    );
+}
+
+#[test]
+fn a_stem_ambiguity_stays_unresolved_despite_a_folder_name() {
+    let vault = paths(&[
+        "projects/surrogate-model.md",
+        "notes/surrogate-model.md",
+        "portfolios/surrogate-model/_index.md",
+    ]);
+    assert_eq!(
+        resolve_bare("surrogate-model", &vault, &AliasMap::default()),
+        None
+    );
+}
+
+#[test]
+fn an_alias_wins_over_a_folder_name() {
+    let vault = paths(&["projects/other.md", "portfolios/surrogate-model/_index.md"]);
+    let aliases = AliasMap::from_rows([("surrogate-model".to_string(), vp("projects/other.md"))]);
+    assert_eq!(
+        resolve_bare("surrogate-model", &vault, &aliases),
+        Some((vp("projects/other.md"), true))
+    );
+}
+
+#[test]
+fn two_folder_notes_with_one_name_stay_unresolved() {
+    let vault = paths(&[
+        "portfolios/surrogate-model/_index.md",
+        "stewardships/surrogate-model/_index.md",
+    ]);
+    assert_eq!(
+        resolve_bare("surrogate-model", &vault, &AliasMap::default()),
+        None
+    );
+}
+
+#[test]
+fn a_qualified_target_gains_no_folder_name_match() {
+    let vault = paths(&["portfolios/surrogate-model/_index.md"]);
+    let none = AliasMap::default();
+    assert_eq!(resolve_bare("other/surrogate-model", &vault, &none), None);
+    assert_eq!(
+        resolve_bare("portfolios/surrogate-model", &vault, &none),
+        Some((vp("portfolios/surrogate-model/_index.md"), false))
+    );
+}
