@@ -21,7 +21,8 @@ pub struct LinkFault {
     pub leaf: String,
 }
 
-/// The links of one Typst source. `spans`, `addresses` and `targets` run in parallel.
+/// The links of one Typst source, in source order. `spans`, `addresses`, `targets`, `labels` and
+/// `in_block` run in parallel.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TypstLinks {
     /// Raw byte ranges, escapes included: `target` holds the backslash of an escaped anchor and
@@ -31,6 +32,11 @@ pub struct TypstLinks {
     pub addresses: Vec<String>,
     /// The decoded target with its anchor, as the resolver sees it.
     pub targets: Vec<String>,
+    /// The decoded label after a `|`; `None` when there is none or it is empty.
+    pub labels: Vec<Option<String>>,
+    /// Whether the link sits in a `<cdno>` block string, which escapes by string rules, not
+    /// markup rules.
+    pub in_block: Vec<bool>,
     pub faults: Vec<LinkFault>,
 }
 
@@ -52,10 +58,11 @@ pub fn wikilink_spans(source: &str) -> TypstLinks {
     let scanned = with_tree(source, |root| {
         let mut scan = Scan {
             source,
-            links: TypstLinks::default(),
+            found: Vec::new(),
+            faults: Vec::new(),
         };
         scan.markup(root, 0, true);
-        scan.links
+        scan.finish()
     });
     let mut links = match scanned {
         Ok(links) => links,
@@ -165,9 +172,18 @@ struct Piece {
     end: usize,
 }
 
+struct Found {
+    span: WikilinkSpan,
+    address: String,
+    target: String,
+    label: Option<String>,
+    in_block: bool,
+}
+
 struct Scan<'s> {
     source: &'s str,
-    links: TypstLinks,
+    found: Vec<Found>,
+    faults: Vec<LinkFault>,
 }
 
 fn is_inline(kind: SyntaxKind) -> bool {
@@ -193,6 +209,25 @@ fn is_cdno_block(call: &SyntaxNode, siblings: &[&SyntaxNode]) -> bool {
 }
 
 impl<'s> Scan<'s> {
+    /// A block's strings are read before its call is walked, so a content block among its
+    /// values would otherwise come out of order.
+    fn finish(mut self) -> TypstLinks {
+        self.found.sort_by_key(|found| found.span.open);
+        self.faults.sort_by_key(|fault| fault.open);
+        let mut links = TypstLinks {
+            faults: self.faults,
+            ..TypstLinks::default()
+        };
+        for found in self.found {
+            links.spans.push(found.span);
+            links.addresses.push(found.address);
+            links.targets.push(found.target);
+            links.labels.push(found.label);
+            links.in_block.push(found.in_block);
+        }
+        links
+    }
+
     fn walk(&mut self, node: &SyntaxNode, start: usize) {
         match node.kind() {
             SyntaxKind::Raw | SyntaxKind::Equation => {}
@@ -236,7 +271,7 @@ impl<'s> Scan<'s> {
 
     fn fault(&mut self, open: usize, leaf: String) {
         // The line is filled in at the end, from one line table for all the faults.
-        self.links.faults.push(LinkFault {
+        self.faults.push(LinkFault {
             open,
             line: 0,
             leaf,
@@ -338,19 +373,26 @@ impl<'s> Scan<'s> {
             _ => after_open..after_open,
         };
 
-        self.links.spans.push(WikilinkSpan {
-            open,
-            address,
-            target,
-            inner_end,
-            is_embed,
+        let label: String = pieces
+            .get(target_end + 1..)
+            .map_or(&[][..], trimmed)
+            .iter()
+            .map(|p| p.ch)
+            .collect();
+
+        self.found.push(Found {
+            span: WikilinkSpan {
+                open,
+                address,
+                target,
+                inner_end,
+                is_embed,
+            },
+            address: address_part.iter().map(|p| p.ch).collect(),
+            target: target_part.iter().map(|p| p.ch).collect(),
+            label: Some(label).filter(|l| !l.is_empty()),
+            in_block: false,
         });
-        self.links
-            .addresses
-            .push(address_part.iter().map(|p| p.ch).collect());
-        self.links
-            .targets
-            .push(target_part.iter().map(|p| p.ch).collect());
     }
 
     fn block_arguments(&mut self, call: &SyntaxNode, start: usize) {
@@ -416,15 +458,23 @@ impl<'s> Scan<'s> {
                     map[range.start].0..map[range.end - 1].1
                 }
             };
-            self.links.spans.push(WikilinkSpan {
-                open: map[span.open].0,
-                address: raw_range(&span.address),
-                target: raw_range(&span.target),
-                inner_end: map[span.inner_end].0,
-                is_embed: span.is_embed,
+            let label = value[span.open + 2..span.inner_end]
+                .split_once('|')
+                .map(|(_, label)| label.trim().to_string())
+                .filter(|label| !label.is_empty());
+            self.found.push(Found {
+                span: WikilinkSpan {
+                    open: map[span.open].0,
+                    address: raw_range(&span.address),
+                    target: raw_range(&span.target),
+                    inner_end: map[span.inner_end].0,
+                    is_embed: span.is_embed,
+                },
+                address: value[span.address].to_string(),
+                target: value[span.target].to_string(),
+                label,
+                in_block: true,
             });
-            self.links.addresses.push(value[span.address].to_string());
-            self.links.targets.push(value[span.target].to_string());
         }
     }
 }
@@ -439,7 +489,8 @@ fn trimmed(pieces: &[Piece]) -> &[Piece] {
 
 /// Decodes a quoted string leaf. Beside the value it returns, per decoded byte, the raw bytes of
 /// the character that byte belongs to. `start` is the offset of the opening quote. `None` when
-/// the leaf is not quoted; a value that differs from the parser's own is refused by the caller.
+/// the leaf is not quoted. Like `ast::Str::get`, a `\u{}` that names no character stays literal;
+/// a value that differs from the parser's own is refused by the caller.
 fn decode_string(raw: &str, start: usize) -> Option<(String, Vec<(usize, usize)>)> {
     let body = raw.strip_prefix('"')?.strip_suffix('"')?;
     let base = start + 1;
@@ -467,14 +518,18 @@ fn decode_string(raw: &str, start: usize) -> Option<(String, Vec<(usize, usize)>
                 let hex_len = body[hex_start..]
                     .find(|ch: char| !ch.is_ascii_hexdigit())
                     .unwrap_or(body.len() - hex_start);
-                let code = u32::from_str_radix(&body[hex_start..hex_start + hex_len], 16).ok()?;
-                decoded = char::from_u32(code)?;
-                end = hex_start + hex_len;
-                if body[end..].starts_with('}') {
-                    end += 1;
-                }
-                while chars.peek().is_some_and(|&(next, _)| next < end) {
-                    chars.next();
+                let named = u32::from_str_radix(&body[hex_start..hex_start + hex_len], 16)
+                    .ok()
+                    .and_then(char::from_u32);
+                if let Some(named) = named {
+                    decoded = named;
+                    end = hex_start + hex_len;
+                    if body[end..].starts_with('}') {
+                        end += 1;
+                    }
+                    while chars.peek().is_some_and(|&(next, _)| next < end) {
+                        chars.next();
+                    }
                 }
             }
         }

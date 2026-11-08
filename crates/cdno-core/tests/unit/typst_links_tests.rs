@@ -312,6 +312,55 @@ fn a_pathological_run_of_openings_returns() {
     assert_eq!(wikilink_spans(&lines).faults.len(), 60_000);
 }
 
+#[test]
+fn spans_come_in_source_order_around_a_content_block_in_the_block() {
+    let links = wikilink_spans("#metadata((a: [ [[x]] ], b: \"[[y]]\")) <cdno>\n\n[[z]]\n");
+    assert_eq!(links.addresses, ["x", "y", "z"]);
+    assert!(links.spans.windows(2).all(|w| w[0].open < w[1].open));
+}
+
+#[test]
+fn links_inside_a_block_string_are_marked() {
+    let links = wikilink_spans("#metadata((origin: \"[[a]]\")) <cdno>\n\n[[b]]\n");
+    assert_eq!(links.addresses, ["a", "b"]);
+    assert_eq!(links.in_block, [true, false]);
+}
+
+#[test]
+fn labels_are_decoded_and_an_empty_one_is_none() {
+    let links = wikilink_spans(
+        "#metadata((origin: \"[[x| the x ]]\")) <cdno>\n\n[[a| part \\#1 ]] [[b]] [[c|]]\n",
+    );
+    assert_eq!(links.addresses, ["x", "a", "b", "c"]);
+    assert_eq!(
+        links.labels,
+        [
+            Some("the x".to_string()),
+            Some("part #1".to_string()),
+            None,
+            None
+        ]
+    );
+}
+
+#[test]
+fn a_block_string_keeps_a_unicode_escape_that_names_no_character() {
+    for escape in ["\\u{zz}", "\\u{110000}", "\\u{}", "\\u{FFFFFFFFF}"] {
+        let source = format!("#metadata((origin: \"[[a{escape}b]]\")) <cdno>\n");
+        let links = one_span(&source);
+        assert_eq!(links.addresses[0], format!("a{escape}b"));
+        assert_eq!(
+            &source[links.spans[0].address.clone()],
+            format!("a{escape}b")
+        );
+    }
+}
+
+#[test]
+fn a_link_glued_after_a_reference_is_not_one() {
+    nothing("@ref[[x]]");
+}
+
 proptest! {
     #[test]
     fn a_slug_path_is_one_link(

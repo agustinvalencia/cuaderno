@@ -384,7 +384,7 @@ and it is defined structurally so that no character list has to be maintained:
   any Typst markup character; over-escaping is harmless.* The characters met in practice are `#`,
   `_`, `*`, `$`, a backtick, `<`, `@`, `~`, `//` (so also the `://` of a URL, which otherwise
   lexes as a Link) and `/*`, and `:` in the head of a term-list item. And *put a space before `[[` when it follows a `#…`
-  expression*: `#emph[a][[x]]` is a trailing content-block argument, so it holds no link at all. The rule for the **machine**: the bytes
+  expression or a reference*: `#emph[a][[x]]` is a trailing content-block argument and `@ref[[x]]` a reference's supplement, so neither holds a link at all. The rule for the **machine**: the bytes
   between `[[` and `]]` must lex as one inline run of the leaf kinds above; any other leaf kind
   inside the brackets is a lint **Error**, as is a `[[` with no `]]` in its run (a stray `[[` in
   prose, unlike Markdown) and a link that spans a line (a Space leaf can hold a newline; the
