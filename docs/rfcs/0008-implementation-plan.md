@@ -37,7 +37,7 @@ repo root is itself a dev vault and its ignore rules hide that folder from ripgr
 A task tiered M or S that turns out to need a decision the RFC does not make is stopped and the
 decision raised on its issue.
 
-Tally: 4 M (T5, T16, T25, T32), 21 S, 8 R (T0, T2, T6, T7, T12, T17, T23, T27). The R tasks are the ones where a
+Tally: 3 M (T5, T16, T25), 21 S, 8 R (T0, T2, T6, T7, T12, T17, T23, T27). The R tasks are the ones where a
 wrong answer is silent: a `.typ` that falls out of the index without a word, a link the lexer
 split that the scanner never saw, a rename that moved the note and left its figures behind, a
 revision that rewrote the metadata block along with the body.
@@ -139,7 +139,6 @@ flowchart LR
     subgraph S6["S6 — documentation and method"]
         T30["T30 documentation"]
         T31["T31 RLM 1.3"]
-        T32["T32 the O4 count"]
     end
 
     T1 --> T2
@@ -190,14 +189,17 @@ flowchart LR
     T29 --> T30
     T17 --> T30
     T30 --> T31
-    T32 --> T23
 ```
 
 **What can start on day one, in parallel:** T0 (the spike, on its own branch), T1 (S1's root),
-T5 (S2's root), T11 (the config table, which touches nothing the others touch) and T32 (a count
-on the maintainer's vault, no code). S1 and S2 are independent until T10 joins them. S4 and S5
-are independent of each other once T18 is in. S4b waits for S4 and for the count (T32), since
-adoption is sized on it.
+T5 (S2's root) and T11 (the config table, which touches nothing the others touch). S1 and S2 are
+independent until T10 joins them. S4 and S5 are independent of each other once T18 is in. S4b
+follows S4.
+
+Nothing in this plan reads, measures or depends on any particular vault. Every fixture is built
+from the stock examples, every differential probe runs on the dev vault that is this repository,
+and the one measurement the RFC records (§2.1) stays what it is: aggregate counts, taken outside
+the repository, with nothing else from the vault entering it.
 
 ---
 
@@ -1213,7 +1215,7 @@ the assets folder is copied and never warned about (§5.7). The original file is
 
 **Deliverable.** The verb, `Adopted`, tests including a rollback.
 
-**Depends on.** T9, T19, T32 (sizing only).
+**Depends on.** T9, T19.
 
 **Complexity.** R. Path containment is a security-shaped check (a literal `../../.ssh/x` must be
 refused, not copied), the rewrite must hit exactly the literal spans, and the import-then-write
@@ -1463,27 +1465,6 @@ stamps a version whose practices it lacks).
 **Correct means.** The method says what the tool does, in one sentence, and a 1.2 logbook is a
 valid 1.3 logbook.
 
-### T32 — The O4 count
-
-**What.** Per §9 O4 (decided 2026-11-08): the fourteen Typst filings counted in §2.1 are split
-by hand into evidence (a dated record bearing on a question) and deliverables (the thing a
-project shipped), and §2.1's second row gets its number. Done on the maintainer's vault, by the
-maintainer or an agent with vault access, **before T23**, so adoption is sized on real filings.
-Nothing from the vault enters the repository but the two counts.
-
-**Deliverable.** One edit to `0008-typst-notes.md` §2.1 with the split, in the RFC's PR or a
-follow-up.
-
-**Depends on.** Nothing.
-
-**Complexity.** M.
-
-**Probes.** The row reads `<n> evidence, <m> deliverables` with `n + m` equal to the first row's
-total for the three months.
-
-**Correct means.** S4b is built for the filings that are evidence, and D1's rule has a number
-behind it.
-
 ---
 
 ## Out of scope, by the RFC
@@ -1501,14 +1482,14 @@ behind it.
 
 ## Suggested order of work
 
-Five tracks from day one: **A** T0 alone, a week at most, its findings folded into the RFC
+Four tracks from day one: **A** T0 alone, a week at most, its findings folded into the RFC
 before S2's R tasks start; **B** T1 → T2 (R) → T3 → T4, which ships S1 as its own release with no
 visible change; **C** T5 → T6 (R) → T7 (R) → T8, T9, the reader with no caller, mergeable
-behind S1 or before it; **D** T11, small and independent; **E** T32, no code. The tracks meet at
+behind S1 or before it; **D** T11, small and independent. The tracks meet at
 T10 → T12 (R), the centre of the work, where a hand-placed Typst note is first indexed; T13, T14,
 T15 and T16 follow it and are independent of each other once T13 is in. S3b (T17, R) can run
 beside S4. S4 (T18 → T19 → T20 ∥ T21 → T22) and S5 (T26 → T27 (R) ∥ T28 → T29) are independent
-after T18 and can run in parallel; S4b (T23 (R) → T24 → T25) follows S4 and the count. T30 closes
+after T18 and can run in parallel; S4b (T23 (R) → T24 → T25) follows S4. T30 closes
 the stage, T31 lands last among the code changes.
 
 Each stage is a PR on its own, green and reviewed before the next (§8); within a stage the tasks

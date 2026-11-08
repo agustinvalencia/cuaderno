@@ -111,7 +111,7 @@ something". Measurements taken on 2026-11-08 over one working vault:
 | Measurement | Count |
 |---|---|
 | Typst-built documents filed as attachments, by month (Jul, Sep, Oct 2026) | 1, 5, 13 |
-| of which evidence (a dated record bearing on a question) rather than a project's deliverable | to be counted before adoption is built (§9 O4; plan T32) |
+| of which evidence (a dated record bearing on a question) rather than a project's deliverable | not counted (§9 O4) |
 | Attachment stubs whose `kind` records the derived PDF rather than the Typst source | 13 of 14 |
 | `.typ` files in the vault, all under `portfolios/` | 58 |
 | Evidence notes whose content is a reusable concept, and that need Typst's mathematics | 2 of the 8 strongest candidates |
@@ -689,7 +689,7 @@ Each stage is a PR on its own, green and reviewed before the next.
 - **S6 — documentation and method.** `design.md`, `CLAUDE.md`, the docs-site page, the method page
   (RLM 1.3, §9 D13), LINKING-RULES, the server instructions.
 
-The task breakdown — thirty-three tasks with deliverables, probes, dependencies and the tracks
+The task breakdown — thirty-two tasks with deliverables, probes, dependencies and the tracks
 that run in parallel — is the [implementation plan](0008-implementation-plan.md).
 - **Later, separate RFC — rendering.** `cdno render`, the `typst` binary on `$PATH` with a minimum
   version, output folder, targets, "does not compile" and "package missing" as lint Warnings, the
@@ -780,8 +780,10 @@ Raised as open by the review; the maintainer's positions, 2026-11-08:
   (adding a missing label, escaping a character inside a link) each guess at intent on a note
   that may be frozen.
 - **O4** — whether the next count of Typst filings should record evidence and deliverables
-  separately, so §2.1's second row has a number. **Yes, before adoption is built** (plan T32), so
-  S4b is sized on the filings that are evidence.
+  separately, so §2.1's second row has a number. **Yes, if a count is ever taken again — and
+  it is not a task.** The measurements in §2.1 were aggregate counts taken outside the
+  repository; a later count follows the same rule, records two integers and nothing else, and no
+  stage of the implementation waits on it. Development is agnostic to any particular vault.
 
 ## 10. Verification
 
