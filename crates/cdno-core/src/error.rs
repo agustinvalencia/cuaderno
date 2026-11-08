@@ -174,6 +174,9 @@ pub enum ParseError {
 
     #[error("YAML parse error: {0}")]
     Yaml(String),
+
+    #[error("{0}")]
+    Typst(#[from] crate::typst::TypstError),
 }
 
 /// Errors from frontmatter field validation.

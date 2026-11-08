@@ -1,5 +1,15 @@
+use cdno_core::error::ParseError as PE;
 use cdno_core::error::{ParseError, ValidationError};
-use cdno_core::frontmatter::{Frontmatter, split_frontmatter, yaml_scalar_is_string};
+use cdno_core::frontmatter::{
+    Frontmatter, parse_note, parse_note_spanned, split_frontmatter, yaml_scalar_is_string,
+};
+use cdno_core::note::note_headings;
+use cdno_core::path::VaultPath;
+use cdno_core::typst::TypstError;
+
+fn vp(s: &str) -> VaultPath {
+    VaultPath::new(s).unwrap()
+}
 
 #[test]
 fn parses_minimal_frontmatter_with_body() {
@@ -170,4 +180,88 @@ fn yaml_scalar_is_string_asks_the_parser() {
     for text in ["y", "n", "surrogate-model", "2026-11", "v2"] {
         assert!(yaml_scalar_is_string(text), "{text:?}");
     }
+}
+
+#[test]
+fn parse_note_on_markdown_is_frontmatter_parse() {
+    let fixtures = [
+        "---\ntitle: Hello\n---\nbody text\n",
+        "---\ntitle: Hello\n---\n",
+        "---\ntitle: Hello\n---",
+        "---\n---\nbody\n",
+        "---\r\ntitle: Surrogate model\r\n---\r\nbody\r\n",
+        "---\ntags:\n  - rust\n  - notes\n---\n# T\n",
+        "---\ntype: evidence\norigin: \"[[surrogate-model]]\"\ncount: 42\n---\n\n# Bias-variance split\n",
+        "no frontmatter at all\n",
+        "---\nunclosed: 1\n",
+        "---\n- a\n- b\n---\nbody\n",
+        "---\n: [broken\n---\nbody\n",
+    ];
+    let path = vp("concepts/surrogate-model.md");
+    for raw in fixtures {
+        match (Frontmatter::parse(raw), parse_note(&path, raw)) {
+            (Ok((a, abody)), Ok((b, bbody))) => {
+                assert_eq!(a.as_json(), b.as_json(), "{raw:?}");
+                assert_eq!(abody, bbody, "{raw:?}");
+            }
+            (Err(a), Err(b)) => assert_eq!(a.to_string(), b.to_string(), "{raw:?}"),
+            other => panic!("{raw:?}: the two disagree: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn parse_note_on_typst_returns_the_block_and_the_rest() {
+    let head = "#metadata((type: \"evidence\", title: \"Bias-variance split\", tags: (\"a\", \"b\"), n: 3, ok: true)) <cdno>";
+    let rest = "\n// a comment on the next line\n= Bias-variance split\n";
+    let raw = format!("{head}{rest}");
+    let (fm, body) = parse_note(&vp("portfolios/surrogate-model/x.typ"), &raw).unwrap();
+    assert_eq!(body, rest);
+    assert_eq!(fm.require_field::<String>("type").unwrap(), "evidence");
+    assert_eq!(
+        fm.require_field::<String>("title").unwrap(),
+        "Bias-variance split"
+    );
+    assert_eq!(fm.require_field::<Vec<String>>("tags").unwrap(), ["a", "b"]);
+    assert_eq!(fm.require_field::<i64>("n").unwrap(), 3);
+    assert!(fm.require_field::<bool>("ok").unwrap());
+
+    let spanned = parse_note_spanned(&vp("portfolios/surrogate-model/x.typ"), &raw).unwrap();
+    assert_eq!(spanned.metadata_span, 0..head.len());
+    assert_eq!(spanned.body, rest);
+}
+
+#[test]
+fn parse_note_spanned_on_markdown_spans_the_frontmatter_block() {
+    let raw = "---\ntitle: Hello\n---\nbody\n";
+    let s = parse_note_spanned(&vp("a.md"), raw).unwrap();
+    assert_eq!(&raw[s.metadata_span], "---\ntitle: Hello\n---\n");
+    assert_eq!(s.body, "body\n");
+}
+
+#[test]
+fn parse_note_on_a_typst_file_without_a_block_is_no_block() {
+    let err = parse_note(&vp("portfolios/p/x.typ"), "= Just a heading\n").unwrap_err();
+    assert!(matches!(err, PE::Typst(TypstError::NoBlock)), "{err:?}");
+}
+
+#[test]
+fn parse_note_on_a_pdf_path_is_an_error() {
+    let err = parse_note(&vp("portfolios/p/x/figure.pdf"), "---\ntitle: x\n---\n").unwrap_err();
+    assert!(matches!(err, PE::MissingFrontmatter(_)), "{err:?}");
+    assert!(parse_note(&vp("README"), "---\n---\n").is_err());
+}
+
+#[test]
+fn note_headings_dispatches_on_the_path() {
+    assert_eq!(
+        note_headings(&vp("a.md"), "# One\n## Two\n"),
+        [(1, "One".to_string()), (2, "Two".to_string())]
+    );
+    assert_eq!(
+        note_headings(&vp("a.typ"), "= One\n== Two\n"),
+        [(1, "One".to_string()), (2, "Two".to_string())]
+    );
+    // A Markdown reading of the same Typst bytes finds nothing.
+    assert!(note_headings(&vp("a.md"), "= One\n").is_empty());
 }

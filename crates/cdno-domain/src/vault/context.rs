@@ -1226,6 +1226,8 @@ fn parse_error_in(path: &VaultPath, e: ParseError) -> DomainError {
         ParseError::InvalidFrontmatter(msg) => ParseError::InvalidFrontmatter(named(msg)),
         ParseError::MissingFrontmatter(msg) => ParseError::MissingFrontmatter(named(msg)),
         ParseError::Yaml(msg) => ParseError::Yaml(named(msg)),
+        // Already carries its line; the caller's path is not in the variant.
+        typst @ ParseError::Typst(_) => typst,
     })
 }
 

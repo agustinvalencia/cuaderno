@@ -22,7 +22,6 @@ use std::sync::Arc;
 
 use crate::error::{IndexError, StoreError, TransactionError};
 use crate::extractors::AliasMap;
-use crate::frontmatter::Frontmatter;
 use crate::index::{
     ArchivalSnapshot, DeadlineEntry, LinkEntry, MilestoneEntry, NoteEntry, VaultIndex,
 };
@@ -430,7 +429,7 @@ impl VaultTransaction {
                 && let IndexOp::UpsertNote(entry) = op
                 && let Some(content) = latest_write_content(&self.file_ops, &entry.path)
             {
-                let parsed = Frontmatter::parse(content).ok();
+                let parsed = crate::frontmatter::parse_note(&entry.path, content).ok();
                 let body = parsed.as_ref().map_or(content, |(_, body)| *body);
                 let title = crate::extractors::first_h1(body);
                 if let Err(e) = self.index.replace_fts(&entry.path, title.as_deref(), body) {

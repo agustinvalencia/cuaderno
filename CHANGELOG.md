@@ -69,6 +69,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   inside the quotes or as not-literal. The callee may be `std.`-qualified, parenthesised or
   `.with(..)`. `@` packages and standard-library imports are left out; a `://` string is a local
   path. Nothing calls it yet.
+- **One door for reading a note** (RFC 0008 T10, part of #927). `cdno-core` gains `parse_note`
+  and `parse_note_spanned`, which read a note by its format (Markdown frontmatter, or a Typst
+  `<cdno>` block with the bytes after it as the body), `Frontmatter::from_typst`, and
+  `note_headings`; reconciliation, the transaction's search mirror and the attachment-stub check
+  read through it. A Markdown note reads exactly as before.
 
 ## [0.44.0] - 2026-11-06
 
