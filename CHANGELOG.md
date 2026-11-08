@@ -41,6 +41,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `NoteScope`, and reconciliation goes through them. A note's extension now matches ASCII
   case-insensitively, so `NOTE.MD` is indexed; nothing else changes.
 
+- **Typst parser in the build** (RFC 0008 T5, #933). `cdno-core` gains `typst-syntax` (pinned `=0.15.1`) behind a single module, `typst`, with `has_label` (the cheap `<cdno>` byte search) and `parses` (one definition of "does not parse", with the first error's line).
+
 ## [0.44.0] - 2026-11-06
 
 ### Added
