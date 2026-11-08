@@ -47,7 +47,7 @@ use cdno_core::frontmatter_edit::{
 use cdno_core::hash::content_hash;
 use cdno_core::index::{ArchivalSnapshot, frontmatter_aliases};
 use cdno_core::path::VaultPath;
-use cdno_core::paths;
+use cdno_core::paths::{self, NoteFormat, note_format};
 use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
@@ -315,6 +315,7 @@ impl Vault {
             && let Some(slug) = candidate_slug(path)
         {
             for dir in [paths::QUESTIONS_RESEARCH, paths::QUESTIONS_LIFE] {
+                // Markdown on purpose: questions are machine-written Markdown.
                 if let Ok(question) = VaultPath::new(format!("{dir}/{slug}.md"))
                     && self.store.exists(&question).unwrap_or(false)
                 {
@@ -330,7 +331,7 @@ impl Vault {
     /// planning), the aliases they declare, and the archival snapshots of
     /// the archived ones.
     ///
-    /// The note set is reconciliation's: `.md` files outside `.cuaderno/`,
+    /// The note set is reconciliation's (the classifier's): notes outside `.cuaderno/`,
     /// minus attachment artefacts and the config `ignore` globs, so a link
     /// resolves here exactly as the index would resolve it. Every note is
     /// read (the substring prefilter needs the text); only notes whose text
@@ -339,38 +340,19 @@ impl Vault {
     /// The caller decides when: the preview takes it without the lock, the
     /// write under it (T20).
     pub fn rename_snapshot(&self) -> Result<VaultSnapshot, DomainError> {
-        let ignore = self.config.ignore_set()?;
-        let walked = self.store.walk_dir(&VaultPath::root())?;
-        let dirs: HashSet<VaultPath> = walked
-            .iter()
-            .flat_map(|p| p.as_path().ancestors().skip(1))
-            .filter_map(|d| VaultPath::new(d).ok())
-            .collect();
-        let files: BTreeSet<VaultPath> = walked
-            .into_iter()
-            .filter(|p| !p.as_path().starts_with(paths::CUADERNO_DIR))
-            .collect();
-        let md: HashSet<VaultPath> = files
-            .iter()
-            .filter(|p| p.as_path().extension() == Some(OsStr::new("md")))
-            .cloned()
-            .collect();
-        let stubs = cdno_core::artefacts::attachment_stubs(&self.store, &md, &dirs);
-        let (mut notes, ignored): (Vec<VaultPath>, Vec<VaultPath>) = md
-            .iter()
-            .filter(|p| {
-                cdno_core::artefacts::owning_artefact_stub(p, |stub| stubs.contains(stub)).is_none()
-            })
-            .cloned()
-            .partition(|p| !ignore.is_match(p.as_path()));
-        notes.sort();
+        let classified = cdno_core::classify::classify(&self.store, &self.note_scope()?)?;
 
         let mut snapshot = VaultSnapshot {
-            ignored: ignored.into_iter().collect(),
-            files,
+            ignored: classified
+                .skipped
+                .iter()
+                .filter(|s| s.reason == cdno_core::classify::SkipReason::Ignored)
+                .map(|s| s.path.clone())
+                .collect(),
+            files: classified.files,
             ..VaultSnapshot::default()
         };
-        for path in notes {
+        for path in classified.notes {
             let content = self.store.read_file(&path)?;
             if content.contains(ALIASES_KEY)
                 && let Some(frontmatter) = frontmatter_json(&content)
@@ -684,6 +666,7 @@ impl Vault {
         };
         if let Some(old_dir) = &moved_folder {
             let new_dir = VaultPath::new(format!("{}/{new_slug}", paths::PORTFOLIOS))?;
+            // Markdown on purpose: a portfolio's folder note is `_index.md`.
             let index = old_dir.as_path().join("_index.md");
             if pair_folder.is_some() {
                 let index = VaultPath::new(index)?;
@@ -814,13 +797,12 @@ impl Vault {
         let title = note_title(target_before).unwrap_or_else(|| old_slug.clone());
         // The log line's link, in the form the type's other log lines use.
         let link = {
-            let rendered = new_path.to_string();
-            let path_link = rendered.strip_suffix(".md").unwrap_or(&rendered);
+            let path_link = paths::note_address(&new_path);
             match builtin {
                 Some(NoteType::Project) => new_slug.to_owned(),
                 Some(NoteType::Action) => format!("{}/{new_slug}", paths::ACTIONS),
                 Some(NoteType::Portfolio) => format!("{}/{new_slug}", paths::PORTFOLIOS),
-                _ => path_link.to_owned(),
+                _ => path_link,
             }
         };
 
@@ -1290,13 +1272,20 @@ impl Vault {
                 return journal(paths::monthly_note_relpath(date));
             }
             NoteRef::Path(raw) => {
-                let raw = raw.strip_suffix(".md").unwrap_or(raw).trim_end_matches('/');
-                for candidate in [format!("{raw}.md"), format!("{raw}/_index.md")] {
-                    if let Ok(path) = VaultPath::new(candidate)
-                        && snapshot.paths.contains(&path)
-                    {
-                        return Ok(ResolvedNote::direct(path));
+                let raw = raw.trim_end_matches('/');
+                // Only a Markdown extension is stripped, as before: `x.typ`
+                // names that file, not `x`.
+                let address = match VaultPath::new(raw) {
+                    Ok(path) if note_format(&path) == Some(NoteFormat::Markdown) => {
+                        paths::note_address(&path)
                     }
+                    _ => raw.to_owned(),
+                };
+                if let Some(path) = paths::note_candidates(&address)
+                    .into_iter()
+                    .find(|path| snapshot.paths.contains(path))
+                {
+                    return Ok(ResolvedNote::direct(path));
                 }
                 return Err(not_found());
             }
@@ -1324,6 +1313,8 @@ impl Vault {
         // one bare slug (§5.3): the pair renames from the question, so that
         // is the hit. Every other multi-hit shape stays ambiguous.
         if let [a, b] = hits.as_slice() {
+            // Markdown on purpose: questions and portfolio folder notes are
+            // machine-written Markdown.
             let is_question = |p: &VaultPath| {
                 [paths::QUESTIONS_RESEARCH, paths::QUESTIONS_LIFE]
                     .iter()
@@ -1331,6 +1322,7 @@ impl Vault {
             };
             let is_index = |p: &VaultPath| {
                 p.as_path()
+                    // Markdown on purpose: a portfolio's folder note is `_index.md`.
                     == std::path::Path::new(&format!("{}/{slug}/_index.md", paths::PORTFOLIOS))
             };
             if is_question(a) && is_index(b) {
@@ -1608,6 +1600,7 @@ fn renamable_type(
     if (is_folder_note(path) || builtin == Some(NoteType::Portfolio)) && !a_portfolio_folder {
         return Err(not_renamable(path, "folder".to_owned()));
     }
+    // Markdown on purpose: questions are machine-written Markdown.
     if a_portfolio_folder
         && let Some(slug) = candidate_slug(path)
         && [paths::QUESTIONS_RESEARCH, paths::QUESTIONS_LIFE]
@@ -1637,6 +1630,7 @@ fn field_keys_for(builtin: Option<NoteType>, paired: bool) -> Vec<NoteType> {
 /// when the snapshot holds it: the pair's other half (§5.3).
 fn question_portfolio_index(question: &VaultPath, snapshot: &VaultSnapshot) -> Option<VaultPath> {
     let slug = candidate_slug(question)?;
+    // Markdown on purpose: a portfolio's folder note is `_index.md`.
     VaultPath::new(format!("{}/{slug}/_index.md", paths::PORTFOLIOS))
         .ok()
         .filter(|index| snapshot.paths.contains(index))
@@ -1720,7 +1714,8 @@ fn not_renamable(path: &VaultPath, reason: String) -> DomainError {
 
 /// `path` with its file stem replaced by `slug`, in the same folder.
 fn sibling_path(path: &VaultPath, slug: &str) -> Result<VaultPath, DomainError> {
-    let file = format!("{slug}.md");
+    let format = note_format(path).unwrap_or(NoteFormat::Markdown);
+    let file = format!("{slug}.{}", format.extension());
     let joined = match path.as_path().parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent.join(file),
         _ => std::path::PathBuf::from(file),
@@ -1737,6 +1732,7 @@ fn is_folder_note(path: &VaultPath) -> bool {
 /// folder note, `portfolios/<slug>/_index.md`.
 fn portfolio_folder(path: &VaultPath) -> Option<VaultPath> {
     let p = path.as_path();
+    // Markdown on purpose: a portfolio's folder note is `_index.md`.
     if p.file_name() != Some(OsStr::new("_index.md")) {
         return None;
     }

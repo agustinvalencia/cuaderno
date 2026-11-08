@@ -175,9 +175,8 @@ impl Vault {
         title: &str,
         suffix: Option<&str>,
     ) -> Result<(), DomainError> {
-        let rendered = note_path.to_string();
-        let stem = rendered.strip_suffix(".md").unwrap_or(&rendered);
-        let line = build_created_line(type_name, stem, title, suffix);
+        let stem = cdno_core::paths::note_address(note_path);
+        let line = build_created_line(type_name, &stem, title, suffix);
         self.stage_daily_log(at, &line, tx)?;
         Ok(())
     }
@@ -186,6 +185,7 @@ impl Vault {
 /// The bare project slug: a `projects/` prefix and `.md` suffix dropped.
 pub(in crate::vault) fn normalise_project_slug(slug: &str) -> &str {
     let slug = slug.strip_prefix("projects/").unwrap_or(slug);
+    // Markdown on purpose: projects are machine-written Markdown.
     slug.strip_suffix(".md").unwrap_or(slug)
 }
 

@@ -4064,3 +4064,28 @@ fn lint_stops_reporting_a_bare_link_to_a_folder_note() {
     assert_eq!(broken.len(), 1, "issues: {:?}", report.issues);
     assert!(broken[0].message.contains("[[ghost]]"));
 }
+
+#[test]
+fn an_upper_case_md_stub_owns_nothing_and_lint_agrees_with_the_classifier() {
+    // `STEM.MD` is an indexed note (RFC 0008 5.1) but candidates are
+    // lower-case, so it is not the stub `STEM/` would pair with: the
+    // classifier keeps `STEM/scan.pdf` unowned, and lint must report the
+    // folder as orphaned rather than treat the upper-case file as its stub.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/STEM.MD", ATTACHMENT_STUB),
+            ("portfolios/demo/STEM/scan.pdf", "%PDF-1.7 fake bytes"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(report.issues[0].path, vp("portfolios/demo/STEM"));
+    assert!(
+        report.issues[0].message.contains("orphaned attachment"),
+        "message: {}",
+        report.issues[0].message
+    );
+}

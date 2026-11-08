@@ -109,6 +109,7 @@ impl Vault {
         at: NaiveDateTime,
         slug: &str,
     ) -> Result<VaultPath, DomainError> {
+        // Markdown on purpose: machine-written capture notes are Markdown.
         let path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::INBOX))?;
         if !self.store.exists(&path)? {
             return Err(DomainError::Store(StoreError::NotFound(path.to_string())));
@@ -157,6 +158,7 @@ impl Vault {
             date.format("%Y-%m-%d"),
             slug
         );
+        // Markdown on purpose: machine-written capture notes are Markdown.
         let first = VaultPath::new(format!("{base}.md"))?;
         if !self.store.exists(&first)? {
             return Ok(first);

@@ -145,6 +145,7 @@ pub fn owning_artefact_stub(
 /// yield `run-v1.md` and pair the artefact with an unrelated note.
 fn sibling_stub_of_path(dir: &std::path::Path) -> Option<VaultPath> {
     let name = dir.file_name()?.to_str()?;
+    // Markdown on purpose: widens with the Typst scope (T14).
     VaultPath::new(dir.with_file_name(format!("{name}.md"))).ok()
 }
 

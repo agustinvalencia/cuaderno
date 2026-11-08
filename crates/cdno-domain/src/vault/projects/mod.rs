@@ -216,6 +216,7 @@ impl Vault {
                 self.available_projects_hint()
             ))));
         }
+        // Markdown on purpose: machine-written project notes are Markdown.
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
         let mut current = slug.to_owned();
         let mut resolved_via_alias = None;
@@ -261,6 +262,7 @@ impl Vault {
     /// `projects/_done/<year>/<slug>.md` for each year directory.
     fn project_map_hits(&self, slug: &str) -> Result<Vec<VaultPath>, DomainError> {
         let mut candidates = vec![
+            // Markdown on purpose: machine-written project notes are Markdown.
             VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?,
             VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?,
         ];
@@ -277,6 +279,7 @@ impl Vault {
                 continue;
             };
             candidates.push(VaultPath::new(format!(
+                // Markdown on purpose: machine-written project notes are Markdown.
                 "{}/{year}/{slug}.md",
                 cdno_core::paths::PROJECTS_DONE
             ))?);
@@ -317,6 +320,7 @@ impl Vault {
     ) -> Result<(ResolvedNote, MarkdownDocument), DomainError> {
         let location = self.locate_project(slug)?;
         let slug = location.slug.as_str();
+        // Markdown on purpose: machine-written project notes are Markdown.
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
         if location.frontmatter.status != ProjectStatus::Active || location.path != active_path {
             return Err(not_active(slug, &location.frontmatter));
@@ -350,6 +354,7 @@ impl Vault {
                 return Err(not_active(slug, &location.frontmatter));
             }
         };
+        // Markdown on purpose: machine-written project notes are Markdown.
         if location.path != VaultPath::new(format!("{expected}/{slug}.md"))? {
             return Err(not_active(slug, &location.frontmatter));
         }
@@ -376,6 +381,7 @@ impl Vault {
         let in_place = match location.frontmatter.status {
             ProjectStatus::Active => {
                 location.path
+                    // Markdown on purpose: machine-written project notes are Markdown.
                     == VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?
             }
             ProjectStatus::Parked => {

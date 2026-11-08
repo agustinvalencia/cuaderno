@@ -143,6 +143,7 @@ impl Vault {
         // Globally-unique stem (#225) so a later park to `_parked/` keeps
         // the project's backlinks resolvable.
         let slug = self.explicit_or_derived_slug(slug, title)?;
+        // Markdown on purpose: machine-written project notes are Markdown.
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
         let parked_path =
             VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
@@ -230,6 +231,7 @@ impl Vault {
         ) = self.resolve_active_project(slug)?;
         let slug = slug.as_str();
         let parked_path =
+            // Markdown on purpose: machine-written project notes are Markdown.
             VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
         if self.store.exists(&parked_path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
@@ -293,6 +295,7 @@ impl Vault {
         // §5.5) names neither the destination nor the log line.
         let slug = location.slug.clone();
         let slug = slug.as_str();
+        // Markdown on purpose: machine-written project notes are Markdown.
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
         let parked_path =
             VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;

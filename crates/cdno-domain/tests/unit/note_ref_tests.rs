@@ -770,3 +770,37 @@ fn a_moved_note_leaves_the_alias_unique() {
     assert_eq!(note.slug, "new");
     assert_eq!(note.resolved_via_alias.as_deref(), Some("old"));
 }
+
+/// A `.typ` file is an attachment until the index says otherwise, so a
+/// reference naming one is a miss rather than a note, with or without its
+/// extension.
+#[test]
+fn an_unindexed_typst_file_is_not_a_note() {
+    let vault = vault_with(&[
+        ("concepts/x.typ", "#let a = 1\n".to_owned()),
+        ("concepts/y.md", note("concept", "Y")),
+    ]);
+    for reference in ["concepts/x", "concepts/x.typ"] {
+        assert_eq!(
+            vault
+                .resolve_note_ref(reference, day(2026, 8, 21))
+                .expect("resolve"),
+            RefResolution::NotFound {
+                reference: reference.to_owned(),
+                miss: Miss::Path,
+            },
+            "{reference}"
+        );
+    }
+}
+
+/// The classifier and the resolver agree about case: `NOTE.MD` is a note,
+/// reachable by its exact path.
+#[test]
+fn an_upper_case_md_path_resolves() {
+    let vault = vault_with(&[("concepts/NOTE.MD", note("concept", "Note"))]);
+    assert_eq!(
+        resolved(&vault, "concepts/NOTE.MD", day(2026, 8, 21)),
+        "concepts/NOTE.MD"
+    );
+}

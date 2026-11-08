@@ -85,6 +85,7 @@ impl Vault {
             note_type: note_type.to_owned(),
         })?;
         let key = nt.as_str();
+        // Markdown on purpose: template files are Markdown.
         let path = template_path(&format!("{key}.md"))?;
         let mut report = TemplateSyncReport {
             note_type: key.to_owned(),

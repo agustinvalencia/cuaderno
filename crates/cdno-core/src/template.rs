@@ -168,6 +168,7 @@ impl TemplateEngine {
     ) -> Result<(Template, TemplateSource), TemplateError> {
         // 1. Custom variant-specific template (e.g. `tracking-gym.md`)
         if let Some(variant) = variant
+            // Markdown on purpose: template files are Markdown.
             && let Some(content) = (self.loader)(&format!("{note_type}-{variant}.md"))?
         {
             return Ok((Template { content }, TemplateSource::CustomVariant));

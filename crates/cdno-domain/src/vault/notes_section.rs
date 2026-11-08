@@ -139,12 +139,7 @@ impl Vault {
         self.validate_history_entry(at.date(), section, &entry)?;
 
         let path = daily_note_path(at.date())?;
-        // The same relpath rule `daily_note_path` uses, minus `.md`.
-        let relpath = cdno_core::paths::daily_note_relpath(at.date());
-        let target = format!(
-            "{}#{heading}",
-            relpath.strip_suffix(".md").unwrap_or(&relpath)
-        );
+        let target = format!("{}#{heading}", cdno_core::paths::note_address(&path));
         let log_line = format!(
             "{}{}",
             pointer_line(&target, body),

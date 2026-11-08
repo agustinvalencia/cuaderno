@@ -3224,3 +3224,28 @@ fn a_portfolio_rename_rewrites_a_bare_link_to_the_folder_note() {
         p.read("journal/2026/daily/2026-05-10.md")
     );
 }
+
+/// The snapshot goes through the classifier, so a reference held in an
+/// upper-case `.MD` note is rewritten like any other.
+#[test]
+fn a_reference_held_in_an_upper_case_md_note_is_rewritten() {
+    let f = fixture();
+    f.write("concepts/NOTE.MD", "# Note\n\nSee [[old]].\n");
+    let plan = f.plan("old", "new").expect("plan");
+    let edit = plan
+        .edits
+        .iter()
+        .find(|e| e.path == vp("concepts/NOTE.MD"))
+        .expect("the upper-case note is planned");
+    assert!(edit.after.contains("[[new]]"), "after: {}", edit.after);
+}
+
+/// A `.typ` attachment is not read as a note by the snapshot.
+#[test]
+fn a_typst_file_is_not_in_the_snapshot() {
+    let f = fixture();
+    f.write("concepts/draft.typ", "See [[old]].\n");
+    let snapshot = f.snapshot();
+    assert!(!snapshot.paths.contains(&vp("concepts/draft.typ")));
+    assert!(snapshot.files.contains(&vp("concepts/draft.typ")));
+}

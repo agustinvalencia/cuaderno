@@ -1221,6 +1221,7 @@ fn orphan_artefact_issues(
         // at the exact file to restore. When that file is already there but
         // isn't a stub, say so rather than calling it missing — otherwise
         // the message names a file the user can plainly see.
+        // Markdown on purpose: the stub-shape probe looks for a Markdown stub.
         let stub = format!("{folder}.md");
         let stub_present = VaultPath::new(&stub)
             .ok()
@@ -1240,6 +1241,7 @@ fn orphan_artefact_issues(
         // right for the first and would permanently hide the second, so the
         // message must not prescribe it blindly.
         let holds_markdown = files.iter().any(|f| {
+            // Markdown on purpose: the stub-shape probe looks for a Markdown stub.
             f.as_path().extension() == Some(std::ffi::OsStr::new("md"))
                 && f.as_path().starts_with(folder.as_path())
         });

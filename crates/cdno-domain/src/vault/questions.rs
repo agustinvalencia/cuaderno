@@ -330,6 +330,7 @@ impl Vault {
 /// [`Vault::resolve_question_by_slug`] counts only holders here.
 pub(in crate::vault) fn is_question_path(path: &VaultPath) -> bool {
     let p = path.as_path();
+    // Markdown on purpose: machine-written questions notes are Markdown.
     p.extension().is_some_and(|e| e == "md")
         && QuestionDomain::ALL
             .iter()
@@ -339,6 +340,7 @@ pub(in crate::vault) fn is_question_path(path: &VaultPath) -> bool {
 /// Vault-relative path for a question note.
 fn question_path(domain: QuestionDomain, slug: &str) -> Result<VaultPath, DomainError> {
     Ok(VaultPath::new(format!(
+        // Markdown on purpose: machine-written questions notes are Markdown.
         "questions/{}/{slug}.md",
         domain.as_str()
     ))?)

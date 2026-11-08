@@ -191,6 +191,7 @@ impl Vault {
             ),
         };
         let question = title.as_str();
+        // Markdown on purpose: portfolio and evidence notes are machine-written Markdown.
         let path = VaultPath::new(format!("{}/{slug}/_index.md", cdno_core::paths::PORTFOLIOS))?;
         if self.store.exists(&path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
@@ -239,6 +240,7 @@ impl Vault {
         // the named project note doesn't exist; the frontmatter link
         // (already in `content`) still stands.
         if let Some(project_target) = project {
+            // Markdown on purpose: portfolio and evidence notes are machine-written Markdown.
             let project_path = VaultPath::new(format!("{project_target}.md"))?;
             if self.store.exists(&project_path)? {
                 self.stage_project_link(&project_path, &path, &mut tx)?;
@@ -296,6 +298,7 @@ impl Vault {
         }
 
         let portfolio_index = VaultPath::new(format!(
+            // Markdown on purpose: portfolio and evidence notes are machine-written Markdown.
             "{}/{portfolio}/_index.md",
             cdno_core::paths::PORTFOLIOS
         ))?;
@@ -305,6 +308,7 @@ impl Vault {
                 self.available_portfolios_hint()
             ))));
         }
+        // Markdown on purpose: portfolio and evidence notes are machine-written Markdown.
         let project_path = VaultPath::new(format!("{project}.md"))?;
         if !self.store.exists(&project_path)? {
             return Err(DomainError::Store(StoreError::NotFound(
@@ -397,6 +401,7 @@ impl Vault {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
 
         let portfolio_index = VaultPath::new(format!(
+            // Markdown on purpose: portfolio and evidence notes are machine-written Markdown.
             "{}/{portfolio}/_index.md",
             cdno_core::paths::PORTFOLIOS
         ))?;
@@ -524,6 +529,7 @@ impl Vault {
         }
 
         let portfolio_index = VaultPath::new(format!(
+            // Markdown on purpose: portfolio and evidence notes are machine-written Markdown.
             "{}/{portfolio}/_index.md",
             cdno_core::paths::PORTFOLIOS
         ))?;
@@ -536,6 +542,7 @@ impl Vault {
 
         let created = at.date();
         let source_slug = slugify(source);
+        // Markdown on purpose: portfolio and evidence notes are machine-written Markdown.
         let filename = format!("{}-{source_slug}.md", created.format("%Y-%m-%d"));
         let path = VaultPath::new(format!(
             "{}/{portfolio}/{filename}",
@@ -602,6 +609,7 @@ impl Vault {
             .ok_or(DomainError::EmptyField { field: "attach" })?;
 
         let portfolio_index = VaultPath::new(format!(
+            // Markdown on purpose: portfolio and evidence notes are machine-written Markdown.
             "{}/{portfolio}/_index.md",
             cdno_core::paths::PORTFOLIOS
         ))?;
@@ -615,6 +623,7 @@ impl Vault {
         let created = at.date();
         let evidence_slug = format!("{}-{}", created.format("%Y-%m-%d"), slugify(source));
         let stub_path = VaultPath::new(format!(
+            // Markdown on purpose: portfolio and evidence notes are machine-written Markdown.
             "{}/{portfolio}/{evidence_slug}.md",
             cdno_core::paths::PORTFOLIOS
         ))?;
@@ -721,6 +730,7 @@ impl Vault {
     /// Errors with `Store(NotFound)` when no portfolio exists at
     /// `portfolios/<slug>/_index.md`.
     pub fn get_portfolio(&self, slug: &str) -> Result<PortfolioFrontmatter, DomainError> {
+        // Markdown on purpose: portfolio and evidence notes are machine-written Markdown.
         let path = VaultPath::new(format!("{}/{slug}/_index.md", cdno_core::paths::PORTFOLIOS))?;
         if !self.store.exists(&path)? {
             return Err(DomainError::Store(StoreError::NotFound(format!(
@@ -782,12 +792,11 @@ impl Vault {
 }
 
 /// The bare wikilink target for a note path: the vault-relative path
-/// with the `.md` extension dropped (e.g.
+/// with the note extension dropped (e.g.
 /// `questions/research/foo.md` → `questions/research/foo`), so it
 /// renders as `[[questions/research/foo]]`.
 fn note_wikilink_target(path: &VaultPath) -> String {
-    let s = path.to_string();
-    s.strip_suffix(".md").unwrap_or(&s).to_owned()
+    cdno_core::paths::note_address(path)
 }
 
 /// Append a `- [[<target>]]` bullet under `## <heading>` in `doc`,

@@ -37,6 +37,7 @@ use chrono::NaiveDate;
 use cdno_core::index::NoteCandidate;
 use cdno_core::path::VaultPath;
 use cdno_core::paths;
+use cdno_core::paths::{NoteFormat, note_format, note_format_candidates};
 
 use crate::error::DomainError;
 
@@ -218,7 +219,8 @@ impl<'a> NoteRef<'a> {
             return Self::Period(PeriodRef::Month(month));
         }
 
-        if trimmed.contains('/') || trimmed.ends_with(".md") {
+        if trimmed.contains('/') || VaultPath::new(trimmed).is_ok_and(|p| note_format(&p).is_some())
+        {
             return Self::Path(trimmed);
         }
 
@@ -327,14 +329,15 @@ impl super::Vault {
         // already name a `.md` file), and a trailing `/` names a directory,
         // not a note. The miss still reports the reference as typed.
         if matches!(parsed, NoteRef::Path(_))
-            && !relpath.ends_with(".md")
+            && !VaultPath::new(&relpath).is_ok_and(|p| note_format(&p).is_some())
             && !relpath.ends_with('/')
         {
-            let with_extension = VaultPath::new(format!("{relpath}.md"))?;
-            if self.is_note_file(&with_extension)? {
-                return Ok(RefResolution::Resolved(ResolvedNote::direct(
-                    with_extension,
-                )));
+            for with_extension in note_format_candidates(&relpath) {
+                if self.is_note_file(&with_extension)? {
+                    return Ok(RefResolution::Resolved(ResolvedNote::direct(
+                        with_extension,
+                    )));
+                }
             }
         }
         Ok(RefResolution::NotFound {
@@ -343,12 +346,19 @@ impl super::Vault {
         })
     }
 
-    /// Whether `path` names an existing note file. `.md` as well as
-    /// existence, because `exists` is true for a directory: without this,
+    /// Whether `path` names an existing note file. A note extension as well
+    /// as existence, because `exists` is true for a directory: without this,
     /// `cdno open projects/` would hand back a directory that no editor can
-    /// open and no `$(…)` can use. A note is always a markdown file.
+    /// open and no `$(…)` can use. A Typst file counts only with an index
+    /// row, so an attachment never resolves as a note.
     fn is_note_file(&self, path: &VaultPath) -> Result<bool, DomainError> {
-        Ok(path.as_path().extension().is_some_and(|e| e == "md") && self.store.exists(path)?)
+        Ok(match note_format(path) {
+            Some(NoteFormat::Markdown) => self.store.exists(path)?,
+            Some(NoteFormat::Typst) => {
+                self.index.find_by_path(path)?.is_some() && self.store.exists(path)?
+            }
+            None => false,
+        })
     }
 
     /// `type:slug` — scoped to one type, so a slug shared across types is no
@@ -505,10 +515,10 @@ impl super::Vault {
         let (base, suffix) = target
             .find(['#', '|'])
             .map_or((target, ""), |at| target.split_at(at));
-        if let Ok(path) = VaultPath::new(format!("{base}.md"))
-            && self.store.exists(&path)?
-        {
-            return Ok(target.to_owned());
+        for path in note_format_candidates(base) {
+            if self.is_note_file(&path)? {
+                return Ok(target.to_owned());
+            }
         }
         let (folder, last) = match base.rsplit_once('/') {
             Some((folder, last)) => (Some(folder), last),

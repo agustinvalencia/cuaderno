@@ -605,6 +605,7 @@ pub(crate) fn describe_project_status(
 ) -> String {
     use crate::frontmatter::ProjectStatus;
     match (status, closed) {
+        // Markdown on purpose: message text naming the Markdown path.
         (ProjectStatus::Active, _) => "marked active but not at projects/<slug>.md".to_owned(),
         (ProjectStatus::Parked, _) => "parked \u{2014} starting, switching or resuming work \
                                         needs an active map, and so does parking"
