@@ -16,7 +16,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   leaves it unresolved, two folder notes with one name leave it unresolved, and only a bare target is
   affected (`[[other/surrogate-model]]` gains nothing). A flat note and a folder note sharing a name
   is still not an error; the flat note keeps the bare name. Backlinks, lint and a rename's reference
-  rewriting follow the resolver.
+  rewriting follow the resolver. An index built before this release keeps such a link's backlink missing until the linking note is
+  next rewritten; run `cdno reindex` once to pick them all up.
 
 ## [0.44.0] - 2026-11-06
 
