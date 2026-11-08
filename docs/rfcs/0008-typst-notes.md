@@ -263,26 +263,32 @@ their literal with a comment stating why.
 
 ### 5.2 What makes a `.typ` file a note
 
-A `.typ` file is a Typst note when **all three** hold:
+A `.typ` file is a Typst note when **all three** hold, checked **in this order**:
 
 1. It lies in the folder of a type that admits Typst (§5.9): under `portfolios/<slug>/` for
    evidence, under the declared folder for concept. A `.typ` anywhere else is never read.
-2. It is not inside an attachment's folder or a Typst note's assets folder (§3.2, §5.7).
+2. It is not inside an attachment's folder or a Typst note's assets folder (§3.2, §5.7). Ownership
+   is checked **first**, from the owner: a file inside an owned folder is an attachment and is
+   **never read**, label or no label.
 3. Its source contains a metadata block (§4) at the top level of the document.
 
-Condition 3 requires reading the file, and the classifier does, with a **byte search for `<cdno>`
-before any parse**: a `.typ` without the label is never parsed. That matters because a Markdown
-note pays its parse once and then rides the index row's fast path, while a `.typ` that is not a
-note has no row and is re-examined on every `Vault::new`, which is every CLI invocation; the byte
-search makes that re-examination cheap, and the residual cost is one read per unlabelled `.typ`
-per command, stated here so S0 can measure it.
+Condition 3 is the only one that reads the file, and the classifier does so with a **byte search
+for `<cdno>` before any parse**: a `.typ` without the label is never parsed. That matters because
+a Markdown note pays its parse once and then rides the index row's fast path, while a `.typ` that
+is not a note has no row and is re-examined on every `Vault::new`, which is every CLI invocation.
+The residual cost is one read per loose unlabelled `.typ` per command. S0 measured it (warm page
+cache, release build): `typst_syntax::parse` takes 24.9 µs on 2 KB, 226 µs on 20 KB and 2.2 ms on
+200 KB; the byte search 0.04 µs, 0.58 µs and 12.9 µs; a read about 11 µs (33 µs at 200 KB).
+Reading and searching 58 files of 20 KB raised `open_vault` from about 5 ms to about 6 ms, the
+upper bound for 58 loose files; owned attachments cost nothing, since they are not read.
 
-A `.typ` that satisfies 1 and 2 but not 3 is an attachment as today when a stub or a Typst note
-owns its folder. A loose `.typ` under a permitted folder with neither label nor owner is reported
-by the classifier as a **Warning** ("Typst file is neither a note nor an attachment") and not
-indexed. A `.typ` whose source contains `#metadata((type:` but whose label is missing, mistyped
-(`<cdn>`) or not at top level is reported as an **Error** on the file (§9 D6): it was meant to be a
-note, and the one visible trace of a note that fell out of the index must be loud.
+A `.typ` that satisfies 1 and 2 but not 3, a loose `.typ` under a permitted folder with neither
+label nor owner, is reported by the classifier as a **Warning** ("Typst file is neither a note nor
+an attachment") and not indexed. A `.typ` that satisfies 1 and 2 and whose source holds `#metadata`,
+optional whitespace, `((` and a `type` key (a whitespace-tolerant byte check, since nothing has
+been parsed and §5.3's own form spans lines), but whose label is missing, mistyped (`<cdn>`) or not
+at top level is reported as an **Error** on the file (§9 D6): it was meant to be a note, and the
+one visible trace of a note that fell out of the index must be loud.
 
 The detection is **by content, not by convention**, for the same reason `artefacts.rs` reads the
 stub rather than trusting the path: a wrong answer in the "is a note" direction indexes a file as
@@ -296,7 +302,7 @@ direction drops a note silently.
   type: "concept",
   title: "Bias–variance split",
   created: "2026-11-08",
-  origin: "[[journal/2026/daily/2026-11-02\#Error budget sketch]]",
+  origin: "[[journal/2026/daily/2026-11-02#Error budget sketch]]",
   tags: ("surrogate", "error-budget"),
 )) <cdno>
 ```
@@ -321,7 +327,8 @@ Rules, each enforced at creation and checked by lint:
 - Dates are strings in the vault's `YYYY-MM-DD` form, as in YAML. Typst's `datetime` is a
   function call and is refused by the literal rule.
 - **Strings take Typst string escapes only** (`"` and `\`), written by the engine; the markup
-  escape rule of §5.5 never applies inside the block. A one-element array is written `("x",)`,
+  escape rule of §5.5 never applies inside the block, so an anchor in a string is a bare `#`
+  (the parser keeps `\#` in a string as a literal backslash and hash). A one-element array is written `("x",)`,
   since `("x")` is a parenthesised string; the reader accepts both.
 - **The block is the frontmatter.** `set_frontmatter` rewrites a value inside it byte-exactly, the
   way `frontmatter_edit.rs` rewrites a YAML scalar, and can insert a missing key; it never
@@ -354,7 +361,7 @@ and it is defined structurally so that no character list has to be maintained:
 
 - **Where links are read.** In markup, at any nesting (a content block inside a `#figure(…)` call
   is markup), over **contiguous runs of inline leaves** read from the source bytes — Text, Escape,
-  Shorthand, SmartQuote, the bracket leaves and Space — because the lexer splits a plain run like
+  Shorthand, SmartQuote and Space (the `[` and `]` of a link are Text leaves of their own) — because the lexer splits a plain run like
   `[[2026-11-08-error-budget]]` into a dozen leaves with shorthands among them. Not in raw blocks
   or inline raw, line or block comments, code-mode expressions, labels, references (`@x`) or
   maths. **And in the string values of the `<cdno>` dictionary**, with the span inside the quotes,
@@ -365,13 +372,14 @@ and it is defined structurally so that no character list has to be maintained:
   bare: `[[slug#Heading]]` would parse `#Heading` as a variable and fail to compile. The rule for
   **writers**, one line in LINKING-RULES: *inside `[[…]]` in a `.typ` body, put a backslash before
   any Typst markup character; over-escaping is harmless.* The characters met in practice are `#`,
-  `_`, `*`, `$`, a backtick, `<`, `@`, `~`, `//` and `/*`. The rule for the **machine**: the bytes
+  `_`, `*`, `$`, a backtick, `<`, `@`, `~`, `//` (so also the `://` of a URL, which otherwise
+  lexes as a Link) and `/*`, and `:` in the head of a term-list item. The rule for the **machine**: the bytes
   between `[[` and `]]` must lex as one inline run of the leaf kinds above; any other leaf kind
-  inside the brackets is a lint **Error** (the file would not compile either). The scanner decodes
+  inside the brackets is a lint **Error**. The scanner decodes
   every **Escape** leaf by its lexed value (`\#` → `#`, `\u{2013}` → the character); Shorthand and
   SmartQuote leaves keep their **source bytes**, so `--` in a slug and a date's hyphens match as
-  written. Lint *finds* `[[…]]` by a byte scan of the markup regions, not from the tree, so a run
-  the lexer broke cannot hide a link from lint.
+  written. Lint *finds* `[[` as two adjacent Text leaves `[` in a markup node, so a run the lexer
+  broke cannot hide a link from lint, and the content-block bracket of `#foo[[x]]` is not an opening.
 - **Anchors.** `[[concepts/x\#Error budget]]` resolves to the `= ` heading whose **source text** —
   the bytes after the `=` run and one space, a trailing `<label>` stripped, escapes decoded, trimmed,
   whitespace collapsed — equals the anchor text, compared exactly as a Markdown anchor is compared
@@ -440,8 +448,9 @@ One verb per type, as today, with a format switch, and two ways to supply the Ty
   the remedy (§9 D16).
 - **Minimum Typst version 0.12.** Before 0.12 a document `set` rule had to precede all content, and
   a `#metadata` ahead of a template whose `show` rule sets `document(title: …)` failed to compile.
-  S0 compiles a prepended body and an adopted file through a template that sets page and document
-  and diffs the PDF against the un-prepended source, rather than this RFC asserting the result.
+  S0 confirmed it by compiling a prepended body and an adopted file through a template that sets
+  page and document: 0.11.1 fails with "document set rules must appear before any content"; 0.12.0
+  matches the un-prepended source in text, raster, title and page count; 0.14.2 is byte-identical.
 - **No engine template for Typst bodies in v1.** `.cuaderno/templates/*.md` and `[variables]` are
   Markdown's; a Typst body arrives complete from the skill, which chooses the Typst template — the
   precursor's decision that templates are plain Typst and the skill's business. The concept
@@ -649,7 +658,8 @@ compiler, which is the rendering phase.
 - **Second clone** (RFC 0007 §5.8): a Typst note is a file like any other; `merge=union` on the
   journal is unaffected.
 - **MCP clients** that ignore `format` get Markdown, as today.
-- **Typst ≥ 0.12** for the prepended block to compile with templates that set `document`.
+- **Typst ≥ 0.12** for the prepended block to compile with templates that set `document`
+  (confirmed by S0, §5.7).
 
 ## 8. Implementation plan — staged
 
