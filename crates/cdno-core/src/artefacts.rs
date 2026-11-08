@@ -25,6 +25,11 @@
 //! nothing naming them. The frontmatter check is what makes that
 //! impossible.
 //!
+//! A Typst note owns a folder the same way (RFC 0008 §5.7): `<stem>.typ`
+//! beside `<stem>/`, in `portfolios/` or in the folder of a type that
+//! admits Typst. It owns it only if it is a note, which is established by
+//! reading: the `<cdno>` label and a `.typ` extension.
+//!
 //! This module lives in `cdno-core` because reconciliation — which is here
 //! — has to apply the rule before any domain type exists, and it is
 //! deliberately the only place core encodes the stub contract.
@@ -34,7 +39,9 @@ use std::sync::Arc;
 
 use crate::path::VaultPath;
 use crate::paths::PORTFOLIOS;
+use crate::paths::{NoteFormat, note_format};
 use crate::store::VaultStore;
+use crate::typst;
 
 /// The note type an attachment stub carries.
 const EVIDENCE_TYPE: &str = "evidence";
@@ -74,88 +81,144 @@ pub fn is_attachment_stub(store: &Arc<dyn VaultStore>, path: &VaultPath) -> bool
     is_evidence && has_kind
 }
 
-/// The attachment stubs among `md_paths`, resolved with one read each.
+/// Whether the file at `path` is a Typst note: a `.typ` carrying the label.
 ///
-/// Only files that could actually own something are read: a stub must sit
-/// under `portfolios/` and have a sibling directory of the same stem. The
-/// read count is therefore bounded by the number of `<dir>.md` / `<dir>/`
-/// pairs in the vault — the artefact folders themselves, plus any
-/// accidental namesake — not by the note count, so a portfolio full of
-/// ordinary evidence notes costs no reads at all. These reads sit outside
-/// the mtime+size fast path (#94), which is why the candidate set is kept
-/// this narrow.
-pub fn attachment_stubs(
-    store: &Arc<dyn VaultStore>,
-    md_paths: &HashSet<VaultPath>,
-    dirs: &HashSet<VaultPath>,
-) -> HashSet<VaultPath> {
-    dirs.iter()
-        .filter(|dir| owner_depth_ok(dir))
-        .filter_map(sibling_stub_of)
-        .filter(|candidate| md_paths.contains(candidate))
-        .filter(|candidate| is_attachment_stub(store, candidate))
-        .collect()
+/// Like [`is_attachment_stub`], an unreadable file is not an owner, since
+/// being wrong in the other direction evicts notes without a word.
+pub fn is_typst_note(store: &Arc<dyn VaultStore>, path: &VaultPath) -> bool {
+    if note_format(path) != Some(NoteFormat::Typst) {
+        return false;
+    }
+    let Ok(bytes) = store.read_bytes(path) else {
+        return false;
+    };
+    std::str::from_utf8(&bytes).is_ok_and(typst::has_label)
 }
 
-/// The evidence stub that owns `path` as an attachment artefact, if any.
+/// The notes among `files` that own a folder, resolved with one read each.
 ///
-/// The walk goes from the nearest ancestor outwards rather than testing a
-/// fixed depth, so the rule survives any intervening folder — which is what
-/// lets a portfolio grow grouping subfolders without this changing. It also
-/// means an artefact nested inside an artefact folder (a filed directory
-/// tree keeps its internal structure) resolves to the same owning stub as
-/// its siblings. A candidate that is not an attachment stub does not stop
-/// the walk: an outer stub can still own the file.
+/// A stub can own `<dir>/` only under `portfolios/`; a Typst note can own it
+/// under `portfolios/` or any of `typst_folders`. Only files that could own
+/// something are read: those with a sibling directory of the same stem, so
+/// the read count is bounded by the number of `<dir>.md|typ` / `<dir>/`
+/// pairs, not by the note count. These reads sit outside the mtime+size fast
+/// path (#94), which is why the candidate set is kept this narrow.
 ///
-/// Only ancestors strictly inside `portfolios/` count. The
-/// stub-beside-folder shape is a portfolio convention, and applying it
-/// vault-wide would be actively harmful: an expanded stewardship is
-/// `stewardships/<slug>/` and a flat one is `stewardships/<slug>.md`, so a
-/// vault holding both spellings of one slug would see the expanded folder's
-/// notes silently vanish from the index.
-///
-/// `is_stub` decides whether a candidate is a real attachment stub. It
-/// is `FnMut` so a caller can memoise: the walk probes the same candidate
-/// once per file beneath it, and each probe costs a read and a parse.
-/// Reconciliation passes a set resolved once by [`attachment_stubs`].
-pub fn owning_artefact_stub(
-    path: &VaultPath,
-    mut is_stub: impl FnMut(&VaultPath) -> bool,
-) -> Option<VaultPath> {
-    let mut ancestor = path.as_path().parent();
-    while let Some(dir) = ancestor {
-        if !owner_depth_ok_path(dir) {
-            return None;
+/// Folders are visited shallowest first and a folder inside an owned folder
+/// is skipped, so a labelled file inside an assets folder is never opened.
+/// A folder claimed by both a stub and a Typst note yields both; see
+/// [`owning_note`] for which one wins.
+pub fn folder_owners(
+    store: &Arc<dyn VaultStore>,
+    files: &HashSet<VaultPath>,
+    dirs: &HashSet<VaultPath>,
+    typst_folders: &[String],
+) -> HashSet<VaultPath> {
+    let mut candidates: Vec<&VaultPath> = dirs.iter().collect();
+    candidates.sort_by_key(|dir| dir.as_path().components().count());
+
+    let mut owned_dirs: Vec<&VaultPath> = Vec::new();
+    let mut owners = HashSet::new();
+    for dir in candidates {
+        if owned_dirs
+            .iter()
+            .any(|owned| dir.as_path().starts_with(owned.as_path()))
+        {
+            continue;
         }
-        if let Some(stub) = sibling_stub_of_path(dir)
-            && is_stub(&stub)
+        let mut claimed = false;
+        if stub_depth_ok(dir.as_path())
+            && let Some(stub) = sibling_with(dir.as_path(), "md")
+            && files.contains(&stub)
+            && is_attachment_stub(store, &stub)
+        {
+            owners.insert(stub);
+            claimed = true;
+        }
+        if typst_depth_ok(dir.as_path(), typst_folders)
+            && let Some(note) = sibling_with(dir.as_path(), "typ")
+            && files.contains(&note)
+            && is_typst_note(store, &note)
+        {
+            owners.insert(note);
+            claimed = true;
+        }
+        if claimed {
+            owned_dirs.push(dir);
+        }
+    }
+    owners
+}
+
+/// The note that owns `path` as an attachment artefact, if any.
+///
+/// The walk goes from the outermost ancestor inwards, so owners resolve
+/// shallow-first: once a folder is owned nothing inside it is probed, and an
+/// artefact nested inside an artefact folder (a filed directory tree keeps
+/// its internal structure) resolves to the same owner as its siblings. A
+/// candidate that is not an owner does not stop the walk.
+///
+/// A stub-beside-folder under `portfolios/` is the portfolio convention, and
+/// applying it vault-wide would be actively harmful: an expanded stewardship
+/// is `stewardships/<slug>/` and a flat one is `stewardships/<slug>.md`, so a
+/// vault holding both spellings of one slug would see the expanded folder's
+/// notes silently vanish from the index. A Typst note owns a folder only
+/// under `portfolios/` or `typst_folders`, for the same reason.
+///
+/// Within one folder the `.md` candidate is asked first, so a stub and a
+/// Typst note sharing a stem resolve to the stub, deterministically.
+///
+/// `is_owner` decides whether a candidate really is one. It is `FnMut` so a
+/// caller can memoise: each probe costs a read and a parse. Reconciliation
+/// passes a set resolved once by [`folder_owners`].
+pub fn owning_note(
+    path: &VaultPath,
+    typst_folders: &[String],
+    mut is_owner: impl FnMut(&VaultPath) -> bool,
+) -> Option<VaultPath> {
+    let mut ancestors: Vec<&std::path::Path> = path.as_path().ancestors().skip(1).collect();
+    ancestors.reverse();
+    for dir in ancestors {
+        if stub_depth_ok(dir)
+            && let Some(stub) = sibling_with(dir, "md")
+            && is_owner(&stub)
         {
             return Some(stub);
         }
-        ancestor = dir.parent();
+        if typst_depth_ok(dir, typst_folders)
+            && let Some(note) = sibling_with(dir, "typ")
+            && is_owner(&note)
+        {
+            return Some(note);
+        }
     }
     None
 }
 
-/// `<dir>.md` — the stub a directory would pair with.
+/// `<dir>.<extension>` — the note a directory would pair with.
 ///
 /// Built with `with_file_name`, never `with_extension`: the latter
 /// *replaces* a trailing dotted segment, so a folder named `run-v1.2` would
 /// yield `run-v1.md` and pair the artefact with an unrelated note.
-fn sibling_stub_of_path(dir: &std::path::Path) -> Option<VaultPath> {
+fn sibling_with(dir: &std::path::Path, extension: &str) -> Option<VaultPath> {
     let name = dir.file_name()?.to_str()?;
-    // Markdown on purpose: widens with the Typst scope (T14).
-    VaultPath::new(dir.with_file_name(format!("{name}.md"))).ok()
+    VaultPath::new(dir.with_file_name(format!("{name}.{extension}"))).ok()
 }
 
-fn sibling_stub_of(dir: &VaultPath) -> Option<VaultPath> {
-    sibling_stub_of_path(dir.as_path())
-}
-
-fn owner_depth_ok_path(dir: &std::path::Path) -> bool {
+fn stub_depth_ok(dir: &std::path::Path) -> bool {
     dir.starts_with(PORTFOLIOS) && dir.components().count() >= MIN_OWNER_DEPTH
 }
 
-fn owner_depth_ok(dir: &VaultPath) -> bool {
-    owner_depth_ok_path(dir.as_path())
+/// `portfolios` keeps its `<portfolio>/<stem>` depth; any other folder of an
+/// admitting type owns at `<folder>/<stem>`.
+fn typst_depth_ok(dir: &std::path::Path, typst_folders: &[String]) -> bool {
+    let depth = dir.components().count();
+    typst_folders.iter().any(|folder| {
+        let root = std::path::Path::new(folder);
+        if root == std::path::Path::new(PORTFOLIOS) {
+            stub_depth_ok(dir)
+        } else {
+            dir.starts_with(root) && depth > root.components().count()
+        }
+    })
 }
