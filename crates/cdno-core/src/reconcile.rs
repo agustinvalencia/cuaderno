@@ -5,8 +5,9 @@
 //! simple:
 //!
 //! 1. Ask [`crate::classify::classify`] which files are notes: every
-//!    `.md` file in the vault, minus attachment artefacts and any matching
-//!    the config `ignore` globs.
+//!    `.md` file in the vault and every labelled `.typ` in a folder that
+//!    admits Typst, minus attachment artefacts and any matching the config
+//!    `ignore` globs.
 //! 2. For each file: take the fast path (skip on matching mtime + size,
 //!    #94), else read, hash, and compare against the matching index row.
 //!    Reindex if the hash differs or no row exists.
@@ -44,7 +45,7 @@ use crate::transaction::VaultTransaction;
 /// updated + skipped`, because errors also count toward `scanned`.
 #[derive(Debug, Default)]
 pub struct ReconciliationReport {
-    /// Total `.md` files walked in the filesystem.
+    /// Total notes the classifier found in the filesystem.
     pub scanned: usize,
     /// Files not previously in the index that were added this pass.
     pub added: usize,
@@ -357,9 +358,9 @@ fn backfill_fts_one(
     let content = store
         .read_file(path)
         .map_err(|e| format!("read failed: {e}"))?;
-    let (_frontmatter, body) = crate::frontmatter::parse_note(path, &content)
+    let (frontmatter, body) = crate::frontmatter::parse_note(path, &content)
         .map_err(|e| format!("frontmatter parse failed: {e}"))?;
-    let title = crate::extractors::first_h1(body);
+    let title = crate::note::fts_title(path, Some(&frontmatter), body);
 
     let mut tx = VaultTransaction::new(store.clone(), index.clone())
         .map_err(|e| format!("acquiring write lock: {e}"))?;
@@ -481,6 +482,7 @@ fn reconcile_one(
     // has: the row stays unstamped, so the note is retried and reported
     // on every pass until fixed.
     let crate::extractors::NoteFacets { tags, links } = crate::extractors::extract_note_facets(
+        path,
         &frontmatter,
         &frontmatter_json,
         body,
@@ -509,10 +511,10 @@ fn reconcile_one(
     // The FTS row needs title + body. This path reindexes a note already
     // on disk, so there's no paired file write for the commit seam to
     // derive the body from — buffer the FTS replacement explicitly. The
-    // FTS title is the body's H1 (where notes carry their title), so it
-    // earns the bm25 title weight; `title` (frontmatter-derived) is the
-    // `notes` row's own field and is a separate concern.
-    let fts_title = crate::extractors::first_h1(body);
+    // FTS title earns the bm25 title weight: the body's H1 for Markdown
+    // (where those notes carry their title), the block's `title` for Typst.
+    // `title` (frontmatter-derived) is the `notes` row's own field.
+    let fts_title = crate::note::fts_title(path, Some(&frontmatter), body);
     let fts_body = body.to_owned();
 
     let entry = NoteEntry {

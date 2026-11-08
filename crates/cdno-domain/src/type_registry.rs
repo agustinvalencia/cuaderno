@@ -324,6 +324,30 @@ impl<'a> TypeRegistry<'a> {
         folders
     }
 
+    /// The folders of the types the switch leaves out: `portfolios` when
+    /// evidence is not admitted, and the folder of each custom type not
+    /// admitted. A folder that an admitted type also lives in is not listed.
+    /// Sorted and de-duplicated.
+    pub fn typst_excluded_folders(&self) -> Vec<String> {
+        let admitted = self.typst_folders();
+        let evidence_excluded =
+            (!self.admits_typst("evidence")).then(|| cdno_core::paths::PORTFOLIOS.to_owned());
+        let custom_excluded = self
+            .config
+            .note_types
+            .iter()
+            .filter(|(name, _)| !self.admits_typst(name))
+            .map(|(_, def)| def.folder.clone());
+        let mut folders: Vec<String> = evidence_excluded
+            .into_iter()
+            .chain(custom_excluded)
+            .filter(|folder| !admitted.contains(folder))
+            .collect();
+        folders.sort();
+        folders.dedup();
+        folders
+    }
+
     /// Reject (or warn on) a `[schemas.<builtin>.fields.<name>]` that collides
     /// with a key the engine owns for that built-in type (`#301`).
     ///

@@ -3281,3 +3281,38 @@ fn a_typst_file_is_not_in_the_snapshot() {
     assert!(!snapshot.paths.contains(&vp("concepts/draft.typ")));
     assert!(snapshot.files.contains(&vp("concepts/draft.typ")));
 }
+
+/// A loose `.typ` that is not UTF-8 is no note, so the snapshot a rename reads
+/// never tries to decode it.
+#[test]
+fn a_non_utf8_loose_typ_does_not_fail_a_rename() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let store: Arc<dyn VaultStore> = Arc::new(cdno_core::store::FsVaultStore::new(dir.path()));
+    store
+        .write_file(
+            &VaultPath::new("projects/surrogate-model.md").unwrap(),
+            "---\ntype: project\ntitle: Surrogate model\nstatus: active\n---\n# Surrogate model\n",
+        )
+        .unwrap();
+    let loose = dir
+        .path()
+        .join("portfolios/surrogate-error-budget/loose.typ");
+    std::fs::create_dir_all(loose.parent().unwrap()).unwrap();
+    std::fs::write(&loose, b"= Loose\n\xff\xfe\n").unwrap();
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, report) = Vault::new(store, index, VaultConfig::default()).unwrap();
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+
+    vault
+        .rename_note(
+            "surrogate-model",
+            "surrogate-model-v2",
+            None,
+            None,
+            at(),
+            || Ok(()),
+        )
+        .expect("rename");
+
+    assert!(dir.path().join("projects/surrogate-model-v2.md").exists());
+}

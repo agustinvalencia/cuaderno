@@ -13,6 +13,7 @@
 //! no format-specific handling ever sees a file inside an owned folder.
 
 use std::collections::{BTreeSet, HashSet};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::artefacts::{attachment_stubs, owning_artefact_stub};
@@ -21,6 +22,7 @@ use crate::error::StoreError;
 use crate::path::VaultPath;
 use crate::paths::{CUADERNO_DIR, NoteFormat, note_format};
 use crate::store::VaultStore;
+use crate::typst;
 
 /// What the classifier needs to know about a vault. Core cannot tell which
 /// note types admit Typst, so the domain says where they live.
@@ -29,6 +31,9 @@ pub struct NoteScope {
     pub ignore: IgnoreSet,
     /// Folders in which a `.typ` file may be a note.
     pub typst_folders: Vec<String>,
+    /// Folders of the note types the `[typst]` switch leaves out. A labelled
+    /// `.typ` here is reported, so turning Typst off hides no note silently.
+    pub typst_excluded_folders: Vec<String>,
 }
 
 impl NoteScope {
@@ -37,12 +42,28 @@ impl NoteScope {
         Self {
             ignore,
             typst_folders: Vec::new(),
+            typst_excluded_folders: Vec::new(),
         }
     }
 
     /// A scope that excludes nothing and admits no Typst.
     pub fn empty() -> Self {
         Self::new(IgnoreSet::empty())
+    }
+
+    /// `Some(admitted)` for a path under either Typst list, `None` for a path
+    /// under neither. Where the lists nest, the deepest folder decides.
+    fn typst_admission(&self, path: &VaultPath) -> Option<bool> {
+        let depth = |folders: &[String]| {
+            folders
+                .iter()
+                .filter(|folder| path.as_path().starts_with(folder))
+                .map(|folder| Path::new(folder).components().count())
+                .max()
+        };
+        let admitted = depth(&self.typst_folders);
+        let excluded = depth(&self.typst_excluded_folders);
+        (admitted.is_some() || excluded.is_some()).then_some(admitted >= excluded)
     }
 }
 
@@ -51,6 +72,15 @@ impl NoteScope {
 pub enum SkipReason {
     Attachment,
     Ignored,
+    /// A loose `.typ` in an admitted folder: neither note nor attachment.
+    TypstUnlabelled,
+    /// No `<cdno>`, but the bytes hold a metadata call with a `type` key.
+    /// `line` is the 1-based line of the call.
+    TypstLabelBroken {
+        line: usize,
+    },
+    /// A labelled `.typ` in a folder the `[typst]` switch excludes.
+    TypstOutsideScope,
 }
 
 /// A file the classifier left out, and why.
@@ -72,7 +102,7 @@ pub struct Classified {
     pub skipped: Vec<Skipped>,
     /// Markdown files owned by an attachment stub.
     pub artefacts: usize,
-    /// Markdown files matched by the `ignore` globs.
+    /// Candidate notes matched by the `ignore` globs.
     pub ignored: usize,
 }
 
@@ -110,26 +140,77 @@ pub fn classify(store: &Arc<dyn VaultStore>, scope: &NoteScope) -> Result<Classi
 
     let mut classified = Classified::default();
     for path in &files {
-        let is_markdown = markdown.contains(path);
+        let format = note_format(path);
         if owning_artefact_stub(path, |stub| stubs.contains(stub)).is_some() {
-            classified.artefacts += usize::from(is_markdown);
+            classified.artefacts += usize::from(format == Some(NoteFormat::Markdown));
             continue;
         }
-        if !is_markdown {
-            continue;
-        }
-        // Counted rather than silently filtered: an over-broad pattern
-        // evicting notes from retrieval has to be observable.
-        if scope.ignore.is_match(path.as_path()) {
-            classified.ignored += 1;
-            classified.skipped.push(Skipped {
-                path: path.clone(),
-                reason: SkipReason::Ignored,
-            });
-        } else {
-            classified.notes.insert(path.clone());
+        match format {
+            Some(NoteFormat::Markdown) => classified.candidate(path, scope),
+            Some(NoteFormat::Typst) => classify_typst(store, path, scope, &mut classified),
+            None => {}
         }
     }
     classified.files = files;
     Ok(classified)
+}
+
+impl Classified {
+    /// A file that is a note unless the `ignore` globs say otherwise. Counted
+    /// rather than silently filtered: an over-broad pattern evicting notes
+    /// from retrieval has to be observable.
+    fn candidate(&mut self, path: &VaultPath, scope: &NoteScope) {
+        if scope.ignore.is_match(path.as_path()) {
+            self.ignored += 1;
+            self.skipped.push(Skipped {
+                path: path.clone(),
+                reason: SkipReason::Ignored,
+            });
+        } else {
+            self.notes.insert(path.clone());
+        }
+    }
+}
+
+/// Sort a `.typ` that no stub owns (RFC 0008 §5.2). Byte searches only: the
+/// parse belongs to reconciliation.
+fn classify_typst(
+    store: &Arc<dyn VaultStore>,
+    path: &VaultPath,
+    scope: &NoteScope,
+    classified: &mut Classified,
+) {
+    let Some(admitted) = scope.typst_admission(path) else {
+        return;
+    };
+    if admitted && scope.ignore.is_match(path.as_path()) {
+        classified.candidate(path, scope);
+        return;
+    }
+    let Ok(bytes) = store.read_bytes(path) else {
+        // Left to reconciliation, which reports the failed read and leaves
+        // any existing row in place. Dropping it here would lose it silently.
+        if admitted {
+            classified.notes.insert(path.clone());
+        }
+        return;
+    };
+    // Typst source is UTF-8, so bytes that do not decode hold no label.
+    let source = std::str::from_utf8(&bytes).unwrap_or_default();
+    let reason = match (admitted, typst::has_label(source)) {
+        (true, true) => {
+            classified.notes.insert(path.clone());
+            return;
+        }
+        (false, true) => SkipReason::TypstOutsideScope,
+        (false, false) => return,
+        (true, false) => match typst::broken_label_line(source) {
+            Some(line) => SkipReason::TypstLabelBroken { line },
+            None => SkipReason::TypstUnlabelled,
+        },
+    };
+    classified.skipped.push(Skipped {
+        path: path.clone(),
+        reason,
+    });
 }

@@ -684,3 +684,87 @@ fn a_vault_declaring_a_project_held_by_schema_field_opens() {
     assert_eq!(active.len(), 1);
     assert_eq!(active[0].1.held_by.as_deref(), Some("the harbour office"));
 }
+
+fn typst_config(concept_folder: &str, typst: Option<Vec<String>>) -> VaultConfig {
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "concept".to_owned(),
+        cdno_core::config::CustomNoteType {
+            folder: concept_folder.to_owned(),
+            required: vec![],
+            optional: vec![],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    config.typst.note_types = typst;
+    config
+}
+
+const TYPST_EVIDENCE: &str = "#metadata((type: \"evidence\")) <cdno>\n\nBody.\n";
+const TYPST_CONCEPT: &str = "#metadata((type: \"concept\", title: \"Split\")) <cdno>\n\nBody.\n";
+
+/// A reconcile-level probe stays green while `Vault::new` hands the classifier
+/// an empty list, so this goes through `Vault::new`, with an unnormalised
+/// folder only `TypeRegistry::validate` can clean.
+#[test]
+fn vault_new_builds_the_note_scope_from_the_validated_config() {
+    let evidence = VaultPath::new("portfolios/surrogate-error-budget/a.typ").unwrap();
+    let concept = VaultPath::new("concepts/split.typ").unwrap();
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    store.write_file(&evidence, TYPST_EVIDENCE).unwrap();
+    store.write_file(&concept, TYPST_CONCEPT).unwrap();
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+
+    let (vault, report) =
+        Vault::new(store, index.clone(), typst_config("concepts/", None)).expect("open");
+
+    assert_eq!(report.added, 2, "{:?}", report.errors);
+    assert!(index.find_by_path(&evidence).unwrap().is_some());
+    assert!(index.find_by_path(&concept).unwrap().is_some());
+    assert_eq!(
+        vault.note_scope().unwrap().typst_folders,
+        vec!["concepts".to_owned(), "portfolios".to_owned()]
+    );
+}
+
+#[test]
+fn vault_new_with_typst_off_indexes_no_typ_and_reports_the_excluded_folders() {
+    let evidence = VaultPath::new("portfolios/surrogate-error-budget/a.typ").unwrap();
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    store.write_file(&evidence, TYPST_EVIDENCE).unwrap();
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+
+    let (vault, report) =
+        Vault::new(store, index.clone(), typst_config("concepts", Some(vec![]))).expect("open");
+
+    assert_eq!(report.added, 0);
+    assert!(index.find_by_path(&evidence).unwrap().is_none());
+    let scope = vault.note_scope().unwrap();
+    assert!(scope.typst_folders.is_empty());
+    assert_eq!(
+        scope.typst_excluded_folders,
+        vec!["concepts".to_owned(), "portfolios".to_owned()]
+    );
+}
+
+#[test]
+fn an_indexed_typst_note_resolves_by_its_path_and_its_address() {
+    let concept = VaultPath::new("concepts/split.typ").unwrap();
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    store.write_file(&concept, TYPST_CONCEPT).unwrap();
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _) = Vault::new(store, index, typst_config("concepts", None)).expect("open");
+
+    for reference in ["concepts/split", "concepts/split.typ"] {
+        match vault
+            .resolve_note_ref(reference, sample_moment().date())
+            .unwrap()
+        {
+            cdno_domain::RefResolution::Resolved(note) => assert_eq!(note.path, concept),
+            other => panic!("{reference}: {other:?}"),
+        }
+    }
+}

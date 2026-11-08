@@ -250,6 +250,30 @@ fn an_upper_case_md_file_triggers_a_pass() {
 }
 
 #[test]
-fn a_typst_file_does_not_trigger_a_pass_until_typst_notes_are_indexed() {
-    assert!(!watch::is_relevant(&changed("concepts/draft.typ")));
+fn a_typst_file_triggers_a_pass() {
+    assert!(watch::is_relevant(&changed("concepts/draft.typ")));
+    assert!(watch::is_relevant(&removed("concepts/draft.typ")));
+}
+
+#[test]
+fn a_typst_file_removed_and_restored_with_the_same_stamp_triggers_a_pass() {
+    let mut filter = watch::TypstEchoFilter::default();
+    let path = "concepts/draft.typ";
+    assert!(filter.is_news(&changed(path), Some((1, 10))));
+    assert!(filter.is_news(&removed(path), None));
+    assert!(filter.is_news(&changed(path), Some((1, 10))), "back again");
+}
+
+#[test]
+fn the_classifiers_own_read_of_a_typst_file_is_an_echo() {
+    // inotify reports the read each pass makes of a loose `.typ`; taking that
+    // for a change would have each pass trigger the next.
+    let mut filter = watch::TypstEchoFilter::default();
+    let edit = changed("concepts/draft.typ");
+    assert!(filter.is_news(&edit, Some((1, 10))), "first sight");
+    assert!(!filter.is_news(&edit, Some((1, 10))), "the pass's own read");
+    assert!(filter.is_news(&edit, Some((2, 10))), "a real edit");
+    assert!(filter.is_news(&removed("concepts/draft.typ"), None));
+    assert!(filter.is_news(&changed("concepts/note.md"), Some((1, 10))));
+    assert!(filter.is_news(&changed("concepts/note.md"), Some((1, 10))));
 }
