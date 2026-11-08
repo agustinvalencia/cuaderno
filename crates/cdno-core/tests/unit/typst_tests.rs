@@ -31,3 +31,37 @@ fn parses_reports_an_unclosed_raw_block() {
     let fault = parses(src).unwrap_err();
     assert_eq!(fault.line, 3);
 }
+
+#[test]
+fn parses_does_not_panic_on_multibyte_line_breaks() {
+    let src = "``` \u{85}```\u{2028}]";
+    let _ = parses(src);
+}
+
+#[test]
+fn parses_counts_every_line_break_typst_knows() {
+    assert_eq!(parses("one\rtwo\r_oops\r").unwrap_err().line, 3);
+    assert_eq!(parses("one\u{2028}_oops\n").unwrap_err().line, 2);
+}
+
+#[test]
+fn parses_survives_a_tree_as_deep_as_the_input() {
+    let src = format!("#a{}", ".b".repeat(200_000));
+    let outcome = std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || parses(&src).is_ok())
+        .unwrap()
+        .join();
+    assert!(outcome.is_ok());
+}
+
+#[test]
+fn parses_reports_the_first_error_not_a_later_one() {
+    let fault = parses("a\n_x\n\n#let y = \n").unwrap_err();
+    assert_eq!(fault.line, 2);
+    assert!(
+        fault.message.contains("unclosed delimiter"),
+        "{}",
+        fault.message
+    );
+}

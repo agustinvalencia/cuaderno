@@ -15,7 +15,7 @@
 //!   101 lines, 24 crates added (typst-syntax, -timing, -utils, ecow, rayon, parking_lot,
 //!   unicode-* and their dependencies).
 
-use typst_syntax::{SyntaxKind, SyntaxNode, parse};
+use typst_syntax::{Lines, SyntaxKind, SyntaxNode, parse};
 
 /// The label that marks a Typst file as a note.
 pub const CDNO_LABEL: &str = "<cdno>";
@@ -35,23 +35,65 @@ pub fn has_label(source: &str) -> bool {
 
 /// P8: `Ok(())` when the tree holds no Error node; else the first one's line and message.
 pub fn parses(source: &str) -> Result<(), SyntaxFault> {
-    let root = parse(source);
-    let Some(offset) = first_error_offset(&root, 0) else {
-        return Ok(());
-    };
-    let line = source[..offset.min(source.len())]
-        .bytes()
-        .filter(|b| *b == b'\n')
-        .count()
-        + 1;
-    let (errors, _) = root.errors_and_warnings();
-    let message = errors
-        .first()
-        .map(|e| e.message.to_string())
-        .unwrap_or_else(|| "syntax error".to_string());
-    Err(SyntaxFault { line, message })
+    with_tree(source, |root| {
+        let Some(offset) = first_error_offset(root, 0) else {
+            return Ok(());
+        };
+        let (errors, _) = root.errors_and_warnings();
+        let message = errors
+            .first()
+            .map(|e| e.message.to_string())
+            .unwrap_or_else(|| "syntax error".to_string());
+        Err(SyntaxFault {
+            line: line_of(source, offset),
+            message,
+        })
+    })?
 }
 
+/// Every use of the parser must go through this. A chain such as `#a.b.b.b...` builds a tree as
+/// deep as the input is long, and walking or dropping it recurses once per level: on a default
+/// stack that is an abort, not a panic. So the parse, the walk `f` and the drop of the tree all
+/// run on a scoped thread whose stack grows with the source.
+///
+/// The stack is `max(8 MiB, 256 * source.len())`: 256 bytes is a generous bound on the frame
+/// cost of one level (a level costs at least one source byte, and the recursive frames here are
+/// well under that). The stack is reserved address space, not committed memory, so the
+/// allowance costs nothing until a deep tree uses it.
+///
+/// Unlike the bare `R` one might expect, this returns a `Result`: if the thread cannot be
+/// spawned, the caller gets a fault rather than a panic.
+fn with_tree<R: Send>(
+    source: &str,
+    f: impl FnOnce(&SyntaxNode) -> R + Send,
+) -> Result<R, SyntaxFault> {
+    let stack = (256 * source.len()).max(8 * 1024 * 1024);
+    std::thread::scope(|scope| {
+        let handle = std::thread::Builder::new()
+            .stack_size(stack)
+            .spawn_scoped(scope, || {
+                let root = parse(source);
+                f(&root)
+            })
+            .map_err(|e| SyntaxFault {
+                line: 1,
+                message: format!("cannot start the Typst parser thread: {e}"),
+            })?;
+        match handle.join() {
+            Ok(r) => Ok(r),
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    })
+}
+
+/// The 1-based line of a byte offset, by Typst's own line rules (`\n`, `\r`, VT, FF, U+0085,
+/// U+2028, U+2029). Never slices `source`, so an offset inside a character cannot panic.
+fn line_of(source: &str, offset: usize) -> usize {
+    let lines = Lines::new(source);
+    lines
+        .byte_to_line(offset.min(source.len()))
+        .map_or(1, |l| l + 1)
+}
 fn first_error_offset(node: &SyntaxNode, start: usize) -> Option<usize> {
     if node.kind() == SyntaxKind::Error {
         return Some(start);
