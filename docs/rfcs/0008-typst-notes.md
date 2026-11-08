@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Draft — for review on the PR. Implementation plan to follow once the review agrees, as RFC 0004, 0005 and 0007 had. |
-| **Tracked by** | this PR |
+| **Tracked by** | PR #925 |
 | **Affects** | `cdno-core` (a new `typst.rs`, `extractors.rs`, `hash.rs`, `reconcile.rs`, `transaction.rs`, `artefacts.rs`, the watcher, one migration), `cdno-domain` (`note_type.rs`, `vault/portfolios.rs`, `vault/custom_notes.rs`, `vault/revise.rs`, `vault/lint.rs`, `vault/rename.rs`, `vault/note_ref.rs`, `config.rs`), `cdno-cli` (`--format` on `cdno file` and `cdno note create`), `cdno-mcp` (one field on two tools, `read_note`, server instructions), `docs/design.md`, `CLAUDE.md`, `docs-site`, the `file-to-portfolio` and `concept` skills |
 | **Related** | #154 and #183 (attachments), RFC 0002 (concept notes), RFC 0007 (renames rewrite references; the masked frozen-prefix hash), #225 (globally unique stems), #215 (last-segment resolution), #211 (`cdno lint --fix`) |
 
