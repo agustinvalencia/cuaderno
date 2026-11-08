@@ -537,12 +537,16 @@ and the S0 numbers (parse cost, compile time, crate count) recorded in the modul
 pub struct MetadataBlock {
     /// From the `#` of `#metadata` to the `>` of `<cdno>`, inclusive.
     pub span: Range<usize>,
-    /// The dictionary as JSON: strings, arrays of strings, booleans (§5.3).
+    /// The dictionary as JSON: strings, arrays of strings, booleans, numbers (§5.3).
     pub value: serde_json::Value,
     /// Each key's value span inside the source, for the edit module (T8).
     pub entries: Vec<EntrySpan { key: String, key_span: Range<usize>, value_span: Range<usize> }>,
     /// Where a new entry would be inserted (before the closing `))`).
     pub insert_at: usize,
+    /// The `:` of an empty dictionary `(:)`, which a first entry replaces (T8).
+    pub empty_colon: Option<Range<usize>>,
+    /// Whether a comma follows the last entry (T8).
+    pub trailing_comma: bool,
 }
 pub enum TypstError {
     NoBlock,                                   // no `#metadata((…)) <cdno>` at top level
@@ -558,7 +562,10 @@ pub fn metadata_block(source: &str) -> Result<MetadataBlock, TypstError>;
 
 Rules from §5.3: top level, first, exactly one; the argument a literal dictionary; values
 `Str`, `Array` of `Str` (`("x",)` and `("x")` both read as one string — the latter is a
-parenthesised string, accepted on read), `Bool`; keys identifiers or string keys; string escapes
+parenthesised string, accepted on read), `Bool`, and `Int` or `Float` with an optional leading
+`-` (read into JSON numbers; a decimal integer beyond `i64` is lexed as a `Float`, `Int::get`
+returns 0 for text it cannot parse, so the reader parses the text itself, and a non-finite float
+is `NotLiteral`); keys identifiers or string keys; string escapes
 decoded by the parser's own `Str::get`. Anything else is `NotLiteral` with `what` naming the node
 kind. `LabelBroken` is the §5.2 Error: the text holds a `#metadata((` call with a `type` key but the
 `<cdno>` label is absent, mistyped or not the call's next non-trivia sibling.
@@ -583,8 +590,9 @@ a file as a note with no metadata.
   `another_metadata_call_before_the_block_is_not_first` (a `#metadata((x: 1)) <other>` ahead of
   the `<cdno>` block is neither whitespace nor a comment, so §5.3 makes it `NotFirst`), and
   `other_metadata_labels_after_the_block_are_ignored`.
-- `proptest`: for a generated dictionary of ≤8 keys with string, string-array and bool values,
-  `write_block` (T8) then `metadata_block` round-trips the JSON exactly.
+- `proptest` (lives in T8's `typst_edit_tests.rs`, where `write_block` exists): for a generated
+  dictionary of ≤8 keys, including Typst keywords, with string, string-array, bool, integer and
+  float values, `write_block` then `metadata_block` round-trips the JSON exactly.
 - Mutation: accept a nested dictionary as a literal; `not_literal_nested_dictionary` fails.
 
 **Correct means.** The block is read without evaluating anything, and every way to get it wrong
@@ -666,17 +674,21 @@ quoting construct is read.
 still the only module naming the crate), mirroring `frontmatter_edit.rs:237–649`:
 
 ```rust
-pub fn write_block(fields: &[(String, serde_json::Value)]) -> String;         // the literal writer: escapes, `("x",)`, `true`/`false`, one key per line, `<cdno>` on the closing line
+pub fn write_block(fields: &[(String, serde_json::Value)]) -> Result<String, TypstError>;  // the literal writer: escapes, `("x",)`, `true`/`false`, numbers, one key per line, `<cdno>` on the closing line; `Unwritable` for null, objects, non-string array items, a repeated key
 pub fn scalar_span(block: &MetadataBlock, key: &str) -> Option<Range<usize>>;
-pub fn rewrite_scalar(source: &str, key: &str, value: &serde_json::Value) -> Result<(String, Range<usize>), TypstError>;  // byte-exact; inserts the key when absent, at `insert_at`
-pub fn append_list_value(source: &str, key: &str, item: &str) -> Result<(String, Range<usize>), TypstError>;  // `("a",)` → `("a", "b")`; absent key inserted
-pub fn remove_list_value(source: &str, key: &str, item: &str) -> Result<(String, Range<usize>), TypstError>;
-pub fn changed_only_at(before: &str, after: &str, spans: &[Range<usize>]) -> bool;
+pub fn rewrite_scalar(source: &str, key: &str, value: &serde_json::Value) -> Result<(String, Vec<AddressEdit>), TypstError>;  // byte-exact; inserts the key when absent, at `insert_at`
+pub fn append_list_value(source: &str, key: &str, item: &str) -> Result<(String, Vec<AddressEdit>), TypstError>;  // `("a",)` → `("a", "b")`; absent key inserted
+pub fn remove_list_value(source: &str, key: &str, item: &str) -> Result<(String, Vec<AddressEdit>), TypstError>;
+// no `changed_only_at`: the edits are checked exactly by core's `differs_only_by(before, after, &edits)`
 ```
 
 The writer emits Typst string escapes only (`"` and `\`), never the markup escape rule (§5.3);
-keys that are not identifiers are written as string keys. Nothing re-serialises the dictionary:
-a comment inside the block and the writer's key order survive every edit.
+keys that are not identifiers, and Typst keywords, are written as string keys; inserting a key into `(:)` replaces the `:`. Nothing re-serialises the dictionary:
+a comment inside the block and the writer's key order survive every edit, except that
+`append_list_value` and `remove_list_value` rewrite the whole array they edit in one-line form, so
+a comment inside *that array* is lost. The edit functions return `AddressEdit`s (a range of the old
+source and its replacement, as the YAML twin does) and an insertion uses the source's line ending
+(`\r\n` when it holds one).
 
 **Deliverable.** The module, tests, `proptest` round trips.
 
@@ -687,12 +699,15 @@ a comment inside the block and the writer's key order survive every edit.
 **Probes.**
 - `cargo test -p cdno-core --test unit -- unit::typst_edit_tests` (new file, registered):
   `write_block_round_trips_through_metadata_block` (proptest, shared with T6),
-  `rewrite_scalar_changes_only_the_value_span` (`changed_only_at` holds; a `// note` comment
-  inside the block survives), `rewrite_scalar_inserts_a_missing_key_before_the_close`,
+  `rewrite_scalar_changes_only_the_value_span` (`differs_only_by` holds on the returned edit, whose range is the old
+  value span; a `// note` comment inside the block survives), `a_same_line_comment_survives_a_rewrite`,
+  `a_crlf_source_gets_crlf_line_endings_on_insertion`, `write_block_refuses_a_repeated_key`, `rewrite_scalar_inserts_a_missing_key_before_the_close`,
   `append_to_a_one_element_array_keeps_it_an_array` (`("a",)` → `("a", "b")`; `("a")` →
   `("a", "b")` too), `remove_last_item_leaves_the_empty_array` (`()`),
   `a_quote_in_a_value_is_escaped_for_typst_not_markup` (`a "b" #c` → `"a \"b\" #c"`).
 - Mutation: re-serialise the dictionary on `rewrite_scalar`; the comment-survives test fails.
+  Mutation: let the replaced range swallow a same-line trailing comment;
+  `a_same_line_comment_survives_a_rewrite` fails.
 
 **Correct means.** The block can be edited the way YAML frontmatter is edited: at a span, with
 proof that nothing else moved.
@@ -1106,8 +1121,11 @@ per the operations-per-file rule, plus free functions):
 
 ```rust
 /// §5.7: the engine's fields first, in this order, then the type's declared fields in the
-/// registry's order; a field a type declares as a list becomes an array; everything a string.
-pub(in crate::vault) fn render_metadata_block(ordered: &[(String, serde_json::Value)]) -> String;  // through T8's write_block
+/// registry's order; everything a string, unless the caller supplies a JSON array.
+/// `FieldSpec.list` is reserved (`list = true` is a load error today), so no declared field is a list.
+/// `TypstError::Unwritable` from `write_block` maps explicitly (no `From` impl) to the existing
+/// `DomainError::InvalidFieldValue { note_type, field: "(metadata block)", reason: what }`.
+pub(in crate::vault) fn render_metadata_block(note_type: &str, ordered: &[(String, serde_json::Value)]) -> Result<String, DomainError>;  // through T8's write_block
 pub(in crate::vault) enum BodyRejection { CarriesBlock, DoesNotParse { line, message }, LinkNeedsEscape { line, leaf }, /* plus any §5.10 row the body alone can trip */ }
 /// One pure check shared with lint: the body must not carry `<cdno>`, must parse, and must have no link fault.
 pub(in crate::vault) fn check_typst_body(body: &str) -> Result<(), BodyRejection>;
@@ -1130,7 +1148,7 @@ pub(in crate::vault) fn assemble_typst_note(block: &str, body: &str) -> String; 
 **Probes.**
 - `cargo test -p cdno-domain --test unit -- unit::typst_note_tests` (new, registered):
   `render_metadata_block_orders_engine_fields_first` (the §1.1 block byte-for-byte),
-  `a_list_field_becomes_an_array_and_a_scalar_a_string`,
+  `a_supplied_array_becomes_an_array_and_a_scalar_a_string`, `an_unwritable_value_maps_to_invalid_field_value`,
   `check_refuses_a_body_carrying_the_label`, `check_refuses_a_body_that_does_not_parse_with_its_line`,
   `check_refuses_an_unescaped_link_with_its_leaf`, `check_accepts_the_rfc_example_body`,
   `every_typst_rejection_carries_a_remedy` (table over the new variants: `remedy()` is `Some`
@@ -1442,10 +1460,12 @@ Markdown machinery cannot do is refused with the way round it.
 ### T28 — `set_frontmatter` on the block
 
 **What.** `set_frontmatter.rs:69`: `parse_note` for the read; the write through
-`typst::metadata_edit::rewrite_scalar` (T8) for a Typst note and `rewrite_frontmatter_scalar`
-for Markdown, chosen by `note_format`; `changed_only_at` asserted in debug builds as the YAML
-path does with `frontmatter_changed_only_at`. The value coercion and the schema checks (`:85–130`)
-are format-neutral and unchanged; a list-typed field writes an array. The log line is unchanged.
+`typst::rewrite_scalar` (T8) for a Typst note and `rewrite_frontmatter_scalar`
+for Markdown, chosen by `note_format`; `differs_only_by` on the returned edits asserted in debug
+builds as the YAML path does with `frontmatter_changed_only_at`. `TypstError::Unwritable` maps to
+`DomainError::InvalidFieldValue { note_type, field: <key>, reason }`. The value coercion and the schema checks (`:85–130`)
+are format-neutral and unchanged; `set_frontmatter` writes scalars (string, int, float, bool, date),
+since `FieldSpec.list` is reserved and the setter has no array path. The log line is unchanged.
 
 **Deliverable.** The dispatch, tests.
 
@@ -1455,9 +1475,11 @@ are format-neutral and unchanged; a list-typed field writes an array. The log li
 
 **Probes.**
 - `cargo test -p cdno-domain --test unit -- unit::set_frontmatter_tests`:
-  `set_frontmatter_rewrites_a_block_scalar_at_its_span` (`changed_only_at` holds; the block's
+  `set_frontmatter_rewrites_a_block_scalar_at_its_span` (`differs_only_by` holds; the block's
   comment and order survive), `set_frontmatter_inserts_a_missing_declared_key_in_the_block`,
-  `set_frontmatter_writes_a_list_field_as_an_array`, `reserved_keys_are_refused_on_typst_too`.
+  `set_frontmatter_writes_int_float_and_bool_literals_on_a_typst_note`,
+  `set_frontmatter_refuses_i64_min_on_an_int_field_as_invalid_field_value` (`Unwritable` →
+  `InvalidFieldValue`), `reserved_keys_are_refused_on_typst_too`.
 - `cargo test -p cdno-cli --test frontmatter`: one Typst round trip.
 
 **Correct means.** A settable field is set the same way whatever the note's syntax.

@@ -213,7 +213,7 @@ fn not_literal_names_the_node_kind() {
         ("x", "identifier"),
         ("f()", "function call"),
         ("\"a\" + \"b\"", "binary expression"),
-        ("1", "integer"),
+        ("1pt", "numeric value"),
         ("none", "`none`"),
         ("((\"x\"))", "group"),
     ] {
@@ -252,4 +252,51 @@ fn a_very_deep_tree_does_not_overflow_the_walk() {
     assert_eq!(err(&chain), TypstError::NoBlock);
     let errors = format!("$#(1 +){}$", "!".repeat(200_000));
     assert_eq!(err(&errors), TypstError::NoBlock);
+}
+
+#[test]
+fn integers_and_floats_read_as_json_numbers() {
+    let source = "#metadata((a: 3, b: -4, c: 1.5, d: -0.25, e: 1e3, f: 0xff, g: -0x10)) <cdno>";
+    let block = metadata_block(source).unwrap();
+    assert_eq!(
+        block.value,
+        json!({"a": 3, "b": -4, "c": 1.5, "d": -0.25, "e": 1000.0, "f": 255, "g": -16})
+    );
+    assert!(block.value["a"].is_i64() && block.value["c"].is_f64());
+    let negative = &block.entries[1];
+    assert_eq!(&source[negative.value_span.clone()], "-4");
+}
+
+#[test]
+fn an_integer_beyond_i64_is_a_float_as_in_typst() {
+    let block = metadata_block("#metadata((a: 9223372036854775808)) <cdno>").unwrap();
+    assert!(block.value["a"].is_f64());
+    let (_, what) = not_literal("#metadata((a: 1e999)) <cdno>");
+    assert_eq!(what, "float");
+}
+
+#[test]
+fn only_a_leading_minus_makes_a_number_a_literal() {
+    for expr in ["+3", "--3", "-a", "1 + 2", "3pt", "50%", "-(3)"] {
+        let source = format!("#metadata((a: {expr})) <cdno>");
+        assert!(
+            matches!(err(&source), TypstError::NotLiteral { .. }),
+            "{expr}"
+        );
+    }
+}
+
+#[test]
+fn a_metadata_call_that_is_not_a_markup_hash_call_is_not_a_broken_block() {
+    // Inside code there is no `#`, so this was never written as a block.
+    assert_eq!(
+        err("#{ metadata((type: \"concept\")) }\n"),
+        TypstError::NoBlock
+    );
+}
+
+#[test]
+fn the_top_level_block_is_chosen_over_an_earlier_nested_one() {
+    let source = "#[ #metadata((type: \"a\")) <cdno> ]\n#metadata((type: \"b\")) <cdno>\n";
+    assert_eq!(err(source), TypstError::NotFirst { line: 2 });
 }
