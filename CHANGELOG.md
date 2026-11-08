@@ -42,6 +42,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   case-insensitively, so `NOTE.MD` is indexed; nothing else changes.
 
 - **Typst parser in the build** (RFC 0008 T5, #933). `cdno-core` gains `typst-syntax` (pinned `=0.15.1`) behind a single module, `typst`, with `has_label` (the cheap `<cdno>` byte search) and `parses` (one definition of "does not parse", with the first error's line).
+- **Headings and wikilinks read from Typst markup** (RFC 0008 T7, #935). `cdno_core::typst` gains `headings` (each heading's source text and level) and `wikilink_spans` (links over inline runs and the `<cdno>` block's strings, with raw byte spans, decoded addresses and targets, and a named fault for every `[[` that is not a link); nothing calls them yet.
 
 ## [0.44.0] - 2026-11-06
 
