@@ -100,6 +100,42 @@ pub fn assemble_typst_note(block: &str, body: &str) -> String {
     out
 }
 
+/// How long the run of blank lines opening `text` is, in bytes.
+fn leading_blank_lines(text: &str) -> usize {
+    text.split_inclusive('\n')
+        .take_while(|line| line.trim().is_empty())
+        .map(str::len)
+        .sum()
+}
+
+/// `raw` with everything after the metadata block replaced by `new_body` (RFC 0008 §5.8).
+///
+/// The blank lines between the label and the old body stay as they were. `read_note` reports the
+/// bytes after the label, those blank lines included, so any opening `new_body` has is dropped in
+/// favour of the kept ones: sending a body back unchanged is then a no-op, and a read-edit-send
+/// cycle cannot add a blank line each time.
+pub(super) fn revised_typst_source(
+    raw: &str,
+    block_end: usize,
+    new_body: &str,
+) -> Result<String, DomainError> {
+    check_typst_body(new_body)?;
+    let (kept, old_body) = raw.split_at(block_end);
+    if new_body == old_body {
+        return Ok(raw.to_owned());
+    }
+    let separator = &old_body[..leading_blank_lines(old_body)];
+    // Nothing to keep (the old body starts on the label's line, or the file ends there): the new
+    // body still needs a line of its own, or a heading would not be a heading.
+    let separator = if separator.contains('\n') {
+        separator
+    } else {
+        SEPARATOR
+    };
+    let new_body = &new_body[leading_blank_lines(new_body)..];
+    Ok(format!("{kept}{separator}{new_body}"))
+}
+
 impl Vault {
     /// Create a custom-type note in `format`: the one entry the CLI and MCP surfaces call.
     /// Markdown goes to [`create_custom_note_with_vars`](Self::create_custom_note_with_vars);

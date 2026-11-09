@@ -2618,3 +2618,100 @@ fn note_create_format_typst_without_a_body_file_fails_non_interactively() {
         .stderr(predicate::str::contains("body-file"));
     assert!(!dir.path().join("concepts/bias-variance-split.typ").exists());
 }
+
+/// A Typst concept, created through `cdno note create`; returns the vault argument.
+fn create_typst_concept(dir: &Path) -> String {
+    init_person_vault(dir);
+    let v = vault_arg(dir);
+    let body_file = dir.join("body.typ");
+    fs::write(&body_file, "= Statement\n\nThe error splits.\n").unwrap();
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "create",
+            "concept",
+            "--format",
+            "typst",
+            "--title",
+            "Bias-variance split",
+            "--body-file",
+            body_file.to_str().unwrap(),
+            "--origin",
+            "[[projects/surrogate-model]]",
+        ])
+        .assert()
+        .success();
+    v
+}
+
+#[test]
+fn note_revise_replaces_a_typst_body_and_keeps_the_block() {
+    let dir = tempdir().unwrap();
+    let v = create_typst_concept(dir.path());
+    let note = dir.path().join("concepts/bias-variance-split.typ");
+    let before = fs::read_to_string(&note).unwrap();
+    let body_file = dir.path().join("new.typ");
+    fs::write(&body_file, "= Statement\n\nA better account.\n").unwrap();
+
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "revise",
+            "concept:bias-variance-split",
+            "--body-file",
+            body_file.to_str().unwrap(),
+            "--reason",
+            "tightened the statement",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Revised concepts/bias-variance-split.typ",
+        ));
+
+    let block_end = before.find("<cdno>").unwrap() + "<cdno>".len();
+    let after = fs::read_to_string(&note).unwrap();
+    assert_eq!(after[..block_end], before[..block_end]);
+    assert_eq!(
+        after[block_end..],
+        *"\n\n= Statement\n\nA better account.\n"
+    );
+}
+
+#[test]
+fn note_revise_section_on_typst_is_refused_with_the_remedy() {
+    let dir = tempdir().unwrap();
+    let v = create_typst_concept(dir.path());
+    let note = dir.path().join("concepts/bias-variance-split.typ");
+    let before = fs::read_to_string(&note).unwrap();
+    let content = dir.path().join("section.typ");
+    fs::write(&content, "New.\n").unwrap();
+
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "revise",
+            "concept:bias-variance-split",
+            "--section",
+            "Statement",
+            "--content-file",
+            content.to_str().unwrap(),
+            "--reason",
+            "tightened",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not by section"))
+        .stderr(predicate::str::contains("--body-file"));
+
+    assert_eq!(fs::read_to_string(&note).unwrap(), before);
+}

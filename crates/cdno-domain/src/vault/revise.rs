@@ -21,10 +21,11 @@
 use chrono::NaiveDateTime;
 
 use cdno_core::error::ManipulationError;
-use cdno_core::frontmatter::Frontmatter;
+use cdno_core::frontmatter::parse_note_spanned;
 use cdno_core::hash::content_hash;
 use cdno_core::markdown::{MarkdownDocument, headings};
 use cdno_core::path::VaultPath;
+use cdno_core::paths::{NoteFormat, note_format};
 
 use crate::error::DomainError;
 use crate::type_registry::NoteTypeDescriptor;
@@ -32,6 +33,7 @@ use crate::type_registry::NoteTypeDescriptor;
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::log::flatten_for_log;
+use super::typst_note::revised_typst_source;
 
 /// What a [`Vault::revise_note`] call changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +113,13 @@ impl Vault {
     ///   heading → the `AmbiguousSection` manipulation error. A heading
     ///   that matches none is not refused: the section is appended.
     ///
+    /// A Typst note is revised as a whole body only (RFC 0008 §5.8): the
+    /// metadata block and everything before it are kept byte for byte, a
+    /// [`Revision::Section`] is [`DomainError::SectionRevisionUnavailableForTypst`],
+    /// and a new body that carries a `<cdno>` label, does not parse, or has
+    /// a broken link is refused with the rejections of
+    /// [`check_typst_body`](super::typst_note::check_typst_body).
+    ///
     /// The note's type is read from the `type:` field of the bytes just
     /// read (the source of truth), not from the index row.
     ///
@@ -167,13 +176,21 @@ impl Vault {
             });
         }
 
-        // Markdown on purpose: the Typst reader and writer land in T27; a Typst note is refused here as before.
-        let (fm, body) = Frontmatter::parse(&raw)?;
-        let note_type = fm.require_field::<String>("type")?;
+        let spanned = parse_note_spanned(path, &raw)?;
+        let body = spanned.body;
+        let note_type = spanned.frontmatter.require_field::<String>("type")?;
         self.ensure_revisable(path, &note_type)?;
+        let is_typst = note_format(path) == Some(NoteFormat::Typst);
 
         let link_target = cdno_core::paths::note_address(path);
         let (new_content, anchor) = match &revision {
+            Revision::Body(new_body) if is_typst => (
+                revised_typst_source(&raw, spanned.metadata_span.end, new_body)?,
+                None,
+            ),
+            Revision::Section { .. } if is_typst => {
+                return Err(DomainError::SectionRevisionUnavailableForTypst);
+            }
             Revision::Body(new_body) => {
                 let frontmatter_block = &raw[..raw.len() - body.len()];
                 (format!("{frontmatter_block}{new_body}"), None)

@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use cdno_core::config::{CustomNoteType, VaultConfig};
 use cdno_core::error::{ManipulationError, StoreError};
 use cdno_core::file_meta::FileMeta;
+use cdno_core::frontmatter::parse_note_spanned;
 use cdno_core::hash::content_hash;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
@@ -863,4 +864,228 @@ fn revision_adding_an_inline_tag_lands_in_the_tags_facet() {
     );
     // The frontmatter `tags:` list still merges in.
     assert!(index.find_by_tag("linear-algebra").unwrap().contains(&path));
+}
+
+// ---------------------------------------------------------------------
+// Typst notes (RFC 0008 §5.8)
+// ---------------------------------------------------------------------
+
+const TYPST_PATH: &str = "concepts/bias-variance-split.typ";
+const TYPST_BLOCK: &str = "#metadata((type: \"concept\", title: \"Bias-variance split\", created: \"2026-09-01\")) <cdno>";
+const TYPST_SEPARATOR: &str = "\n\n";
+const TYPST_BODY: &str = "= Statement\n\nThe error splits as $ sigma^2 $.\n";
+
+fn typst_note() -> String {
+    format!("// preamble\n{TYPST_BLOCK}{TYPST_SEPARATOR}{TYPST_BODY}")
+}
+
+fn seeded_vault(notes: &[(&str, &str)]) -> (Vault, Arc<dyn VaultStore>) {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    seed(&*store);
+    for (path, content) in notes {
+        store.write_file(&vp(path), content).unwrap();
+    }
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _r) =
+        Vault::new(Arc::clone(&store), Arc::clone(&index), config()).expect("Vault::new");
+    (vault, store)
+}
+
+fn typst_vault() -> (Vault, Arc<dyn VaultStore>) {
+    seeded_vault(&[(TYPST_PATH, &typst_note())])
+}
+
+fn revise_typst_body(
+    vault: &Vault,
+    body: &str,
+) -> Result<cdno_domain::vault::ReviseOutcome, DomainError> {
+    let hash = vault.read_note(&vp(TYPST_PATH)).unwrap().content_hash;
+    vault.revise_note(
+        &vp(TYPST_PATH),
+        Some(&hash),
+        Revision::Body(body.to_owned()),
+        "tightened the statement",
+        at(),
+    )
+}
+
+fn assert_refused_unchanged(store: &dyn VaultStore) {
+    assert_eq!(store.read_file(&vp(TYPST_PATH)).unwrap(), typst_note());
+    assert!(revised_lines(store).is_empty());
+}
+
+#[test]
+fn whole_body_revision_of_a_typst_concept_keeps_the_block_byte_for_byte() {
+    let (vault, store) = typst_vault();
+    let before = store.read_file(&vp(TYPST_PATH)).unwrap();
+    let span_end = parse_note_spanned(&vp(TYPST_PATH), &before)
+        .unwrap()
+        .metadata_span
+        .end;
+    let new_body = "= Statement\n\nA better account of [[surrogate-model]].\n";
+
+    let outcome = revise_typst_body(&vault, new_body).expect("revise");
+
+    let after = store.read_file(&vp(TYPST_PATH)).unwrap();
+    assert_eq!(after[..span_end], before[..span_end]);
+    assert_eq!(after[span_end..], format!("{TYPST_SEPARATOR}{new_body}"));
+    assert!(outcome.changed);
+    assert_eq!(outcome.new_hash, content_hash(&after));
+    assert_eq!(
+        vault.read_note(&vp(TYPST_PATH)).unwrap().content_hash,
+        outcome.new_hash
+    );
+}
+
+#[test]
+fn whole_body_revision_logs_revised_with_the_address_and_no_extension() {
+    let (vault, store) = typst_vault();
+
+    let outcome = revise_typst_body(&vault, "= Statement\n\nRevised.\n").expect("revise");
+
+    let line = "revised [[concepts/bias-variance-split]] \u{2014} tightened the statement";
+    assert_eq!(outcome.log_line.as_deref(), Some(line));
+    assert_eq!(outcome.section_target, None);
+    assert_eq!(revised_lines(&*store), vec![format!("- **14:32**: {line}")]);
+}
+
+#[test]
+fn a_new_body_carrying_the_label_is_refused() {
+    let (vault, store) = typst_vault();
+
+    let err = revise_typst_body(&vault, "#metadata((type: \"concept\")) <cdno>\n\nText.\n")
+        .expect_err("refused");
+
+    assert!(
+        matches!(err, DomainError::BodyCarriesMetadataBlock),
+        "{err:?}"
+    );
+    assert_refused_unchanged(&*store);
+}
+
+#[test]
+fn a_new_body_that_does_not_parse_is_refused_and_nothing_changes() {
+    let (vault, store) = typst_vault();
+
+    let err = revise_typst_body(&vault, "fine\n\n#(unclosed\n").expect_err("refused");
+
+    assert!(
+        matches!(err, DomainError::BodyDoesNotParse { line: 3, .. }),
+        "{err:?}"
+    );
+    assert_refused_unchanged(&*store);
+}
+
+#[test]
+fn section_revision_on_typst_is_refused_with_the_remedy() {
+    let (vault, store) = typst_vault();
+
+    let err = vault
+        .revise_note(
+            &vp(TYPST_PATH),
+            None,
+            section("Statement", "New."),
+            "tightened",
+            at(),
+        )
+        .expect_err("refused");
+
+    assert!(
+        matches!(err, DomainError::SectionRevisionUnavailableForTypst),
+        "{err:?}"
+    );
+    let remedy = err.remedy().expect("a remedy");
+    assert!(
+        remedy.contains("whole body") && remedy.contains("expected_hash"),
+        "{remedy}"
+    );
+    assert_refused_unchanged(&*store);
+}
+
+#[test]
+fn a_typst_evidence_note_is_refused_as_append_only() {
+    let body = "\n\nObserved.\n";
+    let typst = "portfolios/surrogate-model/2026-09-01-bias-variance-split.typ";
+    let markdown = "portfolios/surrogate-model/2026-09-02-surrogate-error-budget.md";
+    let typst_note = format!(
+        "#metadata((type: \"evidence\", title: \"Split\", date: \"2026-09-01\")) <cdno>{body}"
+    );
+    let markdown_note = "---\ntype: evidence\ndate: 2026-09-02\n---\n\nObserved.\n";
+    let (vault, store) = seeded_vault(&[(typst, &typst_note), (markdown, markdown_note)]);
+
+    let refuse = |path: &str| {
+        vault
+            .revise_note(
+                &vp(path),
+                None,
+                Revision::Body("New.\n".into()),
+                "why",
+                at(),
+            )
+            .expect_err("refused")
+    };
+    let (typst_err, markdown_err) = (refuse(typst), refuse(markdown));
+
+    let reason = |e: DomainError| match e {
+        DomainError::NoteNotRevisable { reason, .. } => reason,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(reason(typst_err), reason(markdown_err));
+    assert_eq!(store.read_file(&vp(typst)).unwrap(), typst_note);
+}
+
+#[test]
+fn stale_hash_is_refused_before_any_typst_check() {
+    let (vault, store) = typst_vault();
+
+    let err = vault
+        .revise_note(
+            &vp(TYPST_PATH),
+            Some("not-the-hash"),
+            Revision::Body("#(unclosed\n".to_owned()),
+            "why",
+            at(),
+        )
+        .expect_err("refused");
+
+    assert!(matches!(err, DomainError::StaleRevision { .. }), "{err:?}");
+    assert_refused_unchanged(&*store);
+}
+
+#[test]
+fn a_typst_body_sent_back_from_read_note_changes_nothing() {
+    let (vault, store) = typst_vault();
+    let body = vault.read_note(&vp(TYPST_PATH)).unwrap().body;
+
+    let outcome = revise_typst_body(&vault, &body).expect("revise");
+
+    assert!(!outcome.changed);
+    assert_refused_unchanged(&*store);
+}
+
+#[test]
+fn an_edit_of_the_read_body_adds_no_blank_line_after_the_block() {
+    let (vault, store) = typst_vault();
+    let body = vault.read_note(&vp(TYPST_PATH)).unwrap().body;
+    let edited = body.replace("The error", "The total error");
+
+    revise_typst_body(&vault, &edited).expect("revise");
+
+    assert_eq!(
+        store.read_file(&vp(TYPST_PATH)).unwrap(),
+        typst_note().replace("The error", "The total error")
+    );
+}
+
+#[test]
+fn a_body_starting_on_the_label_line_still_gets_a_line_of_its_own() {
+    let note = format!("{TYPST_BLOCK} // kept\n\nOld.\n");
+    let (vault, store) = seeded_vault(&[(TYPST_PATH, &note)]);
+
+    revise_typst_body(&vault, "= Statement\n").expect("revise");
+
+    assert_eq!(
+        store.read_file(&vp(TYPST_PATH)).unwrap(),
+        format!("{TYPST_BLOCK}\n\n= Statement\n")
+    );
 }

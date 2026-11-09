@@ -50,7 +50,9 @@ cdno note list <TYPE>
 Refine a mutable custom note (such as a concept) in place. The revision is logged to today's daily
 note as `revised [[<path>]] — <reason>`, or `revised [[<path>#<Section>]] — <reason>` for a
 section, in the same write; do not log it again by hand. Built-in note types (project, action,
-daily, …) and custom types declared `append_only = true` are refused.
+daily, …) and custom types declared `append_only = true` are refused. A Typst note takes
+`--body-file` (everything after its metadata block, which is kept byte for byte) and refuses
+`--section`: read the note, edit the body, and pass all of it.
 
 ```text
 cdno note revise [OPTIONS] [NOTE]
