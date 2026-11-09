@@ -907,7 +907,7 @@ fn set_frontmatter_on_a_typst_note_keeps_validation_and_strict_exists() {
 }
 
 #[test]
-fn set_frontmatter_on_an_absent_typst_key_errors() {
+fn set_frontmatter_errors_on_an_absent_key_in_the_block() {
     let (vault, store, _i) = typst_vault();
     let raw = TYPST_NOTE.replace("  reviewed: \"2026-07-01\",\n", "");
     store.write_file(&typst_path(), &raw).unwrap();
@@ -937,4 +937,58 @@ fn set_frontmatter_on_a_markdown_note_is_unchanged_by_the_dispatch() {
         .unwrap();
     let raw = store.read_file(&daily_path()).unwrap();
     assert_eq!(raw, DAILY_NOTE.replace("meds: false", "meds: true"));
+}
+
+#[test]
+fn set_frontmatter_refuses_i64_min_on_an_int_field_as_invalid_field_value() {
+    let (vault, store, _i) = typst_vault();
+    let r = vault.set_frontmatter(moment(), TYPST_PATH, "priority", "-9223372036854775808");
+    assert!(
+        matches!(&r, Err(DomainError::InvalidFieldValue { field, .. }) if field == "priority"),
+        "{r:?}"
+    );
+    assert_eq!(store.read_file(&typst_path()).unwrap(), TYPST_NOTE);
+}
+
+#[test]
+fn reserved_keys_are_refused_on_typst_too() {
+    let (vault, store, _i) = typst_vault();
+    for key in ["type", "status"] {
+        let r = vault.set_frontmatter(moment(), TYPST_PATH, key, "x");
+        assert!(r.is_err(), "{key}");
+    }
+    // Declared settable, yet still reserved.
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "concept".to_owned(),
+        CustomNoteType {
+            folder: "concepts".to_owned(),
+            required: vec!["created".to_owned()],
+            optional: vec![],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    let mut schema = SchemaExtension::default();
+    schema
+        .fields
+        .insert("type".into(), typst_spec("string", ""));
+    schema
+        .fields
+        .insert("status".into(), typst_spec("string", ""));
+    config.schemas.insert("concept".to_owned(), schema);
+    let store2: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    store2.write_file(&typst_path(), TYPST_NOTE).unwrap();
+    let (vault2, _r) = Vault::new(Arc::clone(&store2), index, config).unwrap();
+    for key in ["type", "status"] {
+        match vault2.set_frontmatter(moment(), TYPST_PATH, key, "x") {
+            Err(DomainError::ReservedSchemaField { field, .. }) => assert_eq!(field, key),
+            other => panic!("{key}: {other:?}"),
+        }
+    }
+    assert_eq!(store2.read_file(&typst_path()).unwrap(), TYPST_NOTE);
+    assert_eq!(store.read_file(&typst_path()).unwrap(), TYPST_NOTE);
 }
