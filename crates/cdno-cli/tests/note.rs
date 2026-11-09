@@ -2530,6 +2530,62 @@ mod freshness {
 }
 
 #[test]
+fn note_rename_moves_a_typst_note_and_its_folder() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    let note = dir.path().join("concepts/bias-variance-split.typ");
+    let assets = dir.path().join("concepts/bias-variance-split/figs");
+    fs::create_dir_all(&assets).unwrap();
+    fs::write(assets.join("a.png"), [0xff_u8, 0xd8, 0x00]).unwrap();
+    fs::write(
+        &note,
+        "#metadata((\n  type: \"concept\",\n  title: \"Bias-variance split\",\n  created: \"2026-11-08\",\n)) <cdno>\n\n#image(\"bias-variance-split/figs/a.png\")\n",
+    )
+    .unwrap();
+
+    let preview = rename_cmd(dir.path())
+        .args(["bias-variance-split", "--to", "error-split", "--dry-run"])
+        .arg("--json")
+        .assert()
+        .success();
+    let plan: serde_json::Value = serde_json::from_slice(&preview.get_output().stdout).unwrap();
+    let own = plan["edits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["path"] == "concepts/bias-variance-split.typ")
+        .expect("the note's own edit");
+    assert!(
+        own["changes"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!({ "kind": "asset_paths", "count": 1 })),
+        "{own}"
+    );
+
+    rename_cmd(dir.path())
+        .args(["bias-variance-split", "--to", "error-split"])
+        .assert()
+        .success();
+
+    assert!(!note.exists());
+    assert!(!dir.path().join("concepts/bias-variance-split").exists());
+    assert_eq!(
+        fs::read(dir.path().join("concepts/error-split/figs/a.png")).unwrap(),
+        vec![0xff_u8, 0xd8, 0x00]
+    );
+    let moved = fs::read_to_string(dir.path().join("concepts/error-split.typ")).unwrap();
+    assert!(
+        moved.contains("#image(\"error-split/figs/a.png\")"),
+        "{moved}"
+    );
+    assert!(
+        moved.contains("aliases: (\"bias-variance-split\",),"),
+        "{moved}"
+    );
+}
+
+#[test]
 fn note_create_format_typst() {
     let dir = tempdir().unwrap();
     init_person_vault(dir.path());

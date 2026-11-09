@@ -27,6 +27,7 @@ pub(in crate::vault) fn build_index_entry_for(
     note_type: &str,
 ) -> Result<NoteEntry, DomainError> {
     let (fm, _body) = parse_note(path, content)?;
+    let title = fm.optional_field::<String>("title").ok().flatten();
     let now_ns = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
@@ -35,7 +36,7 @@ pub(in crate::vault) fn build_index_entry_for(
     Ok(NoteEntry {
         path: path.clone(),
         note_type: note_type.to_owned(),
-        title: None,
+        title,
         content_hash: content_hash(content),
         mtime_ns: now_ns,
         size: content.len() as u64,

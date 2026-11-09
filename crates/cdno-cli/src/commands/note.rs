@@ -652,6 +652,9 @@ fn emit_rename_json(
                 Change::Address { count } => serde_json::json!({ "kind": "links", "count": count }),
                 Change::Field { key } => serde_json::json!({ "kind": "field", "key": key }),
                 Change::Alias => serde_json::json!({ "kind": "alias" }),
+                Change::AssetPaths { count } => {
+                    serde_json::json!({ "kind": "asset_paths", "count": count })
+                }
                 Change::LogLine => serde_json::json!({ "kind": "log_line" }),
             })
             .collect()
@@ -740,11 +743,13 @@ fn render_plan(plan: &RenamePlan) -> String {
         .unwrap_or(0);
     for edit in &plan.edits {
         let mut links = 0;
+        let mut asset_paths = 0;
         let mut keys: Vec<String> = Vec::new();
         for change in &edit.changes {
             match change {
                 Change::Address { count } => links += count,
                 Change::Field { key } => keys.push(format!("{key}:")),
+                Change::AssetPaths { count } => asset_paths += count,
                 Change::Alias | Change::LogLine => {}
             }
         }
@@ -759,6 +764,9 @@ fn render_plan(plan: &RenamePlan) -> String {
                 plural(keys.len()),
                 keys.join(", ")
             ));
+        }
+        if asset_paths > 0 {
+            parts.push(format!("{asset_paths} asset path{}", plural(asset_paths)));
         }
         if !parts.is_empty() {
             out.push_str(&format!(

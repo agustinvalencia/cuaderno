@@ -319,8 +319,7 @@ pub struct NoteEntry {
 /// 1. **The title comes from `notes_fts.title`, the note's body H1 — not
 ///    [`NoteEntry::title`]**, which is the frontmatter `title:` field and is
 ///    absent on essentially every Cuaderno note (see
-///    [`crate::extractors::first_h1`], and note that
-///    `cdno_domain::vault::index_entry` writes `title: None` unconditionally).
+///    [`crate::extractors::first_h1`]).
 ///    A candidate list built off `NoteEntry` would be label-less.
 /// 2. `NoteEntry` carries the full frontmatter JSON blob, which would be
 ///    deserialised for every note in the vault to reach a field this never
