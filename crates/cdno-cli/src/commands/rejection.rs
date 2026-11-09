@@ -146,6 +146,7 @@ pub fn typst_rejection(err: &cdno_domain::error::DomainError) -> Option<serde_js
             "asset_path_outside_folder",
             serde_json::json!({ "path": path, "line": line }),
         ),
+        DomainError::AdoptionRefused { .. } => ("adoption_refused", serde_json::json!({})),
         DomainError::AssetPathNotLiteral { call, line } => (
             "asset_path_not_literal",
             serde_json::json!({ "call": call, "line": line }),

@@ -1,4 +1,5 @@
 mod unit {
+    mod adoption_tests;
     mod artefacts_tests;
     mod classify_tests;
     mod config_edit_tests;

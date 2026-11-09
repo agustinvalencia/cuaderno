@@ -17,8 +17,8 @@ use crate::context::{
     refuse_reference_outside_the_vault, resolve_note_reference, resolve_rename_note,
 };
 use crate::dto::{
-    CurrentFocusDto, NoteToDailyResponse, PauseResultDto, RenamePlanDto, ResumeResultDto,
-    ResumedFromDto, ReviseNoteResponse, SwitchResultDto,
+    AdoptedWriteResultDto, CurrentFocusDto, NoteToDailyResponse, PauseResultDto, RenamePlanDto,
+    ResumeResultDto, ResumedFromDto, ReviseNoteResponse, SwitchResultDto,
 };
 use crate::input::*;
 
@@ -187,7 +187,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "File evidence into the named portfolio. `origin` is a bare wikilink target (e.g. `projects/foo`); the server wraps it. Resolve a real slug in `origin` (e.g. a project via `get_orientation`) rather than guessing — `origin` is not validated, so a wrong slug silently writes a dangling link instead of erroring. By default writes a markdown evidence note with `content` as the body. To file a non-markdown artefact (PDF, image, video, …), set `attach` to its server-side path: the file is copied into the portfolio and a linked stub is scaffolded, and `content` becomes the stub's abstract — write a descriptive one, since it's the only thing search and other agents see of the artefact. Pass `format: typst` only when the person asks for a Typst note or the material is already Typst (a Typst sibling in the portfolio is only where to copy the preamble from): `content` is then the complete Typst body, preamble and imports included, and the engine writes the metadata block itself, so never put a `<cdno>` block in it. A body the engine cannot take (a `<cdno>` label, a parse error, a `[[…]]` link with an unescaped character) is refused with a `remedy` naming the fix; `vars` is refused with `typst`."
+        description = "File evidence into the named portfolio. `origin` is a bare wikilink target (e.g. `projects/foo`); the server wraps it. Resolve a real slug in `origin` (e.g. a project via `get_orientation`) rather than guessing — `origin` is not validated, so a wrong slug silently writes a dangling link instead of erroring. By default writes a markdown evidence note with `content` as the body. To adopt an existing Typst file as the note, pass `format: typst` with `attach` set to its server-side `.typ` path: the file is the note (leave `content` empty), the engine writes the metadata block, every file under the folder the `.typ` sits in is copied beside the note (subfolders kept, so keep that folder to the note's own figures and bibliography; a symbolic link in it is refused), each literal relative path in the file is rewritten to point at the copy, and the result lists them as `rewrites` (`was`/`now`). A path that climbs out of the folder, a `/`-rooted path or a non-literal path is refused with a `remedy`. To file a non-markdown artefact (PDF, image, video, …), set `attach` to its server-side path: the file is copied into the portfolio and a linked stub is scaffolded, and `content` becomes the stub's abstract — write a descriptive one, since it's the only thing search and other agents see of the artefact. Pass `format: typst` only when the person asks for a Typst note or the material is already Typst (a Typst sibling in the portfolio is only where to copy the preamble from): `content` is then the complete Typst body, preamble and imports included, and the engine writes the metadata block itself, so never put a `<cdno>` block in it. A body the engine cannot take (a `<cdno>` label, a parse error, a `[[…]]` link with an unescaped character) is refused with a `remedy` naming the fix; `vars` is refused with `typst`."
     )]
     pub async fn file_to_portfolio(
         &self,
@@ -204,12 +204,54 @@ impl CuadernoServer {
                 ));
             }
         };
-        if typst && input.attach.is_some() {
-            return Err(invalid_argument(
-                "attach",
-                "adopting a file as a Typst note is not available yet; omit `attach` to file \
-                 `content` as a Typst note",
-            ));
+        if typst && let Some(file) = input.attach.clone() {
+            let root = self.vault_root().to_path_buf();
+            if !input.content.trim().is_empty() {
+                return Err(invalid_argument(
+                    "content",
+                    "with `format: typst` and `attach` the file is the note; leave `content` empty",
+                ));
+            }
+            let adoption = self
+                .with_vault(move |vault| {
+                    if input.vars.as_ref().is_some_and(|v| !v.is_empty()) {
+                        return Ok(Err(DomainError::VarsUnsupportedForTypst));
+                    }
+                    let read = match cdno_core::adoption::read_typst_adoption(
+                        std::path::Path::new(&file),
+                        &root,
+                    ) {
+                        Ok(read) => read,
+                        Err(e) => return Ok(Err(e.into())),
+                    };
+                    Ok(vault.adopt_typst_evidence(
+                        at,
+                        &input.portfolio,
+                        &input.source,
+                        &input.origin,
+                        &read.contents,
+                        &read.file_name,
+                        read.assets,
+                    ))
+                })
+                .await??
+                .map_err(into_mcp_error)?;
+            let message = format!("Filed evidence at {}", adoption.path);
+            let rewrites = adoption.rewrites;
+            return self
+                .verified_write_with(
+                    adoption.path.clone(),
+                    WriteShape::Rewritten,
+                    |verification| {
+                        AdoptedWriteResultDto::new(
+                            adoption.path.to_string(),
+                            message,
+                            rewrites,
+                            verification,
+                        )
+                    },
+                )
+                .await;
         }
         let path = self
             .with_vault(move |vault| {

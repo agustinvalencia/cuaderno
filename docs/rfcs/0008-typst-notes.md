@@ -436,7 +436,7 @@ One verb per type, as today, with a format switch, and two ways to supply the Ty
 - **Authored.** With `format: typst` and no `attach`, `content` is the **Typst body**: everything
   after the metadata block, preamble included, complete.
 - **Adopted** (stage S4b). With `format: typst` **and** `attach: "<file>.typ"`, the file *is* the
-  note. The interface layer reads it and enumerates an optional assets folder beside it into
+  note. The interface layer reads it and enumerates the directory it sits in (its figures, bibliography and any other files; at most 200 files or 200 MiB; entries named `.…` are skipped, so a deck that names one is refused as not in the folder; a symbolic link or a folder overlapping the vault is refused) into
   `(source, destination)` pairs (the domain does no file I/O); the engine refuses a file whose
   parse holds an Error node or that already carries `<cdno>`; it finds every **literal relative
   path** under `image` (and its `icc:`), `read`, `json`, `csv`, `yaml`, `toml`, `xml`, `cbor`,
@@ -574,6 +574,10 @@ compiler, which is the rendering phase.
   template variables, the concept scaffold — does not apply to Typst notes in v1. Each is listed
   above with its rejection.
 - A **search hit** inside a Typst note shows Typst syntax in its snippet.
+- **Adoption scans only the adopted file.** A sibling `.typ` copied with the folder is not scanned,
+  so a `/`-rooted or otherwise unresolvable path inside it passes adoption and fails when the
+  chapter is compiled. The folder is the adopted file's own directory, everything in it comes
+  along, and a symbolic link in it is refused.
 - **A listed function used as a value is not seen.** `("a.png",).map(image)` or `let load = read`
   followed by `load("x.txt")` reach for a file the adoption scan cannot find, so the file is not
   copied and the path is not rewritten. The scan reads calls, not data flow.

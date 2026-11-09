@@ -78,7 +78,7 @@ impl DomainError {
     /// What the caller does about a Typst creation refusal (RFC 0008 §5.7,
     /// §6.4); `None` for any other error. The MCP and CLI render it beside the
     /// message, as they do the focus remedy.
-    pub fn remedy(&self) -> Option<&'static str> {
+    pub fn remedy(&self) -> Option<&str> {
         match self {
             DomainError::BodyCarriesMetadataBlock => Some(
                 "Remove the `#metadata(...) <cdno>` block from the body; the engine writes it from the fields.",
@@ -112,6 +112,7 @@ impl DomainError {
             DomainError::AssetPathOutsideFolder { .. } => Some(
                 "Move the file into the folder being adopted, or change the path to one inside it.",
             ),
+            DomainError::AdoptionRefused { remedy, .. } => Some(remedy.as_str()),
             DomainError::AssetPathNotLiteral { .. } => Some(
                 "Write the path as a string literal, so every file the document reaches for can be found and copied.",
             ),
@@ -563,6 +564,11 @@ pub enum DomainError {
     #[error("line {line}: the path '{path}' lands outside the folder being adopted")]
     AssetPathOutsideFolder { path: String, line: usize },
 
+    /// The file or folder offered for adoption cannot be taken (RFC 0008 §5.7): a symbolic
+    /// link, a folder too large or overlapping the vault, an unreadable file.
+    #[error("{reason}")]
+    AdoptionRefused { reason: String, remedy: String },
+
     /// An adopted file's path argument is not a string literal (RFC 0008
     /// §5.7), so it cannot be resolved or rewritten.
     #[error("line {line}: the path argument of `{call}` is not a string literal")]
@@ -761,5 +767,14 @@ fn focus_open_message(focus: &crate::CurrentFocus, same_action: bool, carried: b
             "an action is already in focus \u{2014} {named}. Switch to the new action, or pause \
              or complete this one first"
         ),
+    }
+}
+
+impl From<cdno_core::adoption::AdoptionReadError> for DomainError {
+    fn from(e: cdno_core::adoption::AdoptionReadError) -> Self {
+        DomainError::AdoptionRefused {
+            reason: e.to_string(),
+            remedy: e.remedy().to_owned(),
+        }
     }
 }

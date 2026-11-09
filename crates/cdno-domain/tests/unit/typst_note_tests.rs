@@ -163,7 +163,7 @@ fn the_link_message_and_remedy_fit_each_kind_of_fault() {
             line: 1,
             leaf: leaf.into(),
         };
-        (e.to_string(), e.remedy().unwrap())
+        (e.to_string(), e.remedy().unwrap().to_owned())
     };
     let (m, r) = texts("end of run");
     assert!(

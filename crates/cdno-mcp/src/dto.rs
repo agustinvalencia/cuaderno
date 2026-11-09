@@ -1843,6 +1843,40 @@ pub struct FocusedWriteResultDto {
     pub focus: Option<CurrentFocusDto>,
 }
 
+/// [`WriteResultDto`] for an adopted Typst note (RFC 0008 §5.7): the same fields, unchanged,
+/// plus the path literals the engine rewrote.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct AdoptedWriteResultDto {
+    #[serde(flatten)]
+    pub write: WriteResultDto,
+    /// Each relative path in the adopted file that was rewritten to point into the note's
+    /// folder, in document order. A record; nothing for the caller to do.
+    pub rewrites: Vec<PathRewriteDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PathRewriteDto {
+    pub was: String,
+    pub now: String,
+}
+
+impl AdoptedWriteResultDto {
+    pub fn new(
+        path: impl Into<String>,
+        message: impl Into<String>,
+        rewrites: Vec<(String, String)>,
+        verification: WriteVerificationDto,
+    ) -> Self {
+        Self {
+            write: WriteResultDto::new(path, message, verification),
+            rewrites: rewrites
+                .into_iter()
+                .map(|(was, now)| PathRewriteDto { was, now })
+                .collect(),
+        }
+    }
+}
+
 impl WriteResultDto {
     pub fn new(
         path: impl Into<String>,

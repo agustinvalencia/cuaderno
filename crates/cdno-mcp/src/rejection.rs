@@ -103,6 +103,7 @@ pub(crate) enum RejectionCode {
     AmbiguousSection,
     AmbiguousSlug,
     AmbiguousWaitingOn,
+    AdoptionRefused,
     AssetPathNotLiteral,
     AssetPathOutsideFolder,
     BodyCarriesMetadataBlock,
@@ -201,7 +202,8 @@ fn rejection_message(code: RejectionCode, e: &DomainError) -> String {
             "{e}; if that is the note you meant, use it; otherwise ask the person for another name, do not suffix it yourself"
         ),
         // The Typst creation refusals end on their remedy (RFC 0008 §6.4).
-        RejectionCode::AssetPathNotLiteral
+        RejectionCode::AdoptionRefused
+        | RejectionCode::AssetPathNotLiteral
         | RejectionCode::AssetPathOutsideFolder
         | RejectionCode::BodyCarriesMetadataBlock
         | RejectionCode::BodyDoesNotParse
@@ -730,6 +732,7 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             RejectionCode::AssetPathOutsideFolder,
             json!({ "path": path, "line": line }),
         ),
+        DomainError::AdoptionRefused { .. } => (RejectionCode::AdoptionRefused, json!({})),
         DomainError::AssetPathNotLiteral { call, line } => (
             RejectionCode::AssetPathNotLiteral,
             json!({ "call": call, "line": line }),
