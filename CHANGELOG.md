@@ -99,6 +99,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `<stem>.typ`, under `portfolios/` or a Typst-admitting type's folder, holds attachments, never
   notes, and lint no longer calls it an orphan. Owners resolve shallow-first, so a labelled file
   inside an owned folder is not read; a stub and a Typst note sharing a stem resolve to the stub.
+- **`format` on `read_note`** (RFC 0008 T16). `read_note` reports `format` (`markdown` or `typst`); for a Typst note `body` is the source after its metadata block, `headings` are its `=` headings, and the title is the block's `title`, never a heading.
 
 ## [0.44.0] - 2026-11-06
 

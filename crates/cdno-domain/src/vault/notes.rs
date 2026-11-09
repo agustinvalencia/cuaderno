@@ -8,7 +8,7 @@
 use cdno_core::extractors::first_h1;
 use cdno_core::frontmatter::parse_note;
 use cdno_core::hash::content_hash;
-use cdno_core::note::{note_heading_texts, note_headings};
+use cdno_core::note::note_heading_texts;
 use cdno_core::path::VaultPath;
 use cdno_core::paths::{NoteFormat, note_format};
 use cdno_core::reconcile::reconcile;
@@ -28,8 +28,11 @@ pub struct NoteView {
     /// `None` when the file isn't indexed — attachments, ignored
     /// files, or a note written since the last reconcile.
     pub note_type: Option<String>,
-    /// Text of the body's first ATX H1, when present.
+    /// A Markdown note's first ATX H1, when present. A Typst note's is the
+    /// metadata block's `title`, never a heading (RFC 0008 §5.3).
     pub title: Option<String>,
+    /// The note's on-disk format, from its extension.
+    pub format: NoteFormat,
     /// Full frontmatter as JSON. `null` when the file has no parseable
     /// frontmatter block. Typed as `unknown` on the wire — the renderer
     /// narrows per note type.
@@ -87,12 +90,13 @@ impl Vault {
             Ok((fm, body)) => (fm.as_json(), body.to_owned()),
             Err(_) => (serde_json::Value::Null, raw),
         };
-        let title = match note_format(path) {
-            Some(NoteFormat::Typst) => note_headings(path, &body)
-                .into_iter()
-                .find(|(level, _)| *level == 1)
-                .map(|(_, text)| text),
-            _ => first_h1(&body),
+        let format = note_format(path).unwrap_or(NoteFormat::Markdown);
+        let title = match format {
+            NoteFormat::Typst => frontmatter
+                .get("title")
+                .and_then(|t| t.as_str())
+                .map(str::to_owned),
+            NoteFormat::Markdown => first_h1(&body),
         };
         let headings = note_heading_texts(path, &body);
         let backlinks = self.index.find_backlinks(path)?;
@@ -100,6 +104,7 @@ impl Vault {
             path: path.clone(),
             note_type,
             title,
+            format,
             frontmatter,
             body,
             content_hash,

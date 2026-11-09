@@ -1527,6 +1527,10 @@ pub struct ReadNoteResponse {
     /// `daily`, ...), or null when the file is not indexed (an ignored
     /// file, or one written since the last reconcile).
     pub note_type: Option<String>,
+    /// `"markdown"` or `"typst"`, from the file's extension. For a Typst
+    /// note `body` is the source after its metadata block, `frontmatter` is
+    /// that block, and `headings` are its `=` headings.
+    pub format: String,
     /// The full frontmatter as JSON, or null when the note has no
     /// parseable frontmatter block (the whole file is then the body).
     pub frontmatter: serde_json::Value,
@@ -1558,6 +1562,7 @@ impl From<cdno_domain::vault::NoteView> for ReadNoteResponse {
         Self {
             path: v.path.to_string(),
             note_type: v.note_type,
+            format: v.format.name().to_owned(),
             frontmatter: v.frontmatter,
             body: v.body,
             content_hash: v.content_hash,
