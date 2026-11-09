@@ -765,6 +765,23 @@ fn an_md_whose_stem_matches_a_typ_is_refused() {
 }
 
 #[test]
+fn a_blank_body_is_refused_and_nothing_is_written() {
+    let (vault, store, _) = evidence_vault(VaultConfig::default());
+    let portfolio = portfolio_slug(&store);
+    let before = snapshot(&store);
+    for body in ["", "  \n\t\n"] {
+        let err = vault
+            .file_typst_evidence(at(), &portfolio, SOURCE, ORIGIN, body)
+            .unwrap_err();
+        assert!(
+            matches!(err, DomainError::EmptyField { field: "content" }),
+            "{err:?}"
+        );
+    }
+    assert_eq!(snapshot(&store), before);
+}
+
+#[test]
 fn typst_off_refuses_with_format_unsupported() {
     let config = VaultConfig {
         typst: TypstConfig {

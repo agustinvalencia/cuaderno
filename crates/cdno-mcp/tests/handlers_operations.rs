@@ -162,6 +162,7 @@ async fn file_to_portfolio_creates_evidence_note() {
             content: "4x speedup at 95% accuracy.".to_owned(),
             attach: None,
             vars: None,
+            format: None,
         }))
         .await
         .expect("file_to_portfolio");
@@ -187,10 +188,191 @@ async fn file_to_portfolio_errors_on_missing_portfolio() {
             content: String::new(),
             attach: None,
             vars: None,
+            format: None,
         }))
         .await
         .expect_err("missing portfolio should error");
     assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+}
+
+const TYPST_EVIDENCE: &str = "#import \"@preview/some-template:0.3.0\": report
+#show: report.with(title: \"Error budget derivation\")
+
+= Setting
+
+The surrogate's error splits as in [[concepts/bias-variance-split]].
+";
+
+fn typst_filing(format: Option<&str>, content: &str) -> FileToPortfolioInput {
+    FileToPortfolioInput {
+        portfolio: "surrogate-error-budget".to_owned(),
+        source: "Error budget derivation".to_owned(),
+        origin: "projects/surrogate-model".to_owned(),
+        content: content.to_owned(),
+        attach: None,
+        vars: None,
+        format: format.map(str::to_owned),
+    }
+}
+
+fn typst_filing_server() -> (CuadernoServer, Arc<dyn VaultStore>) {
+    server_with(|vault, _s| {
+        vault
+            .create_portfolio(moment(2026, 2, 1, 9, 0), "Surrogate error budget", None)
+            .unwrap();
+    })
+}
+
+fn tree(store: &Arc<dyn VaultStore>) -> Vec<(String, String)> {
+    let mut all: Vec<(String, String)> = store
+        .walk_dir(&VaultPath::root())
+        .unwrap()
+        .into_iter()
+        .map(|p| (p.to_string(), store.read_file(&p).unwrap_or_default()))
+        .collect();
+    all.sort();
+    all
+}
+
+#[tokio::test]
+async fn file_to_portfolio_with_format_typst_writes_a_typ_note() {
+    let (server, store) = typst_filing_server();
+    let result = server
+        .file_to_portfolio(Parameters(typst_filing(Some("typst"), TYPST_EVIDENCE)))
+        .await
+        .expect("file_to_portfolio");
+    let value = decode_json(&result);
+    let path = value["path"].as_str().unwrap();
+    assert!(
+        path.starts_with("portfolios/surrogate-error-budget/")
+            && path.ends_with("-error-budget-derivation.typ"),
+        "path: {path}"
+    );
+    let note = store.read_file(&vp(path)).unwrap();
+    assert!(note.contains("<cdno>"), "{note}");
+    assert!(note.ends_with(&format!("\n\n{TYPST_EVIDENCE}")), "{note}");
+    assert!(
+        note.contains("origin: \"[[projects/surrogate-model]]\""),
+        "{note}"
+    );
+}
+
+#[tokio::test]
+async fn file_to_portfolio_typst_refuses_vars_with_a_code() {
+    let (server, store) = typst_filing_server();
+    let before = tree(&store);
+    let mut input = typst_filing(Some("typst"), TYPST_EVIDENCE);
+    input.vars = Some(std::collections::HashMap::from([(
+        "x".to_owned(),
+        "y".to_owned(),
+    )]));
+    let err = server
+        .file_to_portfolio(Parameters(input))
+        .await
+        .expect_err("vars with typst are refused");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "vars_unsupported_for_typst");
+    assert!(
+        !rejection["details"]["remedy"]
+            .as_str()
+            .unwrap_or("")
+            .is_empty(),
+        "{rejection}"
+    );
+    assert_eq!(tree(&store), before);
+}
+
+#[tokio::test]
+async fn file_to_portfolio_typst_refuses_an_unescaped_link_with_line_and_remedy() {
+    let (server, store) = typst_filing_server();
+    let before = tree(&store);
+    let body = "= Setting\n\nSee [[concepts/bias-variance-split#a#b]] now.\n";
+    let err = server
+        .file_to_portfolio(Parameters(typst_filing(Some("typst"), body)))
+        .await
+        .expect_err("refused");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "link_needs_escape");
+    assert_eq!(rejection["details"]["line"], 3);
+    assert_eq!(rejection["details"]["leaf"], "Hash");
+    assert!(
+        !rejection["details"]["remedy"]
+            .as_str()
+            .unwrap_or("")
+            .is_empty(),
+        "{rejection}"
+    );
+    assert_eq!(tree(&store), before);
+}
+
+#[tokio::test]
+async fn file_to_portfolio_typst_refuses_a_shared_stem_naming_the_holder() {
+    let (server, store) = typst_filing_server();
+    let today = chrono::Local::now().format("%Y-%m-%d");
+    let holder = format!("portfolios/surrogate-error-budget/{today}-error-budget-derivation.md");
+    store.write_file(&vp(&holder), "# Held\n").unwrap();
+    let err = server
+        .file_to_portfolio(Parameters(typst_filing(Some("typst"), TYPST_EVIDENCE)))
+        .await
+        .expect_err("refused");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "stem_taken_by_other_format");
+    assert_eq!(rejection["details"]["holder"], holder.as_str());
+}
+
+#[tokio::test]
+async fn file_to_portfolio_typst_refuses_attach_and_an_unknown_format_as_invalid_params() {
+    let (server, store) = typst_filing_server();
+    let before = tree(&store);
+    let mut input = typst_filing(Some("typst"), "x");
+    input.attach = Some("/nowhere/figure.pdf".to_owned());
+    let err = server
+        .file_to_portfolio(Parameters(input))
+        .await
+        .expect_err("attach with typst");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    assert!(err.message.contains("'attach'"), "{err:?}");
+
+    let err = server
+        .file_to_portfolio(Parameters(typst_filing(Some("latex"), "x")))
+        .await
+        .expect_err("unknown format");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    assert!(err.message.contains("'format'"), "{err:?}");
+    assert_eq!(tree(&store), before);
+}
+
+#[tokio::test]
+async fn file_to_portfolio_typst_refuses_a_blank_body() {
+    let (server, store) = typst_filing_server();
+    let before = tree(&store);
+    let err = server
+        .file_to_portfolio(Parameters(typst_filing(Some("typst"), "  \n")))
+        .await
+        .expect_err("refused");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "empty_field");
+    assert_eq!(rejection["details"]["field"], "content");
+    assert_eq!(tree(&store), before);
+}
+
+#[tokio::test]
+async fn file_to_portfolio_without_format_is_markdown() {
+    let (server, _store) = typst_filing_server();
+    let result = server
+        .file_to_portfolio(Parameters(typst_filing(None, "Plain finding.")))
+        .await
+        .expect("file_to_portfolio");
+    let value = decode_json(&result);
+    assert!(value["path"].as_str().unwrap().ends_with(".md"), "{value}");
+    let mut second = typst_filing(Some("markdown"), "Another.");
+    second.source = "Second derivation".to_owned();
+    let result = server
+        .file_to_portfolio(Parameters(second))
+        .await
+        .expect("file_to_portfolio");
+    let value = decode_json(&result);
+    assert!(value["path"].as_str().unwrap().ends_with(".md"), "{value}");
 }
 
 // ---------------------------------------------------------------------
@@ -1500,6 +1682,7 @@ async fn file_to_portfolio_attaches_a_non_markdown_artefact() {
             content: "Sketch of the attention sparsity pattern.".to_owned(),
             attach: Some(artefact.to_string_lossy().into_owned()),
             vars: None,
+            format: None,
         }))
         .await
         .expect("attach via MCP");
