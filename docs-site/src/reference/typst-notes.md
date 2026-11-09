@@ -56,8 +56,10 @@ The block stands where YAML frontmatter stands in a Markdown note. The engine wr
   its `source`, as a Markdown evidence note is.
 - Strings take Typst's string escapes only (`"` and `\`). An anchor inside a string is a bare `#`,
   as in `origin: "[[journal/2026/daily/2026-11-02#Error budget sketch]]"`.
-- Tags come from the block's `tags` array. `#tag` in the body is not read, and the block itself is
-  excluded from search, as YAML frontmatter is.
+- Tags come from the block's `tags` array only; `#tag` in the body is not read. Evidence creation
+  writes no `tags`, and `set_frontmatter` errors on a key the block does not hold, so add the array
+  by hand in the block (`tags: ("surrogate", "error-budget"),`) and keep to it afterwards. The
+  block itself is excluded from search, as YAML frontmatter is.
 - `set_frontmatter` rewrites a value that is already in the block, byte for byte, leaving comments
   and key order alone. A key that is absent from the block is an error, not an insertion.
 
@@ -102,7 +104,7 @@ cdno note create concept --title "Bias variance split" --format typst --body-fil
 Over MCP, `file_to_portfolio` and `create_custom_note` take `format: "typst"`. The body is
 **complete Typst**: preamble, `#import` and `#show` lines included. The engine adds the metadata
 block above it and no title heading; there is no template, no `--var`, and no concept scaffold.
-The `origin` is given bare in the CLI (`projects/surrogate-model`); the engine wraps it.
+`cdno file --origin` takes a bare target (`projects/surrogate-model`) and wraps it in `[[…]]`. `cdno note create --origin` takes a string of wikilinks that you write with the brackets, as for a Markdown note (`"[[journal/2026/daily/2026-11-02#Error budget sketch]]"`); a bare value is stored as text and makes no edge.
 
 A body is refused, with a `remedy`, when it already holds a `<cdno>` label, does not parse, or has
 a `[[…]]` that is not one inline run (an unescaped markup character). The refusal happens before
@@ -131,7 +133,7 @@ an array of `{was, now}`).
 Give the file a directory of its own. Adoption is refused, with the code `adoption_refused` and a
 `remedy`, when:
 
-- the directory holds more than 200 files or more than 200 MiB;
+- the directory holds more than 200 assets (the limit counts the files copied beside the note, not the `.typ` itself) or more than 200 MiB in all (the `.typ` included);
 - it holds a symbolic link, or anything that is neither a regular file nor a folder;
 - the directory overlaps the vault (it contains the vault, or is inside it).
 

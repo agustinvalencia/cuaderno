@@ -54,9 +54,13 @@ says which one fails:
 [warning] portfolios/surrogate-error-budget/2026-11-09-review-deck/inner.md: this Markdown note sits in the assets folder of Typst note `portfolios/surrogate-error-budget/2026-11-09-review-deck.typ`, so it is not indexed; move it out of `portfolios/surrogate-error-budget/2026-11-09-review-deck/`
 ```
 
-A labelled `.typ` owns the folder `<stem>/` beside it, so a note placed there (a Markdown note or
-another labelled `.typ`) is treated as an asset and is not indexed. If `[typst] note_types` leaves
-out the file's type, lint warns "labelled Typst file outside the configured types". To write a note
+A labelled `.typ` owns the folder `<stem>/` beside it, so a Markdown note placed there is not
+indexed (the third row above). The rows apply only where the file is seen: "labelled Typst file
+outside the configured types" fires for a labelled `.typ` in the folder of a type that `[typst]
+note_types` leaves out, and "neither a note nor an attachment" for an unlabelled `.typ` in a folder
+that admits Typst. A labelled `.typ` anywhere else (outside every admitting folder, say in
+`journal/`, or inside another note's assets folder) gets **no row**: it is silently an attachment, so
+if a note you expected is missing and lint is quiet, check where the file sits. To write a note
 rather than attach a file, see [Typst notes](typst-notes.md).
 
 ## `cdno now` says nothing is started, but I started something

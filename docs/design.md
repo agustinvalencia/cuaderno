@@ -793,15 +793,18 @@ character takes a backslash.
 
 **Adoption.** `file_to_portfolio` with `format: typst` and `attach`, or `cdno file --format typst
 --attach`, makes an existing `.typ` the note. The folder it brings is the directory the file sits
-in, copied to `<stem>/` (dot entries skipped; at most 200 files and 200 MiB; a symbolic link or a
+in, copied to `<stem>/` (dot entries skipped; at most 200 asset files, not counting the `.typ`, and 200 MiB in all; a symbolic link or a
 folder overlapping the vault is refused as `adoption_refused`), and each literal relative path the
 file names is rewritten to the copy. Only the adopted file is scanned for paths.
 
 **Reading and revising.** Evidence is append-only in both formats by the same verb rule. A concept
 is revised by whole body only, keeping the blank lines after the block; section revision is refused
 for Typst. A Typst concept may be renamed with its assets folder; evidence is not renamable in
-either format. A labelled `.typ` owns `<stem>/`, so a note placed there is evicted from the index
-(lint warns).
+either format. A labelled `.typ` owns `<stem>/`, so a Markdown note placed there is evicted from the index (lint
+warns on a `.md` with frontmatter). Lint's file rows apply only where the classifier can see the
+file: a loose unlabelled `.typ` in an admitting folder is a warning, a labelled one in a folder of a
+type `[typst] note_types` leaves out is a warning, and a labelled `.typ` outside every admitting
+folder, or inside an assets folder, gets no row at all.
 
 **What is lost.** Obsidian resolves `[[stem]]` only to `stem.md`: every link to a Typst note is dead
 there, the engine's own `evidence created` and `revised` journal lines included, and clicking one
