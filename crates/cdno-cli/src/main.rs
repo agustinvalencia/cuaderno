@@ -300,7 +300,7 @@ enum Commands {
         origin: Option<String>,
         /// Inline body. For a plain note it's the content; with `--attach`
         /// it's the abstract. Optional; defaults to empty.
-        #[arg(long, default_value = "")]
+        #[arg(long, default_value = "", conflicts_with = "body_file")]
         content: String,
         /// Path to a non-markdown artefact to file as evidence. The file
         /// is copied into `portfolios/<slug>/<evidence-slug>/` and an
@@ -316,6 +316,14 @@ enum Commands {
         /// with `--attach` (attachment stubs aren't templated).
         #[arg(long = "var", value_parser = cdno_cli::prompt::parse_key_val)]
         var: Vec<(String, String)>,
+        /// The file format: `markdown` (the default) or `typst`. A Typst
+        /// note is written to `<portfolio>/<date>-<source>.typ` from
+        /// `--body-file` (or `--content`); `--var` is refused with it.
+        #[arg(long, value_enum, default_value_t)]
+        format: commands::file::FileFormat,
+        /// Path to the body of a Typst note (with `--format typst`).
+        #[arg(long = "body-file", value_name = "PATH")]
+        body_file: Option<PathBuf>,
     },
 
     /// Manage question notes: create, then status transitions
@@ -689,6 +697,8 @@ fn dispatch(cli: Cli) -> Result<()> {
             attach,
             r#move,
             var,
+            format,
+            body_file,
         } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::file::run(
@@ -701,6 +711,8 @@ fn dispatch(cli: Cli) -> Result<()> {
                 attach,
                 r#move,
                 var,
+                format,
+                body_file,
                 cli.no_interactive,
                 cli.json,
             )
