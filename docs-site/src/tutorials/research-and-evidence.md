@@ -72,6 +72,36 @@ cdno file --portfolio sparse-vs-dense-attention-ood \
           --content "Key result: 4x speedup at 95% accuracy."
 ```
 
+### Filing a Typst note
+
+If the evidence is already Typst, or you want it written as Typst (a derivation with equations, say),
+file it as a Typst note. First the test every filing passes: **is this the thing you delivered?** A
+deliverable belongs to its project and is not filed as evidence. Evidence is an observation or result
+that bears on a question.
+
+```bash
+cdno file --portfolio sparse-vs-dense-attention-ood \
+          --source "Error budget derivation" \
+          --origin projects/surrogate-model \
+          --format typst --body-file derivation.typ
+```
+
+The body is complete Typst, preamble and imports included; cuaderno writes the metadata block itself,
+so leave out any `<cdno>` block. When you have no preamble of your own, copy the one from the newest
+Typst note in the portfolio. Over MCP the same filing is `file_to_portfolio` with `format: typst`;
+an agent reads that sibling with `read_note`.
+
+Three things to know:
+
+- **Cuaderno checks syntax only.** A body that parses can still come out wrong when you compile it.
+- **Escape inside `[[…]]`.** Put a backslash before any Typst markup character in a link
+  (`[[surrogate-error-budget\#bias]]`). An unescaped character is refused, with the fix named.
+- **Leave a space before `[[`** when it follows a `#…` expression or an `@ref`. Without one the link
+  is lost silently, and nothing refuses it.
+
+`--var` is refused with `--format typst`. Do not use `--attach` for a `.typ` that should be a note:
+attaching stores the bytes behind an abstract, while a Typst note is searchable as text.
+
 ## Review what's accumulated
 
 ```bash
