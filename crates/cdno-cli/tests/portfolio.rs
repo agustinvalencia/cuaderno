@@ -335,6 +335,8 @@ fn portfolio_show_renders_frontmatter_and_evidence() {
         None,
         false,
         vec![],
+        file::FileFormat::Markdown,
+        None,
         true,
         false,
     )
@@ -378,6 +380,8 @@ fn portfolio_show_tags_attachment_evidence_with_its_kind() {
         Some(artefact),
         false,
         vec![],
+        file::FileFormat::Markdown,
+        None,
         true,
         false,
     )
@@ -434,6 +438,8 @@ fn file_writes_evidence_note_with_wrapped_origin() {
         None,
         false,
         vec![],
+        file::FileFormat::Markdown,
+        None,
         true,
         false,
     )
@@ -464,6 +470,8 @@ fn file_writes_empty_body_when_content_omitted() {
         None,
         false,
         vec![],
+        file::FileFormat::Markdown,
+        None,
         true,
         false,
     )
@@ -495,6 +503,8 @@ fn file_errors_when_missing_portfolio_in_non_interactive() {
         None,
         false,
         vec![],
+        file::FileFormat::Markdown,
+        None,
         true,
         false,
     )
@@ -518,6 +528,8 @@ fn file_errors_on_prewrapped_origin() {
         None,
         false,
         vec![],
+        file::FileFormat::Markdown,
+        None,
         true,
         false,
     )
@@ -547,6 +559,8 @@ fn file_attach_imports_artefact_and_writes_linked_stub() {
         Some(artefact.clone()),
         false,
         vec![],
+        file::FileFormat::Markdown,
+        None,
         true,
         false,
     )
@@ -589,6 +603,8 @@ fn file_attach_move_removes_the_source() {
         Some(artefact.clone()),
         true, // --move
         vec![],
+        file::FileFormat::Markdown,
+        None,
         true,
         false,
     )
@@ -727,6 +743,8 @@ fn seed_renamable_portfolio(root: &Path) {
         None,
         false,
         vec![],
+        file::FileFormat::Markdown,
+        None,
         true,
         false,
     )
@@ -743,6 +761,8 @@ fn seed_renamable_portfolio(root: &Path) {
         Some(artefact),
         true,
         vec![],
+        file::FileFormat::Markdown,
+        None,
         true,
         false,
     )
@@ -1147,4 +1167,200 @@ fn a_dangling_symlinked_artefact_is_refused_before_the_write() {
     }
     assert!(!root.join("portfolios/new").exists(), "nothing was written");
     assert!(root.join("portfolios/old/_index.md").is_file());
+}
+
+// ---------------------------------------------------------------------
+// file --format typst (RFC 0008 T20)
+// ---------------------------------------------------------------------
+
+/// A vault with a portfolio and an origin project, so `cdno lint` has
+/// nothing to say about the filed note.
+fn typst_filing_vault() -> TempDir {
+    let dir = vault();
+    seed_portfolio(dir.path());
+    cdno_in(dir.path())
+        .args([
+            "--no-interactive",
+            "project",
+            "create",
+            "--title",
+            "Surrogate model",
+            "--context",
+            "work",
+        ])
+        .assert()
+        .success();
+    dir
+}
+
+fn file_typst_args(root: &Path) -> assert_cmd::Command {
+    let mut cmd = cdno_in(root);
+    cmd.args([
+        "--no-interactive",
+        "file",
+        "--portfolio",
+        "sparse-vs-dense-ood",
+        "--source",
+        "Error budget derivation",
+        "--origin",
+        "projects/surrogate-model",
+        "--format",
+        "typst",
+    ]);
+    cmd
+}
+
+#[test]
+fn file_format_typst_writes_a_typ_note() {
+    use predicates::prelude::*;
+    let dir = typst_filing_vault();
+    let body = dir.path().join("derivation.typ");
+    fs::write(&body, "The error splits as $ sigma^2 $.\n").unwrap();
+
+    file_typst_args(dir.path())
+        .arg("--body-file")
+        .arg(&body)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(".typ"));
+
+    let rel = fs::read_dir(dir.path().join("portfolios/sparse-vs-dense-ood"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .find(|n| n.ends_with(".typ"))
+        .expect("a .typ note");
+    let raw =
+        fs::read_to_string(dir.path().join("portfolios/sparse-vs-dense-ood").join(&rel)).unwrap();
+    assert!(raw.starts_with("#metadata(("), "{raw}");
+    assert!(
+        raw.ends_with("<cdno>\n\nThe error splits as $ sigma^2 $.\n"),
+        "{raw}"
+    );
+
+    cdno_in(dir.path())
+        .args([
+            "open",
+            "--path",
+            &format!("portfolios/sparse-vs-dense-ood/{rel}"),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(".typ"));
+    assert_lint_clean(dir.path());
+}
+
+#[test]
+fn file_format_typst_takes_content_as_the_body() {
+    let dir = typst_filing_vault();
+    file_typst_args(dir.path())
+        .args(["--content", "A short derivation.\n"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn file_format_typst_without_a_body_fails_non_interactively() {
+    use predicates::prelude::*;
+    let dir = typst_filing_vault();
+    file_typst_args(dir.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("body-file"));
+}
+
+#[test]
+fn file_format_typst_refuses_var() {
+    let dir = typst_filing_vault();
+    let out = file_typst_args(dir.path())
+        .args(["--content", "Body.\n", "--var", "k=v", "--json"])
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["code"], "vars_unsupported_for_typst");
+    assert!(json["details"]["remedy"].is_string());
+}
+
+#[test]
+fn file_format_typst_refuses_an_unescaped_link_with_remedy() {
+    let dir = typst_filing_vault();
+    let body = dir.path().join("bad.typ");
+    fs::write(&body, "See [[concepts/bias#variance]] here.\n").unwrap();
+    let out = file_typst_args(dir.path())
+        .arg("--body-file")
+        .arg(&body)
+        .arg("--json")
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["code"], "link_needs_escape");
+    assert!(
+        json["details"]["remedy"]
+            .as_str()
+            .unwrap()
+            .contains("Backslash")
+    );
+    assert!(json["message"].as_str().unwrap().contains("Backslash"));
+}
+
+#[test]
+fn file_format_typst_text_refusal_carries_the_remedy() {
+    use predicates::prelude::*;
+    let dir = typst_filing_vault();
+    let body = dir.path().join("bad.typ");
+    fs::write(&body, "See [[concepts/bias#variance]] here.\n").unwrap();
+    file_typst_args(dir.path())
+        .arg("--body-file")
+        .arg(&body)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Backslash-escape"));
+}
+
+#[test]
+fn file_format_typst_with_attach_is_a_clear_error() {
+    use predicates::prelude::*;
+    let dir = typst_filing_vault();
+    let art = dir.path().join("fig.png");
+    fs::write(&art, b"png").unwrap();
+    file_typst_args(dir.path())
+        .arg("--attach")
+        .arg(&art)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("later release"));
+}
+
+#[test]
+fn file_without_format_is_unchanged() {
+    let dir = typst_filing_vault();
+    cdno_in(dir.path())
+        .args([
+            "--no-interactive",
+            "file",
+            "--portfolio",
+            "sparse-vs-dense-ood",
+            "--source",
+            "Chen 2025",
+            "--origin",
+            "projects/surrogate-model",
+            "--content",
+            "Body text.\n",
+        ])
+        .assert()
+        .success();
+    let names: Vec<String> = fs::read_dir(dir.path().join("portfolios/sparse-vs-dense-ood"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert!(
+        names.iter().any(|n| n.ends_with("-chen-2025.md")),
+        "{names:?}"
+    );
+    assert!(!names.iter().any(|n| n.ends_with(".typ")), "{names:?}");
 }

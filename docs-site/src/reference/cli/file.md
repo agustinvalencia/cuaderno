@@ -20,6 +20,9 @@ cdno file [OPTIONS]
 | `--move` | With `--attach`, remove the source file after a successful copy (move instead of copy). |
 | `--var <NAME=VALUE>` | Value for a custom evidence template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. Ignored with `--attach` (attachment stubs aren't templated). See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
+| `--format <markdown\|typst>` | The file format, default `markdown` (never prompted). `typst` writes `<portfolio>/<date>-<source>.typ` from `--body-file` (or `--content`): a metadata block holding `type`, `created`, `source`, `portfolio` and `origin`, a blank line, then the body as Typst markup. The body is required, and prompted for in an editor when interactive. `--var` is refused with it, and so is a body that carries a `<cdno>` label, does not parse, or has a `[[` link that is not one inline run; with `--json` the refusal is a `{code, message, details}` object whose `details.remedy` says what to do. Not yet combinable with `--attach`. |
+| `--body-file <PATH>` | The body of a Typst note, read from a file. Only with `--format typst`. |
+
 Plus the [global options](overview.md#global-options). With `--json`, emits a `{path, message}`
 result and runs non-interactively.
 
@@ -40,6 +43,15 @@ cdno file --portfolio sparse-vs-dense-attention-ood \
 # Move the artefact in instead of copying:
 cdno file --portfolio sparse-vs-dense-attention-ood --source "fig 3" \
           --origin projects/surrogate-model --attach ./fig3.png --move
+```
+
+A Typst evidence note, written from a file:
+
+```bash
+cdno file --portfolio sparse-vs-dense-attention-ood \
+          --source "Error budget derivation" --origin projects/surrogate-model \
+          --format typst --body-file derivation.typ
+# Filed at portfolios/sparse-vs-dense-attention-ood/2026-11-09-error-budget-derivation.typ
 ```
 
 Evidence notes are [append-only](../../concepts/business-rules.md).

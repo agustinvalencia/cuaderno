@@ -20,6 +20,14 @@ use cdno_domain::Vault;
 use crate::bootstrap;
 use crate::prompt;
 
+/// The file format of the evidence note `cdno file` writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum FileFormat {
+    #[default]
+    Markdown,
+    Typst,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     root: &Path,
@@ -31,9 +39,26 @@ pub fn run(
     attach: Option<PathBuf>,
     move_after: bool,
     var: Vec<(String, String)>,
+    format: FileFormat,
+    body_file: Option<PathBuf>,
     no_interactive: bool,
     json: bool,
 ) -> Result<()> {
+    let typst = format == FileFormat::Typst;
+    if typst && attach.is_some() {
+        anyhow::bail!(
+            "filing an attachment as a Typst note is not available yet; adoption lands in a later release. Omit --format, or drop --attach"
+        );
+    }
+    if !typst && body_file.is_some() {
+        anyhow::bail!("--body-file applies to --format typst; use --content for a Markdown note");
+    }
+    if typst && !var.is_empty() {
+        return Err(crate::commands::rejection::typst_refusal(
+            cdno_domain::error::DomainError::VarsUnsupportedForTypst.into(),
+            json,
+        ));
+    }
     let (vault, _report) = bootstrap::open_vault(root)?;
     // `--json` implies non-interactive: prompts/confirms print to stdout,
     // which would corrupt the JSON result. Scripted callers pass full args.
@@ -53,9 +78,27 @@ pub fn run(
     // `content` stays optional — no prompt. For a plain note it's the
     // body; with `--attach` it's the abstract.
 
+    // A Typst note is not templated and has no body default: the body is
+    // demanded (or prompted), and `--var` is refused with the domain's text.
+    let content = if typst {
+        let from_flag = match body_file {
+            Some(p) => Some(
+                std::fs::read_to_string(&p)
+                    .with_context(|| format!("reading --body-file {}", p.display()))?,
+            ),
+            None if !content.is_empty() => Some(content),
+            None => None,
+        };
+        prompt::gather_or_error(from_flag, "body-file", interactive, &mut prompted, || {
+            prompt::prompt_editor("Body", "")
+        })?
+    } else {
+        content
+    };
+
     // Prompted template variables apply only to the templated (plain-note)
     // path; attachment stubs aren't templated, so `--var` is ignored there.
-    let template_vars = if attach.is_none() {
+    let template_vars = if attach.is_none() && !typst {
         prompt::gather_template_vars(&vault, "evidence", None, &var, interactive, &mut prompted)?
     } else {
         std::collections::HashMap::new()
@@ -89,6 +132,10 @@ pub fn run(
             }
             stub
         }
+        None if typst => vault
+            .file_typst_evidence(at, &portfolio, &source, &origin, &content)
+            .map_err(anyhow::Error::from)
+            .map_err(|e| crate::commands::rejection::typst_refusal(e, json))?,
         None => file_via_vault(
             &vault,
             at,

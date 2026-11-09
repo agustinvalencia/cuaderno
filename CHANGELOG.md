@@ -133,6 +133,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   Markdown.
 - **Concept guide: Typst concepts** (RFC 0008 T29, #957). The concept-library
   pages describe a concept written in Typst, refined as a whole body, and the link escape rule.
+- **`cdno file --format typst`** (RFC 0008 T20, #948). `--format <markdown|typst>` and
+  `--body-file` file a Typst evidence note through `file_typst_evidence`; the body is required,
+  `--var` is refused, and the Typst refusals print as `{code, message, details}` with
+  `details.remedy` under `--json`. With `--attach` it is a clear error until adoption lands.
 
 ## [0.44.0] - 2026-11-06
 
