@@ -256,6 +256,9 @@ Refusals (a [rejection](overview.md) with these codes; nothing is written):
 | `ambiguous_section` | The `section` heading matches more than one heading in the note. |
 | `section_revision_unavailable_for_typst` | A `section` aimed at a Typst note. `details.remedy` names the whole-body form: read the note, edit the body, and pass all of it as `body` with `expected_hash`. |
 | `body_carries_metadata_block` / `body_does_not_parse` / `link_needs_escape` | A Typst note's new `body` holds a `<cdno>` label, does not parse, or has a `[[…]]` that is not one inline run. The metadata block stays the engine's: `body` is everything after it. |
+| `format_unsupported_for_type` | `format: typst` was given for a note type that does not admit Typst. `list_note_types` reports `admits_typst` for each type; `[typst] note_types` sets the list. |
+| `stem_taken_by_other_format` | A `.typ` and an `.md` cannot share a stem in one folder. `details` names the note holding it. |
+| `vars_unsupported_for_typst` | `vars` was given with `format: typst`. A Typst note has no template, so the whole body goes in the content itself. |
 | `not_found` / `ambiguous_slug` | The `note` reference matches no note, or several (with their paths in `details.candidates`), as for `read_note`. |
 
 A blank `reason`, `body` together with `section`, `section` without `content`, `content` without

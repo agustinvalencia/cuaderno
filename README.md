@@ -152,7 +152,7 @@ cdno-core → cdno-domain → cdno-cli
                                    → Streamable HTTP transport (`cdno-mcp-server`, shipped)
 ```
 
-**cdno-core** has no domain knowledge — it handles markdown files with YAML frontmatter, section manipulation, SQLite indexing, and filesystem watching. Reusable in any markdown vault tool.
+**cdno-core** has no domain knowledge — it handles markdown files with YAML frontmatter, Typst notes with a metadata block, section manipulation, SQLite indexing, and filesystem watching. Reusable in any markdown vault tool.
 
 **cdno-domain** contains all RLM business logic. Defines note types, enforces rules (5-project cap, required frontmatter, enforced linking), implements queries (commitments aggregation, portfolio health), and handles state transitions. Pure logic — no file I/O, no networking.
 
@@ -160,7 +160,7 @@ cdno-core → cdno-domain → cdno-cli
 
 ## Design Principles
 
-- **Markdown files are the source of truth.** The SQLite index is a cache. If everything except the vault folder were deleted, the system could be rebuilt by reindexing.
+- **The note files are the source of truth.** They are Markdown, or Typst for evidence and concepts that want it (see [Typst notes](docs-site/src/reference/typst-notes.md)). The SQLite index is a cache. If everything except the vault folder were deleted, the system could be rebuilt by reindexing.
 - **Everything in one place, in open formats.** No proprietary formats, no cloud dependency.
 - **Opinionated enforcement over flexibility.** Required frontmatter by note type, automatic scaffolding, validation, enforced linking patterns.
 - **ADHD-friendly emotional design.** Lead with what is there, not what is missing. No guilt engines. No angry red overdue counts. Permission to park or drop things.

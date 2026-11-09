@@ -842,6 +842,17 @@ fn adoption_refusal(deck: &str, names: &[&str]) -> DomainError {
 }
 
 #[test]
+fn adopting_a_blank_file_is_refused_and_nothing_is_written() {
+    for deck in ["", "  \n\t\n"] {
+        let err = adoption_refusal(deck, &[]);
+        assert!(
+            matches!(err, DomainError::EmptyField { field: "content" }),
+            "{err:?}"
+        );
+    }
+}
+
+#[test]
 fn adopt_copies_assets_rewrites_paths_and_lists_them() {
     let (vault, store, _) = evidence_vault(VaultConfig::default());
     let portfolio = portfolio_slug(&store);
