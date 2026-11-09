@@ -112,3 +112,79 @@ pub fn rename_rejection(err: &cdno_domain::error::DomainError) -> Option<serde_j
         "details": details,
     }))
 }
+
+/// The `{code, message, details}` object for a Typst creation refusal
+/// (RFC 0008 §5.7, §6.4), shaped as the MCP emits it: the message ends on
+/// the remedy and `details` carries the facts plus the `remedy` itself.
+/// `None` for any other domain error.
+pub fn typst_rejection(err: &cdno_domain::error::DomainError) -> Option<serde_json::Value> {
+    use cdno_domain::error::DomainError;
+    let (code, mut details) = match err {
+        DomainError::BodyCarriesMetadataBlock => {
+            ("body_carries_metadata_block", serde_json::json!({}))
+        }
+        DomainError::BodyDoesNotParse { line, message } => (
+            "body_does_not_parse",
+            serde_json::json!({ "line": line, "message": message }),
+        ),
+        DomainError::LinkNeedsEscape { line, leaf } => (
+            "link_needs_escape",
+            serde_json::json!({ "line": line, "leaf": leaf }),
+        ),
+        DomainError::FormatUnsupportedForType { note_type } => (
+            "format_unsupported_for_type",
+            serde_json::json!({ "note_type": note_type }),
+        ),
+        DomainError::VarsUnsupportedForTypst => {
+            ("vars_unsupported_for_typst", serde_json::json!({}))
+        }
+        DomainError::StemTakenByOtherFormat { stem, holder } => (
+            "stem_taken_by_other_format",
+            serde_json::json!({ "stem": stem, "holder": holder.to_string() }),
+        ),
+        DomainError::AssetPathOutsideFolder { path, line } => (
+            "asset_path_outside_folder",
+            serde_json::json!({ "path": path, "line": line }),
+        ),
+        DomainError::AssetPathNotLiteral { call, line } => (
+            "asset_path_not_literal",
+            serde_json::json!({ "call": call, "line": line }),
+        ),
+        _ => return None,
+    };
+    let remedy = err.remedy();
+    if let (Some(remedy), Some(map)) = (remedy, details.as_object_mut()) {
+        map.insert("remedy".to_owned(), serde_json::json!(remedy));
+    }
+    Some(serde_json::json!({
+        "code": code,
+        "message": typst_message(err),
+        "details": details,
+    }))
+}
+
+/// The refusal's text with its remedy, as the MCP renders it.
+pub fn typst_message(err: &cdno_domain::error::DomainError) -> String {
+    match err.remedy() {
+        Some(remedy) => format!("{err}. {remedy}"),
+        None => err.to_string(),
+    }
+}
+
+/// Where a Typst-capable verb's error leaves the handler: a Typst refusal
+/// is printed under `--json` as its rejection object (exit 1, as
+/// `reject_json` does) and otherwise rendered as the message plus its
+/// remedy; every other error is returned unchanged. Looks through
+/// `.context(..)`.
+pub fn typst_refusal(err: anyhow::Error, json: bool) -> anyhow::Error {
+    let Some(object) = err
+        .downcast_ref::<cdno_domain::error::DomainError>()
+        .and_then(typst_rejection)
+    else {
+        return err;
+    };
+    if json && let Err(printing) = crate::commands::action::reject_json(object.clone()) {
+        return printing;
+    }
+    anyhow::anyhow!("{}", object["message"].as_str().unwrap_or("refused"))
+}
