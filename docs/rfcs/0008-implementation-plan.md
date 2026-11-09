@@ -1081,7 +1081,8 @@ are not references in the RFC's sense but they break on the move, and the plan l
 appends the old slug to the block's `aliases` with `append_list_value` (T8). `differs_only_by`
 is asserted over the note's own bytes with the alias span and the path-literal spans as the
 permitted edits. The `renamed [[<new>]] — <title>` line uses `note_address`. `is_renamable`
-(`:312`) admits a Typst evidence or concept note under the same type rules as Markdown.
+(`:312`) admits a Typst concept or other custom-type note; evidence stays unrenamable in both formats
+(RFC 0007 §5.2).
 
 **Deliverable.** The planner and writer changes, the asset moves, tests on the memory store and
 one on real files (the move of a folder).

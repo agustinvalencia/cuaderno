@@ -421,7 +421,8 @@ snapshots or verifies a prefix, and `MASK_VERSION` is untouched. A dated revisio
 end (a `= Revision 2026-12-01` heading) is the convention for Typst as it is for Markdown; no
 engine verb writes it in either format.
 
-A Typst note may itself be **renamed** (RFC 0007): the file moves with its assets folder, its
+A Typst concept or other custom-type note may itself be **renamed** (RFC 0007); evidence stays
+unrenamable in both formats (RFC 0007 §5.2). The file moves with its assets folder, its
 referrers are rewritten through the Typst scanner, and the alias is appended to the block's
 `aliases` array with the per-format edit surface (§6.1). This is a stage of its own (§8 S3b).
 
@@ -574,6 +575,9 @@ compiler, which is the rendering phase.
 - **A listed function used as a value is not seen.** `("a.png",).map(image)` or `let load = read`
   followed by `load("x.txt")` reach for a file the adoption scan cannot find, so the file is not
   copied and the path is not rewritten. The scan reads calls, not data flow.
+- **A rename rewrites only the note's own literal relative paths into its assets folder**: a
+  non-literal or `/`-rooted path into that folder, and a `../<old>/…` path in a `.typ` file inside
+  it, are left as written and break on the move, with no warning.
 - A Typst **evidence** body is frozen as written; a wrong package version has no remedy until the
   rendering RFC (§9 D16).
 
