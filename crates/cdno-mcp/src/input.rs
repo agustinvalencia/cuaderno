@@ -440,7 +440,9 @@ pub struct ReviseNoteInput {
     /// read; a blank value counts as missing. Ignored with `section`.
     pub expected_hash: Option<String>,
     /// The note's whole new body (everything after the frontmatter, which
-    /// is kept as it is). Written verbatim.
+    /// is kept as it is). Written verbatim. A Typst note keeps the blank
+    /// lines that follow its metadata block, so the new body's own leading
+    /// blank lines give way to them.
     pub body: Option<String>,
     /// Heading text of the section to upsert, as `read_note`'s `headings`
     /// lists it, without the `#` markers; surrounding whitespace is

@@ -73,7 +73,10 @@ struct Cli {
     /// `stewardship`, `question`, `commit`) emit a `{path, message}`
     /// result (`note revise` and `log note` add their outcome fields) and run
     /// non-interactively; `note rename` emits its plan with `written`,
-    /// `index_stale` and `dry_run`. Ignored by maintenance/
+    /// `index_stale` and `dry_run`; `file --format typst --attach` adds a
+    /// `rewrites` list of `{was, now}` path pairs, and a refused adoption
+    /// (a symbolic link, over 200 files or 200 MiB, the vault itself) is an
+    /// object with code `adoption_refused`. Ignored by maintenance/
     /// interactive/bootstrap commands (`init`, `lint`, `reindex`,
     /// `normalise`, `triage`, `review`, `weekly`, `monthly`).
     ///
@@ -306,7 +309,11 @@ enum Commands {
         #[arg(long)]
         origin: Option<String>,
         /// Inline body. For a plain note it's the content; with `--attach`
-        /// it's the abstract. Optional; defaults to empty.
+        /// it's the abstract. Optional; defaults to empty. Refused with
+        /// `--format typst --attach`, which adopts the file as the note,
+        /// together with its directory (names starting with `.` skipped; over
+        /// 200 files or 200 MiB, a symbolic link, or a directory holding the
+        /// vault is refused as `adoption_refused`).
         #[arg(long, default_value = "", conflicts_with = "body_file")]
         content: String,
         /// Path to a non-markdown artefact to file as evidence (or, with

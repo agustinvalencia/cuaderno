@@ -1223,6 +1223,43 @@ fn the_projects_end_headline_is_inside_the_cut() {
     );
 }
 
+/// RFC 0008 §6.4: the Typst paragraph reaches an agent with no skill loaded. The first 2048
+/// characters are spent (the focus protocol and the headlines above), so the paragraph follows
+/// the concepts bullet, past the cut, and must not push the headline out of it.
+#[test]
+fn instructions_carry_the_typst_paragraph() {
+    let info = empty_server().get_info();
+    let full = info.instructions.as_deref().unwrap_or_default();
+    let at = full.find("TYPST.").expect("the Typst paragraph is present");
+    let concepts = full.find("- CONCEPTS,").expect("the concepts bullet");
+    assert!(at > concepts, "the paragraph follows the concepts bullet");
+    let rest = &full[at..];
+    let paragraph = &rest[..rest.find("\n\n").unwrap_or(rest.len())];
+    for phrase in [
+        "format: typst",
+        "only when the person asks or the material is already Typst",
+        "evidence and concepts",
+        "not filed to a portfolio",
+        "writes the metadata block",
+        "no title heading",
+        "preamble included",
+        "newest Typst sibling",
+        "backslash-escape any markup character",
+        "Tags go in metadata",
+        "frozen as written",
+        "never `attach` a `.typ` that should be a note",
+    ] {
+        assert!(
+            paragraph.contains(phrase),
+            "the Typst paragraph must carry {phrase:?}"
+        );
+    }
+    assert!(
+        paragraph.chars().count() <= 1200,
+        "the paragraph is a paragraph, not a section"
+    );
+}
+
 /// A fresh empty directory as the server's vault root: the in-memory vault
 /// has no folder of its own, and the root must not be a place git could find
 /// a repository above (a developer's temp dir may sit inside one).

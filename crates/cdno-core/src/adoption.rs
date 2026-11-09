@@ -17,17 +17,15 @@ pub enum AdoptionReadError {
     #[error("cannot adopt '{0}': it is not a regular file")]
     NotAFile(PathBuf),
     #[error(
-        "cannot adopt: '{0}' is a symbolic link, which could bring in a file from outside the folder; replace it with the real file or move it out of the folder"
+        "cannot adopt: '{0}' is a symbolic link, which could bring in a file from outside the folder"
     )]
     Symlink(PathBuf),
-    #[error(
-        "cannot adopt: '{0}' is neither a regular file nor a folder; move it out of the folder"
-    )]
+    #[error("cannot adopt: '{0}' is neither a regular file nor a folder")]
     Special(PathBuf),
     #[error("cannot adopt: '{0}' has a name that is not valid UTF-8")]
     NonUtf8Name(PathBuf),
     #[error(
-        "cannot adopt: the folder holds {files} files ({bytes} bytes), over the limit of {max_files} files or {max_bytes} bytes; move the deck and its assets into a folder of their own"
+        "cannot adopt: the folder holds {files} files ({bytes} bytes), over the limit of {max_files} files or {max_bytes} bytes"
     )]
     TooLarge {
         files: usize,

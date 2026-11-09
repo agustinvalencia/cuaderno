@@ -17,6 +17,11 @@ typed structure — if it parses, it's valid. There are **twelve** note types.
 | `question` | `questions/research/` or `questions/life/` | Status transitions | An important research or life question |
 | `commitment` | `commitments/` → `commitments/_done/` | Moves when it ends, kept or dropped | A standalone dated promise |
 
+Of these, only **evidence** and custom types such as `concept` may be written in Typst instead of
+Markdown (the `[typst]` switch in `config.toml`); every other type is Markdown only. A Typst note is
+a `.typ` file with a `#metadata((…)) <cdno>` block where Markdown has frontmatter. See
+[Typst notes](../reference/typst-notes.md).
+
 Plus the **inbox**: raw, untyped captures in `inbox/` awaiting [triage](../tutorials/inbox-and-triage.md).
 
 ## The journal: `daily`, `weekly`, and `monthly`
@@ -51,7 +56,8 @@ logs it, and — if it had a note — archives that note to `actions/_done/<year
 A portfolio is a folder named for a question, with an `_index.md` (the `portfolio` note) and a set of
 `evidence` notes filed into it over time. Each evidence note records a `source` and an `origin`
 (a wikilink to whatever produced it). Evidence is append-only — a portfolio is a growing record. See
-[Research and evidence](../tutorials/research-and-evidence.md).
+[Research and evidence](../tutorials/research-and-evidence.md). Evidence stays append-only in both
+formats, and an evidence note can be a [Typst note](../reference/typst-notes.md).
 
 ## `stewardship` + `tracking` — long-haul responsibilities
 
