@@ -105,24 +105,27 @@ searchable as text.
 
 #### Adopting a file you already have
 
-A deck or report already written, with its figures beside it, is adopted rather than retyped. Add
-`--attach` to `--format typst` and the file itself becomes the note:
+Evidence that already exists as a `.typ`, an analysis report with its figures beside it say, is
+adopted rather than retyped (the filing test still applies: if it is the thing you delivered, it
+belongs to its project). Add `--attach` to `--format typst` and the file itself becomes the note:
 
 ```bash
-cdno file --portfolio surrogate-error-budget \
-          --source "Review deck, 2026-11-08" \
-          --origin "[[projects/surrogate-model]]" \
-          --format typst --attach ~/talks/review.typ
-# -> portfolios/surrogate-error-budget/2026-11-08-review-deck.typ
-#    portfolios/surrogate-error-budget/2026-11-08-review-deck/figs/…   (copied, paths rewritten)
+cdno file --portfolio sparse-vs-dense-attention-ood \
+          --source "Error budget analysis" \
+          --origin projects/surrogate-model \
+          --format typst --attach ~/analysis/analysis.typ
+# Filed at portfolios/sparse-vs-dense-attention-ood/2026-11-09-error-budget-analysis.typ
+#   rewrote figs/error-split.png -> 2026-11-09-error-budget-analysis/figs/error-split.png
+#   rewrote refs.bib -> 2026-11-09-error-budget-analysis/refs.bib
 ```
 
 The folder copied is the directory the `.typ` sits in, so the deck needs a folder of its own, holding
 only its figures and bibliography. Subfolders are kept; entries whose names start with a dot are
 skipped; the limits are 200 files and 200 MiB. A symbolic link, or a folder that overlaps the vault,
 is refused (code `adoption_refused`). Every literal relative path in the file (an `image`, a
-`bibliography`, a `read`) is rewritten to point at the copy, and the result lists each as a `rewrites`
-pair of `was` and `now`: a record, with nothing for you to do. A path that climbs out of the folder,
+`bibliography`, a `read`) is rewritten to point at the copy, and the command prints one `rewrote`
+line for each (`--json` and MCP return them as `rewrites`, with `was` and `now`): a record, with
+nothing for you to do. A path that climbs out of the folder,
 or a non-literal path, is refused with the fix named. Without `--format`, `--attach deck.typ` still
 files an attachment with a stub.
 
