@@ -4,19 +4,21 @@
 //! Public so the integration suite can reach it. The verbs that write a note call it; lint (T15)
 //! reads the same facts through the core `typst` primitives, not through here.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use cdno_core::config::FieldType;
 use cdno_core::error::StoreError;
 use cdno_core::path::VaultPath;
 use cdno_core::paths::{NoteFormat, note_address};
-use cdno_core::typst::{self, TypstError};
+use cdno_core::typst::{self, PathArg, TypstError};
 use chrono::NaiveDateTime;
 use serde_json::{Value, json};
 
 use super::Vault;
 use super::custom_notes::ENGINE_SUPPLIED_FIELDS;
 use super::index_entry::build_index_entry_for;
+use super::rename::apply;
 use super::set_frontmatter::coerce_value;
 use crate::error::DomainError;
 use crate::note_type::NoteType;
@@ -378,6 +380,158 @@ impl Vault {
         let mut tx = self.transaction()?;
         let source = source.trim();
         let origin = origin.trim();
+        let path = self.typst_evidence_path(at, portfolio, source, origin)?;
+        self.refuse_taken_typst_path(&path)?;
+
+        check_typst_body(body)?;
+
+        let block = typst_evidence_block(at, portfolio, source, origin)?;
+        let content = assemble_typst_note(&block, body);
+        let entry = build_index_entry_for(&path, &content, NoteType::Evidence.as_str())?;
+
+        tx.write_file(path.clone(), content);
+        tx.upsert_note(entry);
+        self.stage_created_line(
+            &mut tx,
+            at,
+            NoteType::Evidence.as_str(),
+            &path,
+            source,
+            None,
+        )?;
+        tx.commit()?;
+
+        Ok(path)
+    }
+
+    /// Adopt an existing Typst file as an evidence note, bringing the folder beside it (RFC 0008
+    /// §5.7, P7). The interface layer reads the file and enumerates the folder: `file_contents`
+    /// is the file, and each of `assets` is a real source path and its name relative to the
+    /// file's directory.
+    ///
+    /// Every relative path the file reaches for is resolved lexically against that directory and
+    /// must name one of `assets`; each is rewritten at its span to `<stem>/<relative>`. Every
+    /// asset is copied to `portfolios/<portfolio>/<stem>/<relative>`, referenced or not, before
+    /// the note is written, so a failure rolls all of them back out. The sources are only read.
+    ///
+    /// Errors, beyond those of [`file_typst_evidence`](Self::file_typst_evidence):
+    /// - [`DomainError::EmptyField`] on `attach` for a blank `file_name`.
+    /// - [`DomainError::AssetPathNotLiteral`] — a path argument is not a string literal.
+    /// - [`DomainError::AssetPathOutsideFolder`] — a path climbs out of the folder, is rooted, or
+    ///   names no listed asset; or a `relative_name` escapes (reported with line 0, since it
+    ///   comes from no line of the file).
+    /// - [`StoreError::AlreadyExists`] — a destination is occupied, or two assets share one.
+    #[allow(clippy::too_many_arguments)]
+    pub fn adopt_typst_evidence(
+        &self,
+        at: NaiveDateTime,
+        portfolio: &str,
+        source: &str,
+        origin: &str,
+        file_contents: &str,
+        file_name: &str,
+        assets: Vec<(PathBuf, String)>,
+    ) -> Result<Adopted, DomainError> {
+        let mut tx = self.transaction()?;
+        let source = source.trim();
+        let origin = origin.trim();
+        if file_name.trim().is_empty() {
+            return Err(DomainError::EmptyField { field: "attach" });
+        }
+        let path = self.typst_evidence_path(at, portfolio, source, origin)?;
+        let stem = path
+            .as_path()
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_owned();
+
+        check_typst_body(file_contents)?;
+
+        let assets = assets
+            .into_iter()
+            .map(|(src, name)| Ok((src, normalised_asset_name(&name)?)))
+            .collect::<Result<Vec<_>, DomainError>>()?;
+        let listed: HashSet<&str> = assets.iter().map(|(_, name)| name.as_str()).collect();
+
+        let args = typst::path_args(file_contents);
+        let mut literals = Vec::with_capacity(args.len());
+        for arg in args {
+            match arg {
+                PathArg::Literal(literal) => literals.push(literal),
+                PathArg::NotLiteral { call, line } => {
+                    return Err(DomainError::AssetPathNotLiteral { call, line });
+                }
+            }
+        }
+
+        // A call's named arguments can precede its positional path; edits apply in source order.
+        literals.sort_by_key(|literal| literal.span.start);
+        literals.dedup_by_key(|literal| literal.span.start);
+
+        let mut edits = Vec::with_capacity(literals.len());
+        let mut rewrites = Vec::with_capacity(literals.len());
+        for literal in literals {
+            let relative = resolve_in_folder(&literal.value)
+                .filter(|relative| listed.contains(relative.as_str()))
+                .ok_or_else(|| DomainError::AssetPathOutsideFolder {
+                    path: literal.value.clone(),
+                    line: literal.line,
+                })?;
+            let rewritten = format!("{stem}/{relative}");
+            edits.push(typst::rewrite_string_content(literal.span, &rewritten));
+            rewrites.push((literal.value, rewritten));
+        }
+        let body = apply(file_contents, &edits);
+
+        self.refuse_taken_typst_path(&path)?;
+
+        let block = typst_evidence_block(at, portfolio, source, origin)?;
+        let content = assemble_typst_note(&block, &body);
+        let entry = build_index_entry_for(&path, &content, NoteType::Evidence.as_str())?;
+
+        let mut imports = Vec::with_capacity(assets.len());
+        let mut destinations = HashSet::with_capacity(assets.len());
+        for (src, name) in assets {
+            let dest = VaultPath::new(format!(
+                "{}/{portfolio}/{stem}/{name}",
+                cdno_core::paths::PORTFOLIOS
+            ))?;
+            if self.store.exists(&dest)? || !destinations.insert(dest.clone()) {
+                return Err(DomainError::Store(StoreError::AlreadyExists(
+                    dest.to_string(),
+                )));
+            }
+            imports.push((src, dest));
+        }
+
+        // Imports first so a failed note write rolls every one of them back out.
+        for (src, dest) in imports {
+            tx.import_external(src, dest);
+        }
+        tx.write_file(path.clone(), content);
+        tx.upsert_note(entry);
+        self.stage_created_line(
+            &mut tx,
+            at,
+            NoteType::Evidence.as_str(),
+            &path,
+            source,
+            None,
+        )?;
+        tx.commit()?;
+
+        Ok(Adopted { path, rewrites })
+    }
+
+    /// The common validation of a Typst evidence note, and the path it would have.
+    fn typst_evidence_path(
+        &self,
+        at: NaiveDateTime,
+        portfolio: &str,
+        source: &str,
+        origin: &str,
+    ) -> Result<VaultPath, DomainError> {
         if !self
             .type_registry()
             .admits_typst(NoteType::Evidence.as_str())
@@ -410,51 +564,80 @@ impl Vault {
             ))));
         }
 
-        let created = at.date();
-        let stem = format!(
-            "{}/{portfolio}/{}-{}",
+        Ok(VaultPath::new(format!(
+            "{}/{portfolio}/{}-{}.typ",
             cdno_core::paths::PORTFOLIOS,
-            created.format("%Y-%m-%d"),
+            at.date().format("%Y-%m-%d"),
             slugify(source)
-        );
-        let path = VaultPath::new(format!("{stem}.typ"))?;
-        if self.store.exists(&path)? {
+        ))?)
+    }
+
+    fn refuse_taken_typst_path(&self, path: &VaultPath) -> Result<(), DomainError> {
+        if self.store.exists(path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
                 path.to_string(),
             )));
         }
-        self.refuse_other_format_stem(&path)?;
-
-        check_typst_body(body)?;
-
-        let block = render_metadata_block(
-            NoteType::Evidence.as_str(),
-            &[
-                ("type".to_string(), json!(NoteType::Evidence.as_str())),
-                (
-                    "created".to_string(),
-                    json!(created.format("%Y-%m-%d").to_string()),
-                ),
-                ("source".to_string(), json!(source)),
-                ("portfolio".to_string(), json!(portfolio)),
-                ("origin".to_string(), json!(format!("[[{origin}]]"))),
-            ],
-        )?;
-        let content = assemble_typst_note(&block, body);
-        let entry = build_index_entry_for(&path, &content, NoteType::Evidence.as_str())?;
-
-        tx.write_file(path.clone(), content);
-        tx.upsert_note(entry);
-        self.stage_created_line(
-            &mut tx,
-            at,
-            NoteType::Evidence.as_str(),
-            &path,
-            source,
-            None,
-        )?;
-        tx.commit()?;
-
-        Ok(path)
+        self.refuse_other_format_stem(path)
     }
+}
+
+/// What adoption did: the note it wrote, and each path literal as `(was, now)` in document order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Adopted {
+    pub path: VaultPath,
+    pub rewrites: Vec<(String, String)>,
+}
+
+fn typst_evidence_block(
+    at: NaiveDateTime,
+    portfolio: &str,
+    source: &str,
+    origin: &str,
+) -> Result<String, DomainError> {
+    render_metadata_block(
+        NoteType::Evidence.as_str(),
+        &[
+            ("type".to_string(), json!(NoteType::Evidence.as_str())),
+            (
+                "created".to_string(),
+                json!(at.date().format("%Y-%m-%d").to_string()),
+            ),
+            ("source".to_string(), json!(source)),
+            ("portfolio".to_string(), json!(portfolio)),
+            ("origin".to_string(), json!(format!("[[{origin}]]"))),
+        ],
+    )
+}
+
+/// `value`, relative to the adopted file's directory, as a normalised path inside that directory;
+/// `None` when it is rooted or climbs out. Purely lexical: the directory's own name is not known
+/// here, so a path that leaves it and comes back counts as leaving.
+fn resolve_in_folder(value: &str) -> Option<String> {
+    if value.starts_with('/') {
+        return None;
+    }
+    let mut at: Vec<&str> = Vec::new();
+    for part in value.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                at.pop()?;
+            }
+            name => at.push(name),
+        }
+    }
+    Some(at.join("/"))
+}
+
+/// An asset's relative name, normalised; it may not be empty, absolute or contain `..`.
+fn normalised_asset_name(name: &str) -> Result<String, DomainError> {
+    VaultPath::new(name)
+        .ok()
+        .filter(|path| *path != VaultPath::root())
+        .map(|path| path.to_string())
+        .ok_or_else(|| DomainError::AssetPathOutsideFolder {
+            path: name.to_owned(),
+            line: 0,
+        })
 }
