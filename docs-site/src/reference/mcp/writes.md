@@ -81,7 +81,7 @@ they write with it; see [The `during:` tag](#the-during-tag).
 
 | Tool | Inputs | Effect |
 |------|--------|--------|
-| `file_to_portfolio` | `portfolio`, `source`, `origin`, `content?`, `attach?`, `vars?` | File evidence into a portfolio; `attach` is a server-side path to a non-Markdown artefact (`vars` is ignored on the attach path). ([`cdno file`](../cli/file.md)) |
+| `file_to_portfolio` | `portfolio`, `source`, `origin`, `content?`, `attach?`, `vars?`, `format?` | File evidence into a portfolio; `attach` is a server-side path to a non-Markdown artefact (`vars` is ignored on the attach path). `format: typst` files `content` as a Typst note: the complete Typst body, preamble included, with no `<cdno>` block (the engine writes it); `vars` is refused, `attach` is not yet supported with it, and a body the engine cannot take is refused with a `remedy`. ([`cdno file`](../cli/file.md)) |
 
 ## Projects, actions, milestones, waiting-on
 
