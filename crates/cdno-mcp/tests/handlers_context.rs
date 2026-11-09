@@ -2140,12 +2140,13 @@ async fn read_note_round_trips_a_concept_note_with_all_seven_fields() {
             "backlinks",
             "body",
             "content_hash",
+            "format",
             "frontmatter",
             "headings",
             "note_type",
             "path",
         ],
-        "the response is exactly the seven ruled fields"
+        "the response is exactly the eight ruled fields"
     );
     assert_eq!(json["path"], CONCEPT_PATH);
     assert_eq!(json["note_type"], "concept");
@@ -2169,6 +2170,21 @@ async fn read_note_round_trips_a_concept_note_with_all_seven_fields() {
         json["headings"],
         serde_json::json!(["Woodbury identity", "Statement", "Why it matters"])
     );
+}
+
+#[tokio::test]
+async fn read_note_carries_format() {
+    let typ = "portfolios/surrogate-error-budget/2026-11-08-error-budget.typ";
+    let source = "#metadata((\n  type: \"evidence\",\n  title: \"Error budget\",\n  created: \"2026-11-08\",\n  source: \"Error budget derivation\",\n  portfolio: \"surrogate-error-budget\",\n)) <cdno>\n\n= Setting\n\nThe fit.\n";
+    let (_store, _vault, server) = concept_vault(&[(typ, source)]);
+
+    let md = decode_json(&read(&server, CONCEPT_PATH).await.expect("read_note"));
+    assert_eq!(md["format"], "markdown");
+
+    let t = decode_json(&read(&server, typ).await.expect("read_note"));
+    assert_eq!(t["format"], "typst");
+    assert_eq!(t["headings"], serde_json::json!(["Setting"]));
+    assert!(t["body"].as_str().unwrap().contains("= Setting"));
 }
 
 #[tokio::test]

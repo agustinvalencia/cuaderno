@@ -201,7 +201,8 @@ pub fn init_dirs(today: NaiveDate) -> Vec<String> {
 }
 
 /// The on-disk format of a note.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum NoteFormat {
     Markdown,
     Typst,
@@ -210,6 +211,14 @@ pub enum NoteFormat {
 impl NoteFormat {
     /// Every format, in note-resolution order.
     pub const ALL: [NoteFormat; 2] = [NoteFormat::Markdown, NoteFormat::Typst];
+
+    /// The name a tool reports: `"markdown"` or `"typst"`.
+    pub const fn name(self) -> &'static str {
+        match self {
+            NoteFormat::Markdown => "markdown",
+            NoteFormat::Typst => "typst",
+        }
+    }
 
     /// The file extension, without the dot.
     pub const fn extension(self) -> &'static str {

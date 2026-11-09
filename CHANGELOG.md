@@ -108,6 +108,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   labelled `.typ` of a type that does not admit Typst; and a Markdown note evicted into a Typst
   note's assets folder. A note edited in place to a type that does not admit Typst is dropped from
   the index, and an owner above a declared type's folder no longer takes it.
+- **`format` on `read_note`** (RFC 0008 T16). `read_note` reports `format` (`markdown` or `typst`); for a Typst note `body` is the source after its metadata block, `headings` are its `=` headings, and `cdno open` resolves a Typst note to its `.typ`. Internally a Typst note's title is the block's `title`, never a heading (the response carries no `title`).
 
 ## [0.44.0] - 2026-11-06
 
