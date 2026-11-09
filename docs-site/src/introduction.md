@@ -1,7 +1,8 @@
 # Cuaderno
 
 **Cuaderno** (`cdno`) is a command-line vault manager for the **Research Logbook Method (RLM)** — a
-way of running long-horizon knowledge work out of a folder of plain Markdown files. It is built for
+way of running long-horizon knowledge work out of a folder of plain Markdown files, with
+[Typst](reference/typst-notes.md) as an option for evidence and concept notes. It is built for
 researchers and other deep-work practitioners, and is deliberately friendly to ADHD working styles:
 it leads with *what is there*, not what is missing — no guilt counters, no angry overdue badges,
 explicit permission to park or drop work.
