@@ -109,7 +109,7 @@ a prompted `body` fills the placeholder as usual, and it renders empty only when
 body is substituted as raw text, so keep `{{body}}` in the note body: in the template's frontmatter
 a multi-line body can add or break YAML keys, and nothing refuses that.
 
-From an MCP client, the equivalent tool is `create_custom_note` (`{ type_name, title, fields, vars, body, origin }`).
+From an MCP client, the equivalent tool is `create_custom_note` (`{ type_name, title, fields, vars, body, origin, slug, format }`).
 
 ## Discovering placeholders and searching
 

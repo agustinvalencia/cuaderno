@@ -110,6 +110,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   the index, and an owner above a declared type's folder no longer takes it.
 - **`format` on `read_note`** (RFC 0008 T16). `read_note` reports `format` (`markdown` or `typst`); for a Typst note `body` is the source after its metadata block, `headings` are its `=` headings, and `cdno open` resolves a Typst note to its `.typ`. Internally a Typst note's title is the block's `title`, never a heading (the response carries no `title`).
 - **Renaming a Typst note** (RFC 0008 T17). A Typst note renames as a Markdown one does: the `.typ` moves with its assets folder, its own relative path literals into that folder follow, and the old slug joins the block's `aliases`. A `portfolio:` or `project:` field in a Typst note's block now follows a rename of what it names, so a Typst evidence note stays in its portfolio.
+- **Create a Typst custom note** (RFC 0008 T26, #954). `cdno note create <type> --format typst
+  --body-file …` and `create_custom_note` with `format: typst` write `<folder>/<slug>.typ` for a
+  custom type that admits Typst (`concept` by default): a metadata block with `type`, `title`,
+  `created`, `origin` and the declared fields, then the body as Typst markup, with no title
+  heading and no template. A declared int, float or bool field is written as that type, so the
+  note passes the type check on re-read; `--var` / `vars` is refused with Typst, and a `.typ` and
+  an `.md` can no longer share a stem in one folder, whichever is created second.
 
 ## [0.44.0] - 2026-11-06
 

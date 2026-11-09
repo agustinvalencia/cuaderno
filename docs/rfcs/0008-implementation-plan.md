@@ -1125,7 +1125,8 @@ per the operations-per-file rule, plus free functions):
 
 ```rust
 /// §5.7: the engine's fields first, in this order, then the type's declared fields in the
-/// registry's order; everything a string, unless the caller supplies a JSON array.
+/// registry's order; each value written as given: a string, a JSON array the caller supplies, or a number
+/// or bool the caller has coerced to a declared `int`/`float`/`bool` field's type (T26).
 /// `FieldSpec.list` is reserved (`list = true` is a load error today), so no declared field is a list.
 /// `TypstError::Unwritable` from `write_block` maps explicitly (no `From` impl) to the existing
 /// `DomainError::InvalidFieldValue { note_type, field: "(metadata block)", reason: what }`.
