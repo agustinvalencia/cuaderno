@@ -270,7 +270,7 @@ fn is_reserved_key(note_type: &str, key: &str) -> bool {
 /// declared `ty`. `bool`/`int`/`float` parse strictly (a parse failure *is* the
 /// type mismatch); `string`/`date` carry the text verbatim for `check_value` to
 /// validate (enum membership, calendar-date validity).
-fn coerce_value(
+pub(in crate::vault) fn coerce_value(
     field: &str,
     note_type: &str,
     ty: FieldType,

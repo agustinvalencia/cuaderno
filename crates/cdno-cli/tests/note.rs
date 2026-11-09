@@ -2528,3 +2528,93 @@ mod freshness {
         assert!(!a.join("projects/surrogate-model.md").exists());
     }
 }
+
+#[test]
+fn note_create_format_typst() {
+    let dir = tempdir().unwrap();
+    init_person_vault(dir.path());
+    let v = vault_arg(dir.path());
+    let body_file = dir.path().join("body.typ");
+    fs::write(&body_file, "The error splits as $ sigma^2 $.\n").unwrap();
+
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "create",
+            "concept",
+            "--format",
+            "typst",
+            "--title",
+            "Bias-variance split",
+            "--body-file",
+            body_file.to_str().unwrap(),
+            "--origin",
+            "[[projects/surrogate-model]]",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("concepts/bias-variance-split.typ"));
+
+    let content = fs::read_to_string(dir.path().join("concepts/bias-variance-split.typ")).unwrap();
+    assert!(
+        content.starts_with("#metadata((\n  type: \"concept\",\n"),
+        "{content}"
+    );
+    assert!(
+        content.contains("origin: \"[[projects/surrogate-model]]\""),
+        "{content}"
+    );
+    assert!(
+        content.ends_with("<cdno>\n\nThe error splits as $ sigma^2 $.\n"),
+        "{content}"
+    );
+    assert!(!dir.path().join("concepts/bias-variance-split.md").exists());
+
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "create",
+            "concept",
+            "--format",
+            "typst",
+            "--title",
+            "Another",
+            "--var",
+            "x=y",
+            "--body-file",
+            body_file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Markdown notes only"));
+}
+
+#[test]
+fn note_create_format_typst_without_a_body_file_fails_non_interactively() {
+    let dir = tempdir().unwrap();
+    init_person_vault(dir.path());
+    let v = vault_arg(dir.path());
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "create",
+            "concept",
+            "--format",
+            "typst",
+            "--title",
+            "Bias-variance split",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("body-file"));
+    assert!(!dir.path().join("concepts/bias-variance-split.typ").exists());
+}

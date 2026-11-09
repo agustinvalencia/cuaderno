@@ -459,7 +459,9 @@ One verb per type, as today, with a format switch, and two ways to supply the Ty
   `portfolio`, `origin`, `source`; `title` and the declared fields for a custom type — and
   prepends it to the body. The skill never writes `<cdno>` itself, so one authority stamps the
   fields in both formats, and a body that already carries a block is refused. **Field transport**:
-  `fields` values are strings, and an array only where the caller supplies one (`FieldSpec.list` is reserved, so no declared
+  `fields` values are strings, and an array only where the caller supplies one; a declared `int`,
+  `float` or `bool` field of a custom type is coerced to its type and written typed, so the note
+  passes `check_value` on re-read (`FieldSpec.list` is reserved, so no declared
   field is a list); `vars`
   with `format: typst` is refused with a code, since template variables belong to Markdown
   templates; no title heading is written.
