@@ -29,7 +29,7 @@ reaches the vault as an *attachment*: the bytes are imported into a portfolio, a
 stands in for them, and the stub's abstract is all that search, lint, backlinks and an agent over
 MCP ever see. The source is in the vault but not of it.
 
-This RFC lets a `.typ` file **be** the note, for two types only: **evidence** and **concept**.
+This RFC lets a `.typ` file **be** the note, for **evidence** and **concept**, and for any other custom type an explicit `[typst] note_types` admits (§5.9).
 
 - The `.typ` **source is the note**. Its text is indexed, its `[[wikilinks]]` are edges, lint reads
   it, `read_note` returns it. Nothing is compiled; a compiled PDF is a derived file, like the index.
@@ -52,9 +52,9 @@ Filing a Typst note into a portfolio, through the `file_to_portfolio` tool or th
 ```sh
 cdno file --portfolio surrogate-error-budget \
   --source "Error budget derivation for the surrogate model, 2026-11-08" \
-  --origin "[[projects/surrogate-model]]" \
+  --origin projects/surrogate-model \
   --format typst --body-file derivation.typ
-# -> portfolios/surrogate-error-budget/2026-11-08-error-budget-derivation-for-the.typ
+# -> portfolios/surrogate-error-budget/2026-11-08-error-budget-derivation-for-the-surrogate.typ
 ```
 
 `derivation.typ` is whatever the writer's template needs — an `#import`, a `#show` rule, headings,
@@ -90,9 +90,9 @@ A deck already written, with its figures beside it, is adopted rather than retyp
 
 ```sh
 cdno file --portfolio surrogate-error-budget --source "Review deck, 2026-11-08" \
-  --origin "[[projects/surrogate-model]]" --format typst --attach ~/talks/review.typ
-# -> portfolios/surrogate-error-budget/2026-11-08-review-deck.typ
-#    portfolios/surrogate-error-budget/2026-11-08-review-deck/figs/…   (copied, paths rewritten)
+  --origin projects/surrogate-model --format typst --attach ~/talks/review.typ
+# -> portfolios/surrogate-error-budget/2026-11-08-review-deck-2026-11-08.typ
+#    portfolios/surrogate-error-budget/2026-11-08-review-deck-2026-11-08/figs/…   (copied, paths rewritten)
 ```
 
 A concept is created the same way, with `--format typst` on `cdno note create` or
@@ -345,7 +345,7 @@ Rules, each enforced at creation and checked by lint:
   (the parser keeps `\#` in a string as a literal backslash and hash). A one-element array is written `("x",)`,
   since `("x")` is a parenthesised string; the reader accepts both.
 - **The block is the frontmatter.** `set_frontmatter` rewrites a value inside it byte-exactly, the
-  way `frontmatter_edit.rs` rewrites a YAML scalar, and can insert a missing key; it never
+  way `frontmatter_edit.rs` rewrites a YAML scalar, and errors on a key the block does not hold; it never
   re-serialises the dictionary, so a comment or the writer's key order survives. The per-format
   edit surface is listed in §6.1.
 - The block is **excluded from the full-text index** (§5.4), so a tag in it is as invisible to
@@ -501,7 +501,7 @@ One verb per type, as today, with a format switch, and two ways to supply the Ty
   kept), `frontmatter` is the dictionary as JSON, `headings` are the `= ` headings. `content_hash`
   is over the whole file as today.
 - `revise_note` **whole-body** (`body` + `expected_hash`) works on a Typst concept unchanged: the
-  new body replaces everything after the metadata block; a new body carrying `<cdno>` is refused.
+  new body replaces everything after the metadata block, but the blank lines that follow the block are kept as the separator and the new body's own leading blank lines are dropped, so sending back what `read_note` returned is a no-op; a new body carrying `<cdno>` is refused.
   The skill reads `format` from `read_note`, re-emits the preamble with the body, and confirms that
   only the intended region changed, since every equation is re-emitted with it.
 - `revise_note` **by section** is **not supported for Typst in v1** and is refused with a rejection
@@ -597,13 +597,13 @@ compiler, which is the rendering phase.
   `IgnoreSet` is threaded to reconcile's callers today (the vault's composition root, `notes.rs`,
   the domain's reconcile, the HTTP server, the CLI watcher) — not injected into the store, whose
   job is not classification.
-- `typst.rs`, the only module that names `typst_syntax`: `metadata_block(source) ->
+- The `typst/` module, the only one that names `typst_syntax`: `metadata_block(source) ->
   Result<(Range<usize>, serde_json::Value), TypstError>`; `headings(source)`;
   `wikilink_spans(source)` over inline runs and block strings (§5.5); `relative_path_literals(source)`
   for adoption (§5.7); `preamble_span(source)` (for the rendering RFC's verb, §9 D16; built when
   needed); the well-formedness check (no Error node); and a **metadata-syntax module** with the
   operations the YAML side has today — rewrite a scalar at its span, append to and remove from a
-  list value, insert a missing key, "changed only at these spans" — plus the **literal writer**
+  list value, insert a missing key — plus the **literal writer**
   (escaping, `("x",)`, key insertion). Compile-time cost and added crates are recorded by S0.
 - `frontmatter.rs`: `Frontmatter::from_typst` producing the same type as `Frontmatter::parse`;
   and **`parse_note(path, raw)`**, dispatching on `note_format`, as the one entry every reader
@@ -661,7 +661,8 @@ compiler, which is the rendering phase.
 - Rejection codes, each with a `remedy` as the focus errors carry: `format_unsupported_for_type`,
   `body_carries_metadata_block`, `body_does_not_parse` (naming the first Error node's line),
   `link_needs_escape`, `vars_unsupported_for_typst`, `stem_taken_by_other_format`,
-  `section_revision_unavailable_for_typst`, `asset_path_outside_folder`, `asset_path_not_literal`.
+  `section_revision_unavailable_for_typst`, `asset_path_outside_folder`, `asset_path_not_literal`,
+  `adoption_refused` (a symbolic link, a folder over 200 files or 200 MiB, or one overlapping the vault).
 - Server instructions, one paragraph: Markdown is the default and `typst` is chosen only when the
   person asks or the material is already Typst; evidence and concepts may be Typst, deliverables
   are not filed to a portfolio in either format; the engine writes the metadata and no title
@@ -751,7 +752,7 @@ that run in parallel — is the [implementation plan](0008-implementation-plan.m
 
 Settled on the precursor discussion, restated for the record; the review raised no objection:
 
-- **D1 — scope: evidence and concept only.** The machine-written types keep Markdown. The draft's
+- **D1 — scope: evidence, concept, and the custom types an explicit `[typst] note_types` admits.** The machine-written types keep Markdown. The draft's
   sentence that a report needed as a daily or project artefact "is filed as evidence instead" was
   deleted by the review as bending the filing test: **a project's deliverable lives where the
   project's work lives, the forge or the repository, linked from the map's `## Links`, and is not

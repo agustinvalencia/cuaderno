@@ -1064,6 +1064,23 @@ fn a_typst_body_sent_back_from_read_note_changes_nothing() {
 }
 
 #[test]
+fn a_hand_written_typst_body_that_does_not_parse_is_a_no_op_when_sent_back_unchanged() {
+    let note = format!("{TYPST_BLOCK}\n\n= Statement\n\nHand edit: #(unclosed\n");
+    let (vault, store) = seeded_vault(&[(TYPST_PATH, &note)]);
+    let body = vault.read_note(&vp(TYPST_PATH)).unwrap().body;
+
+    let outcome = revise_typst_body(&vault, &body).expect("a no-op is not checked");
+
+    assert!(!outcome.changed);
+    assert_eq!(store.read_file(&vp(TYPST_PATH)).unwrap(), note);
+    let err = revise_typst_body(&vault, &format!("{body}more #(\n")).expect_err("a change is");
+    assert!(
+        matches!(err, DomainError::BodyDoesNotParse { .. }),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn an_edit_of_the_read_body_adds_no_blank_line_after_the_block() {
     let (vault, store) = typst_vault();
     let body = vault.read_note(&vp(TYPST_PATH)).unwrap().body;

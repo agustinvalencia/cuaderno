@@ -124,11 +124,11 @@ pub(super) fn revised_typst_source(
     block_end: usize,
     new_body: &str,
 ) -> Result<String, DomainError> {
-    check_typst_body(new_body)?;
     let (kept, old_body) = raw.split_at(block_end);
     if new_body == old_body {
         return Ok(raw.to_owned());
     }
+    check_typst_body(new_body)?;
     let separator = &old_body[..leading_blank_lines(old_body)];
     // Nothing to keep (the old body starts on the label's line, or the file ends there): the new
     // body still needs a line of its own, or a heading would not be a heading.

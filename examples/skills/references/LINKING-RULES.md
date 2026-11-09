@@ -36,6 +36,14 @@ Filed evidence into [[portfolios/reference-material]].
 
 Never invent an alias-pipe (`[[slug|Display]]`) unless the slug is genuinely unreadable — cuaderno slugs are already human-readable, so the bare link reads cleanly on its own.
 
+## In a Typst note
+
+A note written in Typst (`.typ`) takes the same `[[slug]]` links, with one rule: **inside `[[…]]`,
+put a backslash before any Typst markup character** (`#`, `_`, `*`, `$`, `<`, `@`, `~`), as in
+`[[concepts/bias-variance-split\#Statement]]`. Over-escaping is harmless. Put a space before `[[`
+when it follows a `#…` expression or an `@ref`. Do not write inline `#tags` in a Typst body: tags go
+in the metadata block's `tags` array.
+
 ## Where this applies
 
 - `append_to_log(text)` — daily-log lines (e.g. "Started the day — focus [[project-alpha]]: run the first pass").

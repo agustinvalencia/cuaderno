@@ -1529,8 +1529,9 @@ rule, adoption, what is lost — in the words §5.11 uses, the editor-link loss 
 `mcp/reads.md`, `concepts/note-types.md` (which types admit Typst), `troubleshooting.md` ("my
 `.typ` is not in the index": the three conditions and the lint rows). `examples/skills/references/
 LINKING-RULES.md`: the one-line escape rule and the no-inline-tags rule for Typst. The server
-instructions (`server.rs:237`): the §6.4 paragraph, inside the 2048-character cut the module
-notes, with a test pinning it there as the focus paragraph has. `STATUS.md`'s RFC 0008 row;
+instructions (`server.rs:237`): the §6.4 paragraph, placed after the concepts bullet because the
+first 2048 characters are spent on the focus protocol and the headlines, with a test pinning it
+there and the headline still inside the cut. `STATUS.md`'s RFC 0008 row;
 `CHANGELOG.md` collects the stage.
 
 **Deliverable.** The pages.
@@ -1541,7 +1542,7 @@ notes, with a test pinning it there as the focus paragraph has. `STATUS.md`'s RF
 
 **Probes.**
 - `mdbook build docs-site` with no warnings; the new page is in `SUMMARY.md`.
-- `cargo test -p cdno-mcp --test server`: `instructions_carry_the_typst_paragraph_inside_the_cut`.
+- `cargo test -p cdno-mcp --test server`: `instructions_carry_the_typst_paragraph`.
 - Every flag, field and code the pages name exists, checked by hand in the PR description.
 - `rg -n "typst" docs-site/src | wc -l` is at least eight pages.
 

@@ -323,6 +323,18 @@ impl ServerHandler for CuadernoServer {
                 evidence. Evidence records what happened then; a concept describes \
                 understanding now. A concept is refined in place with revise_note, \
                 never appended to, and the daily log records when and why.\n\n\
+                TYPST. Notes are Markdown. Choose `format: typst` (file_to_portfolio, \
+                create_custom_note) only when the person asks or the material is \
+                already Typst, and only for a type that admits it (list_note_types \
+                `admits_typst`: evidence and concepts). A project's deliverable is not \
+                filed to a portfolio in either format. The engine writes the metadata \
+                block and no title heading: send a complete body, preamble included, \
+                copied from the newest Typst sibling (read_note) when the person has \
+                not supplied one. Inside `[[…]]` in a `.typ` body, backslash-escape \
+                any markup character (`#`, `_`, `*`, `$`). Tags go in metadata. \
+                `attach` with `format: typst` adopts a file as the note; never \
+                `attach` a `.typ` that should be a note without it. A Typst evidence \
+                body is frozen as written; a Typst concept is revised by whole body.\n\n\
                 Energy (deep/medium/light) tags an action's cognitive cost so \
                 get_orientation can match work to how the person actually feels.\n\n\
                 Tools split into context-gathering reads (get_orientation, \

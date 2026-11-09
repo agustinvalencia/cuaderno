@@ -58,6 +58,8 @@ match the workspace `version` in the root `Cargo.toml`** — bump both together.
 `METHOD_VERSION` (`crates/cdno-domain/src/method_version.rs`) track the Research Logbook Method's text
 (RFC 0006 §7.4), change only when the method does, and are never bumped with a release tag.
 
+`rg` needs `--no-ignore` under `crates/*/src/vault/`, or it silently finds nothing there.
+
 ## Architecture
 
 ```
@@ -95,8 +97,12 @@ third lookup.
 
 ### Invariants that shape every write
 
-- **Markdown is the source of truth; the SQLite index is a cache.** Deleting everything but the
+- **Plain text on disk is the source of truth; the SQLite index is a cache.** Deleting everything but the
   vault folder must lose nothing — reconciliation rebuilds. Never make the index authoritative.
+  A note is Markdown, or for evidence and custom types such as `concept` a Typst `.typ` with a
+  `#metadata((…)) <cdno>` block (RFC 0008). **`classify` in `cdno-core/src/classify.rs` is the one
+  place that decides what in the vault is a note**, an attachment or neither, for both formats; a
+  new reader of vault files asks it and never re-derives the answer from an extension.
 - **Domain writes go through `VaultTransaction`** (`cdno-core/src/transaction.rs`): buffer file ops and
   index ops, then `commit()`. File writes are atomic-ish with reverse-order rollback; index updates
   run after all file writes succeed, and an index failure surfaces as `IndexStale` (files are
