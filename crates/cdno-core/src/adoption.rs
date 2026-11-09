@@ -35,6 +35,10 @@ pub enum AdoptionReadError {
         max_files: usize,
         max_bytes: u64,
     },
+    #[error(
+        "cannot adopt: the folder '{folder}' and the vault '{vault}' overlap, so adopting would copy the vault into itself or pull in files that are not the deck's"
+    )]
+    OverlapsVault { folder: PathBuf, vault: PathBuf },
     #[error("cannot adopt '{path}': {source}")]
     Io {
         path: PathBuf,
@@ -46,6 +50,25 @@ pub enum AdoptionReadError {
 /// The most files, and bytes, a folder may hold and still be adopted.
 pub const MAX_ASSET_FILES: usize = 200;
 pub const MAX_ASSET_BYTES: u64 = 200 * 1024 * 1024;
+
+impl AdoptionReadError {
+    /// What to do about it, for the rejection the interfaces build.
+    pub fn remedy(&self) -> &'static str {
+        match self {
+            Self::NotTypst(_) | Self::NotAFile(_) => "Pass the path of a `.typ` file.",
+            Self::Symlink(_) | Self::Special(_) | Self::NonUtf8Name(_) => {
+                "Replace it with a regular file, or move it out of the folder."
+            }
+            Self::TooLarge { .. } => {
+                "Move the deck and its assets into a folder of their own, and adopt it from there."
+            }
+            Self::OverlapsVault { .. } => {
+                "Copy the deck and its assets into a folder of their own outside the vault, and adopt it from there."
+            }
+            Self::Io { .. } => "Check that the path exists and can be read.",
+        }
+    }
+}
 
 /// A Typst file read for adoption.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,15 +87,22 @@ pub struct TypstAdoption {
 /// The folder is the file's own directory: the plan and the domain contract both take names
 /// "relative to the file's directory", so a sibling `.typ` or `.bib` beside it is an asset.
 /// Subfolders are included. A symbolic link anywhere in the folder is refused by name rather
-/// than followed or skipped, so a link cannot pull in a file from outside it.
-pub fn read_typst_adoption(file: &Path) -> Result<TypstAdoption, AdoptionReadError> {
-    read_typst_adoption_within(file, MAX_ASSET_FILES, MAX_ASSET_BYTES)
+/// than followed or skipped, so a link cannot pull in a file from outside it, and so is the
+/// adopted file itself when it is a link. Entries whose name begins with `.` (`.git`, `.env`,
+/// `.DS_Store`) are skipped at any depth. A folder that is, lies under or holds `vault_root`
+/// is refused.
+pub fn read_typst_adoption(
+    file: &Path,
+    vault_root: &Path,
+) -> Result<TypstAdoption, AdoptionReadError> {
+    read_typst_adoption_within(file, vault_root, MAX_ASSET_FILES, MAX_ASSET_BYTES)
 }
 
 /// [`read_typst_adoption`] with explicit limits: more than `max_files` assets, or more than
-/// `max_bytes` in total, is refused.
+/// `max_bytes` in total (the adopted file included), is refused.
 pub fn read_typst_adoption_within(
     file: &Path,
+    vault_root: &Path,
     max_files: usize,
     max_bytes: u64,
 ) -> Result<TypstAdoption, AdoptionReadError> {
@@ -88,18 +118,35 @@ pub fn read_typst_adoption_within(
     if !file_name.ends_with(".typ") {
         return Err(AdoptionReadError::NotTypst(file.to_path_buf()));
     }
-    if !fs::metadata(file).map_err(io(file))?.is_file() {
+    let meta = fs::symlink_metadata(file).map_err(io(file))?;
+    if meta.file_type().is_symlink() {
+        return Err(AdoptionReadError::Symlink(file.to_path_buf()));
+    }
+    if !meta.is_file() {
         return Err(AdoptionReadError::NotAFile(file.to_path_buf()));
     }
-    let contents = fs::read_to_string(file).map_err(io(file))?;
+    if meta.len() > max_bytes {
+        return Err(AdoptionReadError::TooLarge {
+            files: 0,
+            bytes: meta.len(),
+            max_files,
+            max_bytes,
+        });
+    }
     let dir = match file.parent() {
         Some(p) if !p.as_os_str().is_empty() => p,
         _ => Path::new("."),
     };
+    let folder = fs::canonicalize(dir).map_err(io(dir))?;
+    let vault = fs::canonicalize(vault_root).map_err(io(vault_root))?;
+    if folder.starts_with(&vault) || vault.starts_with(&folder) {
+        return Err(AdoptionReadError::OverlapsVault { folder, vault });
+    }
+    let contents = fs::read_to_string(file).map_err(io(file))?;
     let mut assets = Vec::new();
     let mut walk = Walk {
         out: &mut assets,
-        bytes: 0,
+        bytes: meta.len(),
         max_files,
         max_bytes,
     };
@@ -139,7 +186,7 @@ fn collect(
             .file_name()
             .into_string()
             .map_err(|_| AdoptionReadError::NonUtf8Name(path.clone()))?;
-        if skip == Some(name.as_str()) {
+        if name.starts_with('.') || skip == Some(name.as_str()) {
             continue;
         }
         let kind = entry.file_type().map_err(|source| AdoptionReadError::Io {
@@ -159,6 +206,10 @@ fn collect(
                     source,
                 })?
                 .len();
+            fs::File::open(&path).map_err(|source| AdoptionReadError::Io {
+                path: path.clone(),
+                source,
+            })?;
             walk.bytes += len;
             walk.out.push((path, relative));
             if walk.out.len() > walk.max_files || walk.bytes > walk.max_bytes {

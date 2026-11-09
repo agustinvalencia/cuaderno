@@ -331,8 +331,8 @@ async fn file_to_portfolio_typst_refuses_a_non_typ_attach_and_an_unknown_format_
         .file_to_portfolio(Parameters(input))
         .await
         .expect_err("attach with typst");
-    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-    assert!(err.message.contains("'attach'"), "{err:?}");
+    assert_eq!(rejection_of(&err)["code"], "adoption_refused");
+    assert!(err.message.contains("figure.pdf"), "{err:?}");
 
     let err = server
         .file_to_portfolio(Parameters(typst_filing(Some("latex"), "x")))
@@ -414,8 +414,9 @@ async fn file_to_portfolio_typst_attach_refuses_an_escape_and_a_symlink_writing_
             .file_to_portfolio(Parameters(adopting(&src.path().join("deck.typ"))))
             .await
             .expect_err("symlink");
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert_eq!(rejection_of(&err)["code"], "adoption_refused");
         assert!(err.message.contains("link.txt"), "{err:?}");
+        assert!(rejection_of(&err)["details"]["remedy"].is_string());
     }
     assert_eq!(tree(&store), before);
 }

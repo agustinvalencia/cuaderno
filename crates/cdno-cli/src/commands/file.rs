@@ -130,7 +130,10 @@ pub fn run(
     let mut rewrites = Vec::new();
     let path = match &attach {
         Some(artefact) if typst => {
-            let adoption = cdno_core::adoption::read_typst_adoption(artefact)?;
+            let adoption = cdno_core::adoption::read_typst_adoption(artefact, root)
+                .map_err(cdno_domain::error::DomainError::from)
+                .map_err(anyhow::Error::from)
+                .map_err(|e| crate::commands::rejection::typst_refusal(e, json))?;
             let adopted = vault
                 .adopt_typst_evidence(
                     at,

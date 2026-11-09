@@ -1568,7 +1568,7 @@ fn file_attach_typst_refuses_a_symlink_in_the_folder_and_copies_nothing() {
     adopt_cmd(dir.path(), &src.path().join("deck.typ"))
         .assert()
         .failure()
-        .stderr(predicates::str::contains("link.txt"));
+        .stdout(predicates::str::contains("link.txt"));
     assert_eq!(
         fs::read_dir(dir.path().join("portfolios/sparse-vs-dense-ood"))
             .unwrap()
@@ -1591,4 +1591,47 @@ fn file_attach_typst_accepts_a_relative_deck_path() {
         .clone();
     let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
     assert_eq!(json["rewrites"].as_array().unwrap().len(), 2, "{json}");
+}
+
+#[test]
+fn file_attach_typst_folder_refusals_carry_a_code_and_remedy_under_json() {
+    let dir = typst_filing_vault();
+    // The folder holds the vault: adopt a deck sitting beside the vault's own files.
+    let deck = dir.path().join("deck.typ");
+    fs::write(&deck, "= x\n").unwrap();
+    let out = adopt_cmd(dir.path(), &deck)
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["code"], "adoption_refused", "{json}");
+    assert!(json["details"]["remedy"].is_string(), "{json}");
+
+    // A `.typ` that is a symbolic link.
+    #[cfg(unix)]
+    {
+        let src = adoption_source();
+        std::os::unix::fs::symlink(src.path().join("deck.typ"), src.path().join("link.typ"))
+            .unwrap();
+        let out = adopt_cmd(dir.path(), &src.path().join("link.typ"))
+            .assert()
+            .failure()
+            .get_output()
+            .stdout
+            .clone();
+        let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(json["code"], "adoption_refused", "{json}");
+    }
+}
+
+#[test]
+fn file_help_describes_adoption() {
+    cdno_in(Path::new("."))
+        .args(["file", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("adopt"))
+        .stdout(predicates::str::contains("200 files"));
 }

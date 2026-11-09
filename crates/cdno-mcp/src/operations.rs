@@ -205,6 +205,7 @@ impl CuadernoServer {
             }
         };
         if typst && let Some(file) = input.attach.clone() {
+            let root = self.vault_root().to_path_buf();
             if !input.content.trim().is_empty() {
                 return Err(invalid_argument(
                     "content",
@@ -216,9 +217,13 @@ impl CuadernoServer {
                     if input.vars.as_ref().is_some_and(|v| !v.is_empty()) {
                         return Ok(Err(DomainError::VarsUnsupportedForTypst));
                     }
-                    let read =
-                        cdno_core::adoption::read_typst_adoption(std::path::Path::new(&file))
-                            .map_err(|e| invalid_argument("attach", &e.to_string()))?;
+                    let read = match cdno_core::adoption::read_typst_adoption(
+                        std::path::Path::new(&file),
+                        &root,
+                    ) {
+                        Ok(read) => read,
+                        Err(e) => return Ok(Err(e.into())),
+                    };
                     Ok(vault.adopt_typst_evidence(
                         at,
                         &input.portfolio,
