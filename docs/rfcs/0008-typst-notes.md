@@ -493,7 +493,7 @@ One verb per type, as today, with a format switch, and two ways to supply the Ty
 
 ### 5.8 Reading and revising
 
-- `read_note`, `cdno open` and `cdno note show` return the source. The DTO gains `format`; `body` is
+- `read_note` returns the source; `cdno open` resolves a Typst note to its `.typ` file as it does a Markdown one. The DTO gains `format`; `body` is
   the source **after** the metadata block (the bytes after the label, so a leading comment is
   kept), `frontmatter` is the dictionary as JSON, `headings` are the `= ` headings. `content_hash`
   is over the whole file as today.
@@ -639,7 +639,7 @@ compiler, which is the rendering phase.
   for adoption (the CLI reads the file and enumerates the assets folder); `cdno note create
   --format typst`. Flags-and-prompts: `--format` is an `Option`, defaulting to `markdown`, never
   prompted (a Typst body is not typed at a prompt).
-- `cdno open`, `cdno note show`: print the source; `cdno lint`: the new rows; the watcher through
+- `cdno open`: resolves to the `.typ` file, as before; `cdno lint`: the new rows; the watcher through
   `note_format`.
 
 ### 6.4 `cdno-mcp`
