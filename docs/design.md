@@ -1097,7 +1097,7 @@ name = "My Research Vault"
 # a newer one: upgrade cdno); reads keep working. A newer minor writes, and
 # both cdno and `cdno lint` say so. The key stays in [vault], which every
 # released binary reads without denying unknown keys.
-method_version = "1.1"
+method_version = "1.3"
 
 # The active-project cap: how many maps count, that is, maps that are
 # active and name no holder (§5.3.2). Default 5.

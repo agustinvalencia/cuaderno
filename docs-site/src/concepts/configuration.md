@@ -68,7 +68,7 @@ The [tutorial](../tutorials/templates-and-frontmatter.md#prompted-variables) cov
 ```toml
 [vault]
 name = "My Research Vault"
-method_version = "1.2"             # written by `cdno init`, changed only by `cdno migrate`
+method_version = "1.3"             # written by `cdno init`, changed only by `cdno migrate`
 max_active_projects = 5            # the active-project cap
 
 # Skip these from the index entirely (search/lint/links). Never deletes files.

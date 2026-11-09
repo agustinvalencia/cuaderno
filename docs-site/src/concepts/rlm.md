@@ -196,6 +196,10 @@ to a newer one; the published method keeps a changelog of practices.
 - **1.2** — practice 1 gains its one exception: a renamed page's references are corrected, the old
   name is kept on the page, and the rename is itself an entry. Additive: every 1.1 logbook is a
   valid 1.2 logbook. On adopting 1.2 a paper user does one thing: a dated line on the first page; there is nothing to read through.
+- **1.3** — notes are plain text: Markdown by default, with Typst admitted for evidence and
+  concepts. A project's deliverable lives where the project's work lives and is not filed to a
+  portfolio. Additive: every 1.2 logbook is a valid 1.3 logbook. On adopting 1.3 a paper user does
+  one thing: a dated line on the first page; there is nothing to read through.
 
 ## How it maps to the tool
 
