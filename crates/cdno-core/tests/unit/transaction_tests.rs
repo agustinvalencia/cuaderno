@@ -758,26 +758,39 @@ fn commit_touched_paths_excludes_index_only_ops() {
 #[test]
 fn import_external_rolls_back_when_a_later_op_fails() {
     let dir = tempfile::tempdir().unwrap();
-    let src = dir.path().join("derivation.pdf");
-    std::fs::write(&src, b"%PDF fake").unwrap();
+    let names = ["derivation.pdf", "figs/a.png", "refs.bib"];
+    let srcs: Vec<_> = names
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let src = dir.path().join(format!("{i}.bin"));
+            std::fs::write(&src, b"%PDF fake").unwrap();
+            src
+        })
+        .collect();
 
     let inner = Arc::new(MemoryVaultStore::new());
-    // Fail on the 2nd file op: import (1st) lands, the stub write (2nd) fails.
-    let store: Arc<dyn VaultStore> = Arc::new(FailingStore::new(inner.clone(), 2));
+    // Fail on the 4th file op: the three imports land, the stub write fails.
+    let store: Arc<dyn VaultStore> = Arc::new(FailingStore::new(inner.clone(), 4));
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
 
     let mut tx = VaultTransaction::new(store, index).expect("write lock");
-    tx.import_external(src, vp("portfolios/p/2026-06-13-d/derivation.pdf"));
+    for (src, name) in srcs.into_iter().zip(names) {
+        tx.import_external(src, vp(&format!("portfolios/p/2026-06-13-d/{name}")));
+    }
     tx.write_file(vp("portfolios/p/2026-06-13-d.md"), "stub");
     let err = tx.commit().unwrap_err();
     assert!(matches!(err, TransactionError::FileWrite { .. }));
 
-    // The imported artefact was rolled back out — neither file remains.
-    assert!(
-        !inner
-            .exists(&vp("portfolios/p/2026-06-13-d/derivation.pdf"))
-            .unwrap()
-    );
+    // Every imported artefact was rolled back out, and no stub remains.
+    for name in names {
+        assert!(
+            !inner
+                .exists(&vp(&format!("portfolios/p/2026-06-13-d/{name}")))
+                .unwrap(),
+            "{name} survived the rollback"
+        );
+    }
     assert!(!inner.exists(&vp("portfolios/p/2026-06-13-d.md")).unwrap());
 }
 

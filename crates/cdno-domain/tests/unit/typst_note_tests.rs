@@ -6,6 +6,8 @@ use std::sync::Arc;
 use cdno_core::config::{
     CustomNoteType, FieldSpec, FieldType, SchemaExtension, TypstConfig, VaultConfig,
 };
+use cdno_core::error::StoreError;
+use cdno_core::extractors::{AddressEdit, differs_only_by};
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::paths::NoteFormat;
@@ -781,4 +783,382 @@ fn typst_off_refuses_with_format_unsupported() {
         "{err:?}"
     );
     assert_eq!(snapshot(&store), before);
+}
+
+// ---------------------------------------------------------------------
+// adopt_typst_evidence (T23)
+// ---------------------------------------------------------------------
+
+const STEM: &str = "2026-11-08-error-budget-derivation";
+const DECK: &str = "#set page(width: 10cm)
+// figs/a.png stays as it is in this comment
+#image(\"figs/a.png\", width: 50%)
+#bibliography(\"refs.bib\")
+Plain text: figs/a.png.
+";
+
+/// Real source files in a temp dir, and the list the interface layer would hand over.
+fn assets(names: &[&str]) -> (tempfile::TempDir, Vec<(std::path::PathBuf, String)>) {
+    let dir = tempfile::tempdir().unwrap();
+    let list = names
+        .iter()
+        .map(|name| {
+            let src = dir.path().join(name.replace('/', "_"));
+            std::fs::write(&src, format!("contents of {name}")).unwrap();
+            (src, (*name).to_string())
+        })
+        .collect();
+    (dir, list)
+}
+
+/// The refusal for `deck` with `names` listed, having checked the vault did not change.
+fn adoption_refusal(deck: &str, names: &[&str]) -> DomainError {
+    let (vault, store, _) = evidence_vault(VaultConfig::default());
+    let portfolio = portfolio_slug(&store);
+    let before = snapshot(&store);
+    let (_dir, list) = assets(names);
+    let err = vault
+        .adopt_typst_evidence(at(), &portfolio, SOURCE, ORIGIN, deck, "deck.typ", list)
+        .unwrap_err();
+    assert_eq!(snapshot(&store), before, "a refusal must write nothing");
+    err
+}
+
+#[test]
+fn adopt_copies_assets_rewrites_paths_and_lists_them() {
+    let (vault, store, _) = evidence_vault(VaultConfig::default());
+    let portfolio = portfolio_slug(&store);
+    let (_dir, list) = assets(&["figs/a.png", "refs.bib"]);
+    let adopted = vault
+        .adopt_typst_evidence(at(), &portfolio, SOURCE, ORIGIN, DECK, "deck.typ", list)
+        .unwrap();
+
+    assert_eq!(
+        adopted.path.to_string(),
+        format!("portfolios/{portfolio}/{STEM}.typ")
+    );
+    assert_eq!(
+        adopted.rewrites,
+        vec![
+            ("figs/a.png".to_string(), format!("{STEM}/figs/a.png")),
+            ("refs.bib".to_string(), format!("{STEM}/refs.bib")),
+        ]
+    );
+
+    let edits: Vec<AddressEdit> = ["figs/a.png", "refs.bib"]
+        .iter()
+        .map(|value| {
+            let start = DECK.find(&format!("\"{value}\"")).unwrap() + 1;
+            AddressEdit {
+                range: start..start + value.len(),
+                replacement: format!("{STEM}/{value}"),
+            }
+        })
+        .collect();
+    let written = store.read_file(&adopted.path).unwrap();
+    let body = written
+        .split_once("<cdno>\n\n")
+        .expect("block then a blank line")
+        .1;
+    assert!(differs_only_by(DECK, body, &edits), "{body}");
+
+    for name in ["figs/a.png", "refs.bib"] {
+        assert_eq!(
+            store
+                .read_file(&vp(&format!("portfolios/{portfolio}/{STEM}/{name}")))
+                .unwrap(),
+            format!("contents of {name}")
+        );
+    }
+    let daily = store.read_file(&vp(DAILY)).unwrap();
+    assert!(daily.contains("evidence created"), "{daily}");
+}
+
+#[test]
+fn a_dotted_path_is_normalised_in_the_rewrite() {
+    let (vault, store, _) = evidence_vault(VaultConfig::default());
+    let portfolio = portfolio_slug(&store);
+    let (_dir, list) = assets(&["figs/a.png"]);
+    let adopted = vault
+        .adopt_typst_evidence(
+            at(),
+            &portfolio,
+            SOURCE,
+            ORIGIN,
+            "#image(\"./figs/x/../a.png\")\n",
+            "deck.typ",
+            list,
+        )
+        .unwrap();
+    assert_eq!(adopted.rewrites[0].1, format!("{STEM}/figs/a.png"));
+}
+
+#[test]
+fn a_named_path_before_the_positional_one_rewrites_both() {
+    let (vault, store, _) = evidence_vault(VaultConfig::default());
+    let portfolio = portfolio_slug(&store);
+    let (_dir, list) = assets(&["ieee.csl", "refs.bib"]);
+    let adopted = vault
+        .adopt_typst_evidence(
+            at(),
+            &portfolio,
+            SOURCE,
+            ORIGIN,
+            "#bibliography(style: \"ieee.csl\", \"refs.bib\")\n",
+            "deck.typ",
+            list,
+        )
+        .unwrap();
+    let written = store.read_file(&adopted.path).unwrap();
+    assert!(
+        written.contains(&format!(
+            "#bibliography(style: \"{STEM}/ieee.csl\", \"{STEM}/refs.bib\")"
+        )),
+        "{written}"
+    );
+    assert_eq!(adopted.rewrites.len(), 2);
+}
+
+#[test]
+fn adopt_refuses_a_path_outside_the_folder() {
+    for path in [
+        "../other/a.png",
+        "../../.ssh/id_rsa",
+        "figs/../../a.png",
+        "x://y",
+    ] {
+        let err = adoption_refusal(&format!("#image(\"{path}\")\n"), &["figs/a.png"]);
+        assert!(
+            matches!(&err, DomainError::AssetPathOutsideFolder { path: p, line: 1 } if p == path),
+            "{path}: {err:?}"
+        );
+    }
+}
+
+#[test]
+fn a_path_that_leaves_and_comes_back_is_outside() {
+    let err = adoption_refusal("#image(\"../t/a.png\")\n", &["a.png", "t/a.png"]);
+    assert!(
+        matches!(err, DomainError::AssetPathOutsideFolder { .. }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn adopt_refuses_an_absolute_and_a_rooted_path() {
+    for path in ["/figs/a.png", "/etc/passwd", "C:/figs/a.png"] {
+        let err = adoption_refusal(&format!("#image(\"{path}\")\n"), &["figs/a.png"]);
+        assert!(
+            matches!(&err, DomainError::AssetPathOutsideFolder { path: p, .. } if p == path),
+            "{path}: {err:?}"
+        );
+    }
+}
+
+#[test]
+fn adopt_refuses_a_non_literal_path_with_its_call() {
+    let err = adoption_refusal(
+        "#let p = \"figs/a.png\"\n#image(\"figs/a.png\")\n#image(p)\n",
+        &["figs/a.png"],
+    );
+    assert!(
+        matches!(&err, DomainError::AssetPathNotLiteral { call, line: 3 } if call == "image"),
+        "{err:?}"
+    );
+    assert!(err.remedy().unwrap().contains("string literal"));
+}
+
+#[test]
+fn adopt_refuses_a_file_already_carrying_the_label() {
+    let err = adoption_refusal("#metadata((type: \"evidence\")) <cdno>\n= Setting\n", &[]);
+    assert!(
+        matches!(err, DomainError::BodyCarriesMetadataBlock),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn adopt_refuses_a_file_that_does_not_parse() {
+    let err = adoption_refusal("= Setting\n#image(\"figs/a.png\"\n", &["figs/a.png"]);
+    assert!(
+        matches!(err, DomainError::BodyDoesNotParse { .. }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn adopt_refuses_when_a_referenced_asset_is_not_in_the_list() {
+    let err = adoption_refusal(DECK, &["figs/a.png"]);
+    assert!(
+        matches!(&err, DomainError::AssetPathOutsideFolder { path, line: 4 } if path == "refs.bib"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_relative_name_that_escapes_is_refused() {
+    for name in ["../x.png", "figs/../../x.png", "/etc/passwd", "", "."] {
+        let (vault, store, _) = evidence_vault(VaultConfig::default());
+        let portfolio = portfolio_slug(&store);
+        let before = snapshot(&store);
+        let (_dir, mut list) = assets(&["ok.png"]);
+        list[0].1 = name.to_string();
+        let err = vault
+            .adopt_typst_evidence(
+                at(),
+                &portfolio,
+                SOURCE,
+                ORIGIN,
+                "= Setting\n",
+                "deck.typ",
+                list,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&err, DomainError::AssetPathOutsideFolder { path, .. } if path == name),
+            "{name}: {err:?}"
+        );
+        assert_eq!(snapshot(&store), before);
+    }
+}
+
+#[test]
+fn an_occupied_destination_is_refused_and_nothing_is_written() {
+    let (vault, store, _) = evidence_vault(VaultConfig::default());
+    let portfolio = portfolio_slug(&store);
+    let occupied = vp(&format!("portfolios/{portfolio}/{STEM}/refs.bib"));
+    store.write_file(&occupied, "already here").unwrap();
+    let before = snapshot(&store);
+    let (_dir, list) = assets(&["figs/a.png", "refs.bib"]);
+    let err = vault
+        .adopt_typst_evidence(at(), &portfolio, SOURCE, ORIGIN, DECK, "deck.typ", list)
+        .unwrap_err();
+    assert!(
+        matches!(&err, DomainError::Store(StoreError::AlreadyExists(p)) if *p == occupied.to_string()),
+        "{err:?}"
+    );
+    assert_eq!(snapshot(&store), before);
+}
+
+#[test]
+fn two_assets_with_one_destination_are_refused() {
+    let (vault, store, _) = evidence_vault(VaultConfig::default());
+    let portfolio = portfolio_slug(&store);
+    let before = snapshot(&store);
+    let (_dir, mut list) = assets(&["figs/a.png", "figs/b.png"]);
+    list[1].1 = "figs/./a.png".to_string();
+    let err = vault
+        .adopt_typst_evidence(
+            at(),
+            &portfolio,
+            SOURCE,
+            ORIGIN,
+            "= Setting\n",
+            "deck.typ",
+            list,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::Store(StoreError::AlreadyExists(_))),
+        "{err:?}"
+    );
+    assert_eq!(snapshot(&store), before);
+}
+
+#[test]
+fn adopt_refuses_a_stem_held_by_markdown() {
+    let (vault, store, _) = evidence_vault(VaultConfig::default());
+    let portfolio = portfolio_slug(&store);
+    store
+        .write_file(
+            &vp(&format!("portfolios/{portfolio}/{STEM}.md")),
+            "---\ntype: none\n---\n",
+        )
+        .unwrap();
+    let before = snapshot(&store);
+    let (_dir, list) = assets(&["figs/a.png", "refs.bib"]);
+    let err = vault
+        .adopt_typst_evidence(at(), &portfolio, SOURCE, ORIGIN, DECK, "deck.typ", list)
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::StemTakenByOtherFormat { .. }),
+        "{err:?}"
+    );
+    assert_eq!(snapshot(&store), before);
+}
+
+#[test]
+fn adopt_leaves_a_pdf_in_the_assets_folder_and_lint_is_clean() {
+    let (vault, store, _) = evidence_vault(VaultConfig::default());
+    let portfolio = portfolio_slug(&store);
+    let (_dir, list) = assets(&["figs/a.png", "refs.bib", "out.pdf"]);
+    let origin = format!("portfolios/{portfolio}/_index");
+    vault
+        .adopt_typst_evidence(at(), &portfolio, SOURCE, &origin, DECK, "deck.typ", list)
+        .unwrap();
+    assert!(
+        store
+            .exists(&vp(&format!("portfolios/{portfolio}/{STEM}/out.pdf")))
+            .unwrap()
+    );
+    let report = vault.lint_all_notes(at().date()).unwrap();
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+}
+
+#[test]
+fn a_failed_import_rolls_back_every_import_and_writes_nothing() {
+    let (vault, store, _) = evidence_vault(VaultConfig::default());
+    let portfolio = portfolio_slug(&store);
+    let before = snapshot(&store);
+    let (dir, list) = assets(&["figs/a.png", "figs/b.png", "refs.bib"]);
+    std::fs::remove_file(dir.path().join("figs_b.png")).unwrap();
+    let err = vault
+        .adopt_typst_evidence(
+            at(),
+            &portfolio,
+            SOURCE,
+            ORIGIN,
+            "#image(\"figs/a.png\")\n",
+            "deck.typ",
+            list,
+        )
+        .unwrap_err();
+    assert!(
+        !matches!(err, DomainError::AssetPathOutsideFolder { .. }),
+        "{err:?}"
+    );
+    assert_eq!(snapshot(&store), before);
+    assert!(
+        !store
+            .exists(&vp(&format!("portfolios/{portfolio}/{STEM}/figs/a.png")))
+            .unwrap(),
+        "the import before the failure must be rolled back"
+    );
+}
+
+#[test]
+fn adopt_never_modifies_the_source_file() {
+    let (vault, store, _) = evidence_vault(VaultConfig::default());
+    let portfolio = portfolio_slug(&store);
+    let (_dir, list) = assets(&["figs/a.png", "refs.bib"]);
+    let sources: Vec<_> = list.iter().map(|(src, _)| src.clone()).collect();
+    let contents = DECK.to_string();
+    vault
+        .adopt_typst_evidence(
+            at(),
+            &portfolio,
+            SOURCE,
+            ORIGIN,
+            &contents,
+            "deck.typ",
+            list,
+        )
+        .unwrap();
+    assert_eq!(contents, DECK);
+    for (src, name) in sources.iter().zip(["figs/a.png", "refs.bib"]) {
+        assert_eq!(
+            std::fs::read_to_string(src).unwrap(),
+            format!("contents of {name}")
+        );
+    }
 }

@@ -133,6 +133,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   Markdown.
 - **Concept guide: Typst concepts** (RFC 0008 T29, #957). The concept-library
   pages describe a concept written in Typst, refined as a whole body, and the link escape rule.
+- **Adopt a Typst file as evidence** (RFC 0008 T23, #951). `Vault::adopt_typst_evidence` turns an existing `.typ` and the folder beside it into a note: every relative path it reaches for must land in that folder and is rewritten to the note's assets folder, the files are copied before the note is written, and a failed copy rolls them all back. Not yet on the CLI or MCP.
 
 ## [0.44.0] - 2026-11-06
 

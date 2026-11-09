@@ -2097,7 +2097,7 @@ fn shift(edit: AddressEdit, base: usize) -> AddressEdit {
     }
 }
 
-fn apply(text: &str, edits: &[AddressEdit]) -> String {
+pub(super) fn apply(text: &str, edits: &[AddressEdit]) -> String {
     let mut out = String::with_capacity(text.len());
     let mut at = 0;
     for edit in edits {
