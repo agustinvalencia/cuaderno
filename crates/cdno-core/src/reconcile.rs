@@ -477,6 +477,16 @@ fn reconcile_one(
         && !typst_types.is_empty()
         && !typst_types.contains(&note_type)
     {
+        // An edit in place to a type that does not admit Typst must not leave the old row
+        // indexed as what it was. The path stays in the classifier's note set, so the orphan
+        // pass would not remove it.
+        if existing.is_some() {
+            let mut tx = VaultTransaction::new(store.clone(), index.clone())
+                .map_err(|e| format!("acquiring write lock: {e}"))?;
+            tx.remove_note(path.clone());
+            tx.commit()
+                .map_err(|e| format!("failed to drop the row of a refused Typst note: {e}"))?;
+        }
         return Err(format!(
             "`{path}` is a Typst note of type `{note_type}`, which does not admit Typst; \
              it is not indexed"

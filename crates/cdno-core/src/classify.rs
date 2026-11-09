@@ -56,13 +56,15 @@ impl NoteScope {
         Self::new(IgnoreSet::empty())
     }
 
-    /// Whether `dir` is itself the folder of a declared type, in either list.
-    /// No note owns such a folder: it is another type's root, not an attachment folder.
+    /// Whether `dir` is the folder of a declared type, in either list, or sits above one.
+    /// No note owns such a folder: it is another type's root, or holds one, and is not an
+    /// attachment folder. Were an ancestor claimed, `areas/y.typ` would take `areas/y/z/` from
+    /// a type declared there.
     pub(crate) fn is_type_root(&self, dir: &std::path::Path) -> bool {
         self.typst_folders
             .iter()
             .chain(&self.typst_excluded_folders)
-            .any(|folder| std::path::Path::new(folder) == dir)
+            .any(|folder| std::path::Path::new(folder).starts_with(dir))
     }
 
     /// `Some(admitted)` for a path under either Typst list, `None` for a path

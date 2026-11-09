@@ -370,6 +370,22 @@ fn a_concept_folder_can_be_owned_by_a_typst_note() {
 }
 
 #[test]
+fn an_owner_above_a_declared_type_root_does_not_take_it() {
+    // `areas/y.typ` is labelled and `areas/y/z` is a declared type's folder: the notes there
+    // stay notes.
+    let got = owners_of(
+        &[
+            ("areas/y.typ", TYPST_NOTE),
+            ("areas/y/z/n.typ", TYPST_NOTE),
+            ("areas/y/z/n.md", "# A note\n"),
+        ],
+        &["areas", "areas/y/z"],
+        &["areas/y/z/n.typ", "areas/y/z/n.md"],
+    );
+    assert_eq!(got, vec![None, None]);
+}
+
+#[test]
 fn an_unlabelled_typ_owns_nothing() {
     // Load-bearing: owning by path shape would drop the folder's notes
     // from the index silently.

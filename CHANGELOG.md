@@ -99,6 +99,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `<stem>.typ`, under `portfolios/` or a Typst-admitting type's folder, holds attachments, never
   notes, and lint no longer calls it an orphan. Owners resolve shallow-first, so a labelled file
   inside an owned folder is not read; a stub and a Typst note sharing a stem resolve to the stub.
+- **Lint rows for Typst notes** (RFC 0008 T15, part of #927). `cdno lint` and the `lint` tool name
+  every way a Typst note can be wrong: a metadata block missing `type` (or `title`, for a type
+  with a title heading), not literal, not first or not top-level, or with a stray second `<cdno>`
+  label; a `[[…]]` whose interior is not one inline run, with its line; a note that does not parse
+  (a warning); a `.typ` sharing a stem with a `.md`; a loose `.typ`, a labelled one outside the
+  configured types, and a block whose label is missing or mistyped, all from the classifier; a
+  labelled `.typ` of a type that does not admit Typst; and a Markdown note evicted into a Typst
+  note's assets folder. A note edited in place to a type that does not admit Typst is dropped from
+  the index, and an owner above a declared type's folder no longer takes it.
 
 ## [0.44.0] - 2026-11-06
 
