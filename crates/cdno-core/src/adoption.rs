@@ -26,6 +26,15 @@ pub enum AdoptionReadError {
     Special(PathBuf),
     #[error("cannot adopt: '{0}' has a name that is not valid UTF-8")]
     NonUtf8Name(PathBuf),
+    #[error(
+        "cannot adopt: the folder holds {files} files ({bytes} bytes), over the limit of {max_files} files or {max_bytes} bytes; move the deck and its assets into a folder of their own"
+    )]
+    TooLarge {
+        files: usize,
+        bytes: u64,
+        max_files: usize,
+        max_bytes: u64,
+    },
     #[error("cannot adopt '{path}': {source}")]
     Io {
         path: PathBuf,
@@ -33,6 +42,10 @@ pub enum AdoptionReadError {
         source: std::io::Error,
     },
 }
+
+/// The most files, and bytes, a folder may hold and still be adopted.
+pub const MAX_ASSET_FILES: usize = 200;
+pub const MAX_ASSET_BYTES: u64 = 200 * 1024 * 1024;
 
 /// A Typst file read for adoption.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +66,16 @@ pub struct TypstAdoption {
 /// Subfolders are included. A symbolic link anywhere in the folder is refused by name rather
 /// than followed or skipped, so a link cannot pull in a file from outside it.
 pub fn read_typst_adoption(file: &Path) -> Result<TypstAdoption, AdoptionReadError> {
+    read_typst_adoption_within(file, MAX_ASSET_FILES, MAX_ASSET_BYTES)
+}
+
+/// [`read_typst_adoption`] with explicit limits: more than `max_files` assets, or more than
+/// `max_bytes` in total, is refused.
+pub fn read_typst_adoption_within(
+    file: &Path,
+    max_files: usize,
+    max_bytes: u64,
+) -> Result<TypstAdoption, AdoptionReadError> {
     let io = |path: &Path| {
         let path = path.to_path_buf();
         move |source| AdoptionReadError::Io { path, source }
@@ -74,7 +97,13 @@ pub fn read_typst_adoption(file: &Path) -> Result<TypstAdoption, AdoptionReadErr
         _ => Path::new("."),
     };
     let mut assets = Vec::new();
-    collect(dir, "", Some(&file_name), &mut assets)?;
+    let mut walk = Walk {
+        out: &mut assets,
+        bytes: 0,
+        max_files,
+        max_bytes,
+    };
+    collect(dir, "", Some(&file_name), &mut walk)?;
     assets.sort_by(|a, b| a.1.cmp(&b.1));
     Ok(TypstAdoption {
         contents,
@@ -83,11 +112,18 @@ pub fn read_typst_adoption(file: &Path) -> Result<TypstAdoption, AdoptionReadErr
     })
 }
 
+struct Walk<'a> {
+    out: &'a mut Vec<(PathBuf, String)>,
+    bytes: u64,
+    max_files: usize,
+    max_bytes: u64,
+}
+
 fn collect(
     dir: &Path,
     prefix: &str,
     skip: Option<&str>,
-    out: &mut Vec<(PathBuf, String)>,
+    walk: &mut Walk<'_>,
 ) -> Result<(), AdoptionReadError> {
     let entries = fs::read_dir(dir).map_err(|source| AdoptionReadError::Io {
         path: dir.to_path_buf(),
@@ -114,9 +150,25 @@ fn collect(
         if kind.is_symlink() {
             return Err(AdoptionReadError::Symlink(path));
         } else if kind.is_dir() {
-            collect(&path, &format!("{relative}/"), None, out)?;
+            collect(&path, &format!("{relative}/"), None, walk)?;
         } else if kind.is_file() {
-            out.push((path, relative));
+            let len = entry
+                .metadata()
+                .map_err(|source| AdoptionReadError::Io {
+                    path: path.clone(),
+                    source,
+                })?
+                .len();
+            walk.bytes += len;
+            walk.out.push((path, relative));
+            if walk.out.len() > walk.max_files || walk.bytes > walk.max_bytes {
+                return Err(AdoptionReadError::TooLarge {
+                    files: walk.out.len(),
+                    bytes: walk.bytes,
+                    max_files: walk.max_files,
+                    max_bytes: walk.max_bytes,
+                });
+            }
         } else {
             return Err(AdoptionReadError::Special(path));
         }

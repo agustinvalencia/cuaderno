@@ -136,15 +136,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   and the engine writes the block. The nine Typst rejection codes carry `details.remedy`; six are reachable through this tool
   (`body_carries_metadata_block`, `body_does_not_parse`, `link_needs_escape`,
   `vars_unsupported_for_typst`, `stem_taken_by_other_format`, `format_unsupported_for_type`) and three
-  have handler tests. A blank `content` is `empty_field`. `vars` is refused with `typst`, and `attach` with `typst` is `INVALID_PARAMS` until adoption lands.
+  have handler tests. A blank `content` is `empty_field`. `vars` is refused with `typst`, and `attach` with `typst` adopts the file (T24).
 - **Concept guide: Typst concepts** (RFC 0008 T29, #957). The concept-library
   pages describe a concept written in Typst, refined as a whole body, and the link escape rule.
 - **`cdno file --format typst`** (RFC 0008 T20, #948). `--format <markdown|typst>` and
   `--body-file` file a Typst evidence note through `file_typst_evidence`; the body is required,
   `--var` is refused, and the Typst refusals print as `{code, message, details}` with
-  `details.remedy` under `--json`. With `--attach` it is a clear error until adoption lands.
+  `details.remedy` under `--json`. With `--attach` it adopts the file (T24).
 - **Adopt a Typst file as evidence** (RFC 0008 T23, #951). `Vault::adopt_typst_evidence` turns an existing `.typ` and the folder beside it into a note: every relative path it reaches for must land in that folder and is rewritten to the note's assets folder, the files are copied before the note is written, and a failed copy rolls them all back. Not yet on the CLI or MCP.
-- **Adoption on the CLI and the server** (RFC 0008 T24, #952). `cdno file --format typst --attach deck.typ` and `file_to_portfolio` with `format: typst` and `attach` adopt the file as the note: every regular file under the folder it sits in (subfolders kept) is copied beside it, and the path literals rewritten are printed, or returned as `rewrites`. A symbolic link in the folder is refused by name. `--move` removes only the adopted `.typ`. The folder walk is `cdno_core::adoption::read_typst_adoption`.
+- **Adoption on the CLI and the server** (RFC 0008 T24, #952). `cdno file --format typst --attach deck.typ` and `file_to_portfolio` with `format: typst` and `attach` adopt the file as the note: every regular file under the folder it sits in (subfolders kept) is copied beside it, and the path literals rewritten are printed, or returned as `rewrites`. A symbolic link in the folder is refused by name. `--move` removes only the adopted `.typ`. A folder of more than 200 files or 200 MiB is refused with the advice to move the deck into a folder of its own. The folder walk is `cdno_core::adoption::read_typst_adoption`.
 
 ## [0.44.0] - 2026-11-06
 

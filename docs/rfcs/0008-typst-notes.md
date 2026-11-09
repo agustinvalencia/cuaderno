@@ -436,7 +436,7 @@ One verb per type, as today, with a format switch, and two ways to supply the Ty
 - **Authored.** With `format: typst` and no `attach`, `content` is the **Typst body**: everything
   after the metadata block, preamble included, complete.
 - **Adopted** (stage S4b). With `format: typst` **and** `attach: "<file>.typ"`, the file *is* the
-  note. The interface layer reads it and enumerates an optional assets folder beside it into
+  note. The interface layer reads it and enumerates the directory it sits in (its figures, bibliography and any other files; at most 200 files or 200 MiB, else refused) into
   `(source, destination)` pairs (the domain does no file I/O); the engine refuses a file whose
   parse holds an Error node or that already carries `<cdno>`; it finds every **literal relative
   path** under `image` (and its `icc:`), `read`, `json`, `csv`, `yaml`, `toml`, `xml`, `cbor`,

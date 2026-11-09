@@ -1576,3 +1576,19 @@ fn file_attach_typst_refuses_a_symlink_in_the_folder_and_copies_nothing() {
         before
     );
 }
+
+#[test]
+fn file_attach_typst_accepts_a_relative_deck_path() {
+    let dir = typst_filing_vault();
+    let src = adoption_source();
+    let out = file_typst_args(dir.path())
+        .current_dir(src.path())
+        .args(["--json", "--attach", "deck.typ"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["rewrites"].as_array().unwrap().len(), 2, "{json}");
+}

@@ -1,6 +1,6 @@
 use std::fs;
 
-use cdno_core::adoption::{AdoptionReadError, read_typst_adoption};
+use cdno_core::adoption::{AdoptionReadError, read_typst_adoption, read_typst_adoption_within};
 
 fn folder() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -67,4 +67,27 @@ fn a_non_typ_file_and_a_missing_file_are_refused() {
         read_typst_adoption(&dir.path().join("gone.typ")),
         Err(AdoptionReadError::Io { .. })
     ));
+}
+
+#[test]
+fn the_file_count_limit_is_inclusive() {
+    let dir = folder(); // four assets
+    let deck = dir.path().join("deck.typ");
+    assert!(read_typst_adoption_within(&deck, 4, u64::MAX).is_ok());
+    let err = read_typst_adoption_within(&deck, 3, u64::MAX).unwrap_err();
+    assert!(matches!(
+        err,
+        AdoptionReadError::TooLarge { max_files: 3, .. }
+    ));
+    assert!(err.to_string().contains("folder of their own"), "{err}");
+}
+
+#[test]
+fn the_size_limit_is_inclusive() {
+    let dir = folder(); // 3 + 3 + 4 bytes of assets, plus "= Two" (5)
+    let deck = dir.path().join("deck.typ");
+    let total = 3 + 3 + 4 + 5;
+    assert!(read_typst_adoption_within(&deck, 10, total).is_ok());
+    let err = read_typst_adoption_within(&deck, 10, total - 1).unwrap_err();
+    assert!(matches!(err, AdoptionReadError::TooLarge { .. }));
 }
