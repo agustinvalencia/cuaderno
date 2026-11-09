@@ -6,10 +6,11 @@
 //! renderer never re-implements the frontmatter split.
 
 use cdno_core::extractors::first_h1;
-use cdno_core::frontmatter::Frontmatter;
+use cdno_core::frontmatter::parse_note;
 use cdno_core::hash::content_hash;
-use cdno_core::markdown::heading_texts;
+use cdno_core::note::{note_heading_texts, note_headings};
 use cdno_core::path::VaultPath;
+use cdno_core::paths::{NoteFormat, note_format};
 use cdno_core::reconcile::reconcile;
 
 use crate::error::DomainError;
@@ -82,12 +83,18 @@ impl Vault {
         let raw = self.store.read_file(path)?;
         let content_hash = content_hash(&raw);
         let note_type = self.index.find_by_path(path)?.map(|entry| entry.note_type);
-        let (frontmatter, body) = match Frontmatter::parse(&raw) {
+        let (frontmatter, body) = match parse_note(path, &raw) {
             Ok((fm, body)) => (fm.as_json(), body.to_owned()),
             Err(_) => (serde_json::Value::Null, raw),
         };
-        let title = first_h1(&body);
-        let headings = heading_texts(&body);
+        let title = match note_format(path) {
+            Some(NoteFormat::Typst) => note_headings(path, &body)
+                .into_iter()
+                .find(|(level, _)| *level == 1)
+                .map(|(_, text)| text),
+            _ => first_h1(&body),
+        };
+        let headings = note_heading_texts(path, &body);
         let backlinks = self.index.find_backlinks(path)?;
         Ok(NoteView {
             path: path.clone(),

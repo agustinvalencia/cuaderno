@@ -5,7 +5,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use cdno_core::frontmatter::Frontmatter;
+use cdno_core::frontmatter::parse_note;
 use cdno_core::hash::content_hash;
 use cdno_core::index::NoteEntry;
 use cdno_core::path::VaultPath;
@@ -26,7 +26,7 @@ pub(in crate::vault) fn build_index_entry_for(
     content: &str,
     note_type: &str,
 ) -> Result<NoteEntry, DomainError> {
-    let (fm, _body) = Frontmatter::parse(content)?;
+    let (fm, _body) = parse_note(path, content)?;
     let now_ns = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)

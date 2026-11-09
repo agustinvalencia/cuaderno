@@ -104,7 +104,9 @@ pub fn note_inline_tags(path: &VaultPath, body: &str) -> Vec<String> {
     }
 }
 
-fn note_body_links(path: &VaultPath, body: &str) -> Vec<WikilinkRaw> {
+/// The wikilinks of a note's `body` by its format, in source order: the Typst scanner for a
+/// `.typ`, the Markdown scanner otherwise.
+pub fn note_body_links(path: &VaultPath, body: &str) -> Vec<WikilinkRaw> {
     if note_format(path) != Some(NoteFormat::Typst) {
         return extract_wikilinks(body);
     }
@@ -403,6 +405,42 @@ pub fn rewrite_wikilink_addresses(
         copied = span.address.end;
         edits.push(AddressEdit {
             range: span.address,
+            replacement,
+        });
+    }
+    out.push_str(&text[copied..]);
+    (out, edits)
+}
+
+/// [`rewrite_wikilink_addresses`] by the note's format: a `.typ` path is scanned by the Typst
+/// scanner (RFC 0008 §5.5), `names_target` and `rewrite` receive the decoded target and address,
+/// and the replacement is written with the escape rule of where the link sits, a `<cdno>` block
+/// string or markup. The edit ranges are raw bytes of `text`, so [`differs_only_by`] holds as for
+/// Markdown. A `[[` the Typst scanner reports as a fault is not a link and is left alone.
+pub fn rewrite_note_wikilink_addresses(
+    path: &VaultPath,
+    text: &str,
+    names_target: impl Fn(&str) -> bool,
+    rewrite: impl Fn(&str) -> String,
+) -> (String, Vec<AddressEdit>) {
+    if note_format(path) != Some(NoteFormat::Typst) {
+        return rewrite_wikilink_addresses(text, names_target, rewrite);
+    }
+    let links = typst::wikilink_spans(text);
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    let mut edits = Vec::new();
+    for (i, span) in links.spans.iter().enumerate() {
+        let address = &links.addresses[i];
+        if address.is_empty() || !names_target(&links.targets[i]) {
+            continue;
+        }
+        let replacement = typst::escape_link_address(&rewrite(address), links.in_block[i]);
+        out.push_str(&text[copied..span.address.start]);
+        out.push_str(&replacement);
+        copied = span.address.end;
+        edits.push(AddressEdit {
+            range: span.address.clone(),
             replacement,
         });
     }

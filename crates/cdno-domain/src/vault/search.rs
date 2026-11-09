@@ -17,7 +17,7 @@
 use chrono::NaiveDate;
 
 use cdno_core::error::StoreError;
-use cdno_core::frontmatter::Frontmatter;
+use cdno_core::frontmatter::{Frontmatter, parse_note};
 use cdno_core::index::SearchHit;
 use cdno_core::path::VaultPath;
 
@@ -152,7 +152,7 @@ impl super::Vault {
                 // parsed (or whose field can't be read) can't be *confirmed*
                 // to pass an active filter, so skip it rather than aborting
                 // the whole search over one malformed note elsewhere.
-                let Ok((fm, _body)) = Frontmatter::parse(&raw) else {
+                let Ok((fm, _body)) = parse_note(&hit.path, &raw) else {
                     continue;
                 };
 

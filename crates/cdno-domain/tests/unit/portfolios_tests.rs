@@ -1746,3 +1746,83 @@ fn creating_a_portfolio_resolves_a_dangling_bare_link_and_backlinks_agree() {
         "{backlinks:?}"
     );
 }
+
+// ---------------------------------------------------------------------
+// A Typst evidence note beside Markdown ones (RFC 0008 T13)
+// ---------------------------------------------------------------------
+
+const BUDGET_INDEX: &str = "---\ntype: portfolio\nquestion: \"How large is the error?\"\ncreated: 2026-05-01\nproject: null\n---\n\n# How large is the error?\n";
+
+fn markdown_evidence(created: &str, source: &str) -> String {
+    format!(
+        "---\ntype: evidence\ncreated: {created}\nsource: \"{source}\"\nportfolio: surrogate-error-budget\norigin: \"[[projects/surrogate-model]]\"\n---\n\n# {source}\n"
+    )
+}
+
+fn typst_evidence(created: &str, source: &str) -> String {
+    format!(
+        "#metadata((\n  type: \"evidence\",\n  created: \"{created}\",\n  source: \"{source}\",\n  portfolio: \"surrogate-error-budget\",\n  origin: \"[[projects/surrogate-model]]\",\n)) <cdno>\n\n= {source}\n\n$ E[(hat(f) - f)^2] = \"bias\"^2 + sigma^2 $\n"
+    )
+}
+
+fn budget_vault() -> Vault {
+    let (vault, _store) = vault_with_seeded_store(&[
+        ("portfolios/surrogate-error-budget/_index.md", BUDGET_INDEX),
+        (
+            "portfolios/surrogate-error-budget/2026-11-01-first-run.md",
+            &markdown_evidence("2026-11-01", "First run"),
+        ),
+        (
+            "portfolios/surrogate-error-budget/2026-11-08-derivation.typ",
+            &typst_evidence("2026-11-08", "Derivation"),
+        ),
+        (
+            "portfolios/surrogate-error-budget/2026-11-05-second-run.md",
+            &markdown_evidence("2026-11-05", "Second run"),
+        ),
+    ]);
+    vault
+}
+
+#[test]
+fn portfolio_contents_lists_a_typst_evidence_note_with_its_fields() {
+    let vault = budget_vault();
+    let out = vault
+        .get_portfolio_contents("surrogate-error-budget")
+        .expect("a Typst note does not fail the call");
+
+    let listed: Vec<(String, String)> = out
+        .iter()
+        .map(|(path, ef)| (path.to_string(), ef.source.clone()))
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            (
+                "portfolios/surrogate-error-budget/2026-11-08-derivation.typ".to_owned(),
+                "Derivation".to_owned()
+            ),
+            (
+                "portfolios/surrogate-error-budget/2026-11-05-second-run.md".to_owned(),
+                "Second run".to_owned()
+            ),
+            (
+                "portfolios/surrogate-error-budget/2026-11-01-first-run.md".to_owned(),
+                "First run".to_owned()
+            ),
+        ],
+        "three entries, most recent first"
+    );
+    assert_eq!(out[0].1.created, ymd(2026, 11, 8));
+    assert_eq!(out[0].1.origin, "[[projects/surrogate-model]]");
+}
+
+#[test]
+fn list_portfolios_counts_a_typst_evidence_note() {
+    let vault = budget_vault();
+    let out = vault.list_portfolios(ymd(2026, 11, 10)).unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].evidence_count, 3);
+    assert_eq!(out[0].last_updated, Some(ymd(2026, 11, 8)));
+    assert_eq!(out[0].staleness_days, Some(2));
+}

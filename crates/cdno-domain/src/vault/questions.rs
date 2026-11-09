@@ -205,6 +205,7 @@ impl Vault {
         let mut out = Vec::with_capacity(entries.len());
         for entry in entries {
             let raw = self.store.read_file(&entry.path)?;
+            // Markdown on purpose: question notes are machine-written Markdown.
             let (fm, body) = Frontmatter::parse(&raw)?;
             let qf = QuestionFrontmatter::try_from(fm)?;
             out.push(QuestionSummary {
@@ -271,6 +272,7 @@ impl Vault {
                 continue;
             }
             let raw = self.store.read_file(&path)?;
+            // Markdown on purpose: question notes are machine-written Markdown.
             let (fm, _body) = Frontmatter::parse(&raw)?;
             let qf = QuestionFrontmatter::try_from(fm)?;
             if found.is_some() {

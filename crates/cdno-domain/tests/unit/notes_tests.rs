@@ -232,3 +232,19 @@ fn write_note_raw_accepts_a_free_edit_the_schema_would_reject() {
         rough
     );
 }
+
+#[test]
+fn read_note_splits_a_typst_note_at_the_label() {
+    let path = "portfolios/surrogate-error-budget/2026-11-08-error-budget.typ";
+    let source = "#metadata((\n  type: \"evidence\",\n  created: \"2026-11-08\",\n  source: \"Error budget derivation\",\n  portfolio: \"surrogate-error-budget\",\n  origin: \"[[projects/surrogate-model]]\",\n)) <cdno>\n\n= Setting\n\nThe fit.\n\n== Residuals\n";
+    let vault = vault_with(&[(path, source)]);
+
+    let view = vault.read_note(&vp(path)).unwrap();
+
+    assert_eq!(view.note_type.as_deref(), Some("evidence"));
+    assert_eq!(view.frontmatter["portfolio"], "surrogate-error-budget");
+    assert!(view.body.starts_with("\n\n= Setting"), "{:?}", view.body);
+    assert!(!view.body.contains("#metadata"));
+    assert_eq!(view.title.as_deref(), Some("Setting"));
+    assert_eq!(view.headings, vec!["Setting", "Residuals"]);
+}

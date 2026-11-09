@@ -128,7 +128,14 @@ pub fn reconcile(
     // exact-then-basename lookup without extra index calls.
     for path in &classified.notes {
         report.scanned += 1;
-        match reconcile_one(store, index, path, &fs_set, &aliases_before) {
+        match reconcile_one(
+            store,
+            index,
+            path,
+            &fs_set,
+            &aliases_before,
+            &scope.typst_types,
+        ) {
             Ok(Outcome::Added) => report.added += 1,
             Ok(Outcome::Updated) => report.updated += 1,
             Ok(Outcome::Skipped) => {}
@@ -411,6 +418,7 @@ fn reconcile_one(
     path: &VaultPath,
     vault_paths: &HashSet<VaultPath>,
     aliases: &AliasMap,
+    typst_types: &[String],
 ) -> Result<Outcome, String> {
     let existing = index
         .find_by_path(path)
@@ -465,6 +473,15 @@ fn reconcile_one(
     let note_type = frontmatter
         .require_field::<String>("type")
         .map_err(|e| format!("missing or invalid `type` field: {e}"))?;
+    if crate::paths::note_format(path) == Some(crate::paths::NoteFormat::Typst)
+        && !typst_types.is_empty()
+        && !typst_types.contains(&note_type)
+    {
+        return Err(format!(
+            "`{path}` is a Typst note of type `{note_type}`, which does not admit Typst; \
+             it is not indexed"
+        ));
+    }
     let title = frontmatter
         .optional_field::<String>("title")
         .map_err(|e| format!("invalid `title` field: {e}"))?;

@@ -270,6 +270,7 @@ impl Vault {
         // `commitments/<slug>.md`, but a manual edit could have set
         // status to completed. Trust the frontmatter, refuse if it's
         // not active.
+        // Markdown on purpose: commitment notes are machine-written Markdown.
         let (fm, _body) = Frontmatter::parse(&raw)?;
         let commitment = CommitmentFrontmatter::try_from(fm)?;
         if commitment.status != CommitmentStatus::Active {
@@ -363,6 +364,7 @@ impl Vault {
         let slug = slug.as_str();
 
         let raw = self.store.read_file(&active_path)?;
+        // Markdown on purpose: commitment notes are machine-written Markdown.
         let (fm, _body) = Frontmatter::parse(&raw)?;
         let commitment = CommitmentFrontmatter::try_from(fm)?;
         if commitment.status != CommitmentStatus::Active {
@@ -452,6 +454,7 @@ impl Vault {
         let slug = slug.as_str();
 
         let raw = self.store.read_file(&path)?;
+        // Markdown on purpose: commitment notes are machine-written Markdown.
         let (fm, _body) = Frontmatter::parse(&raw)?;
         let commitment = CommitmentFrontmatter::try_from(fm)?;
         if commitment.status != CommitmentStatus::Active {
@@ -757,6 +760,7 @@ impl Vault {
             // into the markdown document, to recover the stewardship's
             // context. Same posture as the doc/section parse below: a
             // stewardship whose frontmatter won't parse is skipped whole.
+            // Markdown on purpose: commitment notes are machine-written Markdown.
             let Ok((fm, _body)) = Frontmatter::parse(&raw) else {
                 continue;
             };
@@ -790,6 +794,7 @@ impl Vault {
         // Source 3: standalone active commitment notes.
         for entry in self.index.list_by_type(NoteType::Commitment.as_str())? {
             let raw = self.store.read_file(&entry.path)?;
+            // Markdown on purpose: commitment notes are machine-written Markdown.
             let (fm, _body) = Frontmatter::parse(&raw)?;
             let commitment = CommitmentFrontmatter::try_from(fm)?;
             if commitment.status != CommitmentStatus::Active
@@ -859,6 +864,7 @@ impl Vault {
         let mut matches = Vec::new();
         for entry in self.index.list_by_type(NoteType::Commitment.as_str())? {
             let raw = self.store.read_file(&entry.path)?;
+            // Markdown on purpose: commitment notes are machine-written Markdown.
             let (fm, _body) = Frontmatter::parse(&raw)?;
             let commitment = CommitmentFrontmatter::try_from(fm)?;
             if pred(&commitment) {
@@ -937,6 +943,7 @@ impl Vault {
         let mut entries = Vec::new();
         for entry in self.index.list_by_type(NoteType::Action.as_str())? {
             let raw = self.store.read_file(&entry.path)?;
+            // Markdown on purpose: commitment notes are machine-written Markdown.
             let (fm, _body) = Frontmatter::parse(&raw)?;
             let action = ActionFrontmatter::try_from(fm)?;
             let Some(due) = action.due else { continue };
@@ -996,6 +1003,7 @@ impl Vault {
             .store
             .read_file(path)
             .ok()
+            // Markdown on purpose: commitment notes are machine-written Markdown.
             .and_then(|raw| Frontmatter::parse(&raw).ok().map(|(fm, _body)| fm))
             .and_then(|fm| ProjectFrontmatter::try_from(fm).ok())
             .map(|project| (project.context, project.status));
@@ -1313,6 +1321,7 @@ fn clear_completed_field(raw: &str) -> Result<String, DomainError> {
     match rewrite_field_in_frontmatter(raw, "completed", "null") {
         Ok(cleared) => Ok(cleared),
         Err(err @ DomainError::MissingFrontmatterField(_)) => {
+            // Markdown on purpose: commitment notes are machine-written Markdown.
             let (fm, _) = Frontmatter::parse(raw)?;
             match fm.optional_field::<NaiveDate>("completed") {
                 Ok(None) => Ok(raw.to_owned()),
