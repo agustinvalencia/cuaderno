@@ -397,6 +397,9 @@ impl Vault {
                 value: origin.to_owned(),
             });
         }
+        if body.trim().is_empty() {
+            return Err(DomainError::EmptyField { field: "content" });
+        }
 
         let portfolio_index = VaultPath::new(format!(
             // Markdown on purpose: portfolio and evidence notes are machine-written Markdown.

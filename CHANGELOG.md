@@ -133,9 +133,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   Markdown.
 - **`format` on `file_to_portfolio`** (RFC 0008 T21, #949). `format: typst` files `content` as a
   Typst evidence note (`<date>-<source>.typ`): the body is complete Typst with no `<cdno>` block,
-  and the engine writes the block. The nine Typst rejection codes (`body_carries_metadata_block`,
-  `link_needs_escape`, `stem_taken_by_other_format`, …) reach the agent with `details.remedy`;
-  `vars` is refused with `typst`, and `attach` with `typst` is `INVALID_PARAMS` until adoption lands.
+  and the engine writes the block. The nine Typst rejection codes carry `details.remedy`; six are reachable through this tool
+  (`body_carries_metadata_block`, `body_does_not_parse`, `link_needs_escape`,
+  `vars_unsupported_for_typst`, `stem_taken_by_other_format`, `format_unsupported_for_type`) and three
+  have handler tests. A blank `content` is `empty_field`. `vars` is refused with `typst`, and `attach` with `typst` is `INVALID_PARAMS` until adoption lands.
 - **Concept guide: Typst concepts** (RFC 0008 T29, #957). The concept-library
   pages describe a concept written in Typst, refined as a whole body, and the link escape rule.
 

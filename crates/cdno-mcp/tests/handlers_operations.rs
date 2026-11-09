@@ -343,6 +343,20 @@ async fn file_to_portfolio_typst_refuses_attach_and_an_unknown_format_as_invalid
 }
 
 #[tokio::test]
+async fn file_to_portfolio_typst_refuses_a_blank_body() {
+    let (server, store) = typst_filing_server();
+    let before = tree(&store);
+    let err = server
+        .file_to_portfolio(Parameters(typst_filing(Some("typst"), "  \n")))
+        .await
+        .expect_err("refused");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "empty_field");
+    assert_eq!(rejection["details"]["field"], "content");
+    assert_eq!(tree(&store), before);
+}
+
+#[tokio::test]
 async fn file_to_portfolio_without_format_is_markdown() {
     let (server, _store) = typst_filing_server();
     let result = server
