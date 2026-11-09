@@ -52,7 +52,7 @@ Filing a Typst note into a portfolio, through the `file_to_portfolio` tool or th
 ```sh
 cdno file --portfolio surrogate-error-budget \
   --source "Error budget derivation for the surrogate model, 2026-11-08" \
-  --origin "[[projects/surrogate-model]]" \
+  --origin projects/surrogate-model \
   --format typst --body-file derivation.typ
 # -> portfolios/surrogate-error-budget/2026-11-08-error-budget-derivation-for-the.typ
 ```
@@ -90,7 +90,7 @@ A deck already written, with its figures beside it, is adopted rather than retyp
 
 ```sh
 cdno file --portfolio surrogate-error-budget --source "Review deck, 2026-11-08" \
-  --origin "[[projects/surrogate-model]]" --format typst --attach ~/talks/review.typ
+  --origin projects/surrogate-model --format typst --attach ~/talks/review.typ
 # -> portfolios/surrogate-error-budget/2026-11-08-review-deck.typ
 #    portfolios/surrogate-error-budget/2026-11-08-review-deck/figs/…   (copied, paths rewritten)
 ```
@@ -345,7 +345,7 @@ Rules, each enforced at creation and checked by lint:
   (the parser keeps `\#` in a string as a literal backslash and hash). A one-element array is written `("x",)`,
   since `("x")` is a parenthesised string; the reader accepts both.
 - **The block is the frontmatter.** `set_frontmatter` rewrites a value inside it byte-exactly, the
-  way `frontmatter_edit.rs` rewrites a YAML scalar, and can insert a missing key; it never
+  way `frontmatter_edit.rs` rewrites a YAML scalar, and errors on a key the block does not hold; it never
   re-serialises the dictionary, so a comment or the writer's key order survives. The per-format
   edit surface is listed in §6.1.
 - The block is **excluded from the full-text index** (§5.4), so a tag in it is as invisible to

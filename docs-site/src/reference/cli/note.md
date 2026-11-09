@@ -68,7 +68,7 @@ cdno note revise [OPTIONS] [NOTE]
 
 | Flag | Description |
 |------|-------------|
-| `--body-file <PATH>` | Replace the whole body (everything after the frontmatter, which is kept as it is) with the file's contents, written verbatim. Cannot be combined with `--section`. |
+| `--body-file <PATH>` | Replace the whole body (everything after the frontmatter, which is kept as it is) with the file's contents, written verbatim. A Typst note keeps the blank lines that follow its metadata block, so the file's own leading blank lines give way to them. Cannot be combined with `--section`. |
 | `--section <STRING>` | The heading text of a section to upsert, without the `#` markers. Requires `--content-file`. An existing section is replaced together with its sub-sections; a missing one is appended as `## <section>`. |
 | `--content-file <PATH>` | The section's new text, without its heading. Requires `--section`. |
 | `--reason <STRING>` | Why the note was revised, in a short clause; it becomes the daily-log line. |

@@ -88,6 +88,8 @@ pub enum NoteCommands {
         note: Option<String>,
         /// A file whose contents replace the note's whole body (everything
         /// after the frontmatter, which is kept as it is), written verbatim.
+        /// A Typst note keeps the blank lines that follow its metadata block,
+        /// so the file's own leading blank lines give way to them.
         #[arg(long = "body-file", value_name = "PATH", conflicts_with = "section")]
         body_file: Option<PathBuf>,
         /// The heading text of the section to upsert, without the `#`

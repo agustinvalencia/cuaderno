@@ -40,6 +40,25 @@ Errors are usually an unknown `type:` or invalid frontmatter; warnings are typic
 wikilinks. Fix the reported file, or run [`cdno normalise`](cli/normalise.md) if the issue is field
 ordering. See [Frontmatter fields](frontmatter.md).
 
+## My `.typ` file is not in the index
+
+A `.typ` file is a note only when all three hold: it lies in the folder of a type that admits
+Typst (`portfolios/<slug>/` for evidence, `concepts/` for a concept, and only if `[typst]
+note_types` lists the type); it is not inside another note's assets folder (`<stem>/` beside
+`<stem>.typ`); and it carries a `#metadata((…)) <cdno>` block. [`cdno lint`](cli/lint.md#typst-notes)
+says which one fails:
+
+```text
+[warning] portfolios/surrogate-error-budget/loose.typ: Typst file is neither a note nor an attachment: it has no `<cdno>` block and no note owns its folder; add a block to make it a note, or move it into the assets folder of the note that uses it
+[error] portfolios/surrogate-error-budget/typo.typ: metadata present but the `<cdno>` label is missing, mistyped or nested (line 1); put `<cdno>` directly after the `#metadata((…))` call
+[warning] portfolios/surrogate-error-budget/2026-11-09-review-deck/inner.md: this Markdown note sits in the assets folder of Typst note `portfolios/surrogate-error-budget/2026-11-09-review-deck.typ`, so it is not indexed; move it out of `portfolios/surrogate-error-budget/2026-11-09-review-deck/`
+```
+
+A labelled `.typ` owns the folder `<stem>/` beside it, so a note placed there (a Markdown note or
+another labelled `.typ`) is treated as an asset and is not indexed. If `[typst] note_types` leaves
+out the file's type, lint warns "labelled Typst file outside the configured types". To write a note
+rather than attach a file, see [Typst notes](typst-notes.md).
+
 ## `cdno now` says nothing is started, but I started something
 
 Three causes, and [`cdno lint`](cli/lint.md) tells the first apart from the rest.

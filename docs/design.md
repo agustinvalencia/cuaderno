@@ -67,6 +67,8 @@ The method comes first; this tool implements it. The text below is the method's,
 
 `concept` is not a built-in: it is a custom type (`[note_types.concept]`) that `cdno init` declares in a new vault's config, and it can be deleted like any other declaration (§5.12).
 
+Every note is Markdown by default. A note of type `evidence`, or of a custom type such as `concept` (and no other), may instead be a Typst source, `.typ`, whose `#metadata((…)) <cdno>` block holds what YAML frontmatter holds in a Markdown note (§5.13). Which types admit it is `[typst] note_types` in `config.toml`.
+
 ### Note lifecycle patterns
 
 **Append-only**: daily, weekly, monthly, evidence, tracking. Once written, these notes only grow. They are the historical record.
@@ -446,6 +448,8 @@ PDE families. Gap widens on turbulent flows specifically.
 
 **The `origin:` field is required from Phase 3 onward.** It points to whatever produced the evidence — a project, an action note, a stewardship, etc. The forward-link gives provenance ("which work produced this?") and the backlink falls out of the index for free, which means actions and projects can list their evidence without duplicating any structural data. Baking it in from day one of Phase 3 avoids a migration if the action layer (§5.11) wants to lean on it. A concept note (§5.12) is never an evidence note's `origin:`: evidence records what was done inline and may link a concept only as *see also*, so refining the concept never changes what the evidence meant.
 
+**In Typst.** An evidence note may be a `.typ` file: the same fields in a `<cdno>` metadata block, the body in Typst markup, append-only by the same verb rule (§5.13).
+
 **Created by**: CLI (`cdno file "sparse-vs-dense-ood" --source "Chen et al. 2025"`), Claude (via read-paper or file-to-portfolio skill), or directly in Obsidian.
 
 ### 5.6 Stewardship Dashboard
@@ -758,7 +762,59 @@ A benchmark result is evidence; what the benchmark taught you about the techniqu
 
 **Promotion.** Write a concept when you already know you will reuse it; when unsure, note it in the day and promote it the second time it comes up. Promotion is creation with `origin` — no separate operation and no `promoted to` line, since the creation itself logs `concept created [[concepts/<slug>]] — <title>`. The agent searches for an existing concept before creating one, and offers promotion when entries on the same subject tagged `#concept` appear on two or more dates.
 
+**In Typst.** A concept that is mostly mathematics may be a `.typ` file (`concepts/<slug>.typ`): `type`, `title`, `created`, `origin` and `tags` in a `<cdno>` block, no title heading and no scaffold, refined by whole body only and renamable like a Markdown concept (§5.13).
+
 **Created by**: CLI (`cdno note create concept --title "…" [--body-file F] [--origin "[[…]]"]`), Claude (`create_custom_note` with `body` and `origin`), or directly in an editor — an editor write is legitimate but leaves no log line.
+
+### 5.13 Note formats (RFC 0008)
+
+Plain text on disk is the source of truth, and a note is Markdown unless it says otherwise. Two types
+may be written in **Typst** instead: `evidence` and custom types such as `concept`. The switch is
+`[typst] note_types` in `config.toml`; the default is evidence plus `concept` when the vault declares
+it, and the registry refuses every machine-written or section-structured type (daily, weekly,
+monthly, project, action, commitment, inbox, tracking, stewardship, portfolio, question). Rendering
+to PDF is a later phase and nothing here compiles anything.
+
+**What makes a `.typ` a note.** Three conditions, checked in order by the one classifier
+(`classify` in `cdno-core/src/classify.rs`): it lies in the folder of a type that admits Typst; it is not inside
+an attachment's folder or another Typst note's assets folder `<stem>/` (settled from the owner,
+before the file is opened); and its source carries a top-level `#metadata((…)) <cdno>` block. A
+`.typ` that fails the third is reported by lint and not indexed; every other `.typ` stays an
+attachment, as before.
+
+**The block** stands where frontmatter stands: one per note, first in the file, a literal
+dictionary of strings, arrays of strings, booleans and numbers, read with the Typst parser and no
+evaluation. It maps onto the same JSON the YAML frontmatter produces, so the registry, schemas and
+`set_frontmatter` see no difference; `set_frontmatter` rewrites a value in the block byte for byte
+and errors on a key that is absent. The engine writes the block; the body is complete Typst, with
+no title heading, no template and no concept scaffold. Tags come from the block's `tags` only.
+Links are `[[…]]` in the markup and in the block's strings; inside `[[…]]` a Typst markup
+character takes a backslash.
+
+**Adoption.** `file_to_portfolio` with `format: typst` and `attach`, or `cdno file --format typst
+--attach`, makes an existing `.typ` the note. The folder it brings is the directory the file sits
+in, copied to `<stem>/` (dot entries skipped; at most 200 files and 200 MiB; a symbolic link or a
+folder overlapping the vault is refused as `adoption_refused`), and each literal relative path the
+file names is rewritten to the copy. Only the adopted file is scanned for paths.
+
+**Reading and revising.** Evidence is append-only in both formats by the same verb rule. A concept
+is revised by whole body only, keeping the blank lines after the block; section revision is refused
+for Typst. A Typst concept may be renamed with its assets folder; evidence is not renamable in
+either format. A labelled `.typ` owns `<stem>/`, so a note placed there is evicted from the index
+(lint warns).
+
+**What is lost.** Obsidian resolves `[[stem]]` only to `stem.md`: every link to a Typst note is dead
+there, the engine's own `evidence created` and `revised` journal lines included, and clicking one
+creates an empty `stem.md` beside the `.typ`. Typst notes are read through `cdno open`, an editor
+or the compiled PDF; that is why the scope is two types. Markdown-only tooling (`lint --fix`
+repairs, the section verbs, inline tags, template variables) does not apply. A search snippet shows
+Typst syntax. Adoption cannot see a path reached through a function used as a value or one inside a
+sibling `.typ`; a rename leaves other notes' paths into a moved assets folder as written.
+
+**The deliverable rule.** A project's deliverable (a report, a deck, a paper) lives where the
+project's work lives, the forge or the repository, linked from the map's `## Links`. It is not
+filed to a portfolio in either format: evidence is what the work produced and observed, not what it
+delivered. The user guide's page is `reference/typst-notes.md`.
 
 -----
 
