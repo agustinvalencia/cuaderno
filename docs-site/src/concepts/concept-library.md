@@ -72,6 +72,16 @@ also* is the template's default, and a procedure or a definition simply uses its
 usually two notes, linked. A single derivation that does not split can stay one note, with its
 sections cited by heading link (`[[concepts/woodbury-identity#Statement]]`).
 
+### A concept written in Typst
+
+A concept that is mostly equations can be a Typst note instead: `cdno note create concept --format
+typst --body-file …` writes `concepts/<slug>.typ`, with the engine's metadata block (`type`, `title`,
+`created`, `origin`) above a body of Typst markup and no title heading or template. The library
+treats it like any other concept: it is searched, linked and renamed the same way. Two things differ.
+A Typst concept is refined as a **whole body** (`cdno note revise --body-file …`), because a section
+cannot be revised there, and inside `[[…]]` a Typst markup character takes a backslash, as in
+`[[concepts/bias-variance-split\#Statement]]`.
+
 ## The filing test
 
 Before you keep something, ask *what is it?*
