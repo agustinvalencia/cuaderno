@@ -136,6 +136,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   and the engine writes the block. The nine Typst rejection codes (`body_carries_metadata_block`,
   `link_needs_escape`, `stem_taken_by_other_format`, …) reach the agent with `details.remedy`;
   `vars` is refused with `typst`, and `attach` with `typst` is `INVALID_PARAMS` until adoption lands.
+- **Concept guide: Typst concepts** (RFC 0008 T29, #957). The concept-library
+  pages describe a concept written in Typst, refined as a whole body, and the link escape rule.
 
 ## [0.44.0] - 2026-11-06
 
