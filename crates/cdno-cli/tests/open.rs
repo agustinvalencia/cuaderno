@@ -299,6 +299,13 @@ fn open_prints_a_typst_note() {
         resolve_in(dir.path(), "concepts/bias-variance-split.typ").unwrap(),
         "concepts/bias-variance-split.typ"
     );
+    for reference in ["concepts/bias-variance-split", "bias-variance-split"] {
+        assert_eq!(
+            resolve_in(dir.path(), reference).unwrap(),
+            "concepts/bias-variance-split.typ",
+            "{reference}"
+        );
+    }
 }
 
 /// `exists()` is true for a directory, so without an explicit file check this

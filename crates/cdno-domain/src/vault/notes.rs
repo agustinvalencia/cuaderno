@@ -59,9 +59,10 @@ pub struct NoteView {
     /// resolves once #635 (T0) is merged.
     pub backlinks: Vec<VaultPath>,
     /// Heading text of every heading in the body, all levels, in
-    /// document order.
+    /// document order. For a Typst note these are `=` headings as source
+    /// text, not stripped, and section revision is unavailable.
     ///
-    /// Each heading's text is returned with inline markup stripped
+    /// For Markdown, each heading's text is returned with inline markup stripped
     /// (emphasis, code spans, wikilink brackets) — the same form
     /// `MarkdownDocument::section` matches on, so this is the
     /// canonical form for section anchors. When the frontmatter fails

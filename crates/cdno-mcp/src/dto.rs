@@ -1529,7 +1529,7 @@ pub struct ReadNoteResponse {
     pub note_type: Option<String>,
     /// `"markdown"` or `"typst"`, from the file's extension. For a Typst
     /// note `body` is the source after its metadata block, `frontmatter` is
-    /// that block, and `headings` are its `=` headings.
+    /// that block, and `headings` are its `=` headings as source text.
     pub format: String,
     /// The full frontmatter as JSON, or null when the note has no
     /// parseable frontmatter block (the whole file is then the body).
@@ -1547,8 +1547,10 @@ pub struct ReadNoteResponse {
     /// body; flat rather than grouped by type, because the grouping
     /// [`ProjectBacklinksDto`] carries is specific to project maps.
     pub backlinks: Vec<String>,
-    /// Text of every heading in the body, all levels, in document order,
-    /// with inline markup stripped: the form a section argument matches.
+    /// Text of every heading in the body, all levels, in document order.
+    /// For Markdown, inline markup is stripped: the form a section argument
+    /// matches. For Typst they are source text, and section revision is
+    /// unavailable.
     pub headings: Vec<String>,
     /// The former name `note` matched, when it was one: the note answers
     /// to its current slug (`path` shows it) and an agent should use that

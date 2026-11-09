@@ -237,17 +237,30 @@ fn write_note_raw_accepts_a_free_edit_the_schema_would_reject() {
 
 #[test]
 fn read_note_on_a_typst_concept_reports_format_title_body_and_headings() {
+    let path = "concepts/bias-variance-split.typ";
+    let source = "#metadata((\n  type: \"concept\",\n  title: \"Bias-variance split\",\n  created: \"2026-11-08\",\n)) <cdno>\n\n= Statement\n\nThe error splits.\n\n== Why it matters\n";
+    let vault = vault_with(&[(path, source)]);
+
+    let view = vault.read_note(&vp(path)).unwrap();
+
+    assert_eq!(view.format, NoteFormat::Typst);
+    assert_eq!(view.frontmatter["type"], "concept");
+    assert!(view.body.starts_with("\n\n= Statement"), "{:?}", view.body);
+    assert!(!view.body.contains("#metadata"));
+    assert_eq!(view.title.as_deref(), Some("Bias-variance split"));
+    assert_eq!(view.headings, vec!["Statement", "Why it matters"]);
+}
+
+#[test]
+fn a_typst_evidence_note_without_a_title_has_none_and_never_a_heading() {
     let path = "portfolios/surrogate-error-budget/2026-11-08-error-budget.typ";
-    let source = "#metadata((\n  type: \"evidence\",\n  title: \"Error budget\",\n  created: \"2026-11-08\",\n  source: \"Error budget derivation\",\n  portfolio: \"surrogate-error-budget\",\n  origin: \"[[projects/surrogate-model]]\",\n)) <cdno>\n\n= Setting\n\nThe fit.\n\n== Residuals\n";
+    let source = "#metadata((\n  type: \"evidence\",\n  created: \"2026-11-08\",\n  source: \"Error budget derivation\",\n  portfolio: \"surrogate-error-budget\",\n  origin: \"[[projects/surrogate-model]]\",\n)) <cdno>\n\n= Setting\n\nThe fit.\n\n== Residuals\n";
     let vault = vault_with(&[(path, source)]);
 
     let view = vault.read_note(&vp(path)).unwrap();
 
     assert_eq!(view.note_type.as_deref(), Some("evidence"));
     assert_eq!(view.frontmatter["portfolio"], "surrogate-error-budget");
-    assert!(view.body.starts_with("\n\n= Setting"), "{:?}", view.body);
-    assert!(!view.body.contains("#metadata"));
-    assert_eq!(view.title.as_deref(), Some("Error budget"));
-    assert_eq!(view.format, NoteFormat::Typst);
+    assert_eq!(view.title, None);
     assert_eq!(view.headings, vec!["Setting", "Residuals"]);
 }
