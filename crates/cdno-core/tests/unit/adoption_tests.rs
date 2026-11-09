@@ -84,7 +84,7 @@ fn the_file_count_limit_is_inclusive() {
         err,
         AdoptionReadError::TooLarge { max_files: 3, .. }
     ));
-    assert!(err.to_string().contains("folder of their own"), "{err}");
+    assert!(err.to_string().contains("over the limit"), "{err}");
 }
 
 #[test]
