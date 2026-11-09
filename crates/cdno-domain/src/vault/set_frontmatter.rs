@@ -17,8 +17,11 @@ use serde_json::Value;
 
 use cdno_core::config::FieldType;
 use cdno_core::error::StoreError;
-use cdno_core::frontmatter::Frontmatter;
+use cdno_core::extractors::differs_only_by;
+use cdno_core::frontmatter::{Frontmatter, parse_note};
 use cdno_core::path::VaultPath;
+use cdno_core::paths::{NoteFormat, note_format};
+use cdno_core::typst::{self, TypstError};
 
 use crate::error::DomainError;
 use crate::note_type::NoteType;
@@ -81,8 +84,7 @@ impl Vault {
         // 1. Resolve the note reference to an existing file, then read it.
         let path = self.resolve_frontmatter_note(note, at.date())?;
         let raw = self.store.read_file(&path)?;
-        // Markdown on purpose: the Typst reader and writer land in T28; a Typst note is refused here as before.
-        let (fm, _body) = Frontmatter::parse(&raw)?;
+        let (fm, _body) = parse_note(&path, &raw)?;
 
         // 2. Determine the note's type: the reconciled index row is
         //    authoritative; fall back to the `type:` frontmatter marker.
@@ -158,7 +160,33 @@ impl Vault {
         // 7. Rewrite the single field line in place, preserving key order,
         //    comments, and the body. Strict-exists: a key absent from the
         //    frontmatter errors here rather than being appended out of order.
-        let new_content = rewrite_field_in_frontmatter(&raw, key, &new_scalar)?;
+        let new_content = match note_format(&path) {
+            Some(NoteFormat::Typst) => {
+                if !fm
+                    .as_json()
+                    .as_object()
+                    .is_some_and(|m| m.contains_key(key))
+                {
+                    return Err(DomainError::MissingFrontmatterField(key.to_owned()));
+                }
+                let (out, edits) = typst::rewrite_scalar(&raw, key, &new_json).map_err(|e| {
+                    DomainError::InvalidFieldValue {
+                        note_type: note_type.clone(),
+                        field: key.to_owned(),
+                        reason: match e {
+                            TypstError::Unwritable { what } => what,
+                            other => other.to_string(),
+                        },
+                    }
+                })?;
+                debug_assert!(
+                    differs_only_by(&raw, &out, &edits),
+                    "the Typst rewrite of `{key}` moved bytes outside its edit"
+                );
+                out
+            }
+            _ => rewrite_field_in_frontmatter(&raw, key, &new_scalar)?,
+        };
 
         // 8. Optionally auto-log, then commit. `log_on_change = true` stamps a
         //    `key: old → new` line into today's daily note.
