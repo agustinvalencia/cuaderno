@@ -282,6 +282,32 @@ fn a_path_without_its_extension_opens_the_markdown_file() {
     );
 }
 
+/// A Typst note opens as itself: the reference resolves to the `.typ` file,
+/// which is the path `--print` hands to a script and the editor opens.
+#[test]
+fn open_prints_a_typst_note() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    fs::create_dir_all(dir.path().join("concepts")).unwrap();
+    fs::write(
+        dir.path().join("concepts/bias-variance-split.typ"),
+        "#metadata((\n  type: \"concept\",\n  title: \"Bias-variance split\",\n  created: \"2026-08-21\",\n)) <cdno>\n\n= Statement\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        resolve_in(dir.path(), "concepts/bias-variance-split.typ").unwrap(),
+        "concepts/bias-variance-split.typ"
+    );
+    for reference in ["concepts/bias-variance-split", "bias-variance-split"] {
+        assert_eq!(
+            resolve_in(dir.path(), reference).unwrap(),
+            "concepts/bias-variance-split.typ",
+            "{reference}"
+        );
+    }
+}
+
 /// `exists()` is true for a directory, so without an explicit file check this
 /// handed back a path no editor can open and no `$(…)` can use.
 #[test]
