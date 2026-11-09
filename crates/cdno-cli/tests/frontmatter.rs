@@ -92,3 +92,35 @@ fn frontmatter_set_rejects_a_non_settable_field() {
         "unexpected error: {err}"
     );
 }
+
+#[test]
+fn frontmatter_set_round_trips_on_a_typst_note() {
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+
+    let cfg = dir.path().join(".cuaderno/config.toml");
+    let mut contents = fs::read_to_string(&cfg).unwrap();
+    contents.push_str("\n[schemas.concept.fields.priority]\ntype = \"int\"\nsettable = true\n");
+    fs::write(&cfg, contents).unwrap();
+
+    let note = dir.path().join("concepts/bias-variance-split.typ");
+    fs::create_dir_all(note.parent().unwrap()).unwrap();
+    let before = "#metadata((\n  type: \"concept\",\n  created: \"2026-07-01\",\n  priority: 1, // keep\n)) <cdno>\n\n= Bias-variance split\n";
+    fs::write(&note, before).unwrap();
+
+    frontmatter::run(
+        dir.path(),
+        FrontmatterCommands::Set {
+            note: "concepts/bias-variance-split.typ".to_owned(),
+            key: "priority".to_owned(),
+            value: "3".to_owned(),
+        },
+        false,
+    )
+    .expect("frontmatter set succeeds on a Typst note");
+
+    assert_eq!(
+        fs::read_to_string(&note).unwrap(),
+        before.replace("priority: 1,", "priority: 3,")
+    );
+}
