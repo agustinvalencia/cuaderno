@@ -1973,7 +1973,7 @@ pub struct RenameEditDto {
 }
 
 /// One kind of change in an edit: `links` (with `count`), `field` (with
-/// `key`), `alias`, or `log_line`.
+/// `key`), `alias`, `asset_paths` (with `count`), or `log_line`.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct RenameChangeDto {
     pub kind: &'static str,
@@ -2022,6 +2022,11 @@ impl RenamePlanDto {
             Change::Alias => RenameChangeDto {
                 kind: "alias",
                 count: None,
+                key: None,
+            },
+            Change::AssetPaths { count } => RenameChangeDto {
+                kind: "asset_paths",
+                count: Some(*count),
                 key: None,
             },
             Change::LogLine => RenameChangeDto {

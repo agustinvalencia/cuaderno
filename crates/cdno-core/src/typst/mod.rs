@@ -23,7 +23,10 @@ pub use links::{LinkFault, TypstLinks, escape_link_address, headings, wikilink_s
 
 use typst_syntax::{Lines, SyntaxKind, SyntaxNode, parse};
 
-pub use edit::{append_list_value, remove_list_value, rewrite_scalar, scalar_span, write_block};
+pub use edit::{
+    append_list_value, remove_list_value, rewrite_scalar, rewrite_string_content, scalar_span,
+    write_block,
+};
 pub use metadata::{EntrySpan, MetadataBlock, TypstError, metadata_block};
 
 mod paths;

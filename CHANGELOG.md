@@ -109,6 +109,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   note's assets folder. A note edited in place to a type that does not admit Typst is dropped from
   the index, and an owner above a declared type's folder no longer takes it.
 - **`format` on `read_note`** (RFC 0008 T16). `read_note` reports `format` (`markdown` or `typst`); for a Typst note `body` is the source after its metadata block, `headings` are its `=` headings, and `cdno open` resolves a Typst note to its `.typ`. Internally a Typst note's title is the block's `title`, never a heading (the response carries no `title`).
+- **Renaming a Typst note** (RFC 0008 T17). A Typst note renames as a Markdown one does: the `.typ` moves with its assets folder, its own relative path literals into that folder follow, and the old slug joins the block's `aliases`. A `portfolio:` or `project:` field in a Typst note's block now follows a rename of what it names, so a Typst evidence note stays in its portfolio.
 
 ## [0.44.0] - 2026-11-06
 

@@ -34,6 +34,7 @@ use std::ops::Range;
 
 use chrono::NaiveDateTime;
 
+use cdno_core::artefacts::owning_note;
 use cdno_core::error::TransactionError;
 use cdno_core::extractors::{
     AddressEdit, AliasMap, WikilinkRaw, first_h1, note_link_names, resolve_wikilinks,
@@ -41,14 +42,16 @@ use cdno_core::extractors::{
 };
 use cdno_core::frontmatter::{Frontmatter, parse_note, split_frontmatter};
 use cdno_core::frontmatter_edit::{
-    append_frontmatter_list_value, frontmatter_changed_only_at, frontmatter_scalar_spans,
-    remove_frontmatter_list_value, rewrite_frontmatter_scalar,
+    DriftSide, FrontmatterDrift, append_frontmatter_list_value, frontmatter_changed_only_at,
+    frontmatter_scalar_spans, remove_frontmatter_list_value, rewrite_frontmatter_scalar,
+    values_changed_only_at,
 };
 use cdno_core::hash::content_hash;
 use cdno_core::index::{ArchivalSnapshot, frontmatter_aliases};
 use cdno_core::path::VaultPath;
 use cdno_core::paths::{self, NoteFormat, note_format};
 use cdno_core::transaction::VaultTransaction;
+use cdno_core::typst::{self, PathArg};
 
 use crate::error::DomainError;
 use crate::note_type::NoteType;
@@ -140,7 +143,7 @@ impl RenamePlan {
                 .map(|c| match c {
                     Change::Address { count } => *count,
                     Change::Field { .. } => 1,
-                    Change::Alias | Change::LogLine => 0,
+                    Change::Alias | Change::AssetPaths { .. } | Change::LogLine => 0,
                 })
                 .sum();
             references += here;
@@ -165,7 +168,7 @@ pub struct PlannedEdit {
     pub before: String,
     pub after: String,
     /// What kinds of reference this edit touches, in the order address,
-    /// field, alias, log line.
+    /// field, alias, asset paths, log line.
     pub changes: Vec<Change>,
     /// Every byte edit, ranges into `before`, ascending and non-overlapping:
     /// `after` is exactly `before` with these applied.
@@ -182,6 +185,9 @@ pub enum Change {
     /// The old slug appended to the target's `aliases:` (and the new slug
     /// dropped from it, when the note takes back a former name).
     Alias,
+    /// `count` of a Typst note's own path literals into its assets folder
+    /// rewritten for the move. Not references: they count in no total.
+    AssetPaths { count: usize },
     /// The `renamed` (or `relinked`) line appended to today's daily log.
     LogLine,
 }
@@ -438,6 +444,13 @@ impl Vault {
     /// `portfolio:` value equal to the question's slug names nothing that
     /// moves and is left alone.
     ///
+    /// **A Typst note moves its assets folder** (RFC 0008 §5.6): `moves` holds
+    /// `<old>.typ` and then every file under `<old>/` the note owns, each to
+    /// the same place under `<new>/`. Its own relative path literals into
+    /// that folder follow ([`Change::AssetPaths`]), links into the folder
+    /// follow as a portfolio's do, and the old slug joins the block's
+    /// `aliases`. §3.5 fields of a Typst referrer are rewritten in its block.
+    ///
     pub fn plan_rename(
         &self,
         snapshot: &VaultSnapshot,
@@ -519,7 +532,8 @@ impl Vault {
             .contents
             .get(&target_path)
             .ok_or_else(|| cdno_core::error::StoreError::NotFound(target_path.to_string()))?;
-        let target_type = note_type_name(target_before);
+        let target_type = note_type_name(&target_path, target_before);
+        let target_is_typst = note_format(&target_path) == Some(NoteFormat::Typst);
 
         // 1. Not renamable. A relink edits no alias, so it cannot be
         // refused for its `aliases:` shape, and it changes nothing on the
@@ -527,6 +541,9 @@ impl Vault {
         let builtin = renamable_type(self, &target_path, target_type.as_deref(), snapshot, relink)?;
         let alias_edit = if relink {
             None
+        } else if target_is_typst {
+            typst_alias_edit(target_before, &old_slug, new_slug)
+                .map_err(|reason| not_renamable(&target_path, reason))?
         } else {
             alias_edit(target_before, &old_slug, new_slug)
                 .map_err(|reason| not_renamable(&target_path, reason))?
@@ -646,10 +663,35 @@ impl Vault {
             old_folder.clone().or(pair_folder.clone())
         };
 
-        // The folder segment a portfolio's links carry, before and after.
+        // A Typst note's assets folder, before and after, when the note owns
+        // something in it: a folder it does not own (another type's root)
+        // stays where it is.
+        let scope = self.note_scope()?;
+        let owned_assets: Vec<&VaultPath> = if target_is_typst && !relink {
+            snapshot
+                .files
+                .iter()
+                .filter(|file| owning_note(file, &scope, |owner| *owner == target_path).is_some())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let assets_folders: Option<(VaultPath, VaultPath)> = if owned_assets.is_empty() {
+            None
+        } else {
+            note_folder(&target_path).zip(note_folder(&sibling_path(&target_path, new_slug)?))
+        };
+
+        // The folder segment a portfolio's (or an assets folder's) links
+        // carry, before and after.
         let folder_segments: Option<(String, String)> = moved_folder
             .as_ref()
-            .map(|old| (old.to_string(), format!("{}/{new_slug}", paths::PORTFOLIOS)));
+            .map(|old| (old.to_string(), format!("{}/{new_slug}", paths::PORTFOLIOS)))
+            .or_else(|| {
+                assets_folders
+                    .as_ref()
+                    .map(|(old, new)| (old.to_string(), new.to_string()))
+            });
         let new_path = match &old_folder {
             _ if relink => target_path.clone(),
             Some(old_dir) => rebase(
@@ -679,6 +721,11 @@ impl Vault {
                     continue;
                 }
                 moves.push((file.clone(), rebase(file, old_dir, &new_dir)?));
+            }
+        }
+        if let Some((old_dir, new_dir)) = &assets_folders {
+            for file in &owned_assets {
+                moves.push(((*file).clone(), rebase(file, old_dir, new_dir)?));
             }
         }
 
@@ -851,17 +898,20 @@ impl Vault {
             // value equal to the old slug holds no wikilink, so the address
             // rewrite left it where it was) and shifted to `before`'s bytes.
             let mut guarded: Vec<&str> = Vec::new();
-            let block =
-                split_frontmatter(before).map(|(block, _)| (offset_in(before, block), block));
+            let is_typst = note_format(path) == Some(NoteFormat::Typst);
+            let block = split_frontmatter(before)
+                .filter(|_| !is_typst)
+                .map(|(block, _)| (offset_in(before, block), block));
+            let referrer = note_type_name(path, before).and_then(|t| t.parse::<NoteType>().ok());
+            let referrer_keys: Vec<&'static str> = referrer
+                .map(NoteType::reference_fields)
+                .unwrap_or_default()
+                .iter()
+                .filter(|(_, ty)| field_keys.contains(ty))
+                .map(|(key, _)| *key)
+                .collect();
             if let Some((base, block)) = block {
-                let referrer = note_type_name(before).and_then(|t| t.parse::<NoteType>().ok());
-                for key in referrer
-                    .map(NoteType::reference_fields)
-                    .unwrap_or_default()
-                    .iter()
-                    .filter(|(_, ty)| field_keys.contains(ty))
-                    .map(|(key, _)| *key)
-                {
+                for key in referrer_keys.iter().copied() {
                     let field_edits = field_values
                         .iter()
                         .map(|value| rewrite_frontmatter_scalar(block, key, value, new_slug).1)
@@ -896,6 +946,51 @@ impl Vault {
                     changes.push(Change::Alias);
                     guarded.push(ALIASES_KEY);
                 }
+            } else if is_typst {
+                // The block's literal writer, at the value's span; a value is
+                // compared decoded, so an escaped spelling of the slug follows
+                // too. The block's own positions are `before`'s.
+                let value_of = typst::metadata_block(before).ok().map(|b| b.value);
+                for key in referrer_keys.iter().copied() {
+                    let names = value_of
+                        .as_ref()
+                        .and_then(|value| value.get(key))
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|v| field_values.contains(&v));
+                    if !names {
+                        continue;
+                    }
+                    let (_, field_edits) = typst::rewrite_scalar(
+                        before,
+                        key,
+                        &serde_json::Value::String(new_slug.to_owned()),
+                    )
+                    .map_err(|_| DomainError::ReferenceUnaddressable {
+                        path: path.clone(),
+                        key: key.to_owned(),
+                    })?;
+                    all.extend(field_edits);
+                    changes.push(Change::Field {
+                        key: key.to_owned(),
+                    });
+                    guarded.push(key);
+                }
+                if is_target {
+                    if let Some(edit) = &alias_edit {
+                        all.push(edit.clone());
+                        changes.push(Change::Alias);
+                        guarded.push(ALIASES_KEY);
+                    }
+                    if let Some((old_dir, _)) = &assets_folders {
+                        let path_edits = own_asset_path_edits(path, before, old_dir, new_slug);
+                        if !path_edits.is_empty() {
+                            changes.push(Change::AssetPaths {
+                                count: path_edits.len(),
+                            });
+                            all.extend(path_edits);
+                        }
+                    }
+                }
             }
             all.sort_by_key(|e| (e.range.start, e.range.end));
             if all.windows(2).any(|w| w[1].range.start < w[0].range.end) {
@@ -906,14 +1001,17 @@ impl Vault {
             // The drift guard: past the address rewrite, only the fields
             // just rewritten (and the alias) may differ.
             if !guarded.is_empty() {
-                let links_block = split_frontmatter(&after_links).map_or("", |(b, _)| b);
-                let after_block = split_frontmatter(&after).map_or("", |(b, _)| b);
-                frontmatter_changed_only_at(links_block, after_block, &guarded).map_err(
-                    |drift| DomainError::ReferenceDrift {
-                        path: path.clone(),
-                        drift,
-                    },
-                )?;
+                let drifted = if is_typst {
+                    typst_block_changed_only_at(&after_links, &after, &guarded)
+                } else {
+                    let links_block = split_frontmatter(&after_links).map_or("", |(b, _)| b);
+                    let after_block = split_frontmatter(&after).map_or("", |(b, _)| b);
+                    frontmatter_changed_only_at(links_block, after_block, &guarded)
+                };
+                drifted.map_err(|drift| DomainError::ReferenceDrift {
+                    path: path.clone(),
+                    drift,
+                })?;
             }
 
             // Today's daily note is kept even with no reference in it: the
@@ -946,7 +1044,7 @@ impl Vault {
             .map(|c| match c {
                 Change::Address { count } => *count,
                 Change::Field { .. } => 1,
-                Change::Alias | Change::LogLine => 0,
+                Change::Alias | Change::AssetPaths { .. } | Change::LogLine => 0,
             })
             .sum();
         // A relink with no straggler writes nothing, not even its log line.
@@ -1196,10 +1294,10 @@ impl Vault {
         }
 
         let written = stage_rename(&plan, &snapshot, &mut tx)?;
-        // A portfolio's folders, before and after: the old one is pruned
+        // The moved folders, before and after: the old one is pruned
         // once every file has left it, the new one when the commit failed
         // and the rollback took the files back out of it.
-        let folders = moved_portfolio_folders(&plan);
+        let folders = moved_folders(&plan);
         let index_stale = match tx.commit() {
             Ok(_) => false,
             Err(TransactionError::IndexStale(_)) => true,
@@ -1309,7 +1407,7 @@ impl Vault {
                 snapshot
                     .contents
                     .get(path)
-                    .and_then(|c| note_type_name(c))
+                    .and_then(|c| note_type_name(path, c))
                     .as_deref()
                     == Some(t)
             }
@@ -1419,13 +1517,17 @@ fn stage_index_rows(
     content: &str,
     tx: &mut VaultTransaction,
 ) -> Result<(), DomainError> {
-    let Some(note_type) = parse_note(path, content)
-        .ok()
-        .and_then(|(fm, _)| fm.require_field::<String>("type").ok())
-    else {
+    let Some((note_type, title)) = parse_note(path, content).ok().and_then(|(fm, _)| {
+        let title = fm.optional_field::<String>("title").ok().flatten();
+        Some((fm.require_field::<String>("type").ok()?, title))
+    }) else {
         return Ok(());
     };
-    tx.upsert_note(build_index_entry_for(path, content, &note_type)?);
+    // The row's `title` as reconciliation derives it, so a rename and a
+    // rebuild from scratch agree.
+    let mut entry = build_index_entry_for(path, content, &note_type)?;
+    entry.title = title;
+    tx.upsert_note(entry);
     if note_type == NoteType::Project.as_str() {
         stage_project_index_rows(path, content, tx);
     }
@@ -1461,7 +1563,9 @@ fn failed_path(error: &cdno_core::error::StoreError) -> Option<VaultPath> {
 /// A portfolio's folder moves as one, so a `portfolios/<new>/` holding any
 /// file (a folder of non-notes the snapshot's names cannot show) is refused
 /// the same way, with `kind: folder`: the move never merges into a folder's
-/// contents. One that holds no file at any depth (left by hand, or by an
+/// contents. So is the `<new>/` beside a Typst note, whether or not the note
+/// has assets: arriving at `<new>.typ` would make the note own whatever that
+/// folder holds, and evict any note in it from the index. One that holds no file at any depth (left by hand, or by an
 /// attempt whose rollback could not prune it) holds nothing to merge with,
 /// but its **name** still matters: on a filesystem that cannot tell names
 /// apart, an empty `portfolios/New/` would take every file while the index
@@ -1504,7 +1608,7 @@ fn ensure_destinations_free(
             kind,
         })
     };
-    if let Some((_, new_dir)) = moved_portfolio_folders(plan)
+    if let Some((_, new_dir)) = moved_folders(plan)
         && store.exists(&new_dir)?
     {
         if !store.walk_dir(&new_dir)?.is_empty() {
@@ -1514,7 +1618,11 @@ fn ensure_destinations_free(
             prune_folder_tree(store, &new_dir);
             !store.exists(&new_dir)?
         } else {
-            let parent = VaultPath::new(paths::PORTFOLIOS)?;
+            let parent = new_dir
+                .as_path()
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .map_or_else(|| Ok(VaultPath::root()), VaultPath::new)?;
             store.walk_dirs(&parent)?.contains(&new_dir)
         };
         if !free {
@@ -1654,6 +1762,143 @@ fn moved_portfolio_folders(plan: &RenamePlan) -> Option<(VaultPath, VaultPath)> 
     plan.moves
         .iter()
         .find_map(|(from, to)| portfolio_folder(from).zip(portfolio_folder(to)))
+}
+
+/// The folders a move of the whole note carries: a portfolio's, or the
+/// `<old>/` and `<new>/` beside a Typst note, which the destination check and
+/// the prune treat the same.
+fn moved_folders(plan: &RenamePlan) -> Option<(VaultPath, VaultPath)> {
+    moved_portfolio_folders(plan).or_else(|| {
+        let (from, to) = plan.moves.first()?;
+        (note_format(from) == Some(NoteFormat::Typst))
+            .then(|| note_folder(from).zip(note_folder(to)))
+            .flatten()
+    })
+}
+
+/// `<dir>/<stem>` for a note at `<dir>/<stem>.<ext>`: the folder a Typst note
+/// owns.
+fn note_folder(path: &VaultPath) -> Option<VaultPath> {
+    VaultPath::new(path.as_path().with_extension("")).ok()
+}
+
+/// The edit to a Typst note's `aliases`, in the source's positions: the twin
+/// of [`alias_edit`], through the block's literal writer. An `Err` is the
+/// reason the rename is refused.
+fn typst_alias_edit(
+    source: &str,
+    old_slug: &str,
+    new_slug: &str,
+) -> Result<Option<AddressEdit>, String> {
+    let (dropped, removal) = typst::remove_list_value(source, ALIASES_KEY, new_slug)
+        .map_err(|error| format!("its `aliases` cannot be edited: {error}"))?;
+    let (after, mut appended) = typst::append_list_value(&dropped, ALIASES_KEY, old_slug)
+        .map_err(|error| format!("its `aliases` cannot be edited: {error}"))?;
+    if removal.is_empty() {
+        return Ok(appended.pop());
+    }
+    // A removal, then perhaps an append in the shifted text: one edit over
+    // the region where the source and the result differ.
+    let (region, suffix) = diff_region(source, &after);
+    Ok(Some(AddressEdit {
+        replacement: after[region.start..after.len() - suffix].to_owned(),
+        range: region,
+    }))
+}
+
+/// [`frontmatter_changed_only_at`] for a Typst source's metadata block.
+fn typst_block_changed_only_at(
+    before: &str,
+    after: &str,
+    keys: &[&str],
+) -> Result<(), FrontmatterDrift> {
+    let read = |source: &str, which: DriftSide| {
+        typst::metadata_block(source)
+            .map(|block| block.value)
+            .map_err(|error| FrontmatterDrift::Unparsable {
+                which,
+                error: error.to_string(),
+            })
+    };
+    values_changed_only_at(
+        &read(before, DriftSide::Before)?,
+        &read(after, DriftSide::After)?,
+        keys,
+    )
+}
+
+/// The edits to a Typst note's own path literals that land under `old_dir`,
+/// the assets folder that moves, each with only the folder's segment changed.
+/// A literal that is not relative (a `/`-rooted one), or that is not a string
+/// literal at all, is not rewritten.
+fn own_asset_path_edits(
+    note: &VaultPath,
+    source: &str,
+    old_dir: &VaultPath,
+    new_slug: &str,
+) -> Vec<AddressEdit> {
+    let base: Vec<String> = note
+        .as_path()
+        .parent()
+        .map(components_of)
+        .unwrap_or_default();
+    let folder = components_of(old_dir.as_path());
+    typst::path_args(source)
+        .into_iter()
+        .filter_map(|arg| match arg {
+            PathArg::Literal(literal) => Some(literal),
+            PathArg::NotLiteral { .. } => None,
+        })
+        .filter_map(|literal| {
+            let moved = literal_into_folder(&literal.value, &base, &folder, new_slug)?;
+            Some(typst::rewrite_string_content(literal.span, &moved))
+        })
+        .collect()
+}
+
+fn components_of(path: &std::path::Path) -> Vec<String> {
+    path.components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect()
+}
+
+/// `value`, a path relative to the folder `base`, with the segment that names
+/// `folder` replaced by `new_slug`, when it lands strictly inside `folder`.
+/// Resolved lexically, so `./old/a.png` and `../concepts/old/a.png` are found
+/// and keep their shape; `None` for anything else.
+fn literal_into_folder(
+    value: &str,
+    base: &[String],
+    folder: &[String],
+    new_slug: &str,
+) -> Option<String> {
+    if value.starts_with('/') {
+        return None;
+    }
+    let mut at: Vec<String> = base.to_vec();
+    let mut segment = None;
+    let parts: Vec<&str> = value.split('/').collect();
+    for (i, part) in parts.iter().enumerate() {
+        match *part {
+            "" | "." => {}
+            ".." => {
+                at.pop()?;
+                if at.len() < folder.len() {
+                    segment = None;
+                }
+            }
+            name => {
+                at.push(name.to_owned());
+                if at == folder {
+                    segment = Some(i);
+                }
+            }
+        }
+    }
+    let segment = segment.filter(|_| at.len() > folder.len())?;
+    let mut parts: Vec<&str> = parts;
+    parts[segment] = new_slug;
+    Some(parts.join("/"))
 }
 
 /// The edit to the note's `aliases:`, relative to its frontmatter block:
@@ -1804,8 +2049,17 @@ fn markdown_frontmatter_json(content: &str) -> Option<serde_json::Value> {
 /// The `type:` a note's frontmatter declares, read as text (the first
 /// top-level `type:` scalar) rather than through the parser, so a referrer
 /// whose frontmatter no longer parses still has its §3.5 fields found, and
-/// the drift guard refuses it, instead of the rename skipping them.
-fn note_type_name(content: &str) -> Option<String> {
+/// the drift guard refuses it, instead of the rename skipping them. A Typst
+/// note's comes from its block, the one place it can be read.
+fn note_type_name(path: &VaultPath, content: &str) -> Option<String> {
+    if note_format(path) == Some(NoteFormat::Typst) {
+        return typst::metadata_block(content)
+            .ok()?
+            .value
+            .get("type")?
+            .as_str()
+            .map(str::to_owned);
+    }
     let (block, _) = split_frontmatter(content)?;
     let range = frontmatter_scalar_spans(block, "type").into_iter().next()?;
     Some(block[range].to_owned())
