@@ -27,6 +27,7 @@ A reference can be any of:
 | Month | `2026-08` | that month's monthly note |
 | Vault-relative path | `journal/2026/daily/2026-08-21.md` | that file |
 | Path without `.md`, as a wikilink spells it | `concepts/foo` | `concepts/foo.md` |
+| A Typst note's path, with or without `.typ` | `concepts/foo.typ` | that `.typ` file, opened in the editor or printed by `--path` |
 | Absolute path inside the vault | `/home/you/vault/projects/foo.md` | that file |
 
 Portfolios and expanded stewardships are addressed by their **folder** name, not the literal

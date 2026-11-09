@@ -19,7 +19,7 @@ anything. Inputs marked optional may be omitted.
 | `read_daily_note` | `date?` (default today) | The daily log for a date. |
 | `read_weekly_note` | `date?` (default this week) | The weekly note for an ISO week. |
 | `read_monthly_note` | `date?` (default this month) | The monthly note for a calendar month. |
-| `read_note` | `note` (path, slug, `type:slug` or journal date) | Any note, whole: `path`, `note_type`, `frontmatter`, `body` (uncapped), `content_hash`, `backlinks` and `headings`. Takes the references [`cdno open`](../cli/open.md) takes, plus a path without its `.md`. |
+| `read_note` | `note` (path, slug, `type:slug` or journal date) | Any note, whole: `path`, `note_type`, `format` (`markdown` or `typst`), `frontmatter`, `body` (uncapped), `content_hash`, `backlinks` and `headings`. For a Typst note `body` is the source after its metadata block and `headings` are its `=` headings as source text (section revision is unavailable). Takes the references [`cdno open`](../cli/open.md) takes, plus a path without its `.md`. |
 | `search_notes` | `query`, `note_type?`, `from?`, `to?`, `portfolio?`, `limit?` (default 20) | Ranked full-text hits. The MCP form of [`cdno search`](../cli/search.md). |
 | `lint` | — | Vault-wide problems: frontmatter, broken wikilinks, a link that resolves only through an alias (a former name; the message names the current one), an alias that another note's file stem shadows or a folder note's name contests, attachment pairing, a project whose status disagrees with its folder, a custom template that lacks a key its built-in has gained, and lines the canonical parsers silently skip — malformed stewardship-dashboard bullets and daily-log focus markers (`started`, `paused`, `resumed`, `action promoted on`) [`cdno now`](../cli/now.md) will not read back, plus the same check on a `renamed` or `relinked` line and a warning for a link in its `was:` value. |
 | `triage_inbox` | — | Pending inbox captures awaiting triage. |
@@ -122,8 +122,8 @@ tell an agent how to use the focus; see [Write tools](writes.md#focus-tools).
   detected rather than overwritten. `backlinks` comes from the index, which every cuaderno write
   updates; a link made by editing a file elsewhere appears once the index next reconciles. A slug several notes share is
   refused with code `ambiguous_slug` and the candidates' paths in `details.candidates`; a
-  reference matching nothing is refused with code `not_found`. `headings` lists every heading in
-  the body with inline markup stripped, the form `revise_note`'s `section` takes. To follow a
+  reference matching nothing is refused with code `not_found`. For a Markdown note `headings` lists every
+  heading in the body with inline markup stripped, the form `revise_note`'s `section` takes; a Typst note's are source text and section revision is unavailable. To follow a
   heading link such as a concept's `origin` (`[[journal/2026/daily/2026-09-02#Woodbury
   identity]]`), pass the part before the `#` and find the entry under that heading: the whole link,
   anchor included, is refused as `not_found`. When `note` was a former name of a renamed note, the

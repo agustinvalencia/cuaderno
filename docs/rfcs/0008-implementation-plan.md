@@ -1035,15 +1035,15 @@ rows.
 **Correct means.** Every way a Typst note can be wrong that the RFC names is one visible line,
 at the level the lint convention gives it.
 
-### T16 — `format` on `read_note`, `cdno open`, `cdno note show`
+### T16 — `format` on `read_note`; `cdno open` on a Typst note
 
 **What.** `NoteView` (`notes.rs:20`) gains `format: NoteFormat`; `read_note` goes through
 `parse_note` (body after the block), `headings` through `note_headings` (T10), `title` for Typst
 is the block's `title` (never a `= ` heading, §5.3). `NoteDto` in `cdno-mcp/src/dto.rs` gains
 `format: String` (`"markdown" | "typst"`), the `read_note` description (`context.rs:439`) gains
 one sentence ("`format` is `typst` for a Typst note: `body` is the source after its metadata
-block, `headings` are its `=` headings"). `cdno open` and `cdno note show` print the source;
-`cdno open` with an editor opens the `.typ`.
+block, `headings` are its `=` headings"). `cdno open` keeps its behaviour (it prints a path, or opens the
+file in the editor) and resolves a Typst note to its `.typ`; there is no `cdno note show`.
 
 **Deliverable.** The field on both layers, the description sentence, tests.
 

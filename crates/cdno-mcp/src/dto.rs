@@ -1527,6 +1527,10 @@ pub struct ReadNoteResponse {
     /// `daily`, ...), or null when the file is not indexed (an ignored
     /// file, or one written since the last reconcile).
     pub note_type: Option<String>,
+    /// `"markdown"` or `"typst"`, from the file's extension. For a Typst
+    /// note `body` is the source after its metadata block, `frontmatter` is
+    /// that block, and `headings` are its `=` headings as source text.
+    pub format: String,
     /// The full frontmatter as JSON, or null when the note has no
     /// parseable frontmatter block (the whole file is then the body).
     pub frontmatter: serde_json::Value,
@@ -1543,8 +1547,10 @@ pub struct ReadNoteResponse {
     /// body; flat rather than grouped by type, because the grouping
     /// [`ProjectBacklinksDto`] carries is specific to project maps.
     pub backlinks: Vec<String>,
-    /// Text of every heading in the body, all levels, in document order,
-    /// with inline markup stripped: the form a section argument matches.
+    /// Text of every heading in the body, all levels, in document order.
+    /// For Markdown, inline markup is stripped: the form a section argument
+    /// matches. For Typst they are source text, and section revision is
+    /// unavailable.
     pub headings: Vec<String>,
     /// The former name `note` matched, when it was one: the note answers
     /// to its current slug (`path` shows it) and an agent should use that
@@ -1558,6 +1564,7 @@ impl From<cdno_domain::vault::NoteView> for ReadNoteResponse {
         Self {
             path: v.path.to_string(),
             note_type: v.note_type,
+            format: v.format.name().to_owned(),
             frontmatter: v.frontmatter,
             body: v.body,
             content_hash: v.content_hash,
