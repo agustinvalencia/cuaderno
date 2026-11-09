@@ -117,6 +117,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   heading and no template. A declared int, float or bool field is written as that type, so the
   note passes the type check on re-read; `--var` / `vars` is refused with Typst, and a `.typ` and
   an `.md` can no longer share a stem in one folder, whichever is created second.
+- **`set_frontmatter` on a Typst note** (RFC 0008 T28, #956). The setter reads the note by its
+  format and, for a `.typ`, rewrites only the value's span in the `<cdno>` block, so comments,
+  key order and the body stay byte-for-byte; a value the block cannot hold is an
+  `InvalidFieldValue`. Validation, the no-op rule, strict-exists and the log line are as for
+  Markdown.
 
 ## [0.44.0] - 2026-11-06
 
