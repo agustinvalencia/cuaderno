@@ -725,6 +725,51 @@ fn read_note_then_revise_note_round_trips_through_the_content_hash() {
     assert_eq!(after["content_hash"], revised["new_hash"], "{revised}");
 }
 
+/// Filing a Typst evidence note over the wire, then reading it back: the
+/// `format` field reaches the handler and `read_note` reports the format.
+#[test]
+fn file_to_portfolio_typst_then_read_note_over_stdio() {
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    let mut mcp = McpSubprocess::spawn(dir.path());
+    initialise(&mut mcp);
+
+    let mut call = |id: u64, name: &str, arguments: Value| -> Value {
+        mcp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": { "name": name, "arguments": arguments }
+        }));
+        mcp.read_response(id)
+    };
+
+    call_payload(&call(
+        30,
+        "create_portfolio",
+        json!({ "question": "Surrogate error budget" }),
+    ));
+    let body =
+        "= Setting\n\nThe surrogate's error splits as in [[concepts/bias-variance-split]].\n";
+    let filed = call_payload(&call(
+        31,
+        "file_to_portfolio",
+        json!({
+            "portfolio": "surrogate-error-budget",
+            "source": "Error budget derivation",
+            "origin": "projects/surrogate-model",
+            "content": body,
+            "format": "typst"
+        }),
+    ));
+    let path = filed["path"].as_str().expect("path").to_owned();
+    assert!(path.ends_with("-error-budget-derivation.typ"), "{filed}");
+
+    let read = call_payload(&call(32, "read_note", json!({ "note": path })));
+    assert_eq!(read["format"], "typst", "{read}");
+    assert_eq!(read["body"].as_str().unwrap().trim_start(), body, "{read}");
+}
+
 /// `rename_note` over the wire: preview, write the plan that was shown, then
 /// the old name still resolves (RFC 0007 §6.4, T26).
 #[test]

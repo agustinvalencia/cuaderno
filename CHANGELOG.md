@@ -131,6 +131,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   key order and the body stay byte-for-byte; a value the block cannot hold is an
   `InvalidFieldValue`. Validation, the no-op rule, strict-exists and the log line are as for
   Markdown.
+- **`format` on `file_to_portfolio`** (RFC 0008 T21, #949). `format: typst` files `content` as a
+  Typst evidence note (`<date>-<source>.typ`): the body is complete Typst with no `<cdno>` block,
+  and the engine writes the block. The nine Typst rejection codes (`body_carries_metadata_block`,
+  `link_needs_escape`, `stem_taken_by_other_format`, …) reach the agent with `details.remedy`;
+  `vars` is refused with `typst`, and `attach` with `typst` is `INVALID_PARAMS` until adoption lands.
 
 ## [0.44.0] - 2026-11-06
 

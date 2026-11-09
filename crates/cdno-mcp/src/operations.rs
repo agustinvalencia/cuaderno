@@ -187,15 +187,44 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "File evidence into the named portfolio. `origin` is a bare wikilink target (e.g. `projects/foo`); the server wraps it. Resolve a real slug in `origin` (e.g. a project via `get_orientation`) rather than guessing — `origin` is not validated, so a wrong slug silently writes a dangling link instead of erroring. By default writes a markdown evidence note with `content` as the body. To file a non-markdown artefact (PDF, image, video, …), set `attach` to its server-side path: the file is copied into the portfolio and a linked stub is scaffolded, and `content` becomes the stub's abstract — write a descriptive one, since it's the only thing search and other agents see of the artefact."
+        description = "File evidence into the named portfolio. `origin` is a bare wikilink target (e.g. `projects/foo`); the server wraps it. Resolve a real slug in `origin` (e.g. a project via `get_orientation`) rather than guessing — `origin` is not validated, so a wrong slug silently writes a dangling link instead of erroring. By default writes a markdown evidence note with `content` as the body. To file a non-markdown artefact (PDF, image, video, …), set `attach` to its server-side path: the file is copied into the portfolio and a linked stub is scaffolded, and `content` becomes the stub's abstract — write a descriptive one, since it's the only thing search and other agents see of the artefact. Pass `format: typst` when the person asks for a Typst note or the material is already Typst (a sibling in the portfolio is a `.typ`): `content` is then the complete Typst body, preamble and imports included, and the engine writes the metadata block itself, so never put a `<cdno>` block in it. A body the engine cannot take (a `<cdno>` label, a parse error, a `[[…]]` link with an unescaped character) is refused with a `remedy` naming the fix; `vars` is refused with `typst`."
     )]
     pub async fn file_to_portfolio(
         &self,
         Parameters(input): Parameters<FileToPortfolioInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
+        let typst = match input.format.as_deref() {
+            None | Some("markdown") => false,
+            Some("typst") => true,
+            Some(other) => {
+                return Err(invalid_argument(
+                    "format",
+                    &format!("'{other}' is not 'markdown' or 'typst'"),
+                ));
+            }
+        };
+        if typst && input.attach.is_some() {
+            return Err(invalid_argument(
+                "attach",
+                "adopting a file as a Typst note is not available yet; omit `attach` to file \
+                 `content` as a Typst note",
+            ));
+        }
         let path = self
             .with_vault(move |vault| {
+                if typst {
+                    if input.vars.as_ref().is_some_and(|v| !v.is_empty()) {
+                        return Err(DomainError::VarsUnsupportedForTypst);
+                    }
+                    return vault.file_typst_evidence(
+                        at,
+                        &input.portfolio,
+                        &input.source,
+                        &input.origin,
+                        &input.content,
+                    );
+                }
                 // With `attach`, file the artefact (copy + linked stub); otherwise
                 // write a plain markdown evidence note. `content` is the body /
                 // abstract respectively. Only the markdown path is templated, so
