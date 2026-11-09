@@ -144,6 +144,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `--var` is refused, and the Typst refusals print as `{code, message, details}` with
   `details.remedy` under `--json`. With `--attach` it is a clear error until adoption lands.
 - **Adopt a Typst file as evidence** (RFC 0008 T23, #951). `Vault::adopt_typst_evidence` turns an existing `.typ` and the folder beside it into a note: every relative path it reaches for must land in that folder and is rewritten to the note's assets folder, the files are copied before the note is written, and a failed copy rolls them all back. Not yet on the CLI or MCP.
+- **Adoption on the CLI and the server** (RFC 0008 T24, #952). `cdno file --format typst --attach deck.typ` and `file_to_portfolio` with `format: typst` and `attach` adopt the file as the note: every regular file under the folder it sits in (subfolders kept) is copied beside it, and the path literals rewritten are printed, or returned as `rewrites`. A symbolic link in the folder is refused by name. `--move` removes only the adopted `.typ`. The folder walk is `cdno_core::adoption::read_typst_adoption`.
 
 ## [0.44.0] - 2026-11-06
 

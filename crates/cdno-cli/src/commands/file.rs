@@ -45,9 +45,10 @@ pub fn run(
     json: bool,
 ) -> Result<()> {
     let typst = format == FileFormat::Typst;
-    if typst && attach.is_some() {
+    let adopting = typst && attach.is_some();
+    if adopting && (body_file.is_some() || !content.trim().is_empty()) {
         anyhow::bail!(
-            "filing an attachment as a Typst note is not available yet; adoption lands in a later release. Omit --format, or drop --attach"
+            "--attach with --format typst adopts the file as the note; drop --body-file and --content"
         );
     }
     if !typst && body_file.is_some() {
@@ -80,7 +81,9 @@ pub fn run(
 
     // A Typst note is not templated and has no body default: the body is
     // demanded (or prompted), and `--var` is refused with the domain's text.
-    let content = if typst {
+    let content = if adopting {
+        String::new()
+    } else if typst {
         let from_flag = match body_file {
             Some(p) => Some(
                 std::fs::read_to_string(&p)
@@ -124,7 +127,33 @@ pub fn run(
         return Ok(());
     }
 
+    let mut rewrites = Vec::new();
     let path = match &attach {
+        Some(artefact) if typst => {
+            let adoption = cdno_core::adoption::read_typst_adoption(artefact)?;
+            let adopted = vault
+                .adopt_typst_evidence(
+                    at,
+                    &portfolio,
+                    &source,
+                    &origin,
+                    &adoption.contents,
+                    &adoption.file_name,
+                    adoption.assets,
+                )
+                .map_err(anyhow::Error::from)
+                .map_err(|e| crate::commands::rejection::typst_refusal(e, json))?;
+            if move_after {
+                std::fs::remove_file(artefact).with_context(|| {
+                    format!(
+                        "adopted into the vault, but failed to remove the source: {}",
+                        artefact.display()
+                    )
+                })?;
+            }
+            rewrites = adopted.rewrites;
+            adopted.path
+        }
         Some(artefact) => {
             let stub = vault
                 .file_attachment(at, &portfolio, artefact, &source, &origin, &content)
@@ -155,7 +184,25 @@ pub fn run(
         )
         .map_err(|e| crate::commands::rejection::typst_refusal(e, json))?,
     };
-    crate::output::emit_write_result(json, &path.to_string(), &format!("Filed at {path}"))?;
+    if !adopting {
+        crate::output::emit_write_result(json, &path.to_string(), &format!("Filed at {path}"))?;
+    } else if json {
+        let rewrites: Vec<_> = rewrites
+            .iter()
+            .map(|(was, now)| serde_json::json!({ "was": was, "now": now }))
+            .collect();
+        let payload = serde_json::json!({
+            "path": path.to_string(),
+            "message": format!("Filed at {path}"),
+            "rewrites": rewrites,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        println!("Filed at {path}");
+        for (was, now) in &rewrites {
+            println!("  rewrote {was} -> {now}");
+        }
+    }
     Ok(())
 }
 

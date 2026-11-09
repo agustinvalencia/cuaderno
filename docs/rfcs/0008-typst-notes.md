@@ -574,6 +574,10 @@ compiler, which is the rendering phase.
   template variables, the concept scaffold — does not apply to Typst notes in v1. Each is listed
   above with its rejection.
 - A **search hit** inside a Typst note shows Typst syntax in its snippet.
+- **Adoption scans only the adopted file.** A sibling `.typ` copied with the folder is not scanned,
+  so a `/`-rooted or otherwise unresolvable path inside it passes adoption and fails when the
+  chapter is compiled. The folder is the adopted file's own directory, everything in it comes
+  along, and a symbolic link in it is refused.
 - **A listed function used as a value is not seen.** `("a.png",).map(image)` or `let load = read`
   followed by `load("x.txt")` reach for a file the adoption scan cannot find, so the file is not
   copied and the path is not rewritten. The scan reads calls, not data flow.
