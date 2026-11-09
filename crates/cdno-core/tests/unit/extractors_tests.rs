@@ -1205,3 +1205,62 @@ fn exact_path_candidates_run_markdown_then_typst_then_the_folder_index() {
         Some(vp("a/x/_index.md"))
     );
 }
+
+// ---------------------------------------------------------------------
+// rewrite_note_wikilink_addresses (RFC 0008 T13)
+// ---------------------------------------------------------------------
+
+fn typst_path() -> VaultPath {
+    VaultPath::new("concepts/bias-variance-split.typ").unwrap()
+}
+
+#[test]
+fn a_typst_rewrite_reaches_markup_and_the_block_string_and_nothing_else() {
+    let source = "#metadata((\n  type: \"evidence\",\n  origin: \"[[projects/old]]\",\n  note: \"[[old]] in a plain string field is still a string scan\",\n)) <cdno>\n\nSee [[old|the model]] and [[old\\#Setting]], not `[[old]]`, and // [[old]]\n";
+    let (after, edits) = cdno_core::extractors::rewrite_note_wikilink_addresses(
+        &typst_path(),
+        source,
+        |target| target == "old" || target == "projects/old" || target == "old#Setting",
+        |address| address.replace("old", "new"),
+    );
+    assert_eq!(edits.len(), 4, "{edits:?}");
+    assert!(differs_only_by(source, &after, &edits));
+    assert_eq!(
+        after,
+        source
+            .replace("[[projects/old]]", "[[projects/new]]")
+            .replace("[[old|the model]]", "[[new|the model]]")
+            .replace("[[old\\#Setting]]", "[[new\\#Setting]]")
+            .replace("\"[[old]] in a plain", "\"[[new]] in a plain")
+    );
+}
+
+#[test]
+fn a_typst_rewrite_escapes_by_where_the_link_sits() {
+    let source =
+        "#metadata((\n  type: \"evidence\",\n  origin: \"[[old]]\",\n)) <cdno>\n\nSee [[old]].\n";
+    let (after, edits) = cdno_core::extractors::rewrite_note_wikilink_addresses(
+        &typst_path(),
+        source,
+        |_| true,
+        |_| "a_b\"c#d".to_owned(),
+    );
+    assert!(differs_only_by(source, &after, &edits));
+    assert!(after.contains("origin: \"[[a_b\\\"c#d]]\""), "{after}");
+    assert!(after.contains("See [[a\\_b\"c\\#d]]."), "{after}");
+}
+
+#[test]
+fn a_markdown_path_takes_the_markdown_rewrite() {
+    let source = "See [[old]] and `[[old]]`.\n";
+    let md = VaultPath::new("concepts/x.md").unwrap();
+    let (after, edits) = cdno_core::extractors::rewrite_note_wikilink_addresses(
+        &md,
+        source,
+        |_| true,
+        |_| "new".to_owned(),
+    );
+    let (plain, plain_edits) =
+        cdno_core::extractors::rewrite_wikilink_addresses(source, |_| true, |_| "new".to_owned());
+    assert_eq!((after, edits), (plain, plain_edits));
+}

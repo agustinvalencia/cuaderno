@@ -214,6 +214,7 @@ impl Vault {
             // every stewardship in the vault. Without this, a payload the
             // fresh path refuses outright would be committed simply because it
             // arrived second.
+            // Markdown on purpose: tracking notes are machine-written Markdown.
             let (fm, _rest) = Frontmatter::parse(&merged)?;
             TrackingFrontmatter::try_from(fm)?;
             let entry = build_index_entry_for(&path, &merged, NoteType::Tracking.as_str())?;
@@ -253,6 +254,7 @@ impl Vault {
                 // reader that scans all tracking notes (`list_tracking`,
                 // `list_stewardships`) parses before it filters, so one bad
                 // note fails the read for every stewardship in the vault.
+                // Markdown on purpose: tracking notes are machine-written Markdown.
                 let (fm, _rest) = Frontmatter::parse(&merged)?;
                 TrackingFrontmatter::try_from(fm)?;
                 merged
@@ -340,6 +342,7 @@ impl Vault {
 /// Records append in order, so document order — which is what `last` reduces
 /// on — stays well defined across a merged day.
 fn merge_into_entry(existing: &str, draft: &TrackingEntryDraft) -> Result<String, DomainError> {
+    // Markdown on purpose: tracking notes are machine-written Markdown.
     let (fm, _body) = Frontmatter::parse(existing)?;
     let current = fm.as_json();
 

@@ -47,6 +47,7 @@ impl Vault {
                 continue;
             }
             let raw = self.store.read_file(&entry.path)?;
+            // Markdown on purpose: project maps are machine-written Markdown.
             let (fm, _body) = Frontmatter::parse(&raw)?;
             let project = ProjectFrontmatter::try_from(fm)?;
             if project.status == ProjectStatus::Active {
@@ -67,6 +68,7 @@ impl Vault {
                 continue;
             }
             let raw = self.store.read_file(&entry.path)?;
+            // Markdown on purpose: project maps are machine-written Markdown.
             let (fm, _body) = Frontmatter::parse(&raw)?;
             let project = ProjectFrontmatter::try_from(fm)?;
             if project.status == ProjectStatus::Parked {

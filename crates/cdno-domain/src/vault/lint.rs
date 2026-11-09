@@ -8,11 +8,11 @@ use chrono::{NaiveDate, NaiveTime};
 
 use cdno_core::config::IgnoreSet;
 use cdno_core::error::ConfigError;
-use cdno_core::extractors::{AliasMap, extract_wikilinks, resolve_wikilinks};
-use cdno_core::frontmatter::Frontmatter;
+use cdno_core::extractors::{AliasMap, note_body_links, resolve_wikilinks};
+use cdno_core::frontmatter::parse_note;
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
-use cdno_core::paths::CONFIG_FILE;
+use cdno_core::paths::{CONFIG_FILE, NoteFormat, note_format};
 use cdno_core::store::VaultStore;
 
 use crate::error::DomainError;
@@ -287,7 +287,7 @@ impl Vault {
                     continue;
                 }
             };
-            let body = match Frontmatter::parse(&content) {
+            let body = match parse_note(&path, &content) {
                 Ok((_fm, body)) => body,
                 Err(e) => {
                     issues.push(LintIssue::error(
@@ -304,21 +304,25 @@ impl Vault {
             // same order `normalise` would apply, so lint and the fixer
             // never disagree. A broken template surfaces as an Error
             // rather than aborting the whole pass.
-            match self.canonical_frontmatter_order(&entry.note_type, &content, &mut order_cache) {
-                Ok(order) => {
-                    if super::normalise::reorder_frontmatter(&content, &order).is_some() {
-                        issues.push(LintIssue::warning(
-                            path.clone(),
-                            "frontmatter keys are not in canonical order \
-                             (run `cdno normalise` to fix)"
-                                .to_owned(),
-                        ));
+            // Markdown notes only: a Typst block's key order is its author's.
+            if note_format(&path) != Some(NoteFormat::Typst) {
+                match self.canonical_frontmatter_order(&entry.note_type, &content, &mut order_cache)
+                {
+                    Ok(order) => {
+                        if super::normalise::reorder_frontmatter(&content, &order).is_some() {
+                            issues.push(LintIssue::warning(
+                                path.clone(),
+                                "frontmatter keys are not in canonical order \
+                                 (run `cdno normalise` to fix)"
+                                    .to_owned(),
+                            ));
+                        }
                     }
+                    Err(e) => issues.push(LintIssue::error(
+                        path.clone(),
+                        format!("could not resolve canonical frontmatter order: {e}"),
+                    )),
                 }
-                Err(e) => issues.push(LintIssue::error(
-                    path.clone(),
-                    format!("could not resolve canonical frontmatter order: {e}"),
-                )),
             }
 
             // Resolve against the index first (notes), then the
@@ -333,7 +337,7 @@ impl Vault {
             // Resolved with the alias map, so a link that only an alias
             // carries is a straggler (RFC 0007 §5.5): a Warning naming the
             // note's current slug, so a person can fix the link by hand.
-            let raws = extract_wikilinks(body);
+            let raws = note_body_links(&path, body);
             for (raw, link) in
                 raws.iter()
                     .zip(resolve_wikilinks(raws.clone(), &path_set, &alias_map))

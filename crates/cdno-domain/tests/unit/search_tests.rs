@@ -376,3 +376,31 @@ fn custom_type_filter_with_no_matching_notes_is_empty() {
     };
     assert!(vault.search("sparse", &filters, 10).unwrap().is_empty());
 }
+
+#[test]
+fn search_finds_a_typst_body_and_shows_its_syntax_in_the_snippet() {
+    let typst = "#metadata((\n  type: \"evidence\",\n  created: \"2026-11-08\",\n  source: \"Error budget derivation\",\n  portfolio: \"surrogate-error-budget\",\n  origin: \"[[projects/surrogate-model]]\",\n)) <cdno>\n\n= Setting\n\nThe residual satisfies $ E[r^2] = sigma^2 $ under the zentangle assumption.\n";
+    let vault = vault_with(&[(
+        "portfolios/surrogate-error-budget/2026-11-08-error-budget.typ",
+        typst.to_owned(),
+    )]);
+
+    let hits = vault
+        .search("zentangle", &SearchFilters::default(), 10)
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].note_type, "evidence");
+    // The accepted v1 leak (§5.4): the indexed text is the source, markup included.
+    assert!(
+        hits[0].snippet.contains('$') || hits[0].snippet.contains('='),
+        "{}",
+        hits[0].snippet
+    );
+
+    let filters = SearchFilters {
+        portfolio: Some("surrogate-error-budget".to_owned()),
+        ..Default::default()
+    };
+    let hits = vault.search("zentangle", &filters, 10).unwrap();
+    assert_eq!(hits.len(), 1, "the portfolio filter reads the block");
+}

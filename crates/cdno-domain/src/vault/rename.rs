@@ -37,9 +37,9 @@ use chrono::NaiveDateTime;
 use cdno_core::error::TransactionError;
 use cdno_core::extractors::{
     AddressEdit, AliasMap, WikilinkRaw, first_h1, note_link_names, resolve_wikilinks,
-    rewrite_wikilink_addresses, target_may_name,
+    rewrite_note_wikilink_addresses, target_may_name,
 };
-use cdno_core::frontmatter::{Frontmatter, split_frontmatter};
+use cdno_core::frontmatter::{Frontmatter, parse_note, split_frontmatter};
 use cdno_core::frontmatter_edit::{
     append_frontmatter_list_value, frontmatter_changed_only_at, frontmatter_scalar_spans,
     remove_frontmatter_list_value, rewrite_frontmatter_scalar,
@@ -355,7 +355,7 @@ impl Vault {
         for path in classified.notes {
             let content = self.store.read_file(&path)?;
             if content.contains(ALIASES_KEY)
-                && let Some(frontmatter) = frontmatter_json(&content)
+                && let Some(frontmatter) = frontmatter_json(&path, &content)
             {
                 for alias in frontmatter_aliases(&frontmatter) {
                     snapshot.aliases.push((alias, path.clone()));
@@ -794,7 +794,7 @@ impl Vault {
         } else {
             vec![old_slug.as_str()]
         };
-        let title = note_title(target_before).unwrap_or_else(|| old_slug.clone());
+        let title = note_title(&target_path, target_before).unwrap_or_else(|| old_slug.clone());
         // The log line's link, in the form the type's other log lines use.
         let link = {
             let path_link = paths::note_address(&new_path);
@@ -815,13 +815,17 @@ impl Vault {
         for (path, before) in &snapshot.contents {
             let is_target = *path == target_path;
             let is_daily = *path == daily_path;
-            let mentions = before.contains(old_slug.as_str())
+            // A Typst source may write the slug with escapes (`bias\_split`), which a raw byte
+            // search misses; its scanner decodes, so no prefilter applies.
+            let mentions = note_format(path) == Some(NoteFormat::Typst)
+                || before.contains(old_slug.as_str())
                 || own_aliases.iter().any(|alias| before.contains(alias));
             if !(mentions || is_target || is_daily) {
                 continue;
             }
 
-            let (_, mut link_edits) = rewrite_wikilink_addresses(before, names_target, rewrite);
+            let (_, mut link_edits) =
+                rewrite_note_wikilink_addresses(path, before, names_target, rewrite);
             // A link that already reads the new slug (a straggler through
             // an own alias the note now takes back) is not a change. Rename
             // only: a relink's predicate never yields a byte-identical link
@@ -869,7 +873,7 @@ impl Vault {
                         // a block or folded scalar, a value on the next line,
                         // a tag. Refuse rather than leave the note attached
                         // to a name that no longer exists.
-                        if frontmatter_json(before).is_some_and(|fm| {
+                        if markdown_frontmatter_json(before).is_some_and(|fm| {
                             fm.get(key)
                                 .and_then(|v| v.as_str())
                                 .is_some_and(|v| field_values.contains(&v))
@@ -1415,7 +1419,7 @@ fn stage_index_rows(
     content: &str,
     tx: &mut VaultTransaction,
 ) -> Result<(), DomainError> {
-    let Some(note_type) = Frontmatter::parse(content)
+    let Some(note_type) = parse_note(path, content)
         .ok()
         .and_then(|(fm, _)| fm.require_field::<String>("type").ok())
     else {
@@ -1670,7 +1674,7 @@ fn alias_edit(
     let (dropped, removal) = remove_frontmatter_list_value(block, ALIASES_KEY, new_slug);
     let (after, mut appended) = append_frontmatter_list_value(&dropped, ALIASES_KEY, old_slug);
     let listed = |text: &str, slug: &str| {
-        frontmatter_json(text)
+        markdown_frontmatter_json(text)
             .map(|fm| frontmatter_aliases(&fm).iter().any(|a| a == slug))
             .unwrap_or(false)
     };
@@ -1786,7 +1790,14 @@ fn resolve_with_alias(
         .and_then(|entry| entry.resolved_path.map(|path| (path, entry.via_alias)))
 }
 
-fn frontmatter_json(content: &str) -> Option<serde_json::Value> {
+fn frontmatter_json(path: &VaultPath, content: &str) -> Option<serde_json::Value> {
+    parse_note(path, content).ok().map(|(fm, _)| fm.as_json())
+}
+
+/// [`frontmatter_json`] for text known to be a Markdown frontmatter block's note: the alias edit
+/// and the §3.5 field rewrite work on YAML text and run only where `split_frontmatter` found one.
+fn markdown_frontmatter_json(content: &str) -> Option<serde_json::Value> {
+    // Markdown on purpose: the callers hold YAML text, never a Typst source.
     Frontmatter::parse(content).ok().map(|(fm, _)| fm.as_json())
 }
 
@@ -1801,8 +1812,8 @@ fn note_type_name(content: &str) -> Option<String> {
 }
 
 /// The note's title: its `title:` field, else its first H1.
-fn note_title(content: &str) -> Option<String> {
-    let parsed = Frontmatter::parse(content).ok();
+fn note_title(path: &VaultPath, content: &str) -> Option<String> {
+    let parsed = parse_note(path, content).ok();
     if let Some((fm, _)) = &parsed
         && let Some(title) = fm.as_json().get("title").and_then(|t| t.as_str())
         && !title.trim().is_empty()
@@ -1810,7 +1821,13 @@ fn note_title(content: &str) -> Option<String> {
         return Some(title.to_owned());
     }
     let body = parsed.map_or(content, |(_, body)| body);
-    first_h1(body)
+    match note_format(path) {
+        Some(NoteFormat::Typst) => cdno_core::note::note_headings(path, body)
+            .into_iter()
+            .find(|(level, _)| *level == 1)
+            .map(|(_, text)| text),
+        _ => first_h1(body),
+    }
 }
 
 /// Byte offset of `inner`, a subslice of `outer`, within it.

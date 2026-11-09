@@ -130,6 +130,7 @@ impl Vault {
                 continue;
             }
             let raw = self.store.read_file(&entry.path)?;
+            // Markdown on purpose: weekly notes are machine-written Markdown.
             let (fm, _body) = Frontmatter::parse(&raw)?;
             let pf = ProjectFrontmatter::try_from(fm)?;
             if pf.status != ProjectStatus::Active {

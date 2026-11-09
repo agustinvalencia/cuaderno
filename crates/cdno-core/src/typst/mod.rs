@@ -19,7 +19,7 @@ mod edit;
 mod links;
 mod metadata;
 
-pub use links::{LinkFault, TypstLinks, headings, wikilink_spans};
+pub use links::{LinkFault, TypstLinks, escape_link_address, headings, wikilink_spans};
 
 use typst_syntax::{Lines, SyntaxKind, SyntaxNode, parse};
 

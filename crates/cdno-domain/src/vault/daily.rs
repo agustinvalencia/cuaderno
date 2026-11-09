@@ -368,6 +368,7 @@ impl Vault {
         let path = daily_note_path(date)?;
         if self.store.exists(&path)? {
             let note = self.store.read_file(&path)?;
+            // Markdown on purpose: the daily note is machine-written Markdown.
             let body = match cdno_core::frontmatter::Frontmatter::parse(&note) {
                 Ok((_, body)) => body,
                 Err(_) => note.as_str(),

@@ -475,6 +475,7 @@ impl Vault {
 
 /// The `type:` a note's frontmatter declares, if it parses and has one.
 fn frontmatter_type(content: &str) -> Option<String> {
+    // Markdown on purpose: method migrations rewrite Markdown notes.
     let (frontmatter, _body) = Frontmatter::parse(content).ok()?;
     frontmatter.optional_field::<String>("type").ok().flatten()
 }

@@ -282,6 +282,7 @@ impl Vault {
                     // archive exactly the self-contradictory file the
                     // comment above says this arm exists to prevent.
                     Err(err @ DomainError::MissingFrontmatterField(_)) => {
+                        // Markdown on purpose: action notes are machine-written Markdown.
                         let (fm, _) = Frontmatter::parse(&after_status)?;
                         match fm.optional_field::<NaiveDate>("completed") {
                             Ok(None) => after_status,

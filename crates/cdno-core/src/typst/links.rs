@@ -86,6 +86,40 @@ pub fn wikilink_spans(source: &str) -> TypstLinks {
     links
 }
 
+/// `address` written so that a scan reads it back as the same address: with the string escapes of
+/// a `<cdno>` block when `in_block`, otherwise with a backslash before each Typst markup
+/// character (§5.5). Over-escaping is harmless, so the set errs wide; a `/` is escaped only
+/// where it would start `//` or `/*`.
+pub fn escape_link_address(address: &str, in_block: bool) -> String {
+    let mut out = String::with_capacity(address.len());
+    let mut chars = address.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_block {
+            match c {
+                '\\' | '"' => {
+                    out.push('\\');
+                    out.push(c);
+                }
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                _ => out.push(c),
+            }
+            continue;
+        }
+        let markup = matches!(
+            c,
+            '\\' | '#' | '_' | '*' | '$' | '`' | '<' | '>' | '@' | '~' | '[' | ']'
+        );
+        let comment = c == '/' && matches!(chars.peek(), Some('/' | '*'));
+        if markup || comment {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn collect_headings(source: &str, node: &SyntaxNode, start: usize, out: &mut Vec<(u8, String)>) {
     if matches!(node.kind(), SyntaxKind::Raw | SyntaxKind::Equation) {
         return;

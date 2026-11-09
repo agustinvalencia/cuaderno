@@ -14,7 +14,7 @@ use chrono::{NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
 use cdno_core::extractors::first_h1;
-use cdno_core::frontmatter::Frontmatter;
+use cdno_core::frontmatter::{Frontmatter, parse_note};
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
 use cdno_core::template::VariableContext;
@@ -181,6 +181,7 @@ impl Vault {
                 }
                 let raw = self.store.read_file(q)?;
                 // Body only: a `# comment` in the frontmatter is not a title.
+                // Markdown on purpose: question and portfolio notes are machine-written Markdown.
                 let (_fm, body) = Frontmatter::parse(&raw)?;
                 let text = first_h1(body).unwrap_or_else(|| stem.clone());
                 (stem, text)
@@ -690,7 +691,7 @@ impl Vault {
         let mut by_portfolio: HashMap<String, (usize, Option<NaiveDate>)> = HashMap::new();
         for entry in &evidence_entries {
             let raw = self.store.read_file(&entry.path)?;
-            let (fm, _body) = Frontmatter::parse(&raw)?;
+            let (fm, _body) = parse_note(&entry.path, &raw)?;
             let ef = EvidenceFrontmatter::try_from(fm)?;
             let bucket = by_portfolio
                 .entry(ef.portfolio.clone())
@@ -706,6 +707,7 @@ impl Vault {
         for p_entry in portfolio_entries {
             let slug = portfolio_slug_from_path(&p_entry.path);
             let raw = self.store.read_file(&p_entry.path)?;
+            // Markdown on purpose: question and portfolio notes are machine-written Markdown.
             let (fm, _body) = Frontmatter::parse(&raw)?;
             let pf = PortfolioFrontmatter::try_from(fm)?;
             let (evidence_count, last_updated) =
@@ -739,6 +741,7 @@ impl Vault {
             ))));
         }
         let raw = self.store.read_file(&path)?;
+        // Markdown on purpose: question and portfolio notes are machine-written Markdown.
         let (fm, _body) = Frontmatter::parse(&raw)?;
         Ok(PortfolioFrontmatter::try_from(fm)?)
     }
@@ -775,7 +778,7 @@ impl Vault {
         let mut out = Vec::new();
         for entry in evidence_entries {
             let raw = self.store.read_file(&entry.path)?;
-            let (fm, _body) = Frontmatter::parse(&raw)?;
+            let (fm, _body) = parse_note(&entry.path, &raw)?;
             let ef = EvidenceFrontmatter::try_from(fm)?;
             if ef.portfolio == portfolio {
                 out.push((entry.path, ef));

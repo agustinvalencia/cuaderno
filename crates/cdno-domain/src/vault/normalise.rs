@@ -15,6 +15,7 @@ use std::collections::HashMap;
 
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
+use cdno_core::paths::{NoteFormat, note_format};
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
@@ -73,6 +74,11 @@ impl Vault {
             // Known = a built-in variant OR a config-defined custom type.
             // Unknown types are lint's job, not ours.
             if !self.type_registry().is_known(&entry.note_type) {
+                report.skipped += 1;
+                continue;
+            }
+            // A Typst note's block keeps its author's key order.
+            if note_format(&path) == Some(NoteFormat::Typst) {
                 report.skipped += 1;
                 continue;
             }
@@ -149,6 +155,7 @@ impl Vault {
         // `.cuaderno/templates/` override if present, else built-in). Tracking's
         // order is variant-specific, keyed by the note's `activity`.
         let variant = if note_type == NoteType::Tracking.as_str() {
+            // Markdown on purpose: only a tracking note reaches this line, and tracking is machine-written Markdown.
             Frontmatter::parse(raw)
                 .ok()
                 .and_then(|(fm, _)| fm.optional_field::<String>("activity").ok().flatten())

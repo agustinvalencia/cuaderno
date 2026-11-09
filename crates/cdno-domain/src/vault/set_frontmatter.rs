@@ -81,6 +81,7 @@ impl Vault {
         // 1. Resolve the note reference to an existing file, then read it.
         let path = self.resolve_frontmatter_note(note, at.date())?;
         let raw = self.store.read_file(&path)?;
+        // Markdown on purpose: the Typst reader and writer land in T28; a Typst note is refused here as before.
         let (fm, _body) = Frontmatter::parse(&raw)?;
 
         // 2. Determine the note's type: the reconciled index row is

@@ -1003,6 +1003,9 @@ with the severity the table gives and a message that names the rule and the reme
   `TypstUnlabelled`), `labelled Typst file outside the configured types` (Warning,
   `TypstOutsideScope`), `metadata present but the <cdno> label is missing, mistyped or nested`
   (Error, `TypstLabelBroken`).
+- From reconciliation: a labelled `.typ` whose block `type` is not a Typst-admitting type is kept
+  out of the index and reported per file in the reconciliation issues, naming the path and the
+  type (T13, `NoteScope.typst_types`); lint turns each into an Error row.
 - The existing broken-wikilink check (`lint.rs:336–372`) uses the format-dispatched scanner, so a
   dangling link in a Typst body is reported as for Markdown.
 

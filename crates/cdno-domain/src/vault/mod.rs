@@ -193,6 +193,11 @@ fn note_scope_for(config: &VaultConfig) -> Result<NoteScope, DomainError> {
         ignore: config.ignore_set()?,
         typst_folders: registry.typst_folders(),
         typst_excluded_folders: registry.typst_excluded_folders(),
+        typst_types: registry
+            .typst_types()
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
     })
 }
 

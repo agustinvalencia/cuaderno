@@ -85,6 +85,7 @@ impl Vault {
                 continue;
             }
             let raw = self.store.read_file(&entry.path)?;
+            // Markdown on purpose: project maps are machine-written Markdown.
             let Ok((fm, _body)) = Frontmatter::parse(&raw) else {
                 continue;
             };

@@ -86,6 +86,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   mistyped or switched-off `.typ` is named in the classifier's report rather than dropped silently.
   `cdno watch` and note references accept `.typ` paths. A file inside an attachment's folder is
   never read.
+- **Domain readers read Typst notes** (RFC 0008 T13, #941). `get_portfolio_contents`,
+  `list_portfolios`, search filters, `read_note`, lint and the index-entry builder read a note
+  through `parse_note`, so a Typst evidence note no longer fails the whole call. A Typst note is a
+  rename referrer: its `[[…]]` links, markup and `<cdno>` block strings alike, are rewritten over
+  the Typst scanner's spans, the new address escaped by where the link sits, and lint's
+  broken-link check uses the same scanner. A Markdown note reads and renames exactly as before.
+  A labelled `.typ` whose block `type` does not admit Typst is kept out of the index and reported
+  by reconciliation.
 - **A Typst note owns its sibling folder** (RFC 0008 T14, part of #927). `owning_artefact_stub`
   becomes `owning_note` and `attachment_stubs` becomes `folder_owners`: a folder beside a labelled
   `<stem>.typ`, under `portfolios/` or a Typst-admitting type's folder, holds attachments, never
