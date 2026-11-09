@@ -9,7 +9,7 @@ defaults are applied when omitted. For the conceptual tour, see
 ```toml
 [vault]
 name = "My Research Vault"
-method_version = "1.2"             # the RLM version; written by init, changed by `cdno migrate`
+method_version = "1.3"             # the RLM version; written by init, changed by `cdno migrate`
 max_active_projects = 5            # the active-project cap
 
 # Glob patterns excluded from the index (search, lint, link checks).
