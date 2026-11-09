@@ -104,6 +104,15 @@ pub struct FileToPortfolioInput {
     /// with an "unresolved prompts" error. Ignored when `attach` is set (the
     /// attachment stub is not templated). Omitted = none.
     pub vars: Option<HashMap<String, String>>,
+    /// The file format: `markdown` (the default) or `typst`. With `typst`,
+    /// `content` is the complete Typst body, preamble included, and must not
+    /// carry a `<cdno>` metadata block: the engine writes the block, then the
+    /// body as given, to `<date>-<source>.typ`. A body that carries the label,
+    /// does not parse, or has a `[[` link that is not one inline run is
+    /// refused with a `remedy`. `vars` is refused with `typst`, and `attach`
+    /// is not yet supported with it. Omitted = `markdown`.
+    #[serde(default)]
+    pub format: Option<String>,
 }
 
 /// Input for `create_custom_note` — a note of a config-defined custom type.
