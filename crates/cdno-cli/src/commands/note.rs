@@ -79,7 +79,8 @@ pub enum NoteCommands {
     ///
     /// Give either `--body-file` (the whole body after the frontmatter) or
     /// `--section` with `--content-file` (upsert one section). With neither,
-    /// an interactive session opens the current body in an editor.
+    /// an interactive session opens the current body in an editor. A Typst
+    /// note is revised as a whole body only.
     Revise {
         /// The note to revise, resolved as `cdno open` resolves a reference:
         /// a path with or without `.md`, a slug, or `type:slug`. Omitted in
@@ -380,13 +381,20 @@ fn revise(
 
     // The hash goes with a section revision too: the domain accepts it, and
     // refusing an edit that raced the read is the same promise either way.
-    let outcome = vault.revise_note(
-        &path,
-        Some(view.content_hash.as_str()),
-        revision,
-        &reason,
-        at,
-    )?;
+    let outcome = vault
+        .revise_note(
+            &path,
+            Some(view.content_hash.as_str()),
+            revision,
+            &reason,
+            at,
+        )
+        .map_err(|e| match e {
+            DomainError::SectionRevisionUnavailableForTypst => anyhow::anyhow!(
+                "{e}. Read the note, edit the body, and pass all of it with --body-file."
+            ),
+            other => other.into(),
+        })?;
     emit_revise_result(json, &outcome)
 }
 
@@ -652,6 +660,9 @@ fn emit_rename_json(
                 Change::Address { count } => serde_json::json!({ "kind": "links", "count": count }),
                 Change::Field { key } => serde_json::json!({ "kind": "field", "key": key }),
                 Change::Alias => serde_json::json!({ "kind": "alias" }),
+                Change::AssetPaths { count } => {
+                    serde_json::json!({ "kind": "asset_paths", "count": count })
+                }
                 Change::LogLine => serde_json::json!({ "kind": "log_line" }),
             })
             .collect()
@@ -740,11 +751,13 @@ fn render_plan(plan: &RenamePlan) -> String {
         .unwrap_or(0);
     for edit in &plan.edits {
         let mut links = 0;
+        let mut asset_paths = 0;
         let mut keys: Vec<String> = Vec::new();
         for change in &edit.changes {
             match change {
                 Change::Address { count } => links += count,
                 Change::Field { key } => keys.push(format!("{key}:")),
+                Change::AssetPaths { count } => asset_paths += count,
                 Change::Alias | Change::LogLine => {}
             }
         }
@@ -759,6 +772,9 @@ fn render_plan(plan: &RenamePlan) -> String {
                 plural(keys.len()),
                 keys.join(", ")
             ));
+        }
+        if asset_paths > 0 {
+            parts.push(format!("{asset_paths} asset path{}", plural(asset_paths)));
         }
         if !parts.is_empty() {
             out.push_str(&format!(

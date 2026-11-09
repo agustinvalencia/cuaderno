@@ -114,6 +114,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   block, then the body, checked before anything is written. A `.typ` and an `.md` can no longer
   share a stem in one folder: `file_evidence` and `file_attachment` refuse when the `.typ` exists,
   with `StemTakenByOtherFormat` naming the holder. No CLI or MCP surface yet.
+- **Renaming a Typst note** (RFC 0008 T17). A Typst note renames as a Markdown one does: the `.typ` moves with its assets folder, its own relative path literals into that folder follow, and the old slug joins the block's `aliases`. A `portfolio:` or `project:` field in a Typst note's block now follows a rename of what it names, so a Typst evidence note stays in its portfolio.
 - **Create a Typst custom note** (RFC 0008 T26, #954). `cdno note create <type> --format typst
   --body-file …` and `create_custom_note` with `format: typst` write `<folder>/<slug>.typ` for a
   custom type that admits Typst (`concept` by default): a metadata block with `type`, `title`,
@@ -121,6 +122,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   heading and no template. A declared int, float or bool field is written as that type, so the
   note passes the type check on re-read; `--var` / `vars` is refused with Typst, and a `.typ` and
   an `.md` can no longer share a stem in one folder, whichever is created second.
+- **Revise a Typst note** (RFC 0008 T27, #955). `revise_note` with `body` and `cdno note revise
+  --body-file` replace everything after a Typst note's metadata block and keep the block byte for
+  byte; a body carrying `<cdno>` or failing to parse is refused, and a `section` is refused with
+  the whole-body form as its remedy.
+- **`set_frontmatter` on a Typst note** (RFC 0008 T28, #956). The setter reads the note by its
+  format and, for a `.typ`, rewrites only the value's span in the `<cdno>` block, so comments,
+  key order and the body stay byte-for-byte; a value the block cannot hold is an
+  `InvalidFieldValue`. Validation, the no-op rule, strict-exists and the log line are as for
+  Markdown.
 
 ## [0.44.0] - 2026-11-06
 

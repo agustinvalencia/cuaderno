@@ -1081,7 +1081,8 @@ are not references in the RFC's sense but they break on the move, and the plan l
 appends the old slug to the block's `aliases` with `append_list_value` (T8). `differs_only_by`
 is asserted over the note's own bytes with the alias span and the path-literal spans as the
 permitted edits. The `renamed [[<new>]] — <title>` line uses `note_address`. `is_renamable`
-(`:312`) admits a Typst evidence or concept note under the same type rules as Markdown.
+(`:312`) admits a Typst concept or other custom-type note; evidence stays unrenamable in both formats
+(RFC 0007 §5.2).
 
 **Deliverable.** The planner and writer changes, the asset moves, tests on the memory store and
 one on real files (the move of a folder).
@@ -1469,7 +1470,9 @@ for Markdown, chosen by `note_format`; `differs_only_by` on the returned edits a
 builds as the YAML path does with `frontmatter_changed_only_at`. `TypstError::Unwritable` maps to
 `DomainError::InvalidFieldValue { note_type, field: <key>, reason }`. The value coercion and the schema checks (`:85–130`)
 are format-neutral and unchanged; `set_frontmatter` writes scalars (string, int, float, bool, date),
-since `FieldSpec.list` is reserved and the setter has no array path. The log line is unchanged.
+since `FieldSpec.list` is reserved and the setter has no array path. A key absent from the block is
+`MissingFrontmatterField`, as for Markdown (strict-exists); the setter does not use
+`rewrite_scalar`'s insertion. The log line is unchanged.
 
 **Deliverable.** The dispatch, tests.
 
@@ -1480,7 +1483,8 @@ since `FieldSpec.list` is reserved and the setter has no array path. The log lin
 **Probes.**
 - `cargo test -p cdno-domain --test unit -- unit::set_frontmatter_tests`:
   `set_frontmatter_rewrites_a_block_scalar_at_its_span` (`differs_only_by` holds; the block's
-  comment and order survive), `set_frontmatter_inserts_a_missing_declared_key_in_the_block`,
+  comment and order survive), `set_frontmatter_errors_on_an_absent_key_in_the_block` (strict-exists,
+  as for Markdown: `MissingFrontmatterField`, nothing written),
   `set_frontmatter_writes_int_float_and_bool_literals_on_a_typst_note`,
   `set_frontmatter_refuses_i64_min_on_an_int_field_as_invalid_field_value` (`Unwritable` →
   `InvalidFieldValue`), `reserved_keys_are_refused_on_typst_too`.

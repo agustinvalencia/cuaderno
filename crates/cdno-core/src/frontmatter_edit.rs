@@ -654,7 +654,17 @@ pub fn frontmatter_changed_only_at(
 ) -> Result<(), FrontmatterDrift> {
     let b = parse_block(before, DriftSide::Before)?;
     let a = parse_block(after, DriftSide::After)?;
-    let (Some(b), Some(a)) = (b.as_object(), a.as_object()) else {
+    values_changed_only_at(&b, &a, keys)
+}
+
+/// The comparison behind [`frontmatter_changed_only_at`], over values already read: a Typst
+/// metadata block is compared with it too. Anything but two objects compares clean.
+pub fn values_changed_only_at(
+    before: &serde_json::Value,
+    after: &serde_json::Value,
+    keys: &[&str],
+) -> Result<(), FrontmatterDrift> {
+    let (Some(b), Some(a)) = (before.as_object(), after.as_object()) else {
         return Ok(());
     };
     for (k, bv) in b {

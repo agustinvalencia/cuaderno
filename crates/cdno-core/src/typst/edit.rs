@@ -110,6 +110,17 @@ pub fn remove_list_value(
     Ok(applied(splice(source, span, &array_literal(&items))))
 }
 
+/// The edit that makes the string literal whose content sits at `span` read `value`: `span` is
+/// inside the quotes (a [`PathLiteral`](super::PathLiteral)'s), and the value takes the same
+/// string escapes as every other literal this module writes.
+pub fn rewrite_string_content(span: Range<usize>, value: &str) -> AddressEdit {
+    let quoted = quote(value);
+    AddressEdit {
+        range: span,
+        replacement: quoted[1..quoted.len() - 1].to_string(),
+    }
+}
+
 fn items_of(block: &MetadataBlock, key: &str) -> Result<Vec<String>, TypstError> {
     let not_a_list = || TypstError::Unwritable {
         what: format!("`{key}` is not a list of strings"),

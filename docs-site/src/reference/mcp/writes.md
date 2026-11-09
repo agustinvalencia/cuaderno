@@ -254,6 +254,8 @@ Refusals (a [rejection](overview.md) with these codes; nothing is written):
 | `stale_revision` | A whole-body revision whose `expected_hash` no longer matches the bytes on disk: the note changed since it was read. `details.actual` is the current hash; read the note again and redo the edit on the fresh text. |
 | `revision_invalid` | The `section` heading is empty, spans lines, contains `[`, `]`, `\|` or `#`, or starts with `^`; or `content` holds a heading at the section's own level or above, which would restructure the note. |
 | `ambiguous_section` | The `section` heading matches more than one heading in the note. |
+| `section_revision_unavailable_for_typst` | A `section` aimed at a Typst note. `details.remedy` names the whole-body form: read the note, edit the body, and pass all of it as `body` with `expected_hash`. |
+| `body_carries_metadata_block` / `body_does_not_parse` / `link_needs_escape` | A Typst note's new `body` holds a `<cdno>` label, does not parse, or has a `[[…]]` that is not one inline run. The metadata block stays the engine's: `body` is everything after it. |
 | `not_found` / `ambiguous_slug` | The `note` reference matches no note, or several (with their paths in `details.candidates`), as for `read_note`. |
 
 A blank `reason`, `body` together with `section`, `section` without `content`, `content` without
@@ -294,7 +296,8 @@ A blank `to` beside `relink: true` reads as omitted. `relink` with `to`, either 
 The result is the plan, whether or not it was written: `dry_run`, `target`, `from` (the note's
 current slug), `new_slug`, `found_by_former_name` (the former name `note` matched, or `null`),
 `moves` (`{from, to}`), `edits` (a `path` with its `changes`, each of kind `links` with a `count`,
-`field` with a `key`, `alias` or `log_line`), `references`, `notes`, `warnings` (each with a `kind`
+`field` with a `key`, `alias`, `asset_paths` with a `count` (a Typst note's own path literals into
+its assets folder) or `log_line`), `references`, `notes`, `warnings` (each with a `kind`
 and a `message`: `frozen_prefix_already_diverged`, `old_slug_already_an_alias`, or `sync_check`),
 `plan_hash`, `log_line` (`null` when the plan is empty), then `written`, `index_stale` (`true`: the
 files are written and the rename succeeded; the index catches up on the next open) and

@@ -2530,6 +2530,62 @@ mod freshness {
 }
 
 #[test]
+fn note_rename_moves_a_typst_note_and_its_folder() {
+    let dir = tempdir().unwrap();
+    init_rename_vault(dir.path());
+    let note = dir.path().join("concepts/bias-variance-split.typ");
+    let assets = dir.path().join("concepts/bias-variance-split/figs");
+    fs::create_dir_all(&assets).unwrap();
+    fs::write(assets.join("a.png"), [0xff_u8, 0xd8, 0x00]).unwrap();
+    fs::write(
+        &note,
+        "#metadata((\n  type: \"concept\",\n  title: \"Bias-variance split\",\n  created: \"2026-11-08\",\n)) <cdno>\n\n#image(\"bias-variance-split/figs/a.png\")\n",
+    )
+    .unwrap();
+
+    let preview = rename_cmd(dir.path())
+        .args(["bias-variance-split", "--to", "error-split", "--dry-run"])
+        .arg("--json")
+        .assert()
+        .success();
+    let plan: serde_json::Value = serde_json::from_slice(&preview.get_output().stdout).unwrap();
+    let own = plan["edits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["path"] == "concepts/bias-variance-split.typ")
+        .expect("the note's own edit");
+    assert!(
+        own["changes"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!({ "kind": "asset_paths", "count": 1 })),
+        "{own}"
+    );
+
+    rename_cmd(dir.path())
+        .args(["bias-variance-split", "--to", "error-split"])
+        .assert()
+        .success();
+
+    assert!(!note.exists());
+    assert!(!dir.path().join("concepts/bias-variance-split").exists());
+    assert_eq!(
+        fs::read(dir.path().join("concepts/error-split/figs/a.png")).unwrap(),
+        vec![0xff_u8, 0xd8, 0x00]
+    );
+    let moved = fs::read_to_string(dir.path().join("concepts/error-split.typ")).unwrap();
+    assert!(
+        moved.contains("#image(\"error-split/figs/a.png\")"),
+        "{moved}"
+    );
+    assert!(
+        moved.contains("aliases: (\"bias-variance-split\",),"),
+        "{moved}"
+    );
+}
+
+#[test]
 fn note_create_format_typst() {
     let dir = tempdir().unwrap();
     init_person_vault(dir.path());
@@ -2617,4 +2673,101 @@ fn note_create_format_typst_without_a_body_file_fails_non_interactively() {
         .failure()
         .stderr(predicate::str::contains("body-file"));
     assert!(!dir.path().join("concepts/bias-variance-split.typ").exists());
+}
+
+/// A Typst concept, created through `cdno note create`; returns the vault argument.
+fn create_typst_concept(dir: &Path) -> String {
+    init_person_vault(dir);
+    let v = vault_arg(dir);
+    let body_file = dir.join("body.typ");
+    fs::write(&body_file, "= Statement\n\nThe error splits.\n").unwrap();
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "create",
+            "concept",
+            "--format",
+            "typst",
+            "--title",
+            "Bias-variance split",
+            "--body-file",
+            body_file.to_str().unwrap(),
+            "--origin",
+            "[[projects/surrogate-model]]",
+        ])
+        .assert()
+        .success();
+    v
+}
+
+#[test]
+fn note_revise_replaces_a_typst_body_and_keeps_the_block() {
+    let dir = tempdir().unwrap();
+    let v = create_typst_concept(dir.path());
+    let note = dir.path().join("concepts/bias-variance-split.typ");
+    let before = fs::read_to_string(&note).unwrap();
+    let body_file = dir.path().join("new.typ");
+    fs::write(&body_file, "= Statement\n\nA better account.\n").unwrap();
+
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "revise",
+            "concept:bias-variance-split",
+            "--body-file",
+            body_file.to_str().unwrap(),
+            "--reason",
+            "tightened the statement",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Revised concepts/bias-variance-split.typ",
+        ));
+
+    let block_end = before.find("<cdno>").unwrap() + "<cdno>".len();
+    let after = fs::read_to_string(&note).unwrap();
+    assert_eq!(after[..block_end], before[..block_end]);
+    assert_eq!(
+        after[block_end..],
+        *"\n\n= Statement\n\nA better account.\n"
+    );
+}
+
+#[test]
+fn note_revise_section_on_typst_is_refused_with_the_remedy() {
+    let dir = tempdir().unwrap();
+    let v = create_typst_concept(dir.path());
+    let note = dir.path().join("concepts/bias-variance-split.typ");
+    let before = fs::read_to_string(&note).unwrap();
+    let content = dir.path().join("section.typ");
+    fs::write(&content, "New.\n").unwrap();
+
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "revise",
+            "concept:bias-variance-split",
+            "--section",
+            "Statement",
+            "--content-file",
+            content.to_str().unwrap(),
+            "--reason",
+            "tightened",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not by section"))
+        .stderr(predicate::str::contains("--body-file"));
+
+    assert_eq!(fs::read_to_string(&note).unwrap(), before);
 }

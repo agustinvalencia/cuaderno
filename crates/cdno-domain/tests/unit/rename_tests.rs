@@ -3465,3 +3465,404 @@ fn a_typst_referrer_that_writes_the_slug_only_with_escapes_is_rewritten() {
     );
     assert!(differs_only_by(&edit.before, &edit.after, &edit.edits));
 }
+
+// ---------------------------------------------------------------------
+// A Typst note as the renamed note (RFC 0008 T17)
+// ---------------------------------------------------------------------
+
+const TYPST_CONCEPT_PATH: &str = "concepts/bias-variance-split.typ";
+
+const TYPST_CONCEPT: &str = "#metadata((
+  type: \"concept\",
+  title: \"Bias-variance split\",
+  created: \"2026-11-08\",
+)) <cdno>
+
+= The split
+
+#image(\"bias-variance-split/figs/a.png\")
+#image(\"./bias-variance-split/figs/b.png\")
+#bibliography(\"../concepts/bias-variance-split/refs.bib\")
+#image(\"bias-variance-split-extra/c.png\")
+#image(\"/bias-variance-split/rooted.png\")
+
+Compare [[surrogate-model]].
+";
+
+const TYPST_ASSETS: [&str; 3] = ["figs/a.png", "figs/b.png", "refs.bib"];
+
+const CONCEPT_REFERRER_MD: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nSee [[concepts/bias-variance-split]] and [[bias-variance-split]], figure [[concepts/bias-variance-split/figs/a.png]].\n";
+
+const CONCEPT_REFERRER_TYP: &str = "#metadata((
+  type: \"evidence\",
+  created: \"2026-11-08\",
+  source: \"Error budget derivation\",
+  portfolio: \"surrogate-error-budget\",
+  origin: \"[[concepts/bias-variance-split]]\",
+)) <cdno>
+
+Uses [[bias-variance-split]].
+";
+
+fn concept_config() -> VaultConfig {
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "concept".to_owned(),
+        cdno_core::config::CustomNoteType {
+            folder: "concepts".to_owned(),
+            required: vec!["created".to_owned()],
+            optional: vec![],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    config
+}
+
+fn open_concepts(store: Arc<dyn VaultStore>, index: Arc<dyn VaultIndex>) -> Vault {
+    Vault::new(store, index, concept_config())
+        .expect("vault opens")
+        .0
+}
+
+/// A Typst concept with three assets, a Markdown referrer and a Typst one.
+fn typst_target_fixture() -> Fixture {
+    let mem = Arc::new(MemoryVaultStore::new());
+    let mem_index = Arc::new(MemoryIndex::new());
+    let store: Arc<dyn VaultStore> = mem.clone();
+    store
+        .write_file(&vp(TYPST_CONCEPT_PATH), TYPST_CONCEPT)
+        .unwrap();
+    for asset in TYPST_ASSETS {
+        store
+            .write_file(
+                &vp(&format!("concepts/bias-variance-split/{asset}")),
+                "bytes",
+            )
+            .unwrap();
+    }
+    store
+        .write_file(&vp("projects/surrogate-model.md"), CONCEPT_REFERRER_MD)
+        .unwrap();
+    store
+        .write_file(
+            &vp("portfolios/surrogate-error-budget/_index.md"),
+            BUDGET_INDEX,
+        )
+        .unwrap();
+    store
+        .write_file(&vp(TYPST_EVIDENCE_PATH), CONCEPT_REFERRER_TYP)
+        .unwrap();
+    let index: Arc<dyn VaultIndex> = mem_index.clone();
+    let vault = open_concepts(Arc::clone(&store), index);
+    Fixture {
+        store,
+        mem,
+        index: mem_index,
+        vault,
+    }
+}
+
+const NEW_CONCEPT: &str = "concepts/error-split.typ";
+
+fn rename_concept(f: &Fixture) -> RenameOutcome {
+    f.vault
+        .rename_note(
+            "bias-variance-split",
+            "error-split",
+            None,
+            None,
+            at(),
+            || Ok(()),
+        )
+        .expect("rename")
+}
+
+#[test]
+fn renaming_a_typst_note_moves_its_assets_folder() {
+    let f = typst_target_fixture();
+    let plan = f.plan("bias-variance-split", "error-split").unwrap();
+    assert_eq!(plan.moves.len(), TYPST_ASSETS.len() + 1);
+    assert_eq!(
+        plan.moves[0],
+        (vp(TYPST_CONCEPT_PATH), vp(NEW_CONCEPT)),
+        "the note first"
+    );
+    assert_eq!(
+        plan.log_line.as_deref().map(|l| l.lines().next().unwrap()),
+        Some("renamed [[concepts/error-split]] \u{2014} Bias-variance split")
+    );
+
+    rename_concept(&f);
+
+    for asset in TYPST_ASSETS {
+        assert_eq!(f.read(&format!("concepts/error-split/{asset}")), "bytes");
+        assert!(
+            !f.store
+                .exists(&vp(&format!("concepts/bias-variance-split/{asset}")))
+                .unwrap()
+        );
+    }
+    assert!(!f.store.exists(&vp(TYPST_CONCEPT_PATH)).unwrap());
+    assert!(
+        !f.store
+            .walk_dirs(&vp("concepts"))
+            .unwrap()
+            .contains(&vp("concepts/bias-variance-split")),
+        "the old folder is gone"
+    );
+    // A link into the folder follows, as a portfolio's does.
+    assert!(
+        f.read("projects/surrogate-model.md")
+            .contains("[[concepts/error-split/figs/a.png]]")
+    );
+}
+
+#[test]
+fn renaming_a_typst_note_rewrites_its_own_asset_paths_and_nothing_else() {
+    let f = typst_target_fixture();
+    let plan = f.plan("bias-variance-split", "error-split").unwrap();
+    let edit = plan
+        .edits
+        .iter()
+        .find(|e| e.path == vp(TYPST_CONCEPT_PATH))
+        .expect("the note's own edit");
+    assert_eq!(
+        edit.changes,
+        vec![Change::Alias, Change::AssetPaths { count: 3 }]
+    );
+    assert_eq!(edit.edits.len(), 4, "one alias edit, three path edits");
+    assert!(differs_only_by(&edit.before, &edit.after, &edit.edits));
+    assert_eq!(
+        edit.after,
+        TYPST_CONCEPT
+            .replace(
+                "#image(\"bias-variance-split/figs",
+                "#image(\"error-split/figs"
+            )
+            .replace(
+                "#image(\"./bias-variance-split/figs",
+                "#image(\"./error-split/figs"
+            )
+            .replace(
+                "../concepts/bias-variance-split/",
+                "../concepts/error-split/"
+            )
+            .replace(
+                "  created: \"2026-11-08\",\n",
+                "  created: \"2026-11-08\",\n  aliases: (\"bias-variance-split\",),\n"
+            ),
+    );
+}
+
+#[test]
+fn renaming_a_typst_note_appends_the_alias_to_the_block() {
+    let f = typst_target_fixture();
+    rename_concept(&f);
+    assert!(
+        f.read(NEW_CONCEPT)
+            .contains("aliases: (\"bias-variance-split\",),")
+    );
+    f.vault
+        .rename_note("error-split", "third-name", None, None, at(), || Ok(()))
+        .expect("second rename");
+    assert!(
+        f.read("concepts/third-name.typ")
+            .contains("aliases: (\"bias-variance-split\", \"error-split\"),")
+    );
+    assert_eq!(f.read("concepts/third-name/refs.bib"), "bytes");
+}
+
+#[test]
+fn a_typst_note_takes_a_former_name_back() {
+    let f = typst_target_fixture();
+    rename_concept(&f);
+    f.vault
+        .rename_note(
+            "error-split",
+            "bias-variance-split",
+            None,
+            None,
+            at(),
+            || Ok(()),
+        )
+        .expect("back");
+    let back = f.read(TYPST_CONCEPT_PATH);
+    assert!(back.contains("aliases: (\"error-split\",),"), "{back}");
+}
+
+#[test]
+fn a_markdown_and_a_typst_referrer_are_both_rewritten() {
+    let f = typst_target_fixture();
+    rename_concept(&f);
+    let md = f.read("projects/surrogate-model.md");
+    assert!(
+        md.contains("[[concepts/error-split]] and [[error-split]]"),
+        "{md}"
+    );
+    let typ = f.read(TYPST_EVIDENCE_PATH);
+    assert!(
+        typ.contains("origin: \"[[concepts/error-split]]\""),
+        "{typ}"
+    );
+    assert!(typ.contains("Uses [[error-split]]."), "{typ}");
+}
+
+#[test]
+fn a_failed_asset_move_rolls_the_note_back() {
+    let f = typst_target_fixture();
+    let before = files_of(&*f.mem);
+    let paths_before = f.index.list_all_paths().unwrap();
+    // The note's write and delete are the first two ops; the third asset
+    // move is the fifth.
+    let failing: Arc<dyn VaultStore> = Arc::new(FailingStore::new(Arc::clone(&f.mem), 5));
+    let index: Arc<dyn VaultIndex> = f.index.clone();
+    let vault = open_concepts(failing, index);
+    let err = vault
+        .rename_note(
+            "bias-variance-split",
+            "error-split",
+            None,
+            None,
+            at(),
+            || Ok(()),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::Store(StoreError::PermissionDenied(_))),
+        "{err:?}"
+    );
+    assert_eq!(files_of(&*f.mem), before, "rolled back byte for byte");
+    assert_eq!(f.read(TYPST_CONCEPT_PATH), TYPST_CONCEPT);
+    assert_eq!(f.index.list_all_paths().unwrap(), paths_before);
+}
+
+#[test]
+fn a_renamed_typst_note_reindexes_from_scratch_to_the_same_rows() {
+    let f = typst_target_fixture();
+    rename_concept(&f);
+    let fresh: Arc<MemoryIndex> = Arc::new(MemoryIndex::new());
+    let as_index: Arc<dyn VaultIndex> = fresh.clone();
+    let _rebuilt = open_concepts(Arc::clone(&f.store), as_index);
+
+    let sorted = |mut paths: Vec<VaultPath>| {
+        paths.sort();
+        paths
+    };
+    assert_eq!(
+        sorted(f.index.list_all_paths().unwrap()),
+        sorted(fresh.list_all_paths().unwrap())
+    );
+    let aliases = |index: &MemoryIndex| {
+        let mut rows = index.list_aliases().unwrap();
+        rows.sort();
+        rows
+    };
+    assert_eq!(aliases(&f.index), aliases(&fresh));
+    assert_eq!(
+        sorted(f.index.fts_indexed_paths().unwrap()),
+        sorted(fresh.fts_indexed_paths().unwrap())
+    );
+    for path in f.index.list_all_paths().unwrap() {
+        let (a, b) = (
+            f.index.find_by_path(&path).unwrap().unwrap(),
+            fresh.find_by_path(&path).unwrap().unwrap(),
+        );
+        assert_eq!(
+            (&a.note_type, &a.title, &a.content_hash),
+            (&b.note_type, &b.title, &b.content_hash),
+            "{path}"
+        );
+        assert_eq!(
+            f.index.find_outgoing_links(&path).unwrap(),
+            fresh.find_outgoing_links(&path).unwrap(),
+            "{path}"
+        );
+    }
+    assert!(
+        f.index
+            .find_by_path(&vp("concepts/error-split/figs/a.png"))
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// Issue #945's binding comment: the §3.5 field follows through the block.
+#[test]
+fn a_portfolio_rename_rewrites_a_typst_evidence_portfolio_field() {
+    let f = typst_referrer_fixture();
+    let new_path = "portfolios/error-budget/2026-11-08-error-budget.typ";
+    let plan = f
+        .plan("portfolios/surrogate-error-budget", "error-budget")
+        .unwrap();
+    let edit = plan
+        .edits
+        .iter()
+        .find(|e| e.path == vp(TYPST_EVIDENCE_PATH))
+        .expect("the evidence note's field is planned");
+    assert_eq!(edit.changes, vec![field("portfolio")]);
+    assert!(differs_only_by(&edit.before, &edit.after, &edit.edits));
+
+    f.vault
+        .rename_note(
+            "portfolios/surrogate-error-budget",
+            "error-budget",
+            None,
+            None,
+            at(),
+            || Ok(()),
+        )
+        .expect("rename");
+    assert_eq!(
+        f.read(new_path),
+        TYPST_EVIDENCE.replace(
+            "portfolio: \"surrogate-error-budget\"",
+            "portfolio: \"error-budget\""
+        )
+    );
+    let contents = f.vault.get_portfolio_contents("error-budget").unwrap();
+    assert!(
+        format!("{contents:?}").contains("2026-11-08-error-budget"),
+        "{contents:?}"
+    );
+}
+
+#[test]
+fn a_typst_rename_refuses_a_destination_folder_holding_files() {
+    let f = typst_target_fixture();
+    f.write("concepts/error-split/figure.png", "taken");
+    let err = f
+        .vault
+        .rename_note(
+            "bias-variance-split",
+            "error-split",
+            None,
+            None,
+            at(),
+            || Ok(()),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            DomainError::SlugTaken {
+                kind: TakenBy::Folder,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    assert_eq!(f.read(TYPST_CONCEPT_PATH), TYPST_CONCEPT);
+}
+
+#[test]
+fn a_typst_evidence_note_keeps_the_markdown_refusal() {
+    let f = typst_target_fixture();
+    let err = f.plan(TYPST_EVIDENCE_PATH, "renamed-evidence").unwrap_err();
+    assert!(
+        matches!(&err, DomainError::NoteNotRenamable { reason, .. } if reason == "type evidence"),
+        "{err:?}"
+    );
+}
