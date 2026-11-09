@@ -143,6 +143,8 @@ pub struct CreateCustomNoteInput {
     pub origin: Option<String>,
     /// Optional slug naming the note's file. The slug is the name every later reference types; for a long title propose a short one (lower case, `a-z`, `0-9` and `-`). Omitted = derived from the title. Do not also pass a `slug` in `fields`: the call is refused as `slug_given_twice`.
     pub slug: Option<String>,
+    /// The file format: `markdown` (the default) or `typst`. `typst` writes `<folder>/<slug>.typ`: a metadata block from the type's fields, then `body` as Typst markup (no title heading is written, no template is used). The type must admit Typst (`list_note_types` shows `admits_typst`), and `vars` is refused with it. A Typst body that carries a `<cdno>` label, does not parse, or has a `[[` link that is not one inline run is refused.
+    pub format: Option<String>,
 }
 
 /// Input for `update_project_state`.

@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use clap::Subcommand;
 
+use cdno_core::paths::NoteFormat;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::vault::{
@@ -58,6 +59,12 @@ pub enum NoteCommands {
         /// omitted. Not combinable with `--field slug=…`.
         #[arg(long)]
         slug: Option<String>,
+        /// The file format: `markdown` (the default) or `typst`. A Typst note
+        /// is written to `<folder>/<slug>.typ` from `--body-file`, with the
+        /// type's fields in a metadata block; the type must admit Typst, and
+        /// `--var` is refused (template variables are Markdown's).
+        #[arg(long, value_parser = ["markdown", "typst"], default_value = "markdown")]
+        format: String,
     },
 
     /// List every note of a config-defined custom type, by path.
@@ -163,7 +170,13 @@ pub fn run(
             body_file,
             origin,
             slug,
+            format,
         } => {
+            let format = if format == "typst" {
+                NoteFormat::Typst
+            } else {
+                NoteFormat::Markdown
+            };
             let fields: HashMap<String, String> = field.into_iter().collect();
             let vars: HashMap<String, String> = var.into_iter().collect();
             let body_from_file = body_file
@@ -177,7 +190,9 @@ pub fn run(
             // template has a `{{body}}` slot that nothing else (a `body`
             // field, a `[variables] body`, a `--var body=`) fills; otherwise
             // it is optional.
-            let body = if vault.custom_note_needs_body(&note_type, &fields, &vars)? {
+            let body = if format == NoteFormat::Markdown
+                && vault.custom_note_needs_body(&note_type, &fields, &vars)?
+            {
                 Some(prompt::gather_or_error(
                     body_from_file,
                     "body-file",
@@ -197,8 +212,9 @@ pub fn run(
                 return Ok(());
             }
             let path = vault
-                .create_custom_note_with_vars(
+                .create_custom_note_in_format(
                     at,
+                    format,
                     &note_type,
                     &title,
                     &fields,

@@ -1890,6 +1890,7 @@ async fn create_custom_note_creates_a_custom_type_note() {
     let (server, store) = server_with_config(config_with_person(), |_v, _s| {});
     let result = server
         .create_custom_note(Parameters(CreateCustomNoteInput {
+            format: None,
             slug: None,
             type_name: "person".to_owned(),
             title: "Ada Lovelace".to_owned(),
@@ -1922,6 +1923,7 @@ async fn create_custom_note_rejects_an_unknown_type() {
     let (server, _store) = server_with_config(config_with_person(), |_v, _s| {});
     let result = server
         .create_custom_note(Parameters(CreateCustomNoteInput {
+            format: None,
             slug: None,
             type_name: "gadget".to_owned(),
             title: "Widget".to_owned(),
@@ -1948,6 +1950,7 @@ async fn create_custom_note_names_the_install_command_for_a_bundled_type() {
     let (server, _store) = server_with_config(config_with_person(), |_v, _s| {});
     let err = server
         .create_custom_note(Parameters(CreateCustomNoteInput {
+            format: None,
             slug: None,
             type_name: "concept".to_owned(),
             title: "Woodbury identity".to_owned(),
@@ -1977,6 +1980,7 @@ async fn create_custom_note_rejects_a_missing_required_field() {
     let (server, _store) = server_with_config(config_with_person(), |_v, _s| {});
     let result = server
         .create_custom_note(Parameters(CreateCustomNoteInput {
+            format: None,
             slug: None,
             type_name: "person".to_owned(),
             title: "Nameless".to_owned(),
@@ -2016,6 +2020,7 @@ async fn create_custom_note_writes_body_and_origin() {
     let origin = "[[journal/2026/daily/2026-09-02#Woodbury identity]]";
     let result = server
         .create_custom_note(Parameters(CreateCustomNoteInput {
+            format: None,
             slug: None,
             type_name: "concept".to_owned(),
             title: "Woodbury identity".to_owned(),
@@ -2053,6 +2058,7 @@ async fn create_custom_note_rejects_origin_on_a_type_that_does_not_declare_it() 
     let (server, store) = server_with_config(config_with_person_and_concept(), |_v, _s| {});
     let err = server
         .create_custom_note(Parameters(CreateCustomNoteInput {
+            format: None,
             slug: None,
             type_name: "person".to_owned(),
             title: "Ada".to_owned(),
@@ -2356,6 +2362,7 @@ async fn create_custom_note_reconciles_origin_and_drops_a_repeated_title_heading
     let origin = "[[journal/2026/daily/2026-09-02#Woodbury identity]] [[journal/2026/daily/2026-09-24#Low-rank refit]]";
     server
         .create_custom_note(Parameters(CreateCustomNoteInput {
+            format: None,
             slug: None,
             type_name: "concept".to_owned(),
             title: "Woodbury identity".to_owned(),
@@ -4631,6 +4638,7 @@ async fn a_slug_beside_a_slug_field_rejects_with_slug_given_twice() {
     let (server, _store) = server_with_config(config_with_person(), |_v, _s| {});
     let err = server
         .create_custom_note(Parameters(CreateCustomNoteInput {
+            format: None,
             type_name: "person".to_owned(),
             title: "Ada Lovelace".to_owned(),
             fields: std::collections::HashMap::from([
@@ -4756,6 +4764,7 @@ async fn every_create_tool_passes_the_slug_through() {
         "surrogate-calibration-note".into(),
         server
             .create_custom_note(Parameters(CreateCustomNoteInput {
+                format: None,
                 type_name: "person".to_owned(),
                 title: "Ada Lovelace".to_owned(),
                 fields: std::collections::HashMap::from([("name".to_owned(), "Ada".to_owned())]),
@@ -5614,4 +5623,61 @@ mod rename {
 /// a repository above (a developer's temp dir may sit inside one).
 fn scratch_root() -> std::path::PathBuf {
     tempfile::TempDir::new().expect("tempdir").keep()
+}
+
+#[tokio::test]
+async fn create_custom_note_format_typst() {
+    use cdno_core::config::CustomNoteType;
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "concept".to_owned(),
+        CustomNoteType {
+            folder: "concepts".to_owned(),
+            required: vec!["created".to_owned()],
+            optional: vec!["origin".to_owned()],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    let (server, store) = server_with_config(config, |_v, _s| {});
+    let input = |format: Option<&str>, vars: Option<std::collections::HashMap<String, String>>| {
+        CreateCustomNoteInput {
+            format: format.map(str::to_owned),
+            slug: None,
+            type_name: "concept".to_owned(),
+            title: "Bias-variance split".to_owned(),
+            fields: std::collections::HashMap::new(),
+            vars,
+            body: Some("The error splits as $ sigma^2 $.".to_owned()),
+            origin: Some("[[projects/surrogate-model]]".to_owned()),
+        }
+    };
+
+    server
+        .create_custom_note(Parameters(input(Some("typst"), None)))
+        .await
+        .expect("create_custom_note");
+    let content = store
+        .read_file(&vp("concepts/bias-variance-split.typ"))
+        .unwrap();
+    assert!(
+        content.contains("origin: \"[[projects/surrogate-model]]\""),
+        "{content}"
+    );
+    assert!(
+        content.ends_with("<cdno>\n\nThe error splits as $ sigma^2 $.\n"),
+        "{content}"
+    );
+
+    let vars = std::collections::HashMap::from([("x".to_owned(), "y".to_owned())]);
+    server
+        .create_custom_note(Parameters(input(Some("typst"), Some(vars))))
+        .await
+        .expect_err("vars with typst are refused");
+    server
+        .create_custom_note(Parameters(input(Some("latex"), None)))
+        .await
+        .expect_err("an unknown format is refused");
 }
