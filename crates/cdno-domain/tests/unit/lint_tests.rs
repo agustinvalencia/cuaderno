@@ -4162,3 +4162,488 @@ fn a_pdf_beside_a_typst_note_is_not_an_orphan() {
         report.issues
     );
 }
+
+// --- Typst notes (RFC 0008 §5.10) ---
+
+const EVIDENCE_DIR: &str = "portfolios/surrogate-error-budget";
+const TYPST_EVIDENCE: &str = "#metadata((type: \"evidence\", source: \"Error budget derivation\")) <cdno>\n\n= Setting\n\nThe residual telescopes.\n";
+
+fn typst_evidence(name: &str) -> String {
+    format!("{EVIDENCE_DIR}/{name}")
+}
+
+fn config_with_typst_concept() -> VaultConfig {
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "concept".to_owned(),
+        CustomNoteType {
+            folder: "concepts".to_owned(),
+            required: Vec::new(),
+            optional: vec!["title".to_owned()],
+            template: None,
+            append_only: false,
+            title_field: Some("title".to_owned()),
+            date_field: None,
+        },
+    );
+    config
+}
+
+/// The `(severity, message)` of every issue on `path`.
+fn rows_on(report: &cdno_domain::lint::LintReport, path: &str) -> Vec<(&'static str, String)> {
+    report
+        .issues
+        .iter()
+        .filter(|i| i.path == vp(path))
+        .map(|i| (i.severity.as_str(), i.message.clone()))
+        .collect()
+}
+
+fn lint_typst(files: &[(&str, &str)], config: VaultConfig) -> cdno_domain::lint::LintReport {
+    vault_with_notes(files, config)
+        .lint_all_notes(lint_day())
+        .expect("lint succeeds")
+}
+
+#[test]
+fn typst_missing_type_is_an_error() {
+    let path = typst_evidence("untyped.typ");
+    let report = lint_typst(
+        &[(
+            &path,
+            "#metadata((source: \"Error budget derivation\")) <cdno>\n\nBody.\n",
+        )],
+        VaultConfig::default(),
+    );
+    assert_eq!(
+        rows_on(&report, &path),
+        vec![(
+            "error",
+            "metadata block missing a required key: `type`; add `type: \"…\"` to the \
+             `#metadata((…)) <cdno>` block"
+                .to_owned()
+        )]
+    );
+}
+
+#[test]
+fn typst_concept_without_title_is_an_error() {
+    let path = "concepts/bias-variance-split.typ";
+    let report = lint_typst(
+        &[(
+            path,
+            "#metadata((type: \"concept\")) <cdno>\n\n= Statement\n",
+        )],
+        config_with_typst_concept(),
+    );
+    assert_eq!(
+        rows_on(&report, path),
+        vec![(
+            "error",
+            "metadata block missing a required key: `title`; add `title: \"…\"` to the \
+             `#metadata((…)) <cdno>` block"
+                .to_owned()
+        )]
+    );
+}
+
+#[test]
+fn typst_evidence_without_title_is_clean() {
+    let path = typst_evidence("derivation.typ");
+    let report = lint_typst(&[(&path, TYPST_EVIDENCE)], VaultConfig::default());
+    assert!(report.is_clean(), "{:?}", report.issues);
+}
+
+#[test]
+fn typst_not_literal_is_an_error() {
+    let path = typst_evidence("computed.typ");
+    let report = lint_typst(
+        &[(
+            &path,
+            "#metadata((type: \"evidence\", n: 1 + 2)) <cdno>\n\nBody.\n",
+        )],
+        VaultConfig::default(),
+    );
+    let rows = rows_on(&report, &path);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, "error");
+    assert!(
+        rows[0]
+            .1
+            .starts_with("metadata block not literal (line 1: "),
+        "{}",
+        rows[0].1
+    );
+    assert!(
+        rows[0]
+            .1
+            .ends_with("write only strings, arrays of strings, booleans and numbers")
+    );
+}
+
+#[test]
+fn typst_block_not_first_is_an_error() {
+    let path = typst_evidence("late.typ");
+    let report = lint_typst(
+        &[(
+            &path,
+            "= Setting\n\n#metadata((type: \"evidence\")) <cdno>\n",
+        )],
+        VaultConfig::default(),
+    );
+    assert_eq!(
+        rows_on(&report, &path),
+        vec![(
+            "error",
+            "metadata block not first or not top-level (line 3: only whitespace and comments \
+             may precede the `<cdno>` block); keep a single block at the top of the file, \
+             outside any content block"
+                .to_owned()
+        )]
+    );
+}
+
+#[test]
+fn typst_unescaped_hash_in_a_link_is_an_error_with_its_line() {
+    let path = typst_evidence("anchored.typ");
+    let report = lint_typst(
+        &[(
+            &path,
+            "#metadata((type: \"evidence\")) <cdno>\n\nFirst line.\n\n[[concepts/x#Statement]]\n",
+        )],
+        VaultConfig::default(),
+    );
+    assert_eq!(
+        rows_on(&report, &path),
+        vec![(
+            "error",
+            "link interior not one inline run at line 5: `Hash` inside it is markup, not part \
+             of the address; backslash-escape the markup character inside the `[[…]]`, such \
+             as `\\#` for an anchor"
+                .to_owned()
+        )]
+    );
+}
+
+#[test]
+fn typst_unclosed_emphasis_is_a_warning() {
+    let path = typst_evidence("unclosed.typ");
+    let report = lint_typst(
+        &[(
+            &path,
+            "#metadata((type: \"evidence\")) <cdno>\n\nSome *unclosed emphasis.\n",
+        )],
+        VaultConfig::default(),
+    );
+    let rows = rows_on(&report, &path);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, "warning");
+    assert!(
+        rows[0].1.starts_with("Typst note does not parse (line 3: "),
+        "{}",
+        rows[0].1
+    );
+}
+
+#[test]
+fn shared_stem_is_an_error_naming_the_editor_cause() {
+    let typ = typst_evidence("derivation.typ");
+    let md = typst_evidence("derivation.md");
+    let report = lint_typst(&[(&typ, TYPST_EVIDENCE), (&md, "")], VaultConfig::default());
+    let rows = rows_on(&report, &typ);
+    assert_eq!(
+        rows,
+        vec![(
+            "error",
+            format!(
+                "stem shared between `{EVIDENCE_DIR}/derivation.md` and \
+                 `{EVIDENCE_DIR}/derivation.typ`, so `[[{EVIDENCE_DIR}/derivation]]` names only \
+                 one of them; remove or merge the `.md`: an editor that resolves `[[x]]` only \
+                 to `x.md` may have created the empty file"
+            )
+        )]
+    );
+}
+
+#[test]
+fn loose_typ_is_a_warning() {
+    let path = typst_evidence("template.typ");
+    let report = lint_typst(&[(&path, "= A loose sheet\n")], VaultConfig::default());
+    assert_eq!(
+        rows_on(&report, &path),
+        vec![(
+            "warning",
+            "Typst file is neither a note nor an attachment: it has no `<cdno>` block and no \
+             note owns its folder; add a block to make it a note, or move it into the assets \
+             folder of the note that uses it"
+                .to_owned()
+        )]
+    );
+}
+
+#[test]
+fn labelled_typ_outside_scope_is_a_warning() {
+    let path = typst_evidence("derivation.typ");
+    let mut config = VaultConfig::default();
+    config.typst.note_types = Some(Vec::new());
+    let report = lint_typst(&[(&path, TYPST_EVIDENCE)], config);
+    assert_eq!(
+        rows_on(&report, &path),
+        vec![(
+            "warning",
+            "labelled Typst file outside the configured types, so it is not indexed; admit \
+             its type under `[typst] note_types` or move it to a folder of a type that admits \
+             Typst"
+                .to_owned()
+        )]
+    );
+}
+
+#[test]
+fn broken_label_is_an_error() {
+    let path = typst_evidence("mistyped.typ");
+    let report = lint_typst(
+        &[(&path, "#metadata((type: \"evidence\")) <cdn>\n\nBody.\n")],
+        VaultConfig::default(),
+    );
+    assert_eq!(
+        rows_on(&report, &path),
+        vec![(
+            "error",
+            "metadata present but the `<cdno>` label is missing, mistyped or nested (line 1); \
+             put `<cdno>` directly after the `#metadata((…))` call"
+                .to_owned()
+        )]
+    );
+}
+
+#[test]
+fn a_stray_second_label_is_an_error() {
+    let path = typst_evidence("twice.typ");
+    let report = lint_typst(
+        &[(
+            &path,
+            "#metadata((type: \"evidence\")) <cdno>\n\n= Setting <cdno>\n",
+        )],
+        VaultConfig::default(),
+    );
+    assert_eq!(
+        rows_on(&report, &path),
+        vec![(
+            "error",
+            "a second `<cdno>` label sits outside the metadata block; remove it, the label \
+             belongs to the `#metadata((…))` call only"
+                .to_owned()
+        )]
+    );
+}
+
+#[test]
+fn a_label_on_a_heading_with_no_block_is_an_error() {
+    let path = typst_evidence("headed.typ");
+    let report = lint_typst(&[(&path, "= Setting <cdno>\n")], VaultConfig::default());
+    assert_eq!(
+        rows_on(&report, &path),
+        vec![(
+            "error",
+            "`<cdno>` is not the label of a `#metadata((…))` call; put the label directly \
+             after the call's closing parenthesis"
+                .to_owned()
+        )]
+    );
+}
+
+#[test]
+fn a_typ_of_an_unadmitted_type_is_an_error_naming_the_type() {
+    let path = typst_evidence("project.typ");
+    let report = lint_typst(
+        &[(&path, "#metadata((type: \"project\")) <cdno>\n\nBody.\n")],
+        VaultConfig::default(),
+    );
+    assert_eq!(
+        rows_on(&report, &path),
+        vec![(
+            "error",
+            "Typst note of type `project` does not admit Typst, so it is not indexed; admit \
+             the type under `[typst] note_types` or write the note in Markdown"
+                .to_owned()
+        )]
+    );
+}
+
+#[test]
+fn a_markdown_note_in_a_typst_assets_folder_is_a_warning() {
+    let typ = typst_evidence("derivation.typ");
+    let evicted = typst_evidence("derivation/notes.md");
+    let report = lint_typst(
+        &[
+            (&typ, TYPST_EVIDENCE),
+            (
+                &evicted,
+                "---\ntype: evidence\nsource: Notes\n---\n\nBody.\n",
+            ),
+            (
+                &typst_evidence("derivation/readme.md"),
+                "# No frontmatter\n",
+            ),
+        ],
+        VaultConfig::default(),
+    );
+    assert_eq!(
+        rows_on(&report, &evicted),
+        vec![(
+            "warning",
+            format!(
+                "this Markdown note sits in the assets folder of Typst note `{typ}`, so it is \
+                 not indexed; move it out of `{EVIDENCE_DIR}/derivation/`"
+            )
+        )]
+    );
+    assert_eq!(report.issues.len(), 1, "{:?}", report.issues);
+}
+
+#[test]
+fn dangling_link_in_a_typst_body_is_reported_as_in_markdown() {
+    let path = typst_evidence("derivation.typ");
+    let report = lint_typst(
+        &[(
+            &path,
+            "#metadata((type: \"evidence\")) <cdno>\n\nSee [[bias-variance-split]].\n",
+        )],
+        VaultConfig::default(),
+    );
+    assert_eq!(
+        rows_on(&report, &path),
+        vec![(
+            "warning",
+            "broken wikilink `[[bias-variance-split]]` resolves to no note".to_owned()
+        )]
+    );
+}
+
+#[test]
+fn a_clean_typst_vault_lints_clean() {
+    let report = lint_typst(
+        &[
+            (
+                "projects/surrogate-model.md",
+                "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n",
+            ),
+            (
+                "concepts/bias-variance-split.typ",
+                "#metadata((type: \"concept\", title: \"Bias-variance split\")) <cdno>\n\n= Statement\n\nSee [[projects/surrogate-model]].\n",
+            ),
+            (
+                &typst_evidence("derivation.typ"),
+                "#metadata((\n  type: \"evidence\",\n  source: \"Error budget derivation\",\n  origin: \"[[projects/surrogate-model]]\",\n)) <cdno>\n\n= Setting\n\nSee [[concepts/bias-variance-split]].\n",
+            ),
+            (
+                &typst_evidence("derivation/figure.pdf"),
+                "%PDF-1.7 fake bytes",
+            ),
+            (
+                &typst_evidence("surrogate-error-budget.typ"),
+                TYPST_EVIDENCE,
+            ),
+        ],
+        config_with_typst_concept(),
+    );
+    assert!(report.is_clean(), "{:?}", report.issues);
+}
+
+#[test]
+fn a_typ_edited_to_an_unadmitted_type_is_not_indexed_after_reopening() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let path = typst_evidence("derivation.typ");
+    store.write_file(&vp(&path), TYPST_EVIDENCE).unwrap();
+    let (vault, _) = Vault::new(
+        Arc::clone(&store),
+        Arc::clone(&index),
+        VaultConfig::default(),
+    )
+    .unwrap();
+    assert!(index.find_by_path(&vp(&path)).unwrap().is_some());
+    drop(vault);
+
+    let edited = TYPST_EVIDENCE.replace("type: \"evidence\"", "type: \"project\"");
+    store.write_file(&vp(&path), &edited).unwrap();
+    let (vault, report) = Vault::new(store, Arc::clone(&index), VaultConfig::default()).unwrap();
+
+    assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+    assert!(index.find_by_path(&vp(&path)).unwrap().is_none());
+    let lint = vault.lint_all_notes(lint_day()).unwrap();
+    assert_eq!(rows_on(&lint, &path).len(), 1, "{:?}", lint.issues);
+}
+
+#[test]
+fn an_unindexed_labelled_typ_with_no_other_error_is_an_error() {
+    let path = typst_evidence("tagged.typ");
+    let report = lint_typst(
+        &[(
+            &path,
+            "#metadata((type: \"evidence\", tags: 5)) <cdno>\n\nBody.\n",
+        )],
+        VaultConfig::default(),
+    );
+    let rows = rows_on(&report, &path);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, "error");
+    assert!(
+        rows[0]
+            .1
+            .starts_with("Typst note is not indexed: its block reads"),
+        "{}",
+        rows[0].1
+    );
+}
+
+#[test]
+fn a_loose_typ_in_a_portfolio_subfolder_is_only_the_typst_warning() {
+    let loose = typst_evidence("figs/template.typ");
+    let report = lint_typst(
+        &[
+            (&typst_evidence("derivation.typ"), TYPST_EVIDENCE),
+            (&loose, "= A loose sheet\n"),
+        ],
+        VaultConfig::default(),
+    );
+    assert_eq!(report.issues.len(), 1, "{:?}", report.issues);
+    assert_eq!(report.issues[0].path, vp(&loose));
+    assert_eq!(report.issues[0].severity.as_str(), "warning");
+    assert!(!report.issues[0].message.contains("stub"));
+}
+
+#[test]
+fn an_evicted_markdown_file_with_frontmatter_but_no_type_is_not_named() {
+    let report = lint_typst(
+        &[
+            (&typst_evidence("derivation.typ"), TYPST_EVIDENCE),
+            (
+                &typst_evidence("derivation/draft.md"),
+                "---\ntitle: Draft\n---\n\nBody.\n",
+            ),
+        ],
+        VaultConfig::default(),
+    );
+    assert!(report.is_clean(), "{:?}", report.issues);
+}
+
+#[test]
+fn an_unclosed_metadata_block_is_one_true_row() {
+    let path = typst_evidence("unclosed-block.typ");
+    let report = lint_typst(
+        &[(&path, "#metadata((type: \"evidence\") <cdno>\n\nBody.\n")],
+        VaultConfig::default(),
+    );
+    let rows = rows_on(&report, &path);
+    assert_eq!(
+        rows,
+        vec![(
+            "error",
+            "Typst note does not parse, so its metadata block cannot be read (line 1: unclosed \
+             delimiter); fix the syntax at that line"
+                .to_owned()
+        )]
+    );
+}

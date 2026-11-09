@@ -5,7 +5,7 @@ use cdno_core::error::{
 use cdno_core::path::VaultPath;
 
 /// Why a link's interior broke, by the leaf that broke it (RFC 0008 §5.5).
-fn link_fault_reason(leaf: &str) -> String {
+pub(crate) fn link_fault_reason(leaf: &str) -> String {
     match leaf {
         "end of run" => "it is never closed with `]]` before the text around it ends".to_string(),
         "Space" | "Parbreak" | "Escape" => "it wraps across a line".to_string(),
