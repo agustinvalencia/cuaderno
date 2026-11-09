@@ -555,6 +555,8 @@ impl Vault {
             )));
         }
 
+        self.refuse_other_format_stem(&path)?;
+
         let body = self.render_evidence(created, source, portfolio, origin, content, prompted)?;
         let entry = build_index_entry_for(&path, &body, NoteType::Evidence.as_str())?;
 
@@ -639,6 +641,7 @@ impl Vault {
                 stub_path.to_string(),
             )));
         }
+        self.refuse_other_format_stem(&stub_path)?;
         if self.store.exists(&artefact_dest)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
                 artefact_dest.to_string(),
@@ -749,7 +752,7 @@ impl Vault {
     /// " — available portfolios: …" suffix for a portfolio slug not-found,
     /// listing every indexed portfolio so a caller can self-correct. See
     /// [`slug_hint::available_slugs_hint`](super::slug_hint::available_slugs_hint).
-    fn available_portfolios_hint(&self) -> String {
+    pub(in crate::vault) fn available_portfolios_hint(&self) -> String {
         super::slug_hint::available_slugs_hint(
             self.index.as_ref(),
             NoteType::Portfolio.as_str(),
