@@ -128,7 +128,8 @@ pub fn run(
         Some(artefact) => {
             let stub = vault
                 .file_attachment(at, &portfolio, artefact, &source, &origin, &content)
-                .context("filing attachment")?;
+                .context("filing attachment")
+                .map_err(|e| crate::commands::rejection::typst_refusal(e, json))?;
             if move_after {
                 std::fs::remove_file(artefact).with_context(|| {
                     format!(

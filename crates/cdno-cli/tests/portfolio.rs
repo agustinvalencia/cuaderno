@@ -1427,3 +1427,36 @@ fn file_markdown_over_a_typst_stem_is_a_json_rejection() {
     assert_eq!(json["code"], "stem_taken_by_other_format");
     assert!(json["details"]["remedy"].is_string());
 }
+
+#[test]
+fn file_attach_over_a_typst_stem_is_a_json_rejection() {
+    let dir = typst_filing_vault();
+    file_typst_args(dir.path())
+        .args(["--content", "Typst body.\n"])
+        .assert()
+        .success();
+    let art = dir.path().join("fig.png");
+    fs::write(&art, b"png").unwrap();
+    let out = cdno_in(dir.path())
+        .args([
+            "--no-interactive",
+            "--json",
+            "file",
+            "--portfolio",
+            "sparse-vs-dense-ood",
+            "--source",
+            "Error budget derivation",
+            "--origin",
+            "projects/surrogate-model",
+            "--attach",
+        ])
+        .arg(&art)
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["code"], "stem_taken_by_other_format");
+    assert!(json["details"]["remedy"].is_string());
+}
