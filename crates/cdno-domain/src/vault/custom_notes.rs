@@ -35,7 +35,7 @@ const ORIGIN: &str = "origin";
 /// in `fields` too would ask the caller to repeat what create already
 /// knows. A `required` field outside this set is unaffected: it must
 /// still come from the caller.
-const ENGINE_SUPPLIED_FIELDS: &[&str] = &["title", "slug", "created", "date"];
+pub(super) const ENGINE_SUPPLIED_FIELDS: &[&str] = &["title", "slug", "created", "date"];
 
 impl Vault {
     /// Create a note of a config-defined custom type `type_name`. Convenience
@@ -307,13 +307,14 @@ impl Vault {
             "ENGINE_SUPPLIED_FIELDS and engine_value must stay in lock-step"
         );
 
-        // Markdown on purpose: becomes format-aware with the custom-note creation path (T26).
+        // Markdown on purpose: this is the Markdown verb; the Typst one is `create_typst_custom_note`.
         let path = VaultPath::new(format!("{}/{slug}.md", def.folder))?;
         if self.store.exists(&path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
                 path.to_string(),
             )));
         }
+        self.refuse_other_format_stem(&path)?;
 
         let mut ctx = VariableContext::new();
         ctx.set_contextual("title", title);

@@ -127,12 +127,12 @@ pub struct CreateCustomNoteInput {
     /// as a name -> value map. Mirrors the CLI's repeatable `--var name=value`.
     /// Omitted = none.
     pub vars: Option<HashMap<String, String>>,
-    /// The note's body (markdown), without the title heading: the engine
+    /// The note's body (markdown; Typst markup with `format: typst`), without the title heading: the engine
     /// writes the `# <title>` H1, and a leading H1 equal to the title is
     /// dropped. Kept verbatim apart from leading/trailing blank lines and
     /// trailing whitespace. Fills the type template's `{{body}}` placeholder
     /// (winning over a `body` field or variable), or is inserted after the H1
-    /// when the template has none. Omitted or blank = no body.
+    /// when the template has none. Omitted or blank = no body. With `format: typst` it is Typst markup, written verbatim after the metadata block (no title heading, no template).
     pub body: Option<String>,
     /// Where the note came from: one string of wikilinks, e.g.
     /// `[[journal/2026/daily/2026-09-02#Woodbury identity]]` (promotion, RFC
@@ -143,6 +143,8 @@ pub struct CreateCustomNoteInput {
     pub origin: Option<String>,
     /// Optional slug naming the note's file. The slug is the name every later reference types; for a long title propose a short one (lower case, `a-z`, `0-9` and `-`). Omitted = derived from the title. Do not also pass a `slug` in `fields`: the call is refused as `slug_given_twice`.
     pub slug: Option<String>,
+    /// The file format: `markdown` (the default) or `typst`. `typst` writes `<folder>/<slug>.typ`: a metadata block from the type's fields, then `body` as Typst markup (no title heading is written, no template is used). The type must admit Typst (`list_note_types` shows `admits_typst`), and `vars` is refused with it. A Typst body that carries a `<cdno>` label, does not parse, or has a `[[` link that is not one inline run is refused.
+    pub format: Option<String>,
 }
 
 /// Input for `update_project_state`.
