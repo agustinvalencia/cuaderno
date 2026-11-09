@@ -755,3 +755,186 @@ fn held_by_is_reserved_even_when_declared_settable() {
     }
     assert_eq!(store.read_file(&path).unwrap(), project, "file untouched");
 }
+
+// --- Typst notes (RFC 0008 T28) ---
+
+fn typst_spec(ty: &str, extra: &str) -> FieldSpec {
+    toml::from_str(&format!("type = \"{ty}\"\nsettable = true\n{extra}")).unwrap()
+}
+
+fn typst_vault() -> (Vault, Arc<dyn VaultStore>, Arc<dyn VaultIndex>) {
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "concept".to_owned(),
+        CustomNoteType {
+            folder: "concepts".to_owned(),
+            required: vec!["created".to_owned()],
+            optional: [
+                "origin", "priority", "ratio", "settled", "stage", "reviewed", "label",
+            ]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect(),
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    let mut schema = SchemaExtension::default();
+    schema
+        .fields
+        .insert("priority".into(), typst_spec("int", ""));
+    schema
+        .fields
+        .insert("ratio".into(), typst_spec("float", ""));
+    schema
+        .fields
+        .insert("settled".into(), typst_spec("bool", ""));
+    schema.fields.insert(
+        "stage".into(),
+        typst_spec("string", "values = [\"draft\", \"settled\"]"),
+    );
+    schema
+        .fields
+        .insert("reviewed".into(), typst_spec("date", ""));
+    schema
+        .fields
+        .insert("label".into(), typst_spec("string", "log_on_change = true"));
+    config.schemas.insert("concept".to_owned(), schema);
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    store
+        .write_file(&VaultPath::new(TYPST_PATH).unwrap(), TYPST_NOTE)
+        .unwrap();
+    let (vault, _r) = Vault::new(Arc::clone(&store), Arc::clone(&index), config).unwrap();
+    (vault, store, index)
+}
+
+const TYPST_PATH: &str = "concepts/bias-variance-split.typ";
+
+const TYPST_NOTE: &str = "#metadata((
+  type: \"concept\",
+  created: \"2026-07-01\",
+  origin: \"[[projects/surrogate-model]]\",
+  priority: 1,   // keep
+  ratio: 0.5,
+  settled: false,
+  stage: \"draft\",
+  reviewed: \"2026-07-01\",
+  label: \"first\",
+)) <cdno>
+
+= Bias-variance split
+
+See [[projects/surrogate-model]]; $sigma^2$.
+";
+
+fn typst_path() -> VaultPath {
+    VaultPath::new(TYPST_PATH).unwrap()
+}
+
+#[test]
+fn set_frontmatter_rewrites_one_scalar_in_a_typst_block() {
+    let (vault, store, index) = typst_vault();
+    for (key, value, line) in [
+        ("priority", "3", "priority: 3,   // keep"),
+        ("ratio", "0.75", "ratio: 0.75,"),
+        ("settled", "true", "settled: true,"),
+        ("stage", "settled", "stage: \"settled\","),
+        ("reviewed", "2026-08-01", "reviewed: \"2026-08-01\","),
+        ("label", "second: one", "label: \"second: one\","),
+    ] {
+        let before = store.read_file(&typst_path()).unwrap();
+        let out = vault
+            .set_frontmatter(moment(), TYPST_PATH, key, value)
+            .unwrap();
+        assert!(out.touched(), "{key}");
+        let after = store.read_file(&typst_path()).unwrap();
+        assert!(after.contains(line), "{key}: {after}");
+        let (b, a): (Vec<_>, Vec<_>) = (before.lines().collect(), after.lines().collect());
+        assert_eq!(b.len(), a.len(), "{key}");
+        assert_eq!(
+            b.iter().zip(&a).filter(|(x, y)| x != y).count(),
+            1,
+            "{key} moved more than its own line"
+        );
+        assert!(after.ends_with(TYPST_NOTE.split("<cdno>").nth(1).unwrap()));
+        let fm = index
+            .find_by_path(&typst_path())
+            .unwrap()
+            .unwrap()
+            .frontmatter;
+        assert!(fm.get(key).is_some(), "{key} indexed");
+    }
+    let fm = index
+        .find_by_path(&typst_path())
+        .unwrap()
+        .unwrap()
+        .frontmatter;
+    assert_eq!(fm["priority"], serde_json::json!(3));
+    assert_eq!(fm["settled"], serde_json::json!(true));
+    assert_eq!(fm["reviewed"], serde_json::json!("2026-08-01"));
+}
+
+#[test]
+fn set_frontmatter_on_a_typst_note_is_a_noop_when_unchanged() {
+    let (vault, store, _i) = typst_vault();
+    let out = vault
+        .set_frontmatter(moment(), TYPST_PATH, "priority", "1")
+        .unwrap();
+    assert!(!out.touched());
+    assert_eq!(store.read_file(&typst_path()).unwrap(), TYPST_NOTE);
+}
+
+#[test]
+fn set_frontmatter_on_a_typst_note_keeps_validation_and_strict_exists() {
+    let (vault, store, _i) = typst_vault();
+    let bad = vault.set_frontmatter(moment(), TYPST_PATH, "stage", "nonsense");
+    assert!(
+        matches!(bad, Err(DomainError::InvalidFieldValue { .. })),
+        "{bad:?}"
+    );
+    let reserved = vault.set_frontmatter(moment(), TYPST_PATH, "type", "x");
+    assert!(reserved.is_err());
+    // `origin` is declared by no schema field, so it is undeclared and refused.
+    assert!(
+        vault
+            .set_frontmatter(moment(), TYPST_PATH, "origin", "x")
+            .is_err()
+    );
+    assert_eq!(store.read_file(&typst_path()).unwrap(), TYPST_NOTE);
+}
+
+#[test]
+fn set_frontmatter_on_an_absent_typst_key_errors() {
+    let (vault, store, _i) = typst_vault();
+    let raw = TYPST_NOTE.replace("  reviewed: \"2026-07-01\",\n", "");
+    store.write_file(&typst_path(), &raw).unwrap();
+    let r = vault.set_frontmatter(moment(), TYPST_PATH, "reviewed", "2026-08-01");
+    assert!(matches!(r, Err(DomainError::MissingFrontmatterField(k)) if k == "reviewed"));
+    assert_eq!(store.read_file(&typst_path()).unwrap(), raw);
+}
+
+#[test]
+fn set_frontmatter_on_a_typst_note_logs_when_asked() {
+    let (vault, _s, _i) = typst_vault();
+    vault
+        .set_frontmatter(moment(), TYPST_PATH, "label", "second")
+        .unwrap();
+    let daily = vault.read_daily_note(date()).unwrap().markdown;
+    assert!(
+        daily.contains("label: first \u{2192} second on [[concepts/bias-variance-split]]"),
+        "{daily}"
+    );
+}
+
+#[test]
+fn set_frontmatter_on_a_markdown_note_is_unchanged_by_the_dispatch() {
+    let (vault, store, _i) = seeded_vault();
+    vault
+        .set_frontmatter(moment(), "today", "meds", "true")
+        .unwrap();
+    let raw = store.read_file(&daily_path()).unwrap();
+    assert_eq!(raw, DAILY_NOTE.replace("meds: false", "meds: true"));
+}
