@@ -114,6 +114,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   block, then the body, checked before anything is written. A `.typ` and an `.md` can no longer
   share a stem in one folder: `file_evidence` and `file_attachment` refuse when the `.typ` exists,
   with `StemTakenByOtherFormat` naming the holder. No CLI or MCP surface yet.
+- **Create a Typst custom note** (RFC 0008 T26, #954). `cdno note create <type> --format typst
+  --body-file …` and `create_custom_note` with `format: typst` write `<folder>/<slug>.typ` for a
+  custom type that admits Typst (`concept` by default): a metadata block with `type`, `title`,
+  `created`, `origin` and the declared fields, then the body as Typst markup, with no title
+  heading and no template. A declared int, float or bool field is written as that type, so the
+  note passes the type check on re-read; `--var` / `vars` is refused with Typst, and a `.typ` and
+  an `.md` can no longer share a stem in one folder, whichever is created second.
 
 ## [0.44.0] - 2026-11-06
 

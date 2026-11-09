@@ -1,18 +1,22 @@
 //! The Typst block writer, the field transport and the creation-time body check (RFC 0008 §5.7).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use cdno_core::config::{TypstConfig, VaultConfig};
+use cdno_core::config::{
+    CustomNoteType, FieldSpec, FieldType, SchemaExtension, TypstConfig, VaultConfig,
+};
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
+use cdno_core::paths::NoteFormat;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_domain::SearchFilters;
+use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::vault::typst_note::{
     BodyRejection, assemble_typst_note, check_typst_body, render_metadata_block,
 };
-use cdno_domain::{SearchFilters, Vault};
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{NaiveDate, NaiveDateTime};
 use serde_json::{Value, json};
 
 fn fields(pairs: &[(&str, Value)]) -> Vec<(String, Value)> {
@@ -61,7 +65,7 @@ fn render_metadata_block_orders_engine_fields_first() {
 }
 
 #[test]
-fn a_supplied_array_becomes_an_array_and_a_scalar_a_string() {
+fn values_are_written_as_their_own_type() {
     let block = render_metadata_block(
         "concept",
         &fields(&[
@@ -78,8 +82,8 @@ fn a_supplied_array_becomes_an_array_and_a_scalar_a_string() {
         "{block}"
     );
     assert!(block.contains("one: (\"surrogate\",),"), "{block}");
-    assert!(block.contains("n: \"2\","), "{block}");
-    assert!(block.contains("draft: \"true\","), "{block}");
+    assert!(block.contains("n: 2,"), "{block}");
+    assert!(block.contains("draft: true,"), "{block}");
 }
 
 #[test]
@@ -260,14 +264,317 @@ fn every_typst_rejection_carries_a_remedy() {
 }
 
 // ---------------------------------------------------------------------
-// file_typst_evidence (T19)
+// create_typst_custom_note (T26)
 // ---------------------------------------------------------------------
 
 fn at() -> NaiveDateTime {
     NaiveDate::from_ymd_opt(2026, 11, 8)
         .unwrap()
-        .and_time(NaiveTime::from_hms_opt(9, 30, 0).unwrap())
+        .and_hms_opt(9, 0, 0)
+        .unwrap()
 }
+
+fn vp(p: &str) -> VaultPath {
+    VaultPath::new(p).unwrap()
+}
+
+fn spec(ty: FieldType) -> FieldSpec {
+    toml::from_str(&format!("type = \"{}\"", ty.as_str())).unwrap()
+}
+
+fn concept_config() -> VaultConfig {
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "concept".to_owned(),
+        CustomNoteType {
+            folder: "concepts".to_owned(),
+            required: vec!["created".to_owned()],
+            optional: vec![
+                "tags".to_owned(),
+                "origin".to_owned(),
+                "priority".to_owned(),
+                "ratio".to_owned(),
+                "settled".to_owned(),
+                "stage".to_owned(),
+                "reviewed".to_owned(),
+            ],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    let mut schema = SchemaExtension::default();
+    schema
+        .fields
+        .insert("priority".into(), spec(FieldType::Int));
+    schema.fields.insert("ratio".into(), spec(FieldType::Float));
+    schema
+        .fields
+        .insert("settled".into(), spec(FieldType::Bool));
+    schema.fields.insert(
+        "stage".into(),
+        toml::from_str("type = \"string\"\nvalues = [\"draft\", \"settled\"]").unwrap(),
+    );
+    schema
+        .fields
+        .insert("reviewed".into(), spec(FieldType::Date));
+    config.schemas.insert("concept".to_owned(), schema);
+    config
+}
+
+fn vault(config: VaultConfig) -> (Vault, Arc<dyn VaultStore>) {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, config).expect("Vault::new");
+    (vault, store)
+}
+
+fn string_fields(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+    pairs
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect()
+}
+
+const BODY: &str = "The error splits as bias squared plus variance.\n\n$ sigma^2 $";
+
+#[test]
+fn create_typst_concept_writes_block_body_and_logs() {
+    let (vault, store) = vault(concept_config());
+    let path = vault
+        .create_typst_custom_note(
+            at(),
+            "concept",
+            "Bias-variance split",
+            &HashMap::new(),
+            Some(BODY),
+            Some("[[projects/surrogate-model]]"),
+            None,
+        )
+        .unwrap();
+    assert_eq!(path.to_string(), "concepts/bias-variance-split.typ");
+    let content = store.read_file(&path).unwrap();
+    assert_eq!(
+        content,
+        format!(
+            "#metadata((\n  type: \"concept\",\n  title: \"Bias-variance split\",\n  \
+             created: \"2026-11-08\",\n  origin: \"[[projects/surrogate-model]]\",\n)) \
+             <cdno>\n\n{BODY}\n"
+        )
+    );
+    assert!(!content.contains("= Bias-variance split"));
+    let daily = vault.read_daily_note(at().date()).unwrap().markdown;
+    assert!(
+        daily.contains(
+            "concept created [[concepts/bias-variance-split]] \u{2014} Bias-variance split"
+        ),
+        "{daily}"
+    );
+    assert!(!daily.contains(".typ"), "{daily}");
+    assert!(vault.list_custom_notes("concept").unwrap().contains(&path));
+}
+
+#[test]
+fn create_typst_concept_refuses_a_type_that_does_not_admit_typst() {
+    let mut config = concept_config();
+    config.typst.note_types = Some(vec![]);
+    let (vault, store) = vault(config);
+    let err = vault
+        .create_typst_custom_note(at(), "concept", "X", &HashMap::new(), None, None, None)
+        .unwrap_err();
+    assert!(matches!(err, DomainError::FormatUnsupportedForType { .. }));
+    assert!(!store.exists(&vp("concepts/x.typ")).unwrap());
+}
+
+#[test]
+fn create_typst_concept_refuses_vars() {
+    let (vault, store) = vault(concept_config());
+    let err = vault
+        .create_custom_note_in_format(
+            at(),
+            NoteFormat::Typst,
+            "concept",
+            "Bias-variance split",
+            &HashMap::new(),
+            &string_fields(&[("who", "me")]),
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
+    assert!(matches!(err, DomainError::VarsUnsupportedForTypst));
+    assert!(
+        !store
+            .exists(&vp("concepts/bias-variance-split.typ"))
+            .unwrap()
+    );
+}
+
+#[test]
+fn concept_stem_exclusivity_both_ways() {
+    let (vault, store) = vault(concept_config());
+    // A file the index never saw, so only the file check can catch it.
+    store
+        .write_file(
+            &vp("concepts/bias-variance-split.md"),
+            "---\ntype: concept\n---\n",
+        )
+        .unwrap();
+    let err = vault
+        .create_typst_custom_note(
+            at(),
+            "concept",
+            "Bias-variance split",
+            &HashMap::new(),
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(&err, DomainError::StemTakenByOtherFormat { stem, holder }
+            if stem == "bias-variance-split"
+                && holder.to_string() == "concepts/bias-variance-split.md"),
+        "{err:?}"
+    );
+
+    store
+        .write_file(&vp("concepts/surrogate-bias.typ"), "= Unlabelled\n")
+        .unwrap();
+    let err = vault
+        .create_custom_note(at(), "concept", "Surrogate bias", &HashMap::new())
+        .unwrap_err();
+    assert!(
+        matches!(&err, DomainError::StemTakenByOtherFormat { stem, .. }
+            if stem == "surrogate-bias"),
+        "{err:?}"
+    );
+    assert!(!store.exists(&vp("concepts/surrogate-bias.md")).unwrap());
+}
+
+#[test]
+fn a_blank_title_is_refused() {
+    let (vault, _store) = vault(concept_config());
+    let err = vault
+        .create_typst_custom_note(at(), "concept", "   ", &HashMap::new(), None, None, None)
+        .unwrap_err();
+    assert!(matches!(err, DomainError::EmptyField { field: "title" }));
+}
+
+#[test]
+fn declared_int_float_and_bool_fields_are_written_as_their_type() {
+    let (vault, store) = vault(concept_config());
+    let path = vault
+        .create_typst_custom_note(
+            at(),
+            "concept",
+            "Bias-variance split",
+            &string_fields(&[("priority", "3"), ("ratio", "0.5"), ("settled", "true")]),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let content = store.read_file(&path).unwrap();
+    assert!(content.contains("  priority: 3,\n"), "{content}");
+    assert!(content.contains("  ratio: 0.5,\n"), "{content}");
+    assert!(content.contains("  settled: true,\n"), "{content}");
+    let report = vault
+        .lint_all_notes(NaiveDate::from_ymd_opt(2026, 11, 8).unwrap())
+        .unwrap();
+    let rows: Vec<_> = report.issues.iter().filter(|i| i.path == path).collect();
+    assert!(rows.is_empty(), "{rows:?}");
+}
+
+#[test]
+fn a_value_that_does_not_fit_its_declared_type_is_refused() {
+    let (vault, store) = vault(concept_config());
+    let err = vault
+        .create_typst_custom_note(
+            at(),
+            "concept",
+            "Bias-variance split",
+            &string_fields(&[("priority", "high")]),
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(&err, DomainError::InvalidFieldValue { field, .. } if field == "priority"),
+        "{err:?}"
+    );
+    assert!(
+        !store
+            .exists(&vp("concepts/bias-variance-split.typ"))
+            .unwrap()
+    );
+}
+
+#[test]
+fn a_value_outside_its_enum_or_a_bad_date_is_refused() {
+    let (vault, store) = vault(concept_config());
+    for (key, value) in [("stage", "archived"), ("reviewed", "2026-13-40")] {
+        let err = vault
+            .create_typst_custom_note(
+                at(),
+                "concept",
+                "Bias-variance split",
+                &string_fields(&[(key, value)]),
+                None,
+                None,
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&err, DomainError::InvalidFieldValue { field, .. } if field == key),
+            "{key}: {err:?}"
+        );
+    }
+    assert!(
+        !store
+            .exists(&vp("concepts/bias-variance-split.typ"))
+            .unwrap()
+    );
+}
+
+#[test]
+fn create_typst_refuses_a_bad_body_and_writes_nothing() {
+    let (vault, store) = vault(concept_config());
+    for (body, expect) in [
+        ("#metadata((type: \"concept\")) <cdno>\n", "carries"),
+        ("#let x = (\n", "parse"),
+        ("See [[concepts/a#b]].\n", "link"),
+    ] {
+        let err = vault
+            .create_typst_custom_note(
+                at(),
+                "concept",
+                "Bias-variance split",
+                &HashMap::new(),
+                Some(body),
+                None,
+                None,
+            )
+            .unwrap_err();
+        let ok = match expect {
+            "carries" => matches!(err, DomainError::BodyCarriesMetadataBlock),
+            "parse" => matches!(err, DomainError::BodyDoesNotParse { .. }),
+            _ => matches!(err, DomainError::LinkNeedsEscape { .. }),
+        };
+        assert!(ok, "{body}: {err:?}");
+    }
+    assert!(
+        !store
+            .exists(&vp("concepts/bias-variance-split.typ"))
+            .unwrap()
+    );
+}
+
+// ---------------------------------------------------------------------
+// file_typst_evidence (T19)
+// ---------------------------------------------------------------------
 
 const SOURCE: &str = "Error budget derivation";
 const ORIGIN: &str = "projects/surrogate-model";
@@ -410,7 +717,8 @@ fn a_typ_whose_stem_matches_an_md_is_refused() {
         .file_typst_evidence(at(), &portfolio, SOURCE, ORIGIN, RFC_BODY)
         .unwrap_err();
     match &err {
-        DomainError::StemTakenByOtherFormat { holder, .. } => {
+        DomainError::StemTakenByOtherFormat { stem, holder } => {
+            assert_eq!(stem, "2026-11-08-error-budget-derivation");
             assert_eq!(
                 holder.to_string(),
                 format!("portfolios/{portfolio}/2026-11-08-error-budget-derivation.md")

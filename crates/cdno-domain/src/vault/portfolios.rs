@@ -555,7 +555,7 @@ impl Vault {
             )));
         }
 
-        self.refuse_if_stem_held_by_typst(&path)?;
+        self.refuse_other_format_stem(&path)?;
 
         let body = self.render_evidence(created, source, portfolio, origin, content, prompted)?;
         let entry = build_index_entry_for(&path, &body, NoteType::Evidence.as_str())?;
@@ -641,7 +641,7 @@ impl Vault {
                 stub_path.to_string(),
             )));
         }
-        self.refuse_if_stem_held_by_typst(&stub_path)?;
+        self.refuse_other_format_stem(&stub_path)?;
         if self.store.exists(&artefact_dest)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
                 artefact_dest.to_string(),
