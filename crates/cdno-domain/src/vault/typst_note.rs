@@ -380,7 +380,7 @@ impl Vault {
         let mut tx = self.transaction()?;
         let source = source.trim();
         let origin = origin.trim();
-        let path = self.typst_evidence_path(at, portfolio, source, origin)?;
+        let path = self.typst_evidence_path(at, portfolio, source, origin, body)?;
         self.refuse_taken_typst_path(&path)?;
 
         check_typst_body(body)?;
@@ -438,7 +438,7 @@ impl Vault {
         if file_name.trim().is_empty() {
             return Err(DomainError::EmptyField { field: "attach" });
         }
-        let path = self.typst_evidence_path(at, portfolio, source, origin)?;
+        let path = self.typst_evidence_path(at, portfolio, source, origin, file_contents)?;
         let stem = path
             .as_path()
             .file_stem()
@@ -531,6 +531,7 @@ impl Vault {
         portfolio: &str,
         source: &str,
         origin: &str,
+        body: &str,
     ) -> Result<VaultPath, DomainError> {
         if !self
             .type_registry()
