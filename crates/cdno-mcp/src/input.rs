@@ -109,8 +109,9 @@ pub struct FileToPortfolioInput {
     /// carry a `<cdno>` metadata block: the engine writes the block, then the
     /// body as given, to `<date>-<source>.typ`. A body that carries the label,
     /// does not parse, or has a `[[` link that is not one inline run is
-    /// refused with a `remedy`. `vars` is refused with `typst`, and `attach`
-    /// is not yet supported with it. Omitted = `markdown`.
+    /// refused with a `remedy`. `vars` is refused with `typst`. With `attach`
+    /// naming a `.typ` file the file is adopted as the note, `content` must be
+    /// empty, and the folder beside it is copied. Omitted = `markdown`.
     #[serde(default)]
     pub format: Option<String>,
 }

@@ -287,6 +287,13 @@ enum Commands {
     /// a non-markdown artefact (PDF, image, video, …): the file is copied
     /// into the portfolio and a linked evidence stub is scaffolded beside
     /// it. Without `--attach`, writes a plain markdown evidence note.
+    ///
+    /// With `--format typst --attach deck.typ`, the `.typ` file is adopted as
+    /// the note: every file in its directory (subfolders included; names
+    /// starting with `.` are skipped) is copied beside it, each relative path
+    /// it names is rewritten to the copy, and the rewrites are printed. Give
+    /// it a folder of its own: more than 200 files or 200 MiB, a symbolic link,
+    /// or a folder that overlaps the vault is refused.
     File {
         /// Portfolio slug.
         #[arg(long, add = ArgValueCompleter::new(completions::complete_portfolio))]
@@ -302,7 +309,8 @@ enum Commands {
         /// it's the abstract. Optional; defaults to empty.
         #[arg(long, default_value = "", conflicts_with = "body_file")]
         content: String,
-        /// Path to a non-markdown artefact to file as evidence. The file
+        /// Path to a non-markdown artefact to file as evidence (or, with
+        /// `--format typst`, to the `.typ` file to adopt). The file
         /// is copied into `portfolios/<slug>/<evidence-slug>/` and an
         /// evidence stub links to it.
         #[arg(long)]

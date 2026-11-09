@@ -770,6 +770,49 @@ fn file_to_portfolio_typst_then_read_note_over_stdio() {
     assert_eq!(read["body"].as_str().unwrap().trim_start(), body, "{read}");
 }
 
+/// Adopting a `.typ` with its folder over the wire: the result lists the rewrites.
+#[test]
+fn file_to_portfolio_adopts_a_typst_file_over_stdio() {
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    let src = TempDir::new().unwrap();
+    std::fs::write(src.path().join("deck.typ"), "#image(\"figs/a.png\")\n").unwrap();
+    std::fs::create_dir(src.path().join("figs")).unwrap();
+    std::fs::write(src.path().join("figs/a.png"), b"png").unwrap();
+    let mut mcp = McpSubprocess::spawn(dir.path());
+    initialise(&mut mcp);
+
+    let mut call = |id: u64, name: &str, arguments: Value| -> Value {
+        mcp.send(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": { "name": name, "arguments": arguments }
+        }));
+        mcp.read_response(id)
+    };
+    call_payload(&call(
+        40,
+        "create_portfolio",
+        json!({ "question": "Surrogate error budget" }),
+    ));
+    let filed = call_payload(&call(
+        41,
+        "file_to_portfolio",
+        json!({
+            "portfolio": "surrogate-error-budget",
+            "source": "Error budget derivation",
+            "origin": "projects/surrogate-model",
+            "format": "typst",
+            "attach": src.path().join("deck.typ").to_string_lossy()
+        }),
+    ));
+    let path = filed["path"].as_str().expect("path").to_owned();
+    assert_eq!(filed["rewrites"].as_array().unwrap().len(), 1, "{filed}");
+    let stem = path.strip_suffix(".typ").unwrap();
+    assert!(dir.path().join(stem).join("figs/a.png").is_file());
+}
+
 /// `rename_note` over the wire: preview, write the plan that was shown, then
 /// the old name still resolves (RFC 0007 §6.4, T26).
 #[test]

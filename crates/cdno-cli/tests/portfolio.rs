@@ -1323,7 +1323,7 @@ fn file_format_typst_text_refusal_carries_the_remedy() {
 }
 
 #[test]
-fn file_format_typst_with_attach_is_a_clear_error() {
+fn file_format_typst_with_a_non_typ_attach_is_a_clear_error() {
     use predicates::prelude::*;
     let dir = typst_filing_vault();
     let art = dir.path().join("fig.png");
@@ -1333,7 +1333,7 @@ fn file_format_typst_with_attach_is_a_clear_error() {
         .arg(&art)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("later release"));
+        .stderr(predicate::str::contains("not a `.typ` file"));
 }
 
 #[test]
@@ -1459,4 +1459,179 @@ fn file_attach_over_a_typst_stem_is_a_json_rejection() {
     let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
     assert_eq!(json["code"], "stem_taken_by_other_format");
     assert!(json["details"]["remedy"].is_string());
+}
+
+fn adoption_source() -> TempDir {
+    let src = tempfile::tempdir().unwrap();
+    fs::write(
+        src.path().join("deck.typ"),
+        "= Error budget\n#image(\"figs/a.png\")\n#bibliography(\"refs.bib\")\n",
+    )
+    .unwrap();
+    fs::create_dir(src.path().join("figs")).unwrap();
+    fs::write(src.path().join("figs/a.png"), b"png").unwrap();
+    fs::write(src.path().join("refs.bib"), "@misc{x,}").unwrap();
+    fs::write(src.path().join("out.pdf"), b"%PDF").unwrap();
+    src
+}
+
+fn adopt_cmd(root: &Path, deck: &Path) -> assert_cmd::Command {
+    let mut cmd = file_typst_args(root);
+    cmd.args(["--json", "--attach"]).arg(deck);
+    cmd
+}
+
+#[test]
+fn file_attach_typst_adopts_with_its_folder() {
+    let dir = typst_filing_vault();
+    let src = adoption_source();
+    let before = fs::read_dir(src.path()).unwrap().count();
+    let out = adopt_cmd(dir.path(), &src.path().join("deck.typ"))
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    let path = json["path"].as_str().unwrap();
+    assert!(path.ends_with("-error-budget-derivation.typ"), "{path}");
+    let rewrites = json["rewrites"].as_array().unwrap();
+    assert_eq!(rewrites.len(), 2, "{json}");
+    assert_eq!(rewrites[0]["was"], "figs/a.png");
+
+    let stem = path.strip_suffix(".typ").unwrap();
+    for rel in ["figs/a.png", "refs.bib", "out.pdf"] {
+        assert!(dir.path().join(stem).join(rel).is_file(), "{rel}");
+    }
+    let note = fs::read_to_string(dir.path().join(path)).unwrap();
+    let folder = stem.rsplit('/').next().unwrap();
+    assert!(note.contains(&format!("{folder}/figs/a.png")), "{note}");
+    assert!(note.contains(&format!("{folder}/refs.bib")), "{note}");
+
+    assert!(src.path().join("deck.typ").is_file());
+    assert!(src.path().join("figs/a.png").is_file());
+    assert_eq!(fs::read_dir(src.path()).unwrap().count(), before);
+    assert_lint_clean(dir.path());
+}
+
+#[test]
+fn file_attach_typst_move_removes_only_the_adopted_file() {
+    let dir = typst_filing_vault();
+    let src = adoption_source();
+    adopt_cmd(dir.path(), &src.path().join("deck.typ"))
+        .arg("--move")
+        .assert()
+        .success();
+    assert!(!src.path().join("deck.typ").exists());
+    assert!(src.path().join("figs/a.png").is_file());
+}
+
+#[test]
+fn file_attach_typst_refuses_an_escaping_path_and_copies_nothing() {
+    let dir = typst_filing_vault();
+    let src = adoption_source();
+    fs::write(src.path().join("deck.typ"), "#image(\"../outside.png\")\n").unwrap();
+    let before = fs::read_dir(dir.path().join("portfolios/sparse-vs-dense-ood"))
+        .unwrap()
+        .count();
+    let out = adopt_cmd(dir.path(), &src.path().join("deck.typ"))
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["code"], "asset_path_outside_folder");
+    assert_eq!(
+        fs::read_dir(dir.path().join("portfolios/sparse-vs-dense-ood"))
+            .unwrap()
+            .count(),
+        before
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn file_attach_typst_refuses_a_symlink_in_the_folder_and_copies_nothing() {
+    let dir = typst_filing_vault();
+    let src = adoption_source();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("secret.txt"), "x").unwrap();
+    std::os::unix::fs::symlink(
+        outside.path().join("secret.txt"),
+        src.path().join("figs/link.txt"),
+    )
+    .unwrap();
+    let before = fs::read_dir(dir.path().join("portfolios/sparse-vs-dense-ood"))
+        .unwrap()
+        .count();
+    adopt_cmd(dir.path(), &src.path().join("deck.typ"))
+        .assert()
+        .failure()
+        .stdout(predicates::str::contains("link.txt"));
+    assert_eq!(
+        fs::read_dir(dir.path().join("portfolios/sparse-vs-dense-ood"))
+            .unwrap()
+            .count(),
+        before
+    );
+}
+
+#[test]
+fn file_attach_typst_accepts_a_relative_deck_path() {
+    let dir = typst_filing_vault();
+    let src = adoption_source();
+    let out = file_typst_args(dir.path())
+        .current_dir(src.path())
+        .args(["--json", "--attach", "deck.typ"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["rewrites"].as_array().unwrap().len(), 2, "{json}");
+}
+
+#[test]
+fn file_attach_typst_folder_refusals_carry_a_code_and_remedy_under_json() {
+    let dir = typst_filing_vault();
+    // The folder holds the vault: adopt a deck sitting beside the vault's own files.
+    let deck = dir.path().join("deck.typ");
+    fs::write(&deck, "= x\n").unwrap();
+    let out = adopt_cmd(dir.path(), &deck)
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["code"], "adoption_refused", "{json}");
+    assert!(json["details"]["remedy"].is_string(), "{json}");
+
+    // A `.typ` that is a symbolic link.
+    #[cfg(unix)]
+    {
+        let src = adoption_source();
+        std::os::unix::fs::symlink(src.path().join("deck.typ"), src.path().join("link.typ"))
+            .unwrap();
+        let out = adopt_cmd(dir.path(), &src.path().join("link.typ"))
+            .assert()
+            .failure()
+            .get_output()
+            .stdout
+            .clone();
+        let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(json["code"], "adoption_refused", "{json}");
+    }
+}
+
+#[test]
+fn file_help_describes_adoption() {
+    cdno_in(Path::new("."))
+        .args(["file", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("adopt"))
+        .stdout(predicates::str::contains("200 files"));
 }

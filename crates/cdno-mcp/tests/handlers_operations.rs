@@ -321,17 +321,18 @@ async fn file_to_portfolio_typst_refuses_a_shared_stem_naming_the_holder() {
 }
 
 #[tokio::test]
-async fn file_to_portfolio_typst_refuses_attach_and_an_unknown_format_as_invalid_params() {
+async fn file_to_portfolio_typst_refuses_a_non_typ_attach_and_an_unknown_format_as_invalid_params()
+{
     let (server, store) = typst_filing_server();
     let before = tree(&store);
-    let mut input = typst_filing(Some("typst"), "x");
+    let mut input = typst_filing(Some("typst"), "");
     input.attach = Some("/nowhere/figure.pdf".to_owned());
     let err = server
         .file_to_portfolio(Parameters(input))
         .await
         .expect_err("attach with typst");
-    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-    assert!(err.message.contains("'attach'"), "{err:?}");
+    assert_eq!(rejection_of(&err)["code"], "adoption_refused");
+    assert!(err.message.contains("figure.pdf"), "{err:?}");
 
     let err = server
         .file_to_portfolio(Parameters(typst_filing(Some("latex"), "x")))
@@ -340,6 +341,97 @@ async fn file_to_portfolio_typst_refuses_attach_and_an_unknown_format_as_invalid
     assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     assert!(err.message.contains("'format'"), "{err:?}");
     assert_eq!(tree(&store), before);
+}
+
+fn adoption_source() -> tempfile::TempDir {
+    let src = tempfile::tempdir().unwrap();
+    std::fs::write(
+        src.path().join("deck.typ"),
+        "= Error budget\n#image(\"figs/a.png\")\n#bibliography(\"refs.bib\")\n",
+    )
+    .unwrap();
+    std::fs::create_dir(src.path().join("figs")).unwrap();
+    std::fs::write(src.path().join("figs/a.png"), b"png").unwrap();
+    std::fs::write(src.path().join("refs.bib"), "@misc{x,}").unwrap();
+    std::fs::write(src.path().join("out.pdf"), b"%PDF").unwrap();
+    src
+}
+
+fn adopting(deck: &std::path::Path) -> FileToPortfolioInput {
+    let mut input = typst_filing(Some("typst"), "");
+    input.attach = Some(deck.to_string_lossy().into_owned());
+    input
+}
+
+#[tokio::test]
+async fn file_to_portfolio_typst_attach_adopts_and_lists_rewrites() {
+    let (server, store) = typst_filing_server();
+    let src = adoption_source();
+    let result = server
+        .file_to_portfolio(Parameters(adopting(&src.path().join("deck.typ"))))
+        .await
+        .expect("adopts");
+    let value = decode_json(&result);
+    let path = value["path"].as_str().unwrap();
+    assert!(path.ends_with("-error-budget-derivation.typ"), "{path}");
+    assert_eq!(value["verification"]["verified"], "content", "{value}");
+    let rewrites = value["rewrites"].as_array().unwrap();
+    assert_eq!(rewrites.len(), 2, "{value}");
+    assert_eq!(rewrites[0]["was"], "figs/a.png");
+    let stem = path.strip_suffix(".typ").unwrap();
+    for rel in ["figs/a.png", "refs.bib", "out.pdf"] {
+        assert!(
+            store.exists(&vp(&format!("{stem}/{rel}"))).unwrap(),
+            "{rel}"
+        );
+    }
+    let folder = stem.rsplit('/').next().unwrap();
+    let note = store.read_file(&vp(path)).unwrap();
+    assert!(note.contains(&format!("{folder}/figs/a.png")), "{note}");
+    assert!(src.path().join("figs/a.png").is_file(), "source untouched");
+}
+
+#[tokio::test]
+async fn file_to_portfolio_typst_attach_refuses_an_escape_and_a_symlink_writing_nothing() {
+    let (server, store) = typst_filing_server();
+    let before = tree(&store);
+    let src = adoption_source();
+    std::fs::write(src.path().join("deck.typ"), "#image(\"../x.png\")\n").unwrap();
+    let err = server
+        .file_to_portfolio(Parameters(adopting(&src.path().join("deck.typ"))))
+        .await
+        .expect_err("escape");
+    assert_eq!(rejection_of(&err)["code"], "asset_path_outside_folder");
+
+    #[cfg(unix)]
+    {
+        let src = adoption_source();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("s.txt"), "x").unwrap();
+        std::os::unix::fs::symlink(outside.path().join("s.txt"), src.path().join("link.txt"))
+            .unwrap();
+        let err = server
+            .file_to_portfolio(Parameters(adopting(&src.path().join("deck.typ"))))
+            .await
+            .expect_err("symlink");
+        assert_eq!(rejection_of(&err)["code"], "adoption_refused");
+        assert!(err.message.contains("link.txt"), "{err:?}");
+        assert!(rejection_of(&err)["details"]["remedy"].is_string());
+    }
+    assert_eq!(tree(&store), before);
+}
+
+#[tokio::test]
+async fn file_to_portfolio_typst_attach_refuses_content() {
+    let (server, _store) = typst_filing_server();
+    let src = adoption_source();
+    let mut input = adopting(&src.path().join("deck.typ"));
+    input.content = "extra".to_owned();
+    let err = server
+        .file_to_portfolio(Parameters(input))
+        .await
+        .expect_err("content with attach");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
 }
 
 #[tokio::test]
