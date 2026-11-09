@@ -3052,13 +3052,13 @@ const CONFIG_TOML: &str = ".cuaderno/config.toml";
 /// A vault opened at the binary's own version (on disk and as loaded), with
 /// `notes` seeded, whose config file is then rewritten to `config_text`
 /// after `Vault::new`, as another process would. Lint must see the file as
-/// it is now, not the version loaded at open. The binary is 1.2, so 1.3 is
+/// it is now, not the version loaded at open. The binary is 1.3, so 1.4 is
 /// a newer minor, 2.0 a newer major and 0.5 an older major.
 fn lint_after_restamping(notes: &[(&str, &str)], config_text: &str) -> cdno_domain::LintReport {
     assert_eq!(
         cdno_domain::METHOD_VERSION,
-        cdno_core::config::MethodVersion { major: 1, minor: 2 },
-        "the probe assumes a 1.2 binary"
+        cdno_core::config::MethodVersion { major: 1, minor: 3 },
+        "the probe assumes a 1.3 binary"
     );
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     store
@@ -3097,11 +3097,11 @@ fn the_config_row(report: &cdno_domain::LintReport) -> &cdno_domain::LintIssue {
 
 #[test]
 fn a_newer_minor_vault_is_a_warning_on_the_config() {
-    let report = lint_after_restamping(&[], &stamped_config(1, 3));
+    let report = lint_after_restamping(&[], &stamped_config(1, 4));
 
     let issue = the_config_row(&report);
     assert_eq!(issue.severity, cdno_domain::LintSeverity::Warning);
-    for needle in ["RLM 1.3", "RLM 1.2", "newer minor", "writes proceed"] {
+    for needle in ["RLM 1.4", "RLM 1.3", "newer minor", "writes proceed"] {
         assert!(
             issue.message.contains(needle),
             "{needle:?} not in: {issue:?}"
@@ -3109,14 +3109,15 @@ fn a_newer_minor_vault_is_a_warning_on_the_config() {
     }
 
     // The binary's own version is clean.
-    assert!(lint_after_restamping(&[], &stamped_config(1, 2)).is_clean());
+    assert!(lint_after_restamping(&[], &stamped_config(1, 3)).is_clean());
 }
 
 #[test]
-fn a_1_1_or_unstamped_vault_is_an_older_minor_and_lints_clean() {
-    // RLM 1.2 adds no file change, so a vault still on 1.1 (or unstamped,
-    // read as 1.0) is an older minor: no `newer minor` warning, no row.
+fn a_1_2_or_unstamped_vault_is_an_older_minor_and_lints_clean() {
+    // RLM 1.3 adds no file change, so a vault still on 1.2 or 1.1 (or
+    // unstamped, read as 1.0) is an older minor: no `newer minor` warning, no row.
     for config in [
+        stamped_config(1, 2),
         stamped_config(1, 1),
         stamped_config(1, 0),
         "[vault]\n".to_owned(),
@@ -3132,7 +3133,7 @@ fn a_newer_major_vault_is_an_error() {
 
     let issue = the_config_row(&report);
     assert_eq!(issue.severity, cdno_domain::LintSeverity::Error);
-    for needle in ["RLM 2.0", "RLM 1.2", "newer major", "upgrade cdno"] {
+    for needle in ["RLM 2.0", "RLM 1.3", "newer major", "upgrade cdno"] {
         assert!(
             issue.message.contains(needle),
             "{needle:?} not in: {issue:?}"

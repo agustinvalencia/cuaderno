@@ -303,12 +303,12 @@ fn a_write_to_a_vault_on_an_older_major_is_refused_and_writes_nothing() {
     let map_before = store.read_file(&project_path()).unwrap();
     let daily_before = store.read_file(&daily_path()).unwrap();
 
-    // 0.9 is an older major than the binary's 1.2.
+    // 0.9 is an older major than the binary's 1.3.
     let behind = version(0, 9);
     assert_eq!(
         METHOD_VERSION,
-        version(1, 2),
-        "the probe assumes a 1.2 binary"
+        version(1, 3),
+        "the probe assumes a 1.3 binary"
     );
     store.write_file(&config_path(), &stamped(behind)).unwrap();
 
@@ -321,7 +321,7 @@ fn a_write_to_a_vault_on_an_older_major_is_refused_and_writes_nothing() {
         other => panic!("expected VaultNeedsMigration, got: {other:?}"),
     }
     let message = err.to_string();
-    for needle in ["RLM 0.9", "RLM 1.2", "cdno migrate --dry-run"] {
+    for needle in ["RLM 0.9", "RLM 1.3", "cdno migrate --dry-run"] {
         assert!(message.contains(needle), "{needle:?} not in: {message}");
     }
 
@@ -537,15 +537,15 @@ fn a_newer_minor_writes_and_notices_once() {
     let (vault, store) = stamped_vault();
     assert_eq!(
         METHOD_VERSION,
-        version(1, 2),
-        "the probe assumes a 1.2 binary"
+        version(1, 3),
+        "the probe assumes a 1.3 binary"
     );
     // Opened at the binary's own version: nothing to notice.
     assert_eq!(vault.take_method_notice(), None);
 
     // Another process stamps the vault a newer minor while it is open: the
     // gate allows the write and records the skew from its re-read.
-    let newer_minor = version(1, 3);
+    let newer_minor = version(1, 4);
     store
         .write_file(&config_path(), &stamped(newer_minor))
         .unwrap();
@@ -585,16 +585,21 @@ fn a_newer_minor_writes_and_notices_once() {
 }
 
 #[test]
-fn a_1_1_or_unstamped_vault_is_an_older_minor_and_writes_without_a_notice() {
-    // RLM 1.2 adds no file change: a vault on 1.1, or unstamped (read as
-    // 1.0), is an older minor of this binary, writes proceed, and no
+fn a_1_2_or_unstamped_vault_is_an_older_minor_and_writes_without_a_notice() {
+    // RLM 1.3 adds no file change: a vault on 1.2 or 1.1, or unstamped
+    // (read as 1.0), is an older minor of this binary, writes proceed, and no
     // `newer minor` notice is recorded.
     assert_eq!(
         METHOD_VERSION,
-        version(1, 2),
-        "the probe assumes a 1.2 binary"
+        version(1, 3),
+        "the probe assumes a 1.3 binary"
     );
-    for stamp in [Some(version(1, 1)), Some(version(1, 0)), None] {
+    for stamp in [
+        Some(version(1, 2)),
+        Some(version(1, 1)),
+        Some(version(1, 0)),
+        None,
+    ] {
         let (vault, store) = stamped_vault();
         let text = match stamp {
             Some(v) => stamped(v),

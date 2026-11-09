@@ -11,11 +11,14 @@
 //! It is 1.2 since RFC 0007 (plan T28): a reference is an address, so a
 //! rename corrects every reference, and is the one exception to the log
 //! never being edited.
+//! It is 1.3 since RFC 0008 (plan T31): notes are plain text, Markdown by
+//! default, with Typst admitted for evidence and concepts, and a project's
+//! deliverable lives where its work lives and is not filed to a portfolio.
 
 use cdno_core::config::MethodVersion;
 
 /// The Research Logbook Method version this binary implements.
-pub const METHOD_VERSION: MethodVersion = MethodVersion { major: 1, minor: 2 };
+pub const METHOD_VERSION: MethodVersion = MethodVersion { major: 1, minor: 3 };
 
 /// The version an unstamped vault (no config file, or no
 /// `[vault] method_version` key) is read as when it is compared with a

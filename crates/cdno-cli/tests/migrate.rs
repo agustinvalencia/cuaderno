@@ -124,40 +124,39 @@ fn dry_run_prints_the_plan_and_writes_nothing() {
 }
 
 #[test]
-fn migrate_stamps_an_unstamped_vault_1_2_and_logs_once() {
+fn migrate_stamps_an_unstamped_vault_1_3_and_logs_once() {
     let dir = vault_with_method_line(None);
     assert!(method_lines(dir.path()).is_empty());
 
     let stdout = stdout_of(dir.path(), &["migrate"]);
     assert!(
-        stdout.contains("Migrated the vault to RLM 1.2."),
+        stdout.contains("Migrated the vault to RLM 1.3."),
         "unexpected output:\n{stdout}"
     );
 
-    assert_eq!(method_lines(dir.path()), ["method_version = \"1.2\""]);
+    assert_eq!(method_lines(dir.path()), ["method_version = \"1.3\""]);
 
     let notes = daily_notes_with_migration(dir.path());
     assert_eq!(notes.len(), 1, "one daily note carries the entry");
     let note = &notes[0];
     assert_eq!(note.matches("vault migrated").count(), 1, "{note}");
     assert!(
-        note.contains("vault migrated\n  was: unstamped (read as 1.0)\n  now: 1.2"),
+        note.contains("vault migrated\n  was: unstamped (read as 1.0)\n  now: 1.3"),
         "unexpected entry:\n{note}"
     );
 
     // Run again: already at the binary's version, nothing more is logged.
     let again = stdout_of(dir.path(), &["migrate"]);
-    assert_eq!(again, "vault is at RLM 1.2; nothing to do\n");
+    assert_eq!(again, "vault is at RLM 1.3; nothing to do\n");
     let notes = daily_notes_with_migration(dir.path());
     assert_eq!(notes[0].matches("vault migrated").count(), 1);
 }
 
-#[test]
-fn a_1_1_vault_migrates_to_1_2_with_only_the_stamp() {
-    // RLM 1.2 asks of a vault on 1.1 nothing but the stamp: no migration, no
+fn assert_migrates_to_1_3_with_only_the_stamp(from: &str) {
+    // RLM 1.3 asks of a vault on an earlier 1.x nothing but the stamp: no migration, no
     // read-through (the parked dates were 1.1's, and an overdue one on disk
     // is not listed again), one log line.
-    let dir = vault_with_method_line(Some("method_version = \"1.1\""));
+    let dir = vault_with_method_line(Some(&format!("method_version = \"{from}\"")));
     let root = dir.path();
     write_parked_beta(root, &[GRANT_REPORT_OVERDUE]);
     let before = tree(root);
@@ -165,12 +164,12 @@ fn a_1_1_vault_migrates_to_1_2_with_only_the_stamp() {
     let text = stdout_of(root, &["migrate", "--dry-run"]);
     for needle in [
         "Dry run: nothing written.",
-        "  vault:      RLM 1.1\n",
-        "  this cdno:  RLM 1.2\n",
+        &format!("  vault:      RLM {from}\n"),
+        "  this cdno:  RLM 1.3\n",
         "migrations: none: additive",
-        "would write method_version = \"1.2\" under [vault]",
-        "was: 1.1\n",
-        "now: 1.2\n",
+        "would write method_version = \"1.3\" under [vault]",
+        &format!("was: {from}\n"),
+        "now: 1.3\n",
         "read-through: none",
     ] {
         assert!(text.contains(needle), "missing {needle:?} in:\n{text}");
@@ -179,14 +178,14 @@ fn a_1_1_vault_migrates_to_1_2_with_only_the_stamp() {
 
     let migrated = stdout_of(root, &["migrate"]);
     assert!(
-        migrated.contains("Migrated the vault to RLM 1.2."),
+        migrated.contains("Migrated the vault to RLM 1.3."),
         "{migrated}"
     );
-    assert_eq!(method_lines(root), ["method_version = \"1.2\""]);
+    assert_eq!(method_lines(root), ["method_version = \"1.3\""]);
     let notes = daily_notes_with_migration(root);
     assert_eq!(notes.len(), 1);
     assert!(
-        notes[0].contains("vault migrated\n  was: 1.1\n  now: 1.2\n"),
+        notes[0].contains(&format!("vault migrated\n  was: {from}\n  now: 1.3\n")),
         "{}",
         notes[0]
     );
@@ -206,6 +205,16 @@ fn a_1_1_vault_migrates_to_1_2_with_only_the_stamp() {
         changed.iter().any(|p| p.starts_with("journal/")),
         "{changed:?}"
     );
+}
+
+#[test]
+fn a_1_2_vault_migrates_to_1_3_with_only_the_stamp() {
+    assert_migrates_to_1_3_with_only_the_stamp("1.2");
+}
+
+#[test]
+fn a_1_1_vault_migrates_to_1_3_with_only_the_stamp() {
+    assert_migrates_to_1_3_with_only_the_stamp("1.1");
 }
 
 #[test]
@@ -441,7 +450,7 @@ fn lint_read_through_rows(dir: &Path) -> Vec<String> {
 #[test]
 fn dry_run_on_a_vault_stamped_1_0_plans_the_stamp_and_the_read_through() {
     // The maintainer's case: the vault was stamped "1.0" by an earlier cdno.
-    // It is an older minor than this cdno's 1.2, so the dry run plans the
+    // It is an older minor than this cdno's 1.3, so the dry run plans the
     // stamp, and it is below 1.1, so the read-through prints in the full
     // report. (While this cdno implemented 1.0, the same vault printed
     // "nothing to do" followed by the read-through.)
@@ -454,11 +463,11 @@ fn dry_run_on_a_vault_stamped_1_0_plans_the_stamp_and_the_read_through() {
     for needle in [
         "Dry run: nothing written.",
         "  vault:      RLM 1.0\n",
-        "  this cdno:  RLM 1.2\n",
-        "would write method_version = \"1.2\" under [vault]",
+        "  this cdno:  RLM 1.3\n",
+        "would write method_version = \"1.3\" under [vault]",
         "vault migrated\n",
         "was: 1.0\n",
-        "now: 1.2\n",
+        "now: 1.3\n",
     ] {
         assert!(text.contains(needle), "missing {needle:?} in:\n{text}");
     }
@@ -468,17 +477,17 @@ fn dry_run_on_a_vault_stamped_1_0_plans_the_stamp_and_the_read_through() {
         serde_json::from_str(&stdout_of(root, &["migrate", "--dry-run", "--json"])).expect("JSON");
     assert_eq!(json["outcome"], "planned");
     assert_eq!(json["vault"], "1.0");
-    assert_eq!(json["binary"], "1.2");
-    assert_eq!(json["log_entry"], "vault migrated\n  was: 1.0\n  now: 1.2");
+    assert_eq!(json["binary"], "1.3");
+    assert_eq!(json["log_entry"], "vault migrated\n  was: 1.0\n  now: 1.3");
     assert_eq!(json["read_through"][0]["title"], "Grant report");
     assert_eq!(tree(root), before, "a dry run writes nothing");
 }
 
 #[test]
-fn migrate_stamps_1_2_lists_the_read_through_and_clears_the_lint_row() {
+fn migrate_stamps_1_3_lists_the_read_through_and_clears_the_lint_row() {
     // An unstamped vault (read as 1.0) with an overdue hard date on a parked
     // map: lint warns on it, the dry run lists it, the real run stamps
-    // "1.2" and logs the move, and the lint row is gone afterwards.
+    // "1.3" and logs the move, and the lint row is gone afterwards.
     let dir = vault_with_method_line(None);
     let root = dir.path();
     write_parked_beta(root, &[GRANT_REPORT_OVERDUE]);
@@ -505,7 +514,7 @@ fn migrate_stamps_1_2_lists_the_read_through_and_clears_the_lint_row() {
 
     let migrated = stdout_of(root, &["migrate"]);
     assert!(
-        migrated.contains("Migrated the vault to RLM 1.2."),
+        migrated.contains("Migrated the vault to RLM 1.3."),
         "{migrated}"
     );
     assert_eq!(
@@ -513,19 +522,19 @@ fn migrate_stamps_1_2_lists_the_read_through_and_clears_the_lint_row() {
         READ_THROUGH_SECTION,
         "{migrated}"
     );
-    assert_eq!(method_lines(root), ["method_version = \"1.2\""]);
+    assert_eq!(method_lines(root), ["method_version = \"1.3\""]);
     let notes = daily_notes_with_migration(root);
     assert_eq!(notes.len(), 1);
     assert!(
-        notes[0].contains("vault migrated\n  was: unstamped (read as 1.0)\n  now: 1.2\n"),
+        notes[0].contains("vault migrated\n  was: unstamped (read as 1.0)\n  now: 1.3\n"),
         "{}",
         notes[0]
     );
 
-    // Stamped 1.2: the read-through is done, and the date is still overdue.
+    // Stamped 1.3: the read-through is done, and the date is still overdue.
     assert_eq!(lint_read_through_rows(root), Vec::<String>::new());
     assert_eq!(
         stdout_of(root, &["migrate", "--dry-run"]),
-        "vault is at RLM 1.2; nothing to do\n"
+        "vault is at RLM 1.3; nothing to do\n"
     );
 }
