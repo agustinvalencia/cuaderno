@@ -296,7 +296,8 @@ A blank `to` beside `relink: true` reads as omitted. `relink` with `to`, either 
 The result is the plan, whether or not it was written: `dry_run`, `target`, `from` (the note's
 current slug), `new_slug`, `found_by_former_name` (the former name `note` matched, or `null`),
 `moves` (`{from, to}`), `edits` (a `path` with its `changes`, each of kind `links` with a `count`,
-`field` with a `key`, `alias` or `log_line`), `references`, `notes`, `warnings` (each with a `kind`
+`field` with a `key`, `alias`, `asset_paths` with a `count` (a Typst note's own path literals into
+its assets folder) or `log_line`), `references`, `notes`, `warnings` (each with a `kind`
 and a `message`: `frozen_prefix_already_diverged`, `old_slug_already_an_alias`, or `sync_check`),
 `plan_hash`, `log_line` (`null` when the plan is empty), then `written`, `index_stale` (`true`: the
 files are written and the rename succeeded; the index catches up on the next open) and
