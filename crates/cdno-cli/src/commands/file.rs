@@ -86,12 +86,19 @@ pub fn run(
                 std::fs::read_to_string(&p)
                     .with_context(|| format!("reading --body-file {}", p.display()))?,
             ),
-            None if !content.is_empty() => Some(content),
+            None if !content.trim().is_empty() => Some(content),
             None => None,
         };
-        prompt::gather_or_error(from_flag, "body-file", interactive, &mut prompted, || {
-            prompt::prompt_editor("Body", "")
-        })?
+        // A blank body is no body: refused as if the flag were missing.
+        let from_flag = from_flag.filter(|b| !b.trim().is_empty());
+        let body =
+            prompt::gather_or_error(from_flag, "body-file", interactive, &mut prompted, || {
+                prompt::prompt_editor("Body", "")
+            })?;
+        if body.trim().is_empty() {
+            return Err(prompt::missing_flag("body-file"));
+        }
+        body
     } else {
         content
     };
@@ -144,7 +151,8 @@ pub fn run(
             &origin,
             &content,
             &template_vars,
-        )?,
+        )
+        .map_err(|e| crate::commands::rejection::typst_refusal(e, json))?,
     };
     crate::output::emit_write_result(json, &path.to_string(), &format!("Filed at {path}"))?;
     Ok(())

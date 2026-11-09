@@ -19,9 +19,8 @@ cdno file [OPTIONS]
 | `--attach <ATTACH>` | Path to a non-Markdown artefact. Copied into `portfolios/<slug>/<evidence-slug>/` with a stub that links to it. |
 | `--move` | With `--attach`, remove the source file after a successful copy (move instead of copy). |
 | `--var <NAME=VALUE>` | Value for a custom evidence template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. Ignored with `--attach` (attachment stubs aren't templated). See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
-
 | `--format <markdown\|typst>` | The file format, default `markdown` (never prompted). `typst` writes `<portfolio>/<date>-<source>.typ` from `--body-file` (or `--content`): a metadata block holding `type`, `created`, `source`, `portfolio` and `origin`, a blank line, then the body as Typst markup. The body is required, and prompted for in an editor when interactive. `--var` is refused with it, and so is a body that carries a `<cdno>` label, does not parse, or has a `[[` link that is not one inline run; with `--json` the refusal is a `{code, message, details}` object whose `details.remedy` says what to do. Not yet combinable with `--attach`. |
-| `--body-file <PATH>` | The body of a Typst note, read from a file. Only with `--format typst`. |
+| `--body-file <PATH>` | The body of a Typst note, read from a file. Only with `--format typst`; conflicts with `--content`. A blank body is refused. |
 
 Plus the [global options](overview.md#global-options). With `--json`, emits a `{path, message}`
 result and runs non-interactively.

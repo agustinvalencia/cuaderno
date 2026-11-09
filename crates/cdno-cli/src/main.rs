@@ -300,7 +300,7 @@ enum Commands {
         origin: Option<String>,
         /// Inline body. For a plain note it's the content; with `--attach`
         /// it's the abstract. Optional; defaults to empty.
-        #[arg(long, default_value = "")]
+        #[arg(long, default_value = "", conflicts_with = "body_file")]
         content: String,
         /// Path to a non-markdown artefact to file as evidence. The file
         /// is copied into `portfolios/<slug>/<evidence-slug>/` and an

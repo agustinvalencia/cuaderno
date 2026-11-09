@@ -1364,3 +1364,66 @@ fn file_without_format_is_unchanged() {
     );
     assert!(!names.iter().any(|n| n.ends_with(".typ")), "{names:?}");
 }
+
+#[test]
+fn file_format_typst_refuses_a_blank_body() {
+    use predicates::prelude::*;
+    let dir = typst_filing_vault();
+    let empty = dir.path().join("empty.typ");
+    fs::write(&empty, "  \n").unwrap();
+    file_typst_args(dir.path())
+        .arg("--body-file")
+        .arg(&empty)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("body-file"));
+    file_typst_args(dir.path())
+        .args(["--content", "   "])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("body-file"));
+}
+
+#[test]
+fn file_format_typst_refuses_content_with_body_file() {
+    let dir = typst_filing_vault();
+    let body = dir.path().join("b.typ");
+    fs::write(&body, "Body.\n").unwrap();
+    file_typst_args(dir.path())
+        .arg("--body-file")
+        .arg(&body)
+        .args(["--content", "Also."])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn file_markdown_over_a_typst_stem_is_a_json_rejection() {
+    let dir = typst_filing_vault();
+    file_typst_args(dir.path())
+        .args(["--content", "Typst body.\n"])
+        .assert()
+        .success();
+    let out = cdno_in(dir.path())
+        .args([
+            "--no-interactive",
+            "--json",
+            "file",
+            "--portfolio",
+            "sparse-vs-dense-ood",
+            "--source",
+            "Error budget derivation",
+            "--origin",
+            "projects/surrogate-model",
+            "--content",
+            "Markdown body.\n",
+        ])
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["code"], "stem_taken_by_other_format");
+    assert!(json["details"]["remedy"].is_string());
+}
