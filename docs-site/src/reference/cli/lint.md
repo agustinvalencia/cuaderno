@@ -162,6 +162,33 @@ An action note's row says to re-date its `due:` in the note, or drop the action 
 [`cdno migrate --dry-run`](migrate.md) lists them all. Once the vault records RLM 1.1 the rows are
 gone for good.
 
+## Typst notes
+
+A note written in Typst (`.typ`, a `#metadata((…)) <cdno>` block first in the file) is linted
+like any other note, plus these rows. Errors fail the command; warnings do not, unless `--strict`.
+
+| Row | Level | When |
+|---|---|---|
+| metadata block missing a required key | error | `type` is absent, or `title` on a type that carries a title heading (`concept`, or a custom type with a `title_field`) |
+| metadata block not literal | error | a value is anything but a string, an array of strings, a boolean or a number |
+| metadata block not first or not top-level | error | something other than whitespace or comments precedes the block, it is nested, or there is a second block |
+| `<cdno>` is not the label of a `#metadata((…))` call | error | the label sits on something else, or only inside a comment or a string |
+| a second `<cdno>` label | error | a stray label after a valid block |
+| metadata present but the `<cdno>` label is missing, mistyped or nested | error | a `#metadata((type: …))` call with no `<cdno>` directly after it; the file is not a note until it has one |
+| link interior not one inline run | error | an unescaped markup character in `[[…]]`; the row gives the line and the remedy |
+| Typst note does not parse | warning | the syntax tree holds an error, typically after a hand edit |
+| stem shared between `.md` and `.typ` | error | both exist: `[[x]]` can name only one. An editor that resolves `[[x]]` only to `x.md` may have created the empty file |
+| Typst note of a type that does not admit Typst | error | the block's `type` is not listed under `[typst] note_types`; the file is not indexed |
+| Typst file is neither a note nor an attachment | warning | a loose `.typ` in a folder that admits Typst, with no label and no owning note |
+| labelled Typst file outside the configured types | warning | a labelled `.typ` in the folder of a type that `[typst] note_types` leaves out; it is not indexed |
+| Markdown note in a Typst note's assets folder | warning | `<stem>/` beside `<stem>.typ` holds a `.md` with frontmatter, which would be a note anywhere else; it is not indexed |
+
+```text
+[warning] portfolios/surrogate-error-budget/template.typ: Typst file is neither a note nor an attachment: it has no `<cdno>` block and no note owns its folder; add a block to make it a note, or move it into the assets folder of the note that uses it
+```
+
+A dangling `[[link]]` in a Typst body is reported as in a Markdown note.
+
 ```text
 cdno lint [OPTIONS]
 ```

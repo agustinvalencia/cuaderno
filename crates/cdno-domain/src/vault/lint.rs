@@ -26,6 +26,7 @@ use super::context::{
     RECORD_TIME_FORMATS, RecordTime, parse_focus_marker, parse_log_entry_heads,
     parse_promotion_marker, record_time, records_of, str_field,
 };
+use super::lint_typst::typst_file_issues;
 use super::log::{LOG_RELINKED_PREFIX, LOG_RENAMED_PREFIX};
 use super::method_status::MethodStatus;
 use super::note_ref::candidate_slug;
@@ -118,6 +119,8 @@ impl Vault {
         // per note (#248). Keyed by the type *string* so config-defined custom
         // types share the cache with built-ins.
         let mut order_cache: HashMap<(String, Option<String>), Vec<String>> = HashMap::new();
+
+        let typst_types = self.note_scope()?.typst_types;
 
         for path in paths {
             // A concurrent writer could remove a note between the
@@ -287,8 +290,13 @@ impl Vault {
                     continue;
                 }
             };
+            let is_typst = note_format(&path) == Some(NoteFormat::Typst);
             let body = match parse_note(&path, &content) {
                 Ok((_fm, body)) => body,
+                Err(_) if is_typst => {
+                    issues.extend(typst_file_issues(self, &path, &content, &typst_types));
+                    continue;
+                }
                 Err(e) => {
                     issues.push(LintIssue::error(
                         path.clone(),
@@ -297,6 +305,9 @@ impl Vault {
                     continue;
                 }
             };
+            if is_typst {
+                issues.extend(typst_file_issues(self, &path, &content, &typst_types));
+            }
 
             // Frontmatter-order drift (#236): keys not in the effective
             // template's canonical order. A Warning -- the note is valid,
@@ -381,6 +392,8 @@ impl Vault {
         }
 
         issues.extend(alias_conflict_issues(&path_set, &alias_rows));
+        let (typst_rows, typst_reported) = self.typst_walk_issues(&path_set)?;
+        issues.extend(typst_rows);
 
         // `path_set` is the indexed notes; the ignore matcher is compiled
         // from the same config reconciliation used, so lint and the index
@@ -391,6 +404,7 @@ impl Vault {
             &path_set,
             &ignore,
             &self.note_scope()?,
+            &typst_reported,
         )?);
         issues.extend(self.stewardship_dashboard_issues()?);
         issues.extend(self.tracking_record_order_issues()?);
@@ -1174,6 +1188,7 @@ fn orphan_artefact_issues(
     notes: &HashSet<VaultPath>,
     ignore: &IgnoreSet,
     scope: &cdno_core::classify::NoteScope,
+    typst_reported: &HashSet<VaultPath>,
 ) -> Result<Vec<LintIssue>, DomainError> {
     let Ok(root) = VaultPath::new(cdno_core::paths::PORTFOLIOS) else {
         return Ok(Vec::new());
@@ -1209,7 +1224,9 @@ fn orphan_artefact_issues(
     let mut issues = Vec::new();
     let mut seen: HashSet<VaultPath> = HashSet::new();
     for file in &files {
-        if notes.contains(file) || ignore.is_match(file.as_path()) {
+        // A `.typ` the Typst rows already report is not an orphaned artefact.
+        if notes.contains(file) || ignore.is_match(file.as_path()) || typst_reported.contains(file)
+        {
             continue;
         }
         let owned = cdno_core::artefacts::owning_note(file, scope, |owner| {

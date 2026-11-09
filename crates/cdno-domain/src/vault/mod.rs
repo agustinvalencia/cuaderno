@@ -44,6 +44,7 @@ mod frontmatter_edit;
 mod index_entry;
 mod links;
 mod lint;
+mod lint_typst;
 mod log;
 mod method_status;
 mod migrate;

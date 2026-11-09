@@ -86,6 +86,17 @@ fn label_node_in(node: &SyntaxNode) -> bool {
     node.children().any(label_node_in)
 }
 
+/// How many `<cdno>` Label nodes the tree holds, or `None` when the parser cannot start. More than
+/// one means a label the block reader does not account for: it reads the call's sibling only.
+pub fn label_node_count(source: &str) -> Option<usize> {
+    with_tree(source, count_labels).ok()
+}
+
+fn count_labels(node: &SyntaxNode) -> usize {
+    let own = usize::from(node.kind() == SyntaxKind::Label && node.leaf_text() == CDNO_LABEL);
+    own + node.children().map(count_labels).sum::<usize>()
+}
+
 /// P8: `Ok(())` when the tree holds no Error node; else the first one's line and message.
 pub fn parses(source: &str) -> Result<(), SyntaxFault> {
     with_tree(source, |root| {

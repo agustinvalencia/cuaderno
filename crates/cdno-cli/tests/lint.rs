@@ -524,3 +524,33 @@ fn rename_shaped(text: &str) -> String {
     assert_eq!(edits.len(), 1, "the `project:` scalar is rewritten");
     format!("{}{rewritten}{}", &linked[..start], &linked[end..])
 }
+
+#[test]
+fn lint_prints_typst_rows() {
+    use assert_cmd::Command;
+    use predicates::prelude::*;
+
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+    let folder = dir.path().join("portfolios/surrogate-error-budget");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join("template.typ"), "= A loose sheet\n").unwrap();
+    fs::write(
+        folder.join("mistyped.typ"),
+        "#metadata((type: \"evidence\")) <cdn>\n\nBody.\n",
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("cdno").expect("cdno binary built");
+    cmd.env_remove("CUADERNO_VAULT_PATH")
+        .current_dir(dir.path())
+        .arg("lint")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "[warning] portfolios/surrogate-error-budget/template.typ: Typst file is neither a note nor an attachment",
+        ))
+        .stdout(predicate::str::contains(
+            "[error] portfolios/surrogate-error-budget/mistyped.typ: metadata present but the `<cdno>` label is missing, mistyped or nested (line 1)",
+        ));
+}
