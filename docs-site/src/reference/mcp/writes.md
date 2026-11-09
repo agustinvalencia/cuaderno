@@ -254,6 +254,8 @@ Refusals (a [rejection](overview.md) with these codes; nothing is written):
 | `stale_revision` | A whole-body revision whose `expected_hash` no longer matches the bytes on disk: the note changed since it was read. `details.actual` is the current hash; read the note again and redo the edit on the fresh text. |
 | `revision_invalid` | The `section` heading is empty, spans lines, contains `[`, `]`, `\|` or `#`, or starts with `^`; or `content` holds a heading at the section's own level or above, which would restructure the note. |
 | `ambiguous_section` | The `section` heading matches more than one heading in the note. |
+| `section_revision_unavailable_for_typst` | A `section` aimed at a Typst note. `details.remedy` names the whole-body form: read the note, edit the body, and pass all of it as `body` with `expected_hash`. |
+| `body_carries_metadata_block` / `body_does_not_parse` / `link_needs_escape` | A Typst note's new `body` holds a `<cdno>` label, does not parse, or has a `[[…]]` that is not one inline run. The metadata block stays the engine's: `body` is everything after it. |
 | `not_found` / `ambiguous_slug` | The `note` reference matches no note, or several (with their paths in `details.candidates`), as for `read_note`. |
 
 A blank `reason`, `body` together with `section`, `section` without `content`, `content` without

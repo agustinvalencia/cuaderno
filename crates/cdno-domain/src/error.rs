@@ -107,7 +107,7 @@ impl DomainError {
                 "If that is the note you meant, use it; otherwise ask the person for another name, do not suffix it yourself.",
             ),
             DomainError::SectionRevisionUnavailableForTypst => Some(
-                "Revise the whole body instead: read the note, change the Typst, and send all of it.",
+                "Revise the whole body instead: read the note, edit the body, and pass all of it as `body` with `expected_hash`.",
             ),
             DomainError::AssetPathOutsideFolder { .. } => Some(
                 "Move the file into the folder being adopted, or change the path to one inside it.",

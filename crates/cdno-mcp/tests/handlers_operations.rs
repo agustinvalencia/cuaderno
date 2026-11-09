@@ -2597,6 +2597,52 @@ async fn revise_note_with_identical_text_reports_no_change_and_logs_nothing() {
 }
 
 #[tokio::test]
+async fn revise_note_replaces_a_typst_body_and_refuses_a_section() {
+    let path = "concepts/bias-variance-split.typ";
+    let block = "#metadata((type: \"concept\", title: \"Split\", created: \"2026-09-01\")) <cdno>";
+    let original = format!("{block}\n\n= Old\n");
+    let (server, store) = server_with_config(config_with_person_and_concept(), |v, s| {
+        s.write_file(&vp(path), &original).unwrap();
+        v.reconcile().unwrap();
+    });
+
+    let err = revise(
+        &server,
+        ReviseNoteInput {
+            section: Some("Old".to_owned()),
+            content: Some("New.".to_owned()),
+            ..revise_input(path)
+        },
+    )
+    .await
+    .expect_err("refused");
+    assert_eq!(
+        rejection_code(&err),
+        "section_revision_unavailable_for_typst"
+    );
+    assert_eq!(store.read_file(&vp(path)).unwrap(), original);
+
+    let hash = read_hash(&server, path).await;
+    let json = decode_json(
+        &revise(
+            &server,
+            ReviseNoteInput {
+                body: Some("= New\n".to_owned()),
+                expected_hash: Some(hash),
+                ..revise_input(path)
+            },
+        )
+        .await
+        .expect("revise"),
+    );
+    assert_eq!(json["changed"], true);
+    assert_eq!(
+        store.read_file(&vp(path)).unwrap(),
+        format!("{block}\n\n= New\n")
+    );
+}
+
+#[tokio::test]
 async fn revise_note_refuses_a_built_in_type() {
     let (server, store) = revise_server();
     let mut input = revise_input("projects/demo.md");

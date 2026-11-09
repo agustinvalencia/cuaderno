@@ -79,7 +79,8 @@ pub enum NoteCommands {
     ///
     /// Give either `--body-file` (the whole body after the frontmatter) or
     /// `--section` with `--content-file` (upsert one section). With neither,
-    /// an interactive session opens the current body in an editor.
+    /// an interactive session opens the current body in an editor. A Typst
+    /// note is revised as a whole body only.
     Revise {
         /// The note to revise, resolved as `cdno open` resolves a reference:
         /// a path with or without `.md`, a slug, or `type:slug`. Omitted in
@@ -380,13 +381,20 @@ fn revise(
 
     // The hash goes with a section revision too: the domain accepts it, and
     // refusing an edit that raced the read is the same promise either way.
-    let outcome = vault.revise_note(
-        &path,
-        Some(view.content_hash.as_str()),
-        revision,
-        &reason,
-        at,
-    )?;
+    let outcome = vault
+        .revise_note(
+            &path,
+            Some(view.content_hash.as_str()),
+            revision,
+            &reason,
+            at,
+        )
+        .map_err(|e| match e {
+            DomainError::SectionRevisionUnavailableForTypst => anyhow::anyhow!(
+                "{e}. Read the note, edit the body, and pass all of it with --body-file."
+            ),
+            other => other.into(),
+        })?;
     emit_revise_result(json, &outcome)
 }
 
