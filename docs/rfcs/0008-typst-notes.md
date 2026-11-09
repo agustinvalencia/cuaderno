@@ -576,8 +576,9 @@ compiler, which is the rendering phase.
   followed by `load("x.txt")` reach for a file the adoption scan cannot find, so the file is not
   copied and the path is not rewritten. The scan reads calls, not data flow.
 - **A rename rewrites only the note's own literal relative paths into its assets folder**: a
-  non-literal or `/`-rooted path into that folder, and a `../<old>/…` path in a `.typ` file inside
-  it, are left as written and break on the move, with no warning.
+  non-literal or `/`-rooted path into that folder, a `../<old>/…` path in a `.typ` file inside it,
+  and another note's `#image("…/<old>/…")` into the moved folder are left as written and break on
+  the move, with no warning.
 - A Typst **evidence** body is frozen as written; a wrong package version has no remedy until the
   rendering RFC (§9 D16).
 

@@ -95,6 +95,11 @@ same-slug question is renamed through the question. Dailies, weeklies, monthlies
 tracking, inbox items, archived action notes, stewardships, commitments, a custom note kept as a
 folder and a note with no `type` are refused (`note_not_renamable`).
 
+A Typst note moves with its assets folder: `<old>.typ` and every file under `<old>/` go to the new
+name, and the note's own relative path literals into that folder follow. Any other path into the
+folder (another note's, a non-literal or a `/`-rooted one) is left as written and breaks. Evidence
+is not renamable in either format.
+
 With [`--relink`](#relinking-the-stragglers---relink) the note keeps its slug, and the links that
 still reach it through a former name are rewritten to the current one. An archived action note can
 be relinked, though not renamed.

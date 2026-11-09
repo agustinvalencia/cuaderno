@@ -1517,17 +1517,13 @@ fn stage_index_rows(
     content: &str,
     tx: &mut VaultTransaction,
 ) -> Result<(), DomainError> {
-    let Some((note_type, title)) = parse_note(path, content).ok().and_then(|(fm, _)| {
-        let title = fm.optional_field::<String>("title").ok().flatten();
-        Some((fm.require_field::<String>("type").ok()?, title))
-    }) else {
+    let Some(note_type) = parse_note(path, content)
+        .ok()
+        .and_then(|(fm, _)| fm.require_field::<String>("type").ok())
+    else {
         return Ok(());
     };
-    // The row's `title` as reconciliation derives it, so a rename and a
-    // rebuild from scratch agree.
-    let mut entry = build_index_entry_for(path, content, &note_type)?;
-    entry.title = title;
-    tx.upsert_note(entry);
+    tx.upsert_note(build_index_entry_for(path, content, &note_type)?);
     if note_type == NoteType::Project.as_str() {
         stage_project_index_rows(path, content, tx);
     }

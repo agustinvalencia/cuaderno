@@ -2543,6 +2543,26 @@ fn note_rename_moves_a_typst_note_and_its_folder() {
     )
     .unwrap();
 
+    let preview = rename_cmd(dir.path())
+        .args(["bias-variance-split", "--to", "error-split", "--dry-run"])
+        .arg("--json")
+        .assert()
+        .success();
+    let plan: serde_json::Value = serde_json::from_slice(&preview.get_output().stdout).unwrap();
+    let own = plan["edits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["path"] == "concepts/bias-variance-split.typ")
+        .expect("the note's own edit");
+    assert!(
+        own["changes"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!({ "kind": "asset_paths", "count": 1 })),
+        "{own}"
+    );
+
     rename_cmd(dir.path())
         .args(["bias-variance-split", "--to", "error-split"])
         .assert()
