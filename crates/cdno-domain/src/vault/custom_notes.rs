@@ -35,7 +35,7 @@ const ORIGIN: &str = "origin";
 /// in `fields` too would ask the caller to repeat what create already
 /// knows. A `required` field outside this set is unaffected: it must
 /// still come from the caller.
-const ENGINE_SUPPLIED_FIELDS: &[&str] = &["title", "slug", "created", "date"];
+pub(super) const ENGINE_SUPPLIED_FIELDS: &[&str] = &["title", "slug", "created", "date"];
 
 impl Vault {
     /// Create a note of a config-defined custom type `type_name`. Convenience

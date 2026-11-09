@@ -62,7 +62,7 @@ fn render_metadata_block_orders_engine_fields_first() {
 }
 
 #[test]
-fn a_supplied_array_becomes_an_array_and_a_scalar_a_string() {
+fn values_are_written_as_their_own_type() {
     let block = render_metadata_block(
         "concept",
         &fields(&[
@@ -79,8 +79,8 @@ fn a_supplied_array_becomes_an_array_and_a_scalar_a_string() {
         "{block}"
     );
     assert!(block.contains("one: (\"surrogate\",),"), "{block}");
-    assert!(block.contains("n: \"2\","), "{block}");
-    assert!(block.contains("draft: \"true\","), "{block}");
+    assert!(block.contains("n: 2,"), "{block}");
+    assert!(block.contains("draft: true,"), "{block}");
 }
 
 #[test]
@@ -292,6 +292,8 @@ fn concept_config() -> VaultConfig {
                 "priority".to_owned(),
                 "ratio".to_owned(),
                 "settled".to_owned(),
+                "stage".to_owned(),
+                "reviewed".to_owned(),
             ],
             template: None,
             append_only: false,
@@ -307,6 +309,13 @@ fn concept_config() -> VaultConfig {
     schema
         .fields
         .insert("settled".into(), spec(FieldType::Bool));
+    schema.fields.insert(
+        "stage".into(),
+        toml::from_str("type = \"string\"\nvalues = [\"draft\", \"settled\"]").unwrap(),
+    );
+    schema
+        .fields
+        .insert("reviewed".into(), spec(FieldType::Date));
     config.schemas.insert("concept".to_owned(), schema);
     config
 }
@@ -493,6 +502,66 @@ fn a_value_that_does_not_fit_its_declared_type_is_refused() {
         matches!(&err, DomainError::InvalidFieldValue { field, .. } if field == "priority"),
         "{err:?}"
     );
+    assert!(
+        !store
+            .exists(&vp("concepts/bias-variance-split.typ"))
+            .unwrap()
+    );
+}
+
+#[test]
+fn a_value_outside_its_enum_or_a_bad_date_is_refused() {
+    let (vault, store) = vault(concept_config());
+    for (key, value) in [("stage", "archived"), ("reviewed", "2026-13-40")] {
+        let err = vault
+            .create_typst_custom_note(
+                at(),
+                "concept",
+                "Bias-variance split",
+                &string_fields(&[(key, value)]),
+                None,
+                None,
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&err, DomainError::InvalidFieldValue { field, .. } if field == key),
+            "{key}: {err:?}"
+        );
+    }
+    assert!(
+        !store
+            .exists(&vp("concepts/bias-variance-split.typ"))
+            .unwrap()
+    );
+}
+
+#[test]
+fn create_typst_refuses_a_bad_body_and_writes_nothing() {
+    let (vault, store) = vault(concept_config());
+    for (body, expect) in [
+        ("#metadata((type: \"concept\")) <cdno>\n", "carries"),
+        ("#let x = (\n", "parse"),
+        ("See [[concepts/a#b]].\n", "link"),
+    ] {
+        let err = vault
+            .create_typst_custom_note(
+                at(),
+                "concept",
+                "Bias-variance split",
+                &HashMap::new(),
+                Some(body),
+                None,
+                None,
+            )
+            .unwrap_err();
+        let ok = match expect {
+            "carries" => matches!(err, DomainError::BodyCarriesMetadataBlock),
+            "parse" => matches!(err, DomainError::BodyDoesNotParse { .. }),
+            _ => matches!(err, DomainError::LinkNeedsEscape { .. }),
+        };
+        assert!(ok, "{body}: {err:?}");
+    }
     assert!(
         !store
             .exists(&vp("concepts/bias-variance-split.typ"))

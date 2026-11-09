@@ -190,8 +190,8 @@ pub fn run(
             // template has a `{{body}}` slot that nothing else (a `body`
             // field, a `[variables] body`, a `--var body=`) fills; otherwise
             // it is optional.
-            let body = if format == NoteFormat::Markdown
-                && vault.custom_note_needs_body(&note_type, &fields, &vars)?
+            let body = if format == NoteFormat::Typst
+                || vault.custom_note_needs_body(&note_type, &fields, &vars)?
             {
                 Some(prompt::gather_or_error(
                     body_from_file,

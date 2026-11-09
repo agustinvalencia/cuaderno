@@ -2587,8 +2587,34 @@ fn note_create_format_typst() {
             "Another",
             "--var",
             "x=y",
+            "--body-file",
+            body_file.to_str().unwrap(),
         ])
         .assert()
         .failure()
         .stderr(predicate::str::contains("Markdown notes only"));
+}
+
+#[test]
+fn note_create_format_typst_without_a_body_file_fails_non_interactively() {
+    let dir = tempdir().unwrap();
+    init_person_vault(dir.path());
+    let v = vault_arg(dir.path());
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "create",
+            "concept",
+            "--format",
+            "typst",
+            "--title",
+            "Bias-variance split",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("body-file"));
+    assert!(!dir.path().join("concepts/bias-variance-split.typ").exists());
 }
