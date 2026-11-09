@@ -402,6 +402,37 @@ fn restamp_meta(
     Ok(())
 }
 
+/// A `.typ` whose `type` does not admit Typst is refused, and any row it already has is dropped,
+/// so a note edited in place to such a type, or a type un-admitted by the config, does not stay
+/// indexed as what it was. The path stays in the classifier's note set, so the orphan pass would
+/// not remove it.
+fn refuse_unadmitted(
+    store: &Arc<dyn VaultStore>,
+    index: &Arc<dyn VaultIndex>,
+    path: &VaultPath,
+    note_type: &str,
+    has_row: bool,
+    typst_types: &[String],
+) -> Result<(), String> {
+    if crate::paths::note_format(path) != Some(crate::paths::NoteFormat::Typst)
+        || typst_types.is_empty()
+        || typst_types.iter().any(|t| t == note_type)
+    {
+        return Ok(());
+    }
+    if has_row {
+        let mut tx = VaultTransaction::new(store.clone(), index.clone())
+            .map_err(|e| format!("acquiring write lock: {e}"))?;
+        tx.remove_note(path.clone());
+        tx.commit()
+            .map_err(|e| format!("failed to drop the row of a refused Typst note: {e}"))?;
+    }
+    Err(format!(
+        "`{path}` is a Typst note of type `{note_type}`, which does not admit Typst; \
+         it is not indexed"
+    ))
+}
+
 /// Per-file outcome reported back to the caller counters.
 enum Outcome {
     Added,
@@ -426,6 +457,12 @@ fn reconcile_one(
     let meta = store
         .metadata(path)
         .map_err(|e| format!("metadata failed: {e}"))?;
+
+    // Before either shortcut below: a config change that un-admits a type must drop a row
+    // whose file has not changed.
+    if let Some(entry) = &existing {
+        refuse_unadmitted(store, index, path, &entry.note_type, true, typst_types)?;
+    }
 
     // Fast path (#94): an already-indexed file whose mtime and size both
     // match is assumed unchanged — skip the read + hash entirely. mtime can
@@ -473,25 +510,14 @@ fn reconcile_one(
     let note_type = frontmatter
         .require_field::<String>("type")
         .map_err(|e| format!("missing or invalid `type` field: {e}"))?;
-    if crate::paths::note_format(path) == Some(crate::paths::NoteFormat::Typst)
-        && !typst_types.is_empty()
-        && !typst_types.contains(&note_type)
-    {
-        // An edit in place to a type that does not admit Typst must not leave the old row
-        // indexed as what it was. The path stays in the classifier's note set, so the orphan
-        // pass would not remove it.
-        if existing.is_some() {
-            let mut tx = VaultTransaction::new(store.clone(), index.clone())
-                .map_err(|e| format!("acquiring write lock: {e}"))?;
-            tx.remove_note(path.clone());
-            tx.commit()
-                .map_err(|e| format!("failed to drop the row of a refused Typst note: {e}"))?;
-        }
-        return Err(format!(
-            "`{path}` is a Typst note of type `{note_type}`, which does not admit Typst; \
-             it is not indexed"
-        ));
-    }
+    refuse_unadmitted(
+        store,
+        index,
+        path,
+        &note_type,
+        existing.is_some(),
+        typst_types,
+    )?;
     let title = frontmatter
         .optional_field::<String>("title")
         .map_err(|e| format!("invalid `title` field: {e}"))?;

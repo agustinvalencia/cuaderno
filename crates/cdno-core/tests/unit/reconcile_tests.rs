@@ -2684,6 +2684,26 @@ fn a_typ_edited_to_an_unadmitted_type_drops_its_row() {
 }
 
 #[test]
+fn a_config_that_unadmits_a_type_drops_the_row_of_an_unchanged_file() {
+    let both = NoteScope {
+        typst_types: vec!["evidence".to_owned(), "concept".to_owned()],
+        ..typst_scope()
+    };
+    let concept_only = NoteScope {
+        typst_types: vec!["concept".to_owned()],
+        ..typst_scope()
+    };
+    let vault = TypstVault::with(&[(TYP_NOTE, EVIDENCE_TYP)]);
+    vault.reconcile(&both);
+    assert!(vault.index.find_by_path(&vp(TYP_NOTE)).unwrap().is_some());
+
+    let report = vault.reconcile(&concept_only);
+
+    assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+    assert!(vault.index.find_by_path(&vp(TYP_NOTE)).unwrap().is_none());
+}
+
+#[test]
 fn typst_off_parses_no_typ() {
     let stub = "portfolios/surrogate-error-budget/deck.md";
     let owned = "portfolios/surrogate-error-budget/deck/slides.typ";

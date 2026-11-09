@@ -9,13 +9,13 @@ use std::collections::{HashMap, HashSet};
 
 use cdno_core::artefacts::{is_attachment_stub, is_typst_note, owning_note};
 use cdno_core::classify::{SkipReason, classify};
-use cdno_core::frontmatter::split_frontmatter;
+use cdno_core::frontmatter::parse_note;
 use cdno_core::path::VaultPath;
 use cdno_core::paths::{NoteFormat, note_format};
 use cdno_core::typst::{self, TypstError};
 
 use crate::error::DomainError;
-use crate::lint::LintIssue;
+use crate::lint::{LintIssue, LintSeverity};
 use crate::type_registry::NoteTypeDescriptor;
 
 use super::Vault;
@@ -59,7 +59,20 @@ pub(super) fn typst_file_issues(
                 ));
             }
         }
-        Err(e) => issues.push(error(block_error(&e, content))),
+        Err(e) => {
+            let unreadable = matches!(e, TypstError::LabelBroken { .. } | TypstError::NoBlock);
+            if let (true, Err(fault)) = (unreadable, typst::parses(content)) {
+                // A block that never closes reads as a missing label; the parse fault is the
+                // one true cause, so it is the only row.
+                issues.push(error(format!(
+                    "Typst note does not parse, so its metadata block cannot be read (line {}: \
+                     {}); fix the syntax at that line",
+                    fault.line, fault.message
+                )));
+                return issues;
+            }
+            issues.push(error(block_error(&e, content)));
+        }
     }
 
     if let Err(fault) = typst::parses(content) {
@@ -155,13 +168,15 @@ impl Vault {
     pub(super) fn typst_walk_issues(
         &self,
         indexed: &HashSet<VaultPath>,
-    ) -> Result<Vec<LintIssue>, DomainError> {
+    ) -> Result<(Vec<LintIssue>, HashSet<VaultPath>), DomainError> {
         let scope = self.note_scope()?;
         if scope.typst_folders.is_empty() && scope.typst_excluded_folders.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), HashSet::new()));
         }
         let classified = classify(&self.store, &scope)?;
         let mut issues = Vec::new();
+        // The `.typ` files these rows already speak for, so the orphan-folder check stays off them.
+        let mut reported: HashSet<VaultPath> = HashSet::new();
 
         for skipped in &classified.skipped {
             let message = match skipped.reason {
@@ -178,6 +193,7 @@ impl Vault {
                 SkipReason::TypstLabelBroken { line } => broken_label(line),
                 SkipReason::Attachment | SkipReason::Ignored => continue,
             };
+            reported.insert(skipped.path.clone());
             let issue = match skipped.reason {
                 SkipReason::TypstLabelBroken { .. } => {
                     LintIssue::error(skipped.path.clone(), message)
@@ -194,8 +210,21 @@ impl Vault {
         for path in typ_notes {
             if !indexed.contains(path) {
                 // A failed read is reconciliation's to report.
+                reported.insert(path.clone());
                 if let Ok(content) = self.store.read_file(path) {
-                    issues.extend(typst_file_issues(self, path, &content, &scope.typst_types));
+                    let rows = typst_file_issues(self, path, &content, &scope.typst_types);
+                    // Unindexed yet nothing above explains it: reconciliation refused the
+                    // note for a reason of its own, such as an invalid `tags` or `title`.
+                    if !rows.iter().any(|r| r.severity == LintSeverity::Error) {
+                        issues.push(LintIssue::error(
+                            path.clone(),
+                            "Typst note is not indexed: its block reads, but reconciliation \
+                             refused it, usually for a `tags` or `title` value of the wrong \
+                             type; correct the block, or run `cdno reindex` to see the reason"
+                                .to_owned(),
+                        ));
+                    }
+                    issues.extend(rows);
                 }
             }
             let sibling = path.as_path().with_extension("md");
@@ -232,11 +261,10 @@ impl Vault {
             if note_format(&owner) != Some(NoteFormat::Typst) {
                 continue;
             }
-            let has_frontmatter = self
-                .store
-                .read_file(file)
-                .is_ok_and(|c| split_frontmatter(&c).is_some());
-            if has_frontmatter {
+            let would_be_a_note = self.store.read_file(file).is_ok_and(|c| {
+                parse_note(file, &c).is_ok_and(|(fm, _)| fm.require_field::<String>("type").is_ok())
+            });
+            if would_be_a_note {
                 issues.push(LintIssue::warning(
                     file.clone(),
                     format!(
@@ -247,6 +275,6 @@ impl Vault {
                 ));
             }
         }
-        Ok(issues)
+        Ok((issues, reported))
     }
 }

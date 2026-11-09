@@ -392,7 +392,8 @@ impl Vault {
         }
 
         issues.extend(alias_conflict_issues(&path_set, &alias_rows));
-        issues.extend(self.typst_walk_issues(&path_set)?);
+        let (typst_rows, typst_reported) = self.typst_walk_issues(&path_set)?;
+        issues.extend(typst_rows);
 
         // `path_set` is the indexed notes; the ignore matcher is compiled
         // from the same config reconciliation used, so lint and the index
@@ -403,6 +404,7 @@ impl Vault {
             &path_set,
             &ignore,
             &self.note_scope()?,
+            &typst_reported,
         )?);
         issues.extend(self.stewardship_dashboard_issues()?);
         issues.extend(self.tracking_record_order_issues()?);
@@ -1186,6 +1188,7 @@ fn orphan_artefact_issues(
     notes: &HashSet<VaultPath>,
     ignore: &IgnoreSet,
     scope: &cdno_core::classify::NoteScope,
+    typst_reported: &HashSet<VaultPath>,
 ) -> Result<Vec<LintIssue>, DomainError> {
     let Ok(root) = VaultPath::new(cdno_core::paths::PORTFOLIOS) else {
         return Ok(Vec::new());
@@ -1221,7 +1224,9 @@ fn orphan_artefact_issues(
     let mut issues = Vec::new();
     let mut seen: HashSet<VaultPath> = HashSet::new();
     for file in &files {
-        if notes.contains(file) || ignore.is_match(file.as_path()) {
+        // A `.typ` the Typst rows already report is not an orphaned artefact.
+        if notes.contains(file) || ignore.is_match(file.as_path()) || typst_reported.contains(file)
+        {
             continue;
         }
         let owned = cdno_core::artefacts::owning_note(file, scope, |owner| {

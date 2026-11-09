@@ -4575,3 +4575,75 @@ fn a_typ_edited_to_an_unadmitted_type_is_not_indexed_after_reopening() {
     let lint = vault.lint_all_notes(lint_day()).unwrap();
     assert_eq!(rows_on(&lint, &path).len(), 1, "{:?}", lint.issues);
 }
+
+#[test]
+fn an_unindexed_labelled_typ_with_no_other_error_is_an_error() {
+    let path = typst_evidence("tagged.typ");
+    let report = lint_typst(
+        &[(
+            &path,
+            "#metadata((type: \"evidence\", tags: 5)) <cdno>\n\nBody.\n",
+        )],
+        VaultConfig::default(),
+    );
+    let rows = rows_on(&report, &path);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, "error");
+    assert!(
+        rows[0]
+            .1
+            .starts_with("Typst note is not indexed: its block reads"),
+        "{}",
+        rows[0].1
+    );
+}
+
+#[test]
+fn a_loose_typ_in_a_portfolio_subfolder_is_only_the_typst_warning() {
+    let loose = typst_evidence("figs/template.typ");
+    let report = lint_typst(
+        &[
+            (&typst_evidence("derivation.typ"), TYPST_EVIDENCE),
+            (&loose, "= A loose sheet\n"),
+        ],
+        VaultConfig::default(),
+    );
+    assert_eq!(report.issues.len(), 1, "{:?}", report.issues);
+    assert_eq!(report.issues[0].path, vp(&loose));
+    assert_eq!(report.issues[0].severity.as_str(), "warning");
+    assert!(!report.issues[0].message.contains("stub"));
+}
+
+#[test]
+fn an_evicted_markdown_file_with_frontmatter_but_no_type_is_not_named() {
+    let report = lint_typst(
+        &[
+            (&typst_evidence("derivation.typ"), TYPST_EVIDENCE),
+            (
+                &typst_evidence("derivation/draft.md"),
+                "---\ntitle: Draft\n---\n\nBody.\n",
+            ),
+        ],
+        VaultConfig::default(),
+    );
+    assert!(report.is_clean(), "{:?}", report.issues);
+}
+
+#[test]
+fn an_unclosed_metadata_block_is_one_true_row() {
+    let path = typst_evidence("unclosed-block.typ");
+    let report = lint_typst(
+        &[(&path, "#metadata((type: \"evidence\") <cdno>\n\nBody.\n")],
+        VaultConfig::default(),
+    );
+    let rows = rows_on(&report, &path);
+    assert_eq!(
+        rows,
+        vec![(
+            "error",
+            "Typst note does not parse, so its metadata block cannot be read (line 1: unclosed \
+             delimiter); fix the syntax at that line"
+                .to_owned()
+        )]
+    );
+}
