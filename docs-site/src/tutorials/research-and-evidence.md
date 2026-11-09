@@ -99,8 +99,32 @@ Three things to know:
 - **Leave a space before `[[`** when it follows a `#…` expression or an `@ref`. Without one the link
   is lost silently, and nothing refuses it.
 
-`--var` is refused with `--format typst`. Do not use `--attach` for a `.typ` that should be a note:
-attaching stores the bytes behind an abstract, while a Typst note is searchable as text.
+`--var` is refused with `--format typst`. Do not use `--attach` without `--format typst` for a `.typ`
+that should be a note: attaching stores the bytes behind an abstract, while a Typst note is
+searchable as text.
+
+#### Adopting a file you already have
+
+A deck or report already written, with its figures beside it, is adopted rather than retyped. Add
+`--attach` to `--format typst` and the file itself becomes the note:
+
+```bash
+cdno file --portfolio surrogate-error-budget \
+          --source "Review deck, 2026-11-08" \
+          --origin "[[projects/surrogate-model]]" \
+          --format typst --attach ~/talks/review.typ
+# -> portfolios/surrogate-error-budget/2026-11-08-review-deck.typ
+#    portfolios/surrogate-error-budget/2026-11-08-review-deck/figs/…   (copied, paths rewritten)
+```
+
+The folder copied is the directory the `.typ` sits in, so the deck needs a folder of its own, holding
+only its figures and bibliography. Subfolders are kept; entries whose names start with a dot are
+skipped; the limits are 200 files and 200 MiB. A symbolic link, or a folder that overlaps the vault,
+is refused (code `adoption_refused`). Every literal relative path in the file (an `image`, a
+`bibliography`, a `read`) is rewritten to point at the copy, and the result lists each as a `rewrites`
+pair of `was` and `now`: a record, with nothing for you to do. A path that climbs out of the folder,
+or a non-literal path, is refused with the fix named. Without `--format`, `--attach deck.typ` still
+files an attachment with a stub.
 
 ## Review what's accumulated
 
