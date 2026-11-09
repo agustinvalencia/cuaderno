@@ -237,6 +237,15 @@ $ cdno note revise surrogate-model --body-file /tmp/why.md --reason "tidy"
 Error: note 'projects/surrogate-model.md' cannot be revised: 'project' is a built-in note type; its sections are owned by its own commands
 ```
 
+### If the concept is mostly equations
+
+A concept can be a Typst note: create it with `--format typst` and a body of Typst markup, and the
+engine writes `concepts/<slug>.typ`. Step 6 changes for it: `--section` is refused, with a message
+naming the whole-body form, so you pass the whole body with `--body-file`. An assistant does the
+same over MCP, reading the note, passing the whole `body` with the `content_hash` as
+`expected_hash`, and checking that only the intended region changed. Inside `[[…]]`, put a
+backslash before a Typst markup character (`[[concepts/woodbury-identity\#Statement]]`).
+
 ## 7. Read the trail
 
 The day's `## Logs` now tells the concept's story in three lines, and the two earlier days keep

@@ -126,6 +126,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   key order and the body stay byte-for-byte; a value the block cannot hold is an
   `InvalidFieldValue`. Validation, the no-op rule, strict-exists and the log line are as for
   Markdown.
+- **Concept guide: Typst concepts** (RFC 0008 T29, #957). The concept-library
+  pages describe a concept written in Typst, refined as a whole body, and the link escape rule.
 
 ## [0.44.0] - 2026-11-06
 
