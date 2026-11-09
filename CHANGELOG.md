@@ -109,6 +109,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   note's assets folder. A note edited in place to a type that does not admit Typst is dropped from
   the index, and an owner above a declared type's folder no longer takes it.
 - **`format` on `read_note`** (RFC 0008 T16). `read_note` reports `format` (`markdown` or `typst`); for a Typst note `body` is the source after its metadata block, `headings` are its `=` headings, and `cdno open` resolves a Typst note to its `.typ`. Internally a Typst note's title is the block's `title`, never a heading (the response carries no `title`).
+- **`file_typst_evidence` and stem exclusivity** (RFC 0008 T19, part of #927). The domain gains
+  `Vault::file_typst_evidence`, which files an evidence note as `<date>-<source>.typ`: the metadata
+  block, then the body, checked before anything is written. A `.typ` and an `.md` can no longer
+  share a stem in one folder: `file_evidence` and `file_attachment` refuse when the `.typ` exists,
+  with `StemTakenByOtherFormat` naming the holder. No CLI or MCP surface yet.
 
 ## [0.44.0] - 2026-11-06
 
