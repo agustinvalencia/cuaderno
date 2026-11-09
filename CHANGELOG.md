@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-11-09
+
 ### Fixed
 
 - **No shadow warning for a field that declares no value** (closes #778). Declaring
