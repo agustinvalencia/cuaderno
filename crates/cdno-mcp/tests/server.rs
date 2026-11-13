@@ -64,7 +64,7 @@ fn advertised_catalogue_matches_expected_surface() {
     // the two daily-note tools (GH #158), the two weekly-note tools, and
     // the two monthly-note tools (GH #228).
     let mut expected = vec![
-        // Context (18)
+        // Context (19)
         "get_orientation",
         // What is open right now (#568) — read-only, so it belongs to
         // the context router and the read-only surface with it.
@@ -86,7 +86,9 @@ fn advertised_catalogue_matches_expected_surface() {
         "get_commitments",
         "lint",
         "triage_inbox",
-        // Operations (36)
+        // The index's health, read-only (#526).
+        "index_status",
+        // Operations (37)
         "append_to_log",
         "capture",
         "discard_inbox_item",
@@ -134,6 +136,8 @@ fn advertised_catalogue_matches_expected_surface() {
         "create_question",
         "create_stewardship",
         "create_custom_note",
+        // Rebuild the index in place (#526).
+        "rebuild_index",
         // Lifecycle (6)
         "park_project",
         "activate_project",
@@ -147,7 +151,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 66);
+    assert_eq!(tools.len(), 68);
 }
 
 /// `read_note` is a read, so it rides the context router onto the
@@ -168,7 +172,7 @@ fn read_only_server_advertises_read_note() {
     assert!(names.iter().any(|n| n == "search_notes"), "{names:?}");
     assert_eq!(
         names.len(),
-        18,
+        19,
         "the read-only surface is the context router: {names:?}"
     );
 }
@@ -197,7 +201,7 @@ fn revise_note_is_a_write_tool_absent_from_the_read_only_server() {
         !read_only.iter().any(|n| n == "revise_note"),
         "{read_only:?}"
     );
-    assert_eq!(read_only.len(), 18, "{read_only:?}");
+    assert_eq!(read_only.len(), 19, "{read_only:?}");
 }
 
 /// `note_to_daily` writes, so it is on the full catalogue and not on the
@@ -223,7 +227,7 @@ fn note_to_daily_is_a_write_tool_absent_from_the_read_only_server() {
         !read_only.iter().any(|n| n == "note_to_daily"),
         "{read_only:?}"
     );
-    assert_eq!(read_only.len(), 18, "{read_only:?}");
+    assert_eq!(read_only.len(), 19, "{read_only:?}");
 }
 
 #[test]

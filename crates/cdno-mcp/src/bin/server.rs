@@ -76,11 +76,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use cdno_core::classify::NoteScope;
-use cdno_core::index::VaultIndex;
-use cdno_core::reconcile::reconcile;
-use cdno_core::store::VaultStore;
-use cdno_mcp::bootstrap::open_vault;
+use cdno_mcp::bootstrap::open_vault_checked;
 use cdno_mcp::{CuadernoServer, SmokeServer};
 use rmcp::transport::streamable_http_server::session::never::NeverSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
@@ -353,7 +349,10 @@ async fn serve() -> Result<()> {
         let root = vault_root(args.vault.clone())?;
         tracing::info!(vault_root = %root.display(), "starting cdno-mcp-server");
 
-        let opened = open_vault(&root).inspect_err(|e| {
+        // Checked: a damaged index found here is set aside and rebuilt
+        // before the first reconcile, since a restart is what an operator
+        // reaches for when the index is suspect (#526).
+        let opened = open_vault_checked(&root).inspect_err(|e| {
             tracing::error!(error = %e, vault_root = %root.display(), "failed to open vault");
         })?;
 
@@ -361,14 +360,12 @@ async fn serve() -> Result<()> {
         // (RFC 0006 §8.4).
         cdno_mcp::startup::log_method_notice(&opened.vault);
 
+        let health = Arc::new(cdno_mcp::index_health::IndexHealth::from_opened(&opened));
         if args.reconcile_interval_secs > 0 {
-            spawn_reconcile_loop(
-                opened.store.clone(),
-                opened.index.clone(),
-                opened.scope.clone(),
-                Duration::from_secs(args.reconcile_interval_secs),
-            );
+            health.spawn_loop(Some(Duration::from_secs(args.reconcile_interval_secs)));
         } else {
+            // Still listen for a tool call that meets a damaged index.
+            health.spawn_loop(None);
             tracing::warn!(
                 "periodic reconciliation disabled (--reconcile-interval-secs 0); \
                  out-of-band edits will not appear in the index until restart"
@@ -410,9 +407,9 @@ async fn serve() -> Result<()> {
         let vault = Arc::new(opened.vault);
         let server = if args.read_only {
             tracing::info!("read-only mode: mutating tools are not registered");
-            CuadernoServer::read_only(vault, root.clone())
+            CuadernoServer::read_only(vault, root.clone()).with_index_health(health)
         } else {
-            let server = CuadernoServer::new(vault, root.clone());
+            let server = CuadernoServer::new(vault, root.clone()).with_index_health(health);
             if args.sync_nudge {
                 tracing::info!(
                     sentinel = %sentinel.path().display(),
@@ -503,58 +500,6 @@ fn vault_root(flag: Option<PathBuf>) -> Result<PathBuf> {
             std::env::current_dir().context("could not determine the current working directory")
         }
     }
-}
-
-/// Periodic index reconciliation — the correctness backstop for a
-/// long-running server whose markdown is mutated by other writers
-/// (CLI, editors, sync). Runs the synchronous pass on the blocking
-/// pool so tool requests keep flowing while it scans.
-///
-/// Known benign race (PR #304 review, correctness finding 2): the
-/// pass reads file state *before* taking the per-note write lock, so
-/// a tool-call write landing in that window can be shadowed by a
-/// stale index row — which the *next* pass heals (mtime mismatch).
-/// Worst case is stale search results for one interval; markdown is
-/// never touched by reconciliation, so no data is at risk.
-fn spawn_reconcile_loop(
-    store: Arc<dyn VaultStore>,
-    index: Arc<dyn VaultIndex>,
-    scope: Arc<NoteScope>,
-    every: Duration,
-) {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(every);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // The first tick fires immediately; skip it — `Vault::new`
-        // just reconciled at open.
-        interval.tick().await;
-        loop {
-            interval.tick().await;
-            let (s, i, g) = (store.clone(), index.clone(), scope.clone());
-            match tokio::task::spawn_blocking(move || reconcile(&s, &i, &g)).await {
-                Ok(Ok(report)) => {
-                    let changed = report.added + report.updated + report.removed;
-                    if changed > 0 || !report.errors.is_empty() {
-                        tracing::info!(
-                            scanned = report.scanned,
-                            added = report.added,
-                            updated = report.updated,
-                            removed = report.removed,
-                            errors = report.errors.len(),
-                            "periodic reconciliation applied out-of-band changes"
-                        );
-                    } else {
-                        tracing::debug!(
-                            scanned = report.scanned,
-                            "periodic reconciliation: nothing changed"
-                        );
-                    }
-                }
-                Ok(Err(e)) => tracing::warn!(error = %e, "periodic reconciliation failed"),
-                Err(e) => tracing::warn!(error = %e, "periodic reconciliation task panicked"),
-            }
-        }
-    });
 }
 
 /// Same tracing setup as the stdio binary: stderr, `info` default,

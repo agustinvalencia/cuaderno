@@ -243,6 +243,44 @@ pub enum TransactionError {
     /// All file operations succeeded, but one or more index updates
     /// failed. The vault on disk is correct; the index is stale for
     /// the affected notes. Reconciliation will heal it.
-    #[error("index stale after successful commit ({} error(s))", .0.len())]
+    ///
+    /// The message carries the first underlying error, not only the
+    /// count: a count alone hid a corrupt index for days, because every
+    /// per-note failure read the same and none named its cause.
+    #[error("index stale after successful commit ({} error(s)){}", .0.len(), first_cause(.0))]
     IndexStale(Vec<IndexError>),
+}
+
+impl TransactionError {
+    /// True when the index failure underneath this error says the
+    /// database file itself is damaged, rather than a row being
+    /// rejected. A file failure never is: it is not the index.
+    pub fn is_index_corruption(&self) -> bool {
+        match self {
+            Self::IndexStale(errors) => errors.iter().any(IndexError::is_corruption),
+            Self::FileWrite { .. } => false,
+        }
+    }
+}
+
+/// `": <first error>"`, or nothing for an empty list.
+fn first_cause(errors: &[IndexError]) -> String {
+    errors.first().map(|e| format!(": {e}")).unwrap_or_default()
+}
+
+impl IndexError {
+    /// True for the SQLite result codes meaning the database file is
+    /// damaged or is not a database at all. The index is a rebuildable
+    /// cache, so these are recovered by rebuilding it, never shown to
+    /// the person as if their notes were at risk.
+    pub fn is_corruption(&self) -> bool {
+        matches!(
+            self,
+            Self::Sqlite(rusqlite::Error::SqliteFailure(e, _))
+                if matches!(
+                    e.code,
+                    rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+                )
+        )
+    }
 }

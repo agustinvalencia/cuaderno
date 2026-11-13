@@ -495,6 +495,39 @@ impl CuadernoServer {
         let dtos: Vec<SearchResultDto> = results.into_iter().map(Into::into).collect();
         json_result(dtos)
     }
+
+    #[tool(
+        description = "The health of the vault's index, the cache of the notes that search, context and every write's bookkeeping read from. Runs a quick integrity check of the index's database file now and returns it (`check`), the latest reconciliation sweep (`last_sweep`: counts, and the first few notes it could not index with the reason each failed), the latest rebuild (`last_rebuild`), and any damage the server found when it started (`damage_at_open`). `healthy` is the verdict on the index itself: the check passed and the latest rebuild did not fail. `notes_not_indexed` counts notes the latest sweep could not index; those are nearly always notes that do not parse, which `lint` names and no rebuild fixes, so they do not make `healthy` false. Call it when a tool reports a damaged index or `index stale after successful commit`, or when results look wrong (a vault that reads as empty, a note search cannot find). The notes on disk are the source of truth, and an unhealthy index never means they are lost: the server rebuilds a damaged index itself when a check or a tool call finds the damage. `rebuild_index` forces a rebuild now."
+    )]
+    pub async fn index_status(
+        &self,
+        Parameters(_input): Parameters<EmptyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let health = index_health_or_error(self)?;
+        let status = tokio::task::spawn_blocking(move || health.status())
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "index_status panicked on the blocking pool");
+                ErrorData::internal_error(
+                    "internal error while checking the index".to_string(),
+                    None,
+                )
+            })?;
+        json_result(status)
+    }
+}
+
+/// The server's index-health supervisor, or the error a server without
+/// one returns (both binaries attach one; a bare test server may not).
+pub(crate) fn index_health_or_error(
+    server: &CuadernoServer,
+) -> Result<std::sync::Arc<crate::index_health::IndexHealth>, ErrorData> {
+    server.index_health().cloned().ok_or_else(|| {
+        ErrorData::internal_error(
+            "index health is not available on this server".to_string(),
+            None,
+        )
+    })
 }
 
 /// Refuse a note reference naming somewhere outside the vault as

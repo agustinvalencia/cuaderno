@@ -63,6 +63,11 @@ pub struct CuadernoServer {
     // no server can skip the check by omission; a folder that is not a git
     // repository is reported as such by `git_state` and passes.
     vault_root: std::path::PathBuf,
+    // The index-health supervisor behind `index_status` and
+    // `rebuild_index` (#526). `None` unless a caller attached one with
+    // `with_index_health`; both binaries do, and the tools say so when
+    // it is missing.
+    index_health: Option<Arc<crate::index_health::IndexHealth>>,
     // Merged dispatch table (the four per-group `#[tool_router]`s).
     // `#[tool_handler(router = self.tool_router)]` reads it at runtime;
     // dead-code analysis can't trace the proc-macro-generated reads.
@@ -84,6 +89,7 @@ impl CuadernoServer {
             vault,
             sync_nudge: None,
             vault_root,
+            index_health: None,
             tool_router,
         }
     }
@@ -100,6 +106,18 @@ impl CuadernoServer {
     pub fn with_sync_nudge(mut self, nudge: crate::nudge::SharedNudge) -> Self {
         self.sync_nudge = Some(nudge);
         self
+    }
+
+    /// Attach the index-health supervisor that `index_status` and
+    /// `rebuild_index` report on and act through (#526).
+    pub fn with_index_health(mut self, health: Arc<crate::index_health::IndexHealth>) -> Self {
+        self.index_health = Some(health);
+        self
+    }
+
+    /// The attached supervisor, if any.
+    pub(crate) fn index_health(&self) -> Option<&Arc<crate::index_health::IndexHealth>> {
+        self.index_health.as_ref()
     }
 
     /// The configured sentinel, if any. Read only by
@@ -122,6 +140,7 @@ impl CuadernoServer {
             // ever reach the nudge; leaving it `None` says so.
             sync_nudge: None,
             vault_root,
+            index_health: None,
             tool_router: Self::context_router(),
         }
     }

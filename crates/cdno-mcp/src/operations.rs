@@ -1341,6 +1341,44 @@ impl CuadernoServer {
         self.verified_write(path, message, WriteShape::Rewritten)
             .await
     }
+
+    #[tool(
+        description = "Rebuild the vault's index from the notes now: build a fresh index from every note on disk, check it, and copy it into the live index in place, so every process using the vault sees it at once. A copy of the old file is kept as `.cuaderno/index.db.previous`. No note is read differently or changed: the index is a cache, and this is what `cdno reindex` does, done without a restart. The server already rebuilds a damaged index by itself, so call this only when `index_status` stays unhealthy, or when the person asks. It does not fix `notes_not_indexed`: those are notes that do not parse (see `lint`). Search and context keep answering from the old index while it builds. Refused with `rebuild_refused` while another rebuild is running in this server or within a minute of the last (`details.reason` says which). Returns the rebuild's record: `rebuilt`, the number of `notes` indexed, `errors` for notes it could not index, `snapshots_carried` / `snapshots_lost` for the archival snapshots, and `failure` when it did not replace anything (the old index is then still live)."
+    )]
+    pub async fn rebuild_index(
+        &self,
+        Parameters(_input): Parameters<EmptyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let health = crate::context::index_health_or_error(self)?;
+        let outcome =
+            tokio::task::spawn_blocking(move || health.rebuild("rebuild_index was called"))
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "rebuild_index panicked on the blocking pool");
+                    ErrorData::internal_error(
+                        "internal error while rebuilding the index".to_string(),
+                        None,
+                    )
+                })?;
+        match outcome {
+            Ok(record) => {
+                tracing::warn!(
+                    rebuilt = record.rebuilt,
+                    notes = record.notes,
+                    errors = record.errors,
+                    "index rebuilt on request"
+                );
+                json_result(record)
+            }
+            // A refusal the caller can act on (wait, or let the running
+            // rebuild finish), so a rejection, not a protocol error.
+            Err(refused) => Err(crate::rejection::reject(
+                crate::rejection::RejectionCode::RebuildRefused,
+                refused.to_string(),
+                serde_json::json!({ "reason": refused.to_string() }),
+            )),
+        }
+    }
 }
 
 impl CuadernoServer {

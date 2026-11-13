@@ -145,6 +145,7 @@ pub(crate) enum RejectionCode {
     ProjectInFocus,
     ProjectNotActive,
     ProjectNotParked,
+    RebuildRefused,
     ReferenceDrift,
     ReferenceUnaddressable,
     RenameIncomplete,
