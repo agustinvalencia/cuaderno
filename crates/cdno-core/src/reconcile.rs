@@ -99,6 +99,58 @@ pub struct ReconciliationIssue {
     pub reason: String,
 }
 
+/// What [`rebuild`] did.
+#[derive(Debug, Default)]
+pub struct RebuildReport {
+    /// The full pass that populated the fresh index, so `added` counts
+    /// every note it now holds.
+    pub reconciliation: ReconciliationReport,
+    /// Archival snapshot rows copied from the old index.
+    pub snapshots_carried: usize,
+    /// Rows that could not be carried, or a reason none could: the old
+    /// index's damage reached them. Each lost row only loses `lint`'s
+    /// frozen-prefix check on that archived note; nothing else depends on
+    /// it.
+    pub snapshots_lost: Vec<String>,
+}
+
+/// Rebuild `index` from the markdown into a fresh file and swap it in
+/// ([`SqliteIndex::rebuild_with`](crate::index::SqliteIndex::rebuild_with)):
+/// the repair for a damaged index in a process that keeps it open.
+///
+/// One table is not derived from the markdown: the archival snapshots,
+/// the frozen-prefix record lint checks each archived action note
+/// against. They are carried across from the old index, every row that
+/// can still be read, so an automatic repair does not quietly drop the
+/// check the way deleting the file (`cdno reindex`) does.
+pub fn rebuild(
+    store: &Arc<dyn VaultStore>,
+    index: &crate::index::SqliteIndex,
+    scope: &NoteScope,
+) -> Result<RebuildReport, IndexError> {
+    index.rebuild_with(|fresh| {
+        let reconciliation = reconcile(store, fresh, scope)?;
+        let mut report = RebuildReport {
+            reconciliation,
+            ..RebuildReport::default()
+        };
+        match index.list_archival_snapshots() {
+            Ok(rows) => {
+                for (path, snapshot) in rows {
+                    match fresh.record_archival_snapshot(&path, &snapshot) {
+                        Ok(()) => report.snapshots_carried += 1,
+                        Err(e) => report.snapshots_lost.push(format!("{path}: {e}")),
+                    }
+                }
+            }
+            Err(e) => report
+                .snapshots_lost
+                .push(format!("the old index's snapshots could not be read: {e}")),
+        }
+        Ok(report)
+    })
+}
+
 /// Reconcile the index against the filesystem. See module docs for the
 /// algorithm. Returns `Err` only for catastrophic failures (e.g. the
 /// vault walk itself fails); per-file errors accumulate into the

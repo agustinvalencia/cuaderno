@@ -300,3 +300,247 @@ fn migration_004_adds_nullable_columns() {
     assert_eq!(masked, None);
     assert_eq!(mask_version, None);
 }
+
+// ---------------------------------------------------------------------
+// Integrity checks and the in-place rebuild (#526)
+// ---------------------------------------------------------------------
+
+fn insert_note(index: &SqliteIndex, path: &str, frontmatter: &str) {
+    index
+        .with_connection(|c| {
+            c.execute(
+                "INSERT INTO notes (path, note_type, content_hash, mtime_ns, size, frontmatter, indexed_at_ns) VALUES (?1, 'daily', 'h', 0, 0, ?2, 0)",
+                rusqlite::params![path, frontmatter],
+            )
+        })
+        .unwrap();
+}
+
+fn note_paths(index: &SqliteIndex) -> Vec<String> {
+    index
+        .with_connection(|c| {
+            let mut stmt = c.prepare("SELECT path FROM notes ORDER BY path")?;
+            stmt.query_map([], |r| r.get(0))?.collect()
+        })
+        .unwrap()
+}
+
+fn with_suffix(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
+    let mut p = path.as_os_str().to_owned();
+    p.push(suffix);
+    std::path::PathBuf::from(p)
+}
+
+/// Fill an index with enough rows to span many pages, close it, and
+/// overwrite its last page with garbage. The header and schema pages are
+/// untouched, so the file still opens and migrates: the damage only
+/// shows to an integrity check, the shape that went unnoticed in #526.
+fn damaged_index_file(path: &std::path::Path) {
+    {
+        let index = SqliteIndex::open(path).unwrap();
+        let padding = "x".repeat(400);
+        for i in 0..400 {
+            insert_note(
+                &index,
+                &format!("n{i:04}.md"),
+                &format!("{{\"p\":\"{padding}\"}}"),
+            );
+        }
+    }
+    let page_size: u64 = Connection::open(path)
+        .unwrap()
+        .query_row("PRAGMA page_size", [], |r| r.get(0))
+        .unwrap();
+    let mut bytes = std::fs::read(path).unwrap();
+    let len = bytes.len() as u64;
+    assert!(len / page_size > 20, "the fixture spans many pages");
+    let start = (len - page_size) as usize;
+    for b in &mut bytes[start..] {
+        *b = 0xA5;
+    }
+    std::fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn quick_check_is_empty_on_a_sound_index() {
+    let (_dir, path) = new_db_path();
+    let index = SqliteIndex::open(&path).unwrap();
+    insert_note(&index, "a.md", "{}");
+    assert!(index.quick_check().unwrap().is_empty());
+    assert!(index.integrity_check().unwrap().is_empty());
+}
+
+#[test]
+fn quick_check_reports_page_damage_that_open_does_not_notice() {
+    let (_dir, path) = new_db_path();
+    damaged_index_file(&path);
+
+    let index = SqliteIndex::open(&path).expect("page damage does not fail open");
+    let problems = index.quick_check().unwrap();
+    assert!(!problems.is_empty(), "the damage is reported");
+    assert!(problems.len() <= cdno_core::index::CHECK_PROBLEM_LIMIT);
+    assert!(!index.check_integrity().unwrap());
+}
+
+#[test]
+fn rebuild_with_swaps_the_fresh_file_in_and_keeps_the_old_one() {
+    let (_dir, path) = new_db_path();
+    let index = SqliteIndex::open(&path).unwrap();
+    insert_note(&index, "old.md", "{}");
+
+    index
+        .rebuild_with(|fresh| {
+            fresh.list_all_paths().map(|paths| assert!(paths.is_empty(), "it starts empty"))?;
+            // `populate` writes through the trait in real use; raw SQL
+            // through a second handle stands in for it here.
+            let conn = Connection::open(with_suffix(&path, cdno_core::index::REBUILD_SUFFIX))
+                .unwrap();
+            conn.execute(
+                "INSERT INTO notes (path, note_type, content_hash, mtime_ns, size, frontmatter, indexed_at_ns) VALUES ('new.md', 'daily', 'h', 0, 0, '{}', 0)",
+                [],
+            )
+            .unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+    assert_eq!(
+        note_paths(&index),
+        vec!["new.md"],
+        "the same handle reads the new file"
+    );
+    assert!(index.quick_check().unwrap().is_empty());
+    let previous = with_suffix(&path, cdno_core::index::PREVIOUS_SUFFIX);
+    assert!(previous.exists(), "the replaced file is kept");
+    let old: Vec<String> = Connection::open(&previous)
+        .unwrap()
+        .prepare("SELECT path FROM notes")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(old, vec!["old.md"]);
+    assert!(
+        !with_suffix(&path, cdno_core::index::REBUILD_SUFFIX).exists(),
+        "no rebuild file is left behind"
+    );
+}
+
+#[test]
+fn rebuild_with_leaves_the_live_index_alone_when_populate_fails() {
+    let (_dir, path) = new_db_path();
+    let index = SqliteIndex::open(&path).unwrap();
+    insert_note(&index, "kept.md", "{}");
+
+    let err = index
+        .rebuild_with(|_| -> Result<(), _> {
+            Err(cdno_core::error::IndexError::Query("walk failed".into()))
+        })
+        .unwrap_err();
+    assert!(err.to_string().contains("walk failed"));
+    assert_eq!(note_paths(&index), vec!["kept.md"]);
+    assert!(!with_suffix(&path, cdno_core::index::REBUILD_SUFFIX).exists());
+    assert!(!with_suffix(&path, cdno_core::index::PREVIOUS_SUFFIX).exists());
+}
+
+#[test]
+fn rebuild_with_refuses_while_the_fresh_index_is_still_held() {
+    let (_dir, path) = new_db_path();
+    let index = SqliteIndex::open(&path).unwrap();
+    insert_note(&index, "kept.md", "{}");
+
+    let mut kept = None;
+    let err = index
+        .rebuild_with(|fresh| {
+            kept = Some(fresh.clone());
+            Ok(())
+        })
+        .unwrap_err();
+    assert!(err.to_string().contains("still in use"), "{err}");
+    drop(kept);
+    assert_eq!(
+        note_paths(&index),
+        vec!["kept.md"],
+        "the live index is untouched"
+    );
+}
+
+#[test]
+fn rebuild_with_repairs_a_damaged_index_behind_the_same_handle() {
+    let (_dir, path) = new_db_path();
+    damaged_index_file(&path);
+    let index = SqliteIndex::open(&path).unwrap();
+    assert!(!index.quick_check().unwrap().is_empty());
+
+    index.rebuild_with(|_| Ok(())).unwrap();
+
+    assert!(
+        index.quick_check().unwrap().is_empty(),
+        "the handle now reads a sound file"
+    );
+    assert!(note_paths(&index).is_empty());
+    insert_note(&index, "after.md", "{}");
+    assert_eq!(note_paths(&index), vec!["after.md"], "and writes to it");
+}
+
+#[test]
+fn set_aside_moves_the_index_files_to_previous() {
+    let (_dir, path) = new_db_path();
+    drop(SqliteIndex::open(&path).unwrap());
+    std::fs::write(with_suffix(&path, "-wal"), b"wal").unwrap();
+
+    SqliteIndex::set_aside(&path);
+
+    assert!(!path.exists());
+    assert!(!with_suffix(&path, "-wal").exists());
+    assert!(with_suffix(&path, cdno_core::index::PREVIOUS_SUFFIX).exists());
+    assert!(with_suffix(&path, &format!("{}-wal", cdno_core::index::PREVIOUS_SUFFIX)).exists());
+}
+
+fn sqlite_failure(code: std::ffi::c_int) -> cdno_core::error::IndexError {
+    cdno_core::error::IndexError::Sqlite(rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(code),
+        None,
+    ))
+}
+
+#[test]
+fn index_stale_names_its_first_cause() {
+    use cdno_core::error::{IndexError, TransactionError};
+    let err = TransactionError::IndexStale(vec![
+        sqlite_failure(rusqlite::ffi::SQLITE_CORRUPT),
+        IndexError::Query("second".into()),
+    ]);
+    let message = err.to_string();
+    assert!(
+        message.starts_with("index stale after successful commit (2 error(s)): SQLite error: "),
+        "{message}"
+    );
+    assert!(!message.contains("second"), "only the first cause is named");
+    assert_eq!(
+        TransactionError::IndexStale(Vec::new()).to_string(),
+        "index stale after successful commit (0 error(s))"
+    );
+}
+
+#[test]
+fn only_a_damaged_file_counts_as_index_corruption() {
+    use cdno_core::error::{IndexError, TransactionError};
+    assert!(sqlite_failure(rusqlite::ffi::SQLITE_CORRUPT).is_corruption());
+    assert!(sqlite_failure(rusqlite::ffi::SQLITE_NOTADB).is_corruption());
+    assert!(!sqlite_failure(rusqlite::ffi::SQLITE_CONSTRAINT).is_corruption());
+    assert!(!IndexError::Query("x".into()).is_corruption());
+
+    assert!(
+        TransactionError::IndexStale(vec![
+            IndexError::Query("x".into()),
+            sqlite_failure(rusqlite::ffi::SQLITE_CORRUPT),
+        ])
+        .is_index_corruption(),
+        "any one damaged-file error is enough"
+    );
+    assert!(
+        !TransactionError::IndexStale(vec![IndexError::Query("x".into())]).is_index_corruption()
+    );
+}

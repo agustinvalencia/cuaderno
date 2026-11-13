@@ -33,8 +33,25 @@ pub(crate) fn json_result<S: serde::Serialize>(value: S) -> Result<CallToolResul
 /// the classification lives one hop away from this function.
 pub(crate) fn into_mcp_error(e: DomainError) -> ErrorData {
     let data = crate::rejection::envelope(&e);
-    ErrorData::internal_error(e.to_string(), data)
+    ErrorData::internal_error(message(&e), data)
 }
+
+/// The client-facing message for `e`. A damaged index also wakes the
+/// health loop and says what the client most needs to know: the notes
+/// are safe, and the cache is being rebuilt (#526, #520).
+fn message(e: &DomainError) -> String {
+    if e.is_index_corruption() {
+        crate::index_health::corruption_seen();
+        format!("{e} \u{2014} {INDEX_DAMAGED_HINT}")
+    } else {
+        e.to_string()
+    }
+}
+
+/// Appended to an error caused by a damaged index.
+pub(crate) const INDEX_DAMAGED_HINT: &str = "the notes on disk are intact; the index (a cache of \
+     them) is damaged, and the server rebuilds it automatically. `index_status` shows the repair; \
+     `rebuild_index` forces one. A write that reported this was saved.";
 
 /// [`into_mcp_error`] for a start or switch: a `focus_open` rejection also
 /// carries `details.attempted`, what the caller asked for, in the shape
@@ -49,7 +66,7 @@ pub(crate) fn into_mcp_error_attempting(e: DomainError, attempted: serde_json::V
     {
         rejection["details"]["attempted"] = attempted;
     }
-    ErrorData::internal_error(e.to_string(), data)
+    ErrorData::internal_error(message(&e), data)
 }
 
 /// [`into_mcp_error`] for a pause or a resume: a `no_focus` rejection carries
@@ -65,7 +82,7 @@ pub(crate) fn into_mcp_error_no_focus(e: DomainError, message: &str) -> ErrorDat
     {
         rejection["message"] = message.into();
     }
-    ErrorData::internal_error(e.to_string(), data)
+    ErrorData::internal_error(self::message(&e), data)
 }
 
 /// Build an InvalidParams error pointing at a specific input field.

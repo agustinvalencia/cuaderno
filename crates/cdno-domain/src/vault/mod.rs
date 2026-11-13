@@ -203,6 +203,17 @@ fn note_scope_for(config: &VaultConfig) -> Result<NoteScope, DomainError> {
 }
 
 impl Vault {
+    /// The [`NoteScope`] a vault opened on `config` would reconcile with,
+    /// for a caller that has to reconcile before the vault exists (the
+    /// checked open's rebuild of a damaged index, #526). Validates a copy
+    /// of the config the way [`new`](Self::new) validates its own.
+    pub fn note_scope_of(config: &VaultConfig) -> Result<NoteScope, DomainError> {
+        let mut config = config.clone();
+        config.ignore_set()?;
+        crate::type_registry::TypeRegistry::validate(&mut config)?;
+        note_scope_for(&config)
+    }
+
     /// Construct a vault and run startup reconciliation. The returned
     /// [`ReconciliationReport`] lets callers surface scan counts or
     /// per-file issues without re-running the pass.

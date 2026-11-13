@@ -34,9 +34,9 @@ docs-site/book/
 # the diff and can accumulate fragments of whatever else was indexed
 # locally. The config and templates under `.cuaderno/` stay tracked;
 # these do not (#456).
-.cuaderno/index.db
-.cuaderno/index.db-shm
-.cuaderno/index.db-wal
+# The glob also covers a rebuild's `index.db.rebuild` and the
+# `index.db.previous` it keeps (#526).
+.cuaderno/index.db*
 .cuaderno/.lock
 
 # ...and the notes it accumulates. The repo root is a vault, so any `cdno`

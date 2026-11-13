@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use cdno_mcp::CuadernoServer;
-use cdno_mcp::bootstrap::open_vault;
+use cdno_mcp::bootstrap::open_vault_checked;
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use tracing_subscriber::EnvFilter;
@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
     // A stdio session is short-lived, so only the `vault` is kept;
     // the store/index/ignore handles (used by the HTTP binary's
     // reconciliation loop) are dropped.
-    let opened = open_vault(&root).inspect_err(|e| {
+    let opened = open_vault_checked(&root).inspect_err(|e| {
         tracing::error!(error = %e, vault_root = %root.display(), "failed to open vault");
     })?;
 
@@ -47,7 +47,11 @@ async fn main() -> Result<()> {
     // (RFC 0006 §8.4).
     cdno_mcp::startup::log_method_notice(&opened.vault);
 
-    let server = CuadernoServer::new(Arc::new(opened.vault), root.clone());
+    // No sweep loop here, but `index_status` and `rebuild_index` work the
+    // same as over HTTP (#526).
+    let health = Arc::new(cdno_mcp::index_health::IndexHealth::from_opened(&opened));
+    let server =
+        CuadernoServer::new(Arc::new(opened.vault), root.clone()).with_index_health(health);
     // Derive the count from the merged router rather than hardcoding it,
     // so the startup log can't fall out of sync as tools are added.
     tracing::info!(

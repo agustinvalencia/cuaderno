@@ -359,6 +359,7 @@ dependencies = [
  "jsonwebtoken",
  "reqwest",
  "rmcp",
+ "rusqlite",
  "schemars",
  "serde",
  "serde_json",

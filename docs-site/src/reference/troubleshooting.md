@@ -27,6 +27,13 @@ cdno reindex
 The Markdown files are always authoritative, so a rebuild is safe. See
 [Business rules](../concepts/business-rules.md).
 
+On a server (`cdno-mcp`, `cdno-mcp-server`) the index is checked and repaired without you: see
+[The index looks after itself](mcp/overview.md#the-index-looks-after-itself). An error ending in
+"the notes on disk are intact; the index … is damaged" is that repair being started. Ask the
+assistant for `index_status` to see how it went, or `rebuild_index` to force it. Run `cdno reindex`
+against a vault a server has open only with the server stopped: two processes writing one index
+file is one way it gets damaged.
+
 ## `lint` is failing
 
 Run it to see the specifics:

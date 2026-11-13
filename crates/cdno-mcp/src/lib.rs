@@ -47,6 +47,7 @@ mod context;
 mod creation;
 pub mod dto;
 pub mod freshness;
+pub mod index_health;
 pub mod input;
 mod lifecycle;
 pub mod nudge;

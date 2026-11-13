@@ -9,8 +9,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
-use std::sync::Mutex;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension, params};
@@ -58,6 +58,9 @@ const MIGRATIONS: &[(u32, &str, &str)] = &[
 /// dep until there's evidence.
 pub struct SqliteIndex {
     conn: Mutex<Connection>,
+    /// Where the database file lives, so [`rebuild_with`](Self::rebuild_with)
+    /// can build a replacement beside it and move it into place.
+    path: PathBuf,
 }
 
 impl std::fmt::Debug for SqliteIndex {
@@ -127,6 +130,7 @@ impl SqliteIndex {
 
         Ok(Self {
             conn: Mutex::new(conn),
+            path: path.to_path_buf(),
         })
     }
 
@@ -144,14 +148,156 @@ impl SqliteIndex {
     ///
     /// Not invoked automatically on open: for a CLI-style invocation
     /// pattern, every command is a fresh startup and this would add
-    /// tens of milliseconds to each call. Callers that care about
-    /// integrity (e.g. a future `cdno doctor`) invoke this explicitly.
-    /// If any routine query elsewhere returns a corruption-shaped
-    /// error, the recovery path is to drop the index and reconcile.
+    /// tens of milliseconds to each call. A long-lived process opens
+    /// once and can afford it, so the MCP servers check at start and on
+    /// every reconciliation sweep. If any routine query elsewhere
+    /// returns a corruption-shaped error, the recovery path is to
+    /// rebuild the index ([`rebuild_with`](Self::rebuild_with)).
     pub fn check_integrity(&self) -> Result<bool, IndexError> {
+        Ok(self.quick_check()?.is_empty())
+    }
+
+    /// The problems `PRAGMA quick_check` reports, at most
+    /// [`CHECK_PROBLEM_LIMIT`] of them; empty when the file is sound.
+    ///
+    /// Page-level damage can leave every ordinary query working while
+    /// writes to the damaged pages fail, so this check, not query
+    /// errors, is the dependable signal. A check that itself fails with
+    /// a corruption code reports that error as its one problem rather
+    /// than failing: the answer to "is it damaged?" is then yes.
+    pub fn quick_check(&self) -> Result<Vec<String>, IndexError> {
+        self.run_check("quick_check")
+    }
+
+    /// [`quick_check`](Self::quick_check)'s thorough sibling, `PRAGMA
+    /// integrity_check`: it also compares every index with its table, so
+    /// it finds rows missing from an index that `quick_check` skips. It
+    /// is slower (it reads every index), so it runs on demand, not on
+    /// every sweep.
+    pub fn integrity_check(&self) -> Result<Vec<String>, IndexError> {
+        self.run_check("integrity_check")
+    }
+
+    fn run_check(&self, pragma: &str) -> Result<Vec<String>, IndexError> {
         let conn = self.lock_conn();
-        let result: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
-        Ok(result == "ok")
+        let rows = conn
+            .prepare(&format!("PRAGMA {pragma}({CHECK_PROBLEM_LIMIT})"))
+            .and_then(|mut stmt| {
+                stmt.query_map([], |r| r.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<String>>>()
+            });
+        match rows.map_err(IndexError::from) {
+            Ok(rows) if rows.len() == 1 && rows[0] == "ok" => Ok(Vec::new()),
+            Ok(rows) => Ok(rows),
+            Err(e) if e.is_corruption() => Ok(vec![e.to_string()]),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Rebuild the index into a fresh file and swap it in, without
+    /// closing the handle the rest of the process holds.
+    ///
+    /// `populate` fills the fresh index (normally a full reconciliation
+    /// against the markdown). While it runs, the live index keeps
+    /// serving every other caller. Only once the fresh file is populated
+    /// and passes `quick_check` does the swap take the connection mutex:
+    /// it closes the live connection, moves the old files aside as
+    /// `<index>.previous` (one generation, replacing an older one), moves
+    /// the fresh file into place, and reopens. Every caller holding this
+    /// `SqliteIndex` sees the new database on its next call.
+    ///
+    /// Building beside the live file, rather than deleting rows inside
+    /// it, is the point: a damaged b-tree can fail the deletes too, and
+    /// the bad file is kept for diagnosis instead of being destroyed.
+    ///
+    /// A write committed while `populate` runs lands in the old file, so
+    /// the new one lacks it. Its note has a newer mtime than the row the
+    /// rebuild wrote, so the next reconciliation picks it up.
+    ///
+    /// Rebuilding loses nothing a note holds; it is the same as
+    /// `cdno reindex`. A failure before the swap leaves the live index
+    /// exactly as it was. A failure during the swap leaves an unusable
+    /// connection that reports errors on every query, never an empty
+    /// index that reads as an empty vault (#520).
+    pub fn rebuild_with<T>(
+        &self,
+        populate: impl FnOnce(&Arc<dyn VaultIndex>) -> Result<T, IndexError>,
+    ) -> Result<T, IndexError> {
+        let fresh_path = sibling(&self.path, REBUILD_SUFFIX);
+        remove_index_files(&fresh_path);
+
+        let fresh = Arc::new(Self::open_connection(&fresh_path)?);
+        let populated = {
+            let as_dyn: Arc<dyn VaultIndex> = fresh.clone();
+            populate(&as_dyn)
+        };
+        let outcome = match populated {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                drop(fresh);
+                remove_index_files(&fresh_path);
+                return Err(e);
+            }
+        };
+        let problems = fresh.quick_check()?;
+        // Closing the fresh connection checkpoints its WAL into the main
+        // file, so moving the main file alone moves all of it. If
+        // `populate` kept a clone the file would still be open, and
+        // moving it then could lose the WAL's contents.
+        let fresh = Arc::try_unwrap(fresh).map_err(|_| {
+            remove_index_files(&fresh_path);
+            IndexError::Update("the rebuilt index is still in use; not swapping it in".into())
+        })?;
+        let fresh_conn = fresh
+            .conn
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Err((_, e)) = fresh_conn.close() {
+            remove_index_files(&fresh_path);
+            return Err(e.into());
+        }
+        if !problems.is_empty() {
+            remove_index_files(&fresh_path);
+            return Err(IndexError::Update(format!(
+                "the rebuilt index failed its own check, so it was not swapped in: {}",
+                problems.join("; ")
+            )));
+        }
+
+        let mut conn = self.lock_conn();
+        let old = std::mem::replace(&mut *conn, Connection::open_in_memory()?);
+        // A close error on a damaged file changes nothing that follows:
+        // the file is moved aside regardless.
+        let _ = old.close();
+        let previous = sibling(&self.path, PREVIOUS_SUFFIX);
+        remove_index_files(&previous);
+        move_index_files(&self.path, &previous);
+        fs::rename(&fresh_path, &self.path).map_err(|e| IndexError::Open {
+            path: self.path.display().to_string(),
+            source: e,
+        })?;
+        remove_index_files(&fresh_path);
+        let reopened = Connection::open(&self.path)?;
+        configure_connection(&reopened)?;
+        apply_pending_migrations(&reopened)?;
+        *conn = reopened;
+        Ok(outcome)
+    }
+
+    /// The database file this index reads and writes.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Move the index files at `path` aside to `<path>.previous`, as a
+    /// rebuild does, so the next [`open`](Self::open) starts from an
+    /// empty file. For a process that finds damage before anything else
+    /// holds the index, such as a server at start.
+    pub fn set_aside(path: impl AsRef<Path>) {
+        let path = path.as_ref();
+        let previous = sibling(path, PREVIOUS_SUFFIX);
+        remove_index_files(&previous);
+        move_index_files(path, &previous);
     }
 
     /// Borrow the underlying connection under the mutex for ad-hoc
@@ -173,28 +319,45 @@ impl SqliteIndex {
 /// cache, so these are recovered by dropping the file and reconciling
 /// rather than surfaced to the user.
 fn is_recoverable_corruption(err: &IndexError) -> bool {
-    matches!(
-        err,
-        IndexError::Sqlite(rusqlite::Error::SqliteFailure(e, _))
-            if matches!(
-                e.code,
-                rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
-            )
-    )
+    err.is_corruption()
+}
+
+/// The most problems an integrity check reports. The first few name the
+/// damage; a full list on a badly broken file would only be noise.
+pub const CHECK_PROBLEM_LIMIT: usize = 20;
+
+/// Suffix of the file a rebuild populates before swapping it in.
+pub const REBUILD_SUFFIX: &str = ".rebuild";
+
+/// Suffix the replaced index is kept under after a rebuild, one
+/// generation deep.
+pub const PREVIOUS_SUFFIX: &str = ".previous";
+
+/// SQLite's sidecars beside the main file: the write-ahead log and its
+/// shared-memory index.
+const SIDECARS: [&str; 3] = ["", "-wal", "-shm"];
+
+/// `path` with `suffix` appended to its file name (`index.db` →
+/// `index.db.previous`, `index.db-wal`).
+fn sibling(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
 }
 
 /// Remove the SQLite index file and its `-wal` / `-shm` sidecars,
 /// ignoring not-found. Used to drop a corrupt cache before rebuilding.
 fn remove_index_files(path: &Path) {
-    for suffix in ["", "-wal", "-shm"] {
-        let target = if suffix.is_empty() {
-            path.to_path_buf()
-        } else {
-            let mut name = path.as_os_str().to_owned();
-            name.push(suffix);
-            std::path::PathBuf::from(name)
-        };
-        let _ = fs::remove_file(target);
+    for suffix in SIDECARS {
+        let _ = fs::remove_file(sibling(path, suffix));
+    }
+}
+
+/// Rename the index file and its sidecars from `from` to `to`, each
+/// keeping its own suffix, ignoring any that do not exist.
+fn move_index_files(from: &Path, to: &Path) {
+    for suffix in SIDECARS {
+        let _ = fs::rename(sibling(from, suffix), sibling(to, suffix));
     }
 }
 

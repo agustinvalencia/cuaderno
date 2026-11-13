@@ -364,6 +364,18 @@ or starts with `^`. Headings inside the body must be level 3 or deeper and are h
 uniqueness rule, so a pasted derivation with its own `## Proof` must be demoted first. A blank
 `heading` or `body` is refused as an invalid argument (`-32602`).
 
+## The index
+
+| Tool | Inputs | Returns |
+|------|--------|---------|
+| `rebuild_index` | — | Rebuilds the index from every note into a fresh file, checks it, and swaps it in without a restart, keeping the old file as `.cuaderno/index.db.previous`. Search and context keep answering from the old index while it runs. Returns `rebuilt`, the `notes` indexed, `errors` (notes it could not index), `trigger` and `failure` (set when nothing was swapped; the old index is then still live). |
+
+The server already rebuilds a damaged index on its own, so this is for when
+[`index_status`](reads.md) stays unhealthy. It changes no note: it is what
+[`cdno reindex`](../cli/reindex.md) does, without stopping the server. A second call while one is
+running, or within a minute of the last, is refused with code `rebuild_refused`, and
+`details.reason` says which.
+
 ## Notes
 
 - `append?` defaults to replacing the section; set it `true` to append instead.

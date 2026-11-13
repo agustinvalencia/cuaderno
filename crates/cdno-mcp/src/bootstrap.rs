@@ -17,3 +17,11 @@ pub fn open_vault(root: &Path) -> Result<OpenedVault> {
     cdno_domain::bootstrap::open_vault(root)
         .with_context(|| format!("opening vault at {}", root.display()))
 }
+
+/// Open a vault at `root`, checking the index first — see
+/// [`cdno_domain::bootstrap::open_vault_checked`]. What both MCP binaries
+/// use: each is a long-lived process that pays the check once.
+pub fn open_vault_checked(root: &Path) -> Result<OpenedVault> {
+    cdno_domain::bootstrap::open_vault_checked(root)
+        .with_context(|| format!("opening vault at {}", root.display()))
+}
