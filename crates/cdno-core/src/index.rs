@@ -59,8 +59,8 @@ const MIGRATIONS: &[(u32, &str, &str)] = &[
 /// dep until there's evidence.
 pub struct SqliteIndex {
     conn: Mutex<Connection>,
-    /// Where the database file lives, so [`rebuild_with`](Self::rebuild_with)
-    /// can build a replacement beside it and move it into place.
+    /// Where the database file lives, so [`open_fresh_beside`](Self::open_fresh_beside)
+    /// can build a fresh index beside it.
     path: PathBuf,
 }
 
@@ -125,7 +125,16 @@ impl SqliteIndex {
     /// core of [`open`](Self::open), split out so `open` can retry it on
     /// a fresh file after discarding a corrupt one.
     fn open_connection(path: &Path) -> Result<Self, IndexError> {
+        Self::open_connection_sized(path, None)
+    }
+
+    /// [`open_connection`](Self::open_connection), setting the page size
+    /// first when one is given. It only takes effect on a new, empty file.
+    fn open_connection_sized(path: &Path, page_size: Option<u32>) -> Result<Self, IndexError> {
         let conn = Connection::open(path)?;
+        if let Some(size) = page_size {
+            conn.pragma_update(None, "page_size", size)?;
+        }
         configure_connection(&conn)?;
         apply_pending_migrations(&conn)?;
 
@@ -153,7 +162,7 @@ impl SqliteIndex {
     /// once and can afford it, so the MCP servers check at start and on
     /// every reconciliation sweep. If any routine query elsewhere
     /// returns a corruption-shaped error, the recovery path is to
-    /// rebuild the index ([`rebuild_with`](Self::rebuild_with)).
+    /// rebuild the index ([`crate::reconcile::rebuild`]).
     pub fn check_integrity(&self) -> Result<bool, IndexError> {
         Ok(self.quick_check()?.is_empty())
     }
@@ -226,7 +235,15 @@ impl SqliteIndex {
         );
         let path = sibling(&self.path, &suffix);
         remove_index_files(&path);
-        match Self::open_connection(&path) {
+        // The backup copy refuses a WAL destination whose page size differs
+        // from the source's, so the fresh file takes the live one's (read
+        // from the header, which survives most damage). A header too
+        // damaged to read leaves SQLite's default.
+        let page_size: Option<u32> = self
+            .lock_conn()
+            .query_row("PRAGMA page_size", [], |r| r.get(0))
+            .ok();
+        match Self::open_connection_sized(&path, page_size) {
             Ok(index) => Ok(FreshIndex {
                 index: Some(Arc::new(index)),
                 path,
@@ -249,9 +266,8 @@ impl SqliteIndex {
     /// damaged file. Damaged pages do not stop the copy: it writes every
     /// page of the destination and reads none of its b-trees.
     ///
-    /// Before copying, the current file and its WAL are copied byte for
-    /// byte to `<index>.previous` (one generation, replacing an older one),
-    /// best effort, for diagnosis.
+    /// Keeping a copy of the damaged file for diagnosis is the caller's
+    /// choice, before it takes any lock: [`keep_previous_copy`](Self::keep_previous_copy).
     ///
     /// `fresh` must pass `quick_check` first, or nothing is touched. A
     /// failed copy leaves the live file as it was, since the copy is one
@@ -268,7 +284,6 @@ impl SqliteIndex {
         }
         let source = fresh.sqlite().lock_conn();
         let mut live = self.lock_conn();
-        keep_previous_copy(&self.path);
 
         let backup = rusqlite::backup::Backup::new(&source, &mut live)?;
         let deadline = std::time::Instant::now() + REPLACE_TIMEOUT;
@@ -289,6 +304,15 @@ impl SqliteIndex {
             }
         }
         Ok(())
+    }
+
+    /// Copy the index file and its WAL byte for byte to `<index>.previous`
+    /// (and `.previous-wal`), replacing an older copy, for diagnosis. Best
+    /// effort: a failure must not stop a repair. A copy taken while
+    /// another process writes can be torn, which is acceptable for a file
+    /// nothing reads back.
+    pub fn keep_previous_copy(&self) {
+        keep_previous_copy(&self.path);
     }
 
     /// The database file this index reads and writes.
@@ -338,8 +362,9 @@ pub const CHECK_PROBLEM_LIMIT: usize = 20;
 pub const REBUILD_SUFFIX: &str = ".rebuild";
 
 /// How long [`SqliteIndex::replace_contents_from`] waits for the live
-/// file's write lock before giving up.
-const REPLACE_TIMEOUT: Duration = Duration::from_secs(30);
+/// file's write lock before giving up: the same as a writer waits for the
+/// vault lock, which the caller holds meanwhile.
+const REPLACE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A fresh index built beside a live one, for a rebuild. Its files are
 /// removed when it drops.
@@ -362,6 +387,12 @@ impl FreshIndex {
 
     fn sqlite(&self) -> &SqliteIndex {
         self.index.as_deref().expect("present until drop")
+    }
+
+    /// `quick_check` on the fresh index, so a caller can check it before
+    /// taking a lock; [`SqliteIndex::replace_contents_from`] checks again.
+    pub fn quick_check(&self) -> Result<Vec<String>, IndexError> {
+        self.sqlite().quick_check()
     }
 
     /// Where its database file is.

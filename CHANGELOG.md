@@ -16,15 +16,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
     after every reconciliation sweep (the thorough `integrity_check` when the sweep could not index
     some notes);
   - a damaged index is rebuilt from the notes into a fresh file, then copied into the live file in
-    place with SQLite's backup API, under the vault write lock, so every process using the vault
-    sees the repair and no commit lands half before it; a copy of the damaged file is kept as
-    `.cuaderno/index.db.previous`, and the archival snapshots it can still read are carried across;
+    place with SQLite's backup API, so every process using the vault sees the repair; the last
+    pass and the copy run under the vault write lock, so a write committed during the rebuild is
+    never lost from the index; a copy of the damaged file is kept as `.cuaderno/index.db.previous`,
+    and the archival snapshots it can still read are carried across;
+  - a header too damaged to be written over in place is reported as `restart_required`, since
+    only a restart's open can replace it;
   - a tool call that meets a corruption error starts the repair at once, on both servers, and its
     message says the notes on disk are intact and whether that call's write was saved;
   - rebuilds within one server are serialised and spaced at least a minute apart, concurrent
     rebuilds in different processes use separate files, and a failed one leaves the live index as
     it was;
-  - a database with no schema now fails the check, rather than reading as an empty vault.
+  - a database with no schema now fails the check, rather than reading as an empty vault;
+  - the git checkpoint now excludes `.cuaderno/index.db*`, so a rebuild's files never reach a
+    vault's history, and the guide's ignore line says `index.db*`.
 - **`index stale after successful commit` names its first cause**, not just a count, and the
   sweep logs the first five notes it could not index, with each one's reason, as a warning.
 
@@ -32,12 +37,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 - **`index_status` and `rebuild_index` MCP tools** (#526). `index_status` (read-only, also on
   `--read-only` servers) runs a fresh `quick_check` and reports the latest sweep, the latest
-  rebuild and any damage found at start; `healthy` judges the index itself, and
-  `notes_not_indexed` counts notes that did not index (usually notes that do not parse). `rebuild_index` forces a rebuild without a restart and
-  is refused with `rebuild_refused` while one is running or within a minute of the last. The
-  server advertises 68 tools.
+  rebuild and any damage found at start. `healthy` judges the index itself: a failed thorough
+  check keeps it false until a check as thorough passes. `notes_not_indexed` counts notes that
+  did not index (usually notes that do not parse). `rebuild_index` forces a rebuild without a
+  restart and is refused with `rebuild_refused` while one is running or within a minute of the
+  last. The server advertises 68 tools.
 - `SqliteIndex::quick_check`, `integrity_check` (both return the problem lines),
-  `open_fresh_beside`, `replace_contents_from` and `set_aside`, with `FreshIndex`; `cdno_core::reconcile::rebuild`; `IndexError::is_corruption`,
+  `open_fresh_beside`, `replace_contents_from`, `keep_previous_copy` and `set_aside`, with
+  `FreshIndex`; `cdno_core::reconcile::rebuild`; `IndexError::is_corruption`,
   `TransactionError::is_index_corruption` and `DomainError::is_index_corruption`;
   `cdno_domain::bootstrap::open_vault_checked`.
 

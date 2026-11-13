@@ -122,18 +122,20 @@ pub struct RebuildReport {
 /// has it open.
 ///
 /// 1. A full pass into a fresh index beside the live one, which keeps
-///    serving meanwhile.
-/// 2. A second, catch-up pass for whatever changed during the first; it is
-///    quick, since unchanged notes are skipped by mtime.
+///    serving meanwhile, then a second one for whatever changed during the
+///    first. Unchanged notes are skipped by mtime, so it is quick, and it
+///    keeps the pass under the lock short.
+/// 2. The fresh index is checked, and a copy of the live file is kept as
+///    `.previous` if the live file is damaged (a rebuild of a sound index
+///    keeps no copy, so it cannot overwrite the copy of a damaged one).
 /// 3. Under the vault write lock, so no commit in any process can land in
-///    between: carry the archival snapshots across (the one table the notes
-///    cannot regenerate), then copy the fresh index in. A snapshot whose
-///    note the fresh index lacks (archived after the catch-up pass) brings
-///    that note's row over from the live index first.
+///    between: a last pass into the fresh index, which makes it exactly the
+///    notes on disk at this moment; the archival snapshots carried across
+///    (the one table the notes cannot regenerate), bringing a note's row
+///    over from the live index when the fresh one lacks it; then the copy.
 ///
-/// Nothing else may hold the vault write lock in this thread while this
-/// runs: the lock is per open file, so taking it twice would wait for
-/// itself until the timeout.
+/// The caller must not hold the vault write lock itself: it is one per open
+/// file, so taking it twice in one thread would wait out the timeout.
 pub fn rebuild(
     store: &Arc<dyn VaultStore>,
     index: &crate::index::SqliteIndex,
@@ -142,15 +144,28 @@ pub fn rebuild(
     let fresh = index.open_fresh_beside()?;
     let fresh_index = fresh.index();
     reconcile(store, &fresh_index, scope)?;
-    let catch_up = reconcile(store, &fresh_index, scope)?;
+    reconcile(store, &fresh_index, scope)?;
+    let problems = fresh.quick_check()?;
+    if !problems.is_empty() {
+        return Err(IndexError::Update(format!(
+            "the rebuilt index failed its own check, so it was not copied in: {}",
+            problems.join("; ")
+        )));
+    }
+    if !index.quick_check().map(|p| p.is_empty()).unwrap_or(false) {
+        index.keep_previous_copy();
+    }
 
     let _lock = store.acquire_write_lock().map_err(|e| {
         IndexError::Update(format!(
             "acquiring the vault write lock to replace the index: {e}"
         ))
     })?;
+    // Lock held: this pass's transactions must not try to take it again.
+    let held: Arc<dyn VaultStore> = Arc::new(crate::store::LockHeldStore(store.clone()));
+    let last = reconcile(&held, &fresh_index, scope)?;
     let mut report = RebuildReport {
-        errors: catch_up.errors,
+        errors: last.errors,
         ..RebuildReport::default()
     };
     match index.list_archival_snapshots() {

@@ -64,8 +64,8 @@ fn message(e: &DomainError) -> String {
 
 /// Appended to an error caused by a damaged index.
 pub(crate) const INDEX_DAMAGED_HINT: &str = "the notes on disk are intact; the index (a cache of \
-     them) is damaged, and the server has started rebuilding it. `index_status` shows the repair; \
-     `rebuild_index` forces one.";
+     them) may be damaged, and the server is checking it and rebuilds it if it is. `index_status` \
+     shows the outcome; `rebuild_index` forces a rebuild.";
 
 /// Then, for a commit whose files were written before the index failed.
 const INDEX_DAMAGED_SAVED: &str = "This write was saved; do not repeat it.";

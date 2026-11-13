@@ -7,18 +7,19 @@
 //! notes it failed to index, and a damaged database stayed damaged until
 //! somebody with a shell on the host deleted it.
 //!
-//! - **Assess.** Every sweep reconciles, then runs `PRAGMA quick_check`.
-//!   Page-level damage can leave every read working while writes to the
-//!   damaged pages fail, so the check, not a query error, is the signal
-//!   that can be relied on. A tool call that meets a corruption error
-//!   wakes the loop at once ([`corruption_seen`]) for the thorough
-//!   `integrity_check`.
-//! - **Repair.** A failed check rebuilds the index into a fresh file and
-//!   swaps it in behind the handle every tool call shares
-//!   ([`SqliteIndex::rebuild_with`]), with no restart. Rebuilds are
-//!   serialised and spaced at least [`MIN_REBUILD_INTERVAL`] apart, so a
-//!   file that keeps getting damaged costs one rebuild per interval, not
-//!   a spin.
+//! - **Assess.** Every sweep reconciles, then runs `PRAGMA quick_check`
+//!   (the thorough `integrity_check` when the sweep could not index some
+//!   notes, at most once an hour). Page-level damage can leave every read
+//!   working while writes to the damaged pages fail, so the check, not a
+//!   query error, is the signal that can be relied on. A tool call that
+//!   meets a corruption error wakes the loop at once ([`corruption_seen`])
+//!   for `integrity_check`.
+//! - **Repair.** A failed check rebuilds the index from the notes and
+//!   copies it into the live file in place
+//!   ([`cdno_core::reconcile::rebuild`]), with no restart, so every process
+//!   using the vault sees the repair. Rebuilds are serialised and spaced at
+//!   least [`MIN_REBUILD_INTERVAL`] apart, so a file that keeps getting
+//!   damaged costs one rebuild per interval, not a spin.
 //! - **Report.** Failing notes are logged with their reasons, and the
 //!   latest sweep, check and rebuild are kept for `index_status`.
 //!
@@ -38,8 +39,13 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use tokio::sync::Notify;
 
-/// The shortest time between two rebuilds, automatic or asked for.
+/// The shortest time between two rebuilds, automatic or asked for. Also
+/// how long one `integrity_check` answers repeated corruption signals.
 pub const MIN_REBUILD_INTERVAL: Duration = Duration::from_secs(60);
+
+/// How often a sweep that keeps failing on some notes repeats the
+/// thorough check.
+pub const INTEGRITY_RECHECK: Duration = Duration::from_secs(3600);
 
 /// How many failing notes a sweep names, in the log and in the record.
 /// The first few show what is wrong; all of them would bury it.
@@ -75,6 +81,12 @@ struct State {
     last_rebuild: Option<RebuildRecord>,
     last_rebuild_at: Option<Instant>,
     damage_at_open: Option<Vec<String>>,
+    /// The strongest check that has failed since the index was last known
+    /// sound. Cleared by a passing check at least that strong, or by a
+    /// rebuild. `quick_check` cannot see what `integrity_check` found, so
+    /// a later quick pass must not clear it.
+    outstanding_damage: Option<CheckKind>,
+    last_integrity_at: Option<Instant>,
 }
 
 /// One reconciliation sweep, as `index_status` reports it.
@@ -115,7 +127,8 @@ pub struct CheckRecord {
     pub problems: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+/// Ordered by strength: `IntegrityCheck` sees everything `QuickCheck` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckKind {
     QuickCheck,
@@ -129,7 +142,7 @@ pub struct RebuildRecord {
     /// Why it ran: a failed sweep check, a corruption a tool call met, or
     /// a `rebuild_index` call.
     pub trigger: String,
-    /// True when the fresh index was swapped in.
+    /// True when the fresh index was copied in.
     pub rebuilt: bool,
     /// Notes the rebuilt index holds.
     pub notes: usize,
@@ -144,16 +157,24 @@ pub struct RebuildRecord {
     /// Why the rebuild failed, when it did. The old index is then still
     /// the live one.
     pub failure: Option<String>,
+    /// True when the failure means the live file is too damaged to be
+    /// written over in place (its header, typically): a running server
+    /// cannot repair it, and a restart, whose open replaces such a file,
+    /// is needed.
+    pub restart_required: bool,
 }
 
 /// What `index_status` returns.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct IndexStatus {
     /// The verdict on the index itself: true when the check run for this
-    /// call found nothing and the latest rebuild, if any, did not fail.
-    /// Notes that could not be indexed do not make it false: they are
-    /// nearly always notes that do not parse, which no rebuild can fix.
+    /// call found nothing, and no stronger check has found damage since the
+    /// index was last known sound. Notes that could not be indexed do not
+    /// make it false: they are nearly always notes that do not parse, which
+    /// no rebuild can fix.
     pub healthy: bool,
+    /// True when the latest rebuild failed in a way only a restart can fix.
+    pub restart_required: bool,
     /// The check run for this call.
     pub check: CheckRecord,
     /// How many notes the latest sweep (or rebuild) could not index, listed
@@ -163,7 +184,7 @@ pub struct IndexStatus {
     pub last_sweep: Option<SweepRecord>,
     pub last_rebuild: Option<RebuildRecord>,
     /// What the server found wrong with the index when it started, before
-    /// it set the file aside and rebuilt it; null when nothing was.
+    /// it rebuilt it; null when nothing was.
     pub damage_at_open: Option<Vec<String>>,
 }
 
@@ -239,7 +260,16 @@ impl IndexHealth {
             ok: problems.is_empty(),
             problems,
         };
-        self.lock().last_check = Some(record.clone());
+        let mut state = self.lock();
+        state.last_check = Some(record.clone());
+        if kind == CheckKind::IntegrityCheck {
+            state.last_integrity_at = Some(Instant::now());
+        }
+        if !record.ok {
+            state.outstanding_damage = state.outstanding_damage.max(Some(kind));
+        } else if state.outstanding_damage.is_none_or(|d| kind >= d) {
+            state.outstanding_damage = None;
+        }
         record
     }
 
@@ -263,7 +293,13 @@ impl IndexHealth {
         // damage confined to an index b-tree (rows missing from
         // `idx_links_resolved`, as in #526) fails only writes, and
         // `quick_check` skips exactly that comparison.
-        let kind = if had_errors {
+        // At most hourly: a vault with one note that never parses would
+        // otherwise pay a full scan on every sweep.
+        let integrity_due = self
+            .lock()
+            .last_integrity_at
+            .is_none_or(|at| at.elapsed() >= INTEGRITY_RECHECK);
+        let kind = if had_errors && integrity_due {
             CheckKind::IntegrityCheck
         } else {
             CheckKind::QuickCheck
@@ -281,6 +317,21 @@ impl IndexHealth {
     /// A tool call met a corruption error: run the thorough check now and
     /// rebuild if it confirms the damage.
     pub fn on_corruption_seen(&self) {
+        // A client retrying in a loop sends a signal per call; one full
+        // scan a minute answers them all.
+        let recent = {
+            let state = self.lock();
+            state
+                .last_integrity_at
+                .is_some_and(|at| at.elapsed() < MIN_REBUILD_INTERVAL)
+                .then_some(state.outstanding_damage.is_some())
+        };
+        if let Some(damaged) = recent {
+            if damaged {
+                self.rebuild_logged("a tool call met a damaged index");
+            }
+            return;
+        }
         let check = self.check(CheckKind::IntegrityCheck);
         if check.ok {
             tracing::info!(
@@ -301,6 +352,11 @@ impl IndexHealth {
                 notes = record.notes,
                 errors = record.errors,
                 "the index was rebuilt; a copy of the damaged file is kept as index.db.previous"
+            ),
+            Ok(record) if record.restart_required => tracing::error!(
+                failure = record.failure.as_deref().unwrap_or(""),
+                "rebuilding the index failed; the damaged index is still live, and only a \
+                 restart can replace it"
             ),
             Ok(record) => tracing::error!(
                 failure = record.failure.as_deref().unwrap_or(""),
@@ -339,11 +395,14 @@ impl IndexHealth {
                 // notes index; a sweep from before it would read stale.
                 let errors = ReconciliationReport {
                     scanned: report.notes,
-                    added: report.notes,
                     errors: report.errors,
                     ..ReconciliationReport::default()
                 };
-                self.lock().last_sweep = Some(sweep_record(&errors, None));
+                {
+                    let mut state = self.lock();
+                    state.last_sweep = Some(sweep_record(&errors, None));
+                    state.outstanding_damage = None;
+                }
                 RebuildRecord {
                     at: now(),
                     trigger: trigger.to_string(),
@@ -353,6 +412,7 @@ impl IndexHealth {
                     snapshots_carried: report.snapshots_carried,
                     snapshots_lost: report.snapshots_lost,
                     failure: None,
+                    restart_required: false,
                 }
             }
             Err(e) => RebuildRecord {
@@ -364,6 +424,7 @@ impl IndexHealth {
                 snapshots_carried: 0,
                 snapshots_lost: Vec::new(),
                 failure: Some(e.to_string()),
+                restart_required: e.is_corruption(),
             },
         };
         let mut state = self.lock();
@@ -372,14 +433,23 @@ impl IndexHealth {
         Ok(record)
     }
 
-    /// The status `index_status` reports: a fresh `quick_check` plus the
-    /// latest records. Blocking.
+    /// The status `index_status` reports: a fresh check plus the latest
+    /// records. The check is `quick_check`, or `integrity_check` while
+    /// damage only that one sees is outstanding, so a quick pass cannot
+    /// report healthy over it. Blocking.
     pub fn status(&self) -> IndexStatus {
-        let check = self.check(CheckKind::QuickCheck);
+        let kind = self
+            .lock()
+            .outstanding_damage
+            .unwrap_or(CheckKind::QuickCheck);
+        let check = self.check(kind);
         let state = self.lock();
-        let rebuild_failed = state.last_rebuild.as_ref().is_some_and(|r| !r.rebuilt);
         IndexStatus {
-            healthy: check.ok && !rebuild_failed,
+            healthy: check.ok && state.outstanding_damage.is_none(),
+            restart_required: state
+                .last_rebuild
+                .as_ref()
+                .is_some_and(|r| r.restart_required),
             notes_not_indexed: state.last_sweep.as_ref().map_or(0, |s| s.errors),
             check,
             last_sweep: state.last_sweep.clone(),

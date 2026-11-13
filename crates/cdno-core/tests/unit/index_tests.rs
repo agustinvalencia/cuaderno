@@ -442,6 +442,7 @@ fn replace_contents_keeps_a_copy_of_the_old_file() {
     insert_note(&live, "old.md", "{}");
 
     let fresh = fresh_with_note(&live, "new.md");
+    live.keep_previous_copy();
     live.replace_contents_from(&fresh).unwrap();
 
     let previous = with_suffix(&path, cdno_core::index::PREVIOUS_SUFFIX);
@@ -564,4 +565,24 @@ fn only_a_damaged_file_counts_as_index_corruption() {
     assert!(
         !TransactionError::IndexStale(vec![IndexError::Query("x".into())]).is_index_corruption()
     );
+}
+
+#[test]
+fn a_live_index_with_another_page_size_can_still_be_replaced() {
+    // The backup copy refuses a WAL destination of another page size, so
+    // the fresh index takes the live one's.
+    let (_dir, path) = new_db_path();
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.pragma_update(None, "page_size", 8192).unwrap();
+        conn.execute_batch("CREATE TABLE seed(a); DROP TABLE seed;")
+            .unwrap();
+    }
+    let live = SqliteIndex::open(&path).unwrap();
+    insert_note(&live, "old.md", "{}");
+
+    let fresh = fresh_with_note(&live, "new.md");
+    live.replace_contents_from(&fresh).unwrap();
+
+    assert_eq!(note_paths(&live), vec!["new.md"]);
 }

@@ -597,19 +597,34 @@ fn warn_paused_op(last_warned: &AtomicU64, op: &PausedGitOp) {
     }
 }
 
-/// Idempotently add the atomic-write temp-file prefix to the repo's
-/// local `.git/info/exclude` (not the tracked `.gitignore`, so the
-/// user's ignore file is untouched). Ensures `git add -A` never stages
-/// an in-flight temp sibling.
+/// The patterns [`ensure_wip_excluded`] keeps in `.git/info/exclude`: the
+/// atomic-write temp prefix (bare, so git applies it at any depth), and the
+/// index with every file beside it. The index is a cache, and a rebuild
+/// leaves an `index.db.previous` copy and, while it runs, an
+/// `index.db.rebuild-*` file; a vault that ignores only `index.db` would
+/// otherwise commit them (#526 review).
+fn excluded_patterns() -> [String; 2] {
+    [
+        format!("{}*", cdno_core::store::WIP_TEMP_PREFIX),
+        format!("{}*", cdno_core::paths::INDEX_DB),
+    ]
+}
+
+/// Idempotently add [`excluded_patterns`] to the repo's local
+/// `.git/info/exclude` (not the tracked `.gitignore`, so the user's ignore
+/// file is untouched). Ensures `git add -A` never stages an in-flight temp
+/// sibling or anything of the index.
 fn ensure_wip_excluded(root: &Path) -> Result<()> {
     use std::io::Write;
-    let pattern = format!("{}*", cdno_core::store::WIP_TEMP_PREFIX);
     let info = root.join(".git").join("info");
     std::fs::create_dir_all(&info).context("creating .git/info")?;
     let exclude = info.join("exclude");
     let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
-    // Match at any depth: bare pattern (git applies it per directory).
-    if existing.lines().any(|l| l.trim() == pattern) {
+    let missing: Vec<String> = excluded_patterns()
+        .into_iter()
+        .filter(|p| !existing.lines().any(|l| l.trim() == p))
+        .collect();
+    if missing.is_empty() {
         return Ok(());
     }
     let mut f = std::fs::OpenOptions::new()
@@ -617,7 +632,12 @@ fn ensure_wip_excluded(root: &Path) -> Result<()> {
         .append(true)
         .open(&exclude)
         .context("opening .git/info/exclude")?;
-    writeln!(f, "{pattern}").context("appending to .git/info/exclude")?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        writeln!(f).context("appending to .git/info/exclude")?;
+    }
+    for pattern in missing {
+        writeln!(f, "{pattern}").context("appending to .git/info/exclude")?;
+    }
     Ok(())
 }
 
@@ -798,12 +818,39 @@ mod tests {
         ensure_wip_excluded(dir.path()).unwrap();
         let exclude =
             std::fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap_or_default();
-        let pattern = format!("{}*", cdno_core::store::WIP_TEMP_PREFIX);
-        assert_eq!(
-            exclude.lines().filter(|l| l.trim() == pattern).count(),
-            1,
-            "the exclude rule must be written exactly once"
-        );
+        for pattern in excluded_patterns() {
+            assert_eq!(
+                exclude.lines().filter(|l| l.trim() == pattern).count(),
+                1,
+                "the exclude rule {pattern} must be written exactly once"
+            );
+        }
+    }
+
+    #[test]
+    fn the_index_and_its_rebuild_files_are_never_staged() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        ensure_wip_excluded(dir.path()).unwrap();
+        let cuaderno = dir.path().join(".cuaderno");
+        std::fs::create_dir_all(&cuaderno).unwrap();
+        for name in [
+            "index.db",
+            "index.db-wal",
+            "index.db.previous",
+            "index.db.rebuild-1-0",
+        ] {
+            std::fs::write(cuaderno.join(name), b"x").unwrap();
+        }
+        std::fs::write(cuaderno.join("config.toml"), b"x").unwrap();
+        let out = run_git(
+            dir.path(),
+            &["status", "--porcelain", "--untracked-files=all"],
+        )
+        .unwrap();
+        let status = String::from_utf8_lossy(&out.stdout);
+        assert!(status.contains("config.toml"), "{status}");
+        assert!(!status.contains("index.db"), "{status}");
     }
 
     #[test]

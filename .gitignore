@@ -34,7 +34,7 @@ docs-site/book/
 # the diff and can accumulate fragments of whatever else was indexed
 # locally. The config and templates under `.cuaderno/` stay tracked;
 # these do not (#456).
-# The glob also covers a rebuild's `index.db.rebuild` and the
+# The glob also covers a rebuild's `index.db.rebuild-<pid>-<n>` and the
 # `index.db.previous` it keeps (#526).
 .cuaderno/index.db*
 .cuaderno/.lock

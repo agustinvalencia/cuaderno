@@ -338,3 +338,78 @@ async fn a_corruption_signal_starts_a_repair_without_a_sweep_loop() {
     }
     assert!(opened.sqlite.quick_check().unwrap().is_empty());
 }
+
+#[test]
+fn writes_committed_during_a_rebuild_are_in_the_index_afterwards() {
+    // The final pass runs under the vault write lock, so nothing can land
+    // between it and the copy (second review round on #997: 119 of 984
+    // captures were missing without it).
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let dir = vault_with_notes();
+    let opened = Arc::new(open_vault_checked(dir.path()).unwrap());
+    let stop = Arc::new(AtomicBool::new(false));
+    let writer = {
+        let (opened, stop) = (Arc::clone(&opened), Arc::clone(&stop));
+        std::thread::spawn(move || {
+            let at = NaiveDate::from_ymd_opt(2026, 3, 1)
+                .unwrap()
+                .and_hms_opt(9, 0, 0)
+                .unwrap();
+            let mut written = 0usize;
+            while !stop.load(Ordering::Relaxed) {
+                opened
+                    .vault
+                    .capture_to_inbox(at, &format!("surrogate model idea {written}"))
+                    .expect("capture");
+                written += 1;
+            }
+            written
+        })
+    };
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let record = IndexHealth::from_opened(&opened).rebuild("test").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    stop.store(true, Ordering::Relaxed);
+    let written = writer.join().unwrap();
+
+    assert!(record.rebuilt, "{:?}", record.failure);
+    assert!(written > 0);
+    let on_disk = std::fs::read_dir(dir.path().join("inbox")).unwrap().count();
+    let indexed = opened
+        .index
+        .list_all_paths()
+        .unwrap()
+        .iter()
+        .filter(|p| p.to_string().starts_with("inbox/"))
+        .count();
+    assert_eq!(
+        indexed, on_disk,
+        "every capture that reported success is indexed"
+    );
+}
+
+#[test]
+fn damage_to_the_file_header_asks_for_a_restart() {
+    // The in-place copy cannot write over a header SQLite no longer
+    // recognises; a running server must say so rather than retry forever.
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path()).unwrap();
+    let path = index_path(dir.path());
+    let mut bytes = std::fs::read(&path).unwrap();
+    for b in &mut bytes[..100] {
+        *b = 0xA5;
+    }
+    std::fs::write(&path, bytes).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+
+    let record = health.rebuild("test").unwrap();
+
+    if record.rebuilt {
+        // SQLite may still hold the header in its cache and write it back;
+        // then the repair simply worked.
+        assert!(opened.sqlite.quick_check().unwrap().is_empty());
+    } else {
+        assert!(record.restart_required, "{:?}", record.failure);
+        assert!(health.status().restart_required);
+    }
+}

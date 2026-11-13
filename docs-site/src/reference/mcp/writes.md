@@ -372,8 +372,8 @@ uniqueness rule, so a pasted derivation with its own `## Proof` must be demoted 
 
 The server already rebuilds a damaged index on its own, so this is for when
 [`index_status`](reads.md) stays unhealthy. It does not help with `notes_not_indexed`: those are
-notes that do not parse, and `lint` names them. It changes no note: it is what
-[`cdno reindex`](../cli/reindex.md) does, without stopping the server. A second call while one is
+notes that do not parse, and `lint` names them. It changes no note. Unlike
+[`cdno reindex`](../cli/reindex.md), it needs no restart and keeps the archival snapshots. A second call while one is
 running in the same server, or within a minute of the last, is refused with code `rebuild_refused`, and
 `details.reason` says which.
 

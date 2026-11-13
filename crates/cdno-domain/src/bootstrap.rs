@@ -49,8 +49,8 @@ pub struct OpenedVault {
     /// the vault too.
     pub sqlite: Arc<SqliteIndex>,
     /// What [`open_vault_checked`] found wrong with the index before it
-    /// set the file aside and started from an empty one; `None` when it
-    /// found nothing, or when the open did not check.
+    /// rebuilt it; `None` when it found nothing, or when the open did not
+    /// check.
     pub damage_at_open: Option<Vec<String>>,
 }
 
@@ -89,10 +89,10 @@ pub fn open_vault(root: &Path) -> Result<OpenedVault, BootstrapError> {
 /// reports damage, rebuild it in place from the notes
 /// ([`cdno_core::reconcile::rebuild`]), keeping a copy of the damaged file
 /// as `index.db.previous` and carrying across the archival snapshots it
-/// can still read. If that rebuild fails, the damaged file is set aside
-/// instead and the open starts from an empty index, which the
-/// reconciliation fills (the snapshots are then lost, as with
-/// `cdno reindex`).
+/// can still read. If that rebuild fails, the index is emptied in place
+/// instead and the startup reconciliation fills it (the snapshots are then
+/// lost, as with `cdno reindex`). It also clears rebuild files a killed
+/// rebuild left behind.
 ///
 /// A damaged file can open and answer queries normally, so the open-time
 /// self-heal, which only catches a file SQLite refuses outright, misses
@@ -101,6 +101,78 @@ pub fn open_vault(root: &Path) -> Result<OpenedVault, BootstrapError> {
 /// pays once.
 pub fn open_vault_checked(root: &Path) -> Result<OpenedVault, BootstrapError> {
     open(root, true)
+}
+
+/// The checked open's fallback when the rebuild failed: empty the index in
+/// place, so the startup reconciliation fills it and any other process
+/// holding the file sees the same empty-then-filled index. Renaming the
+/// file away would strand those processes on the damaged one, so that is
+/// only the last resort, when even the in-place copy is refused (a header
+/// too damaged to write over), and it runs under the vault write lock.
+fn empty_in_place(
+    sqlite: SqliteIndex,
+    store: &Arc<dyn VaultStore>,
+    index_path: &Path,
+    cause: &IndexError,
+) -> Result<SqliteIndex, BootstrapError> {
+    let emptied = (|| {
+        let empty = sqlite.open_fresh_beside()?;
+        let _lock = store
+            .acquire_write_lock()
+            .map_err(|e| IndexError::Update(format!("acquiring the vault write lock: {e}")))?;
+        sqlite.replace_contents_from(&empty)
+    })();
+    match emptied {
+        Ok(()) => {
+            tracing::warn!(
+                error = %cause,
+                "rebuilding the damaged index failed; emptied it in place, and the startup \
+                 reconciliation refills it from the notes"
+            );
+            Ok(sqlite)
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %cause,
+                emptying = %e,
+                "rebuilding the damaged index failed and it could not be emptied in place; \
+                 setting it aside and starting from an empty one (another process with it open \
+                 keeps the old file until it restarts)"
+            );
+            let _lock = store.acquire_write_lock().ok();
+            drop(sqlite);
+            SqliteIndex::set_aside(index_path);
+            Ok(SqliteIndex::open(index_path)?)
+        }
+    }
+}
+
+/// Remove `index.db.rebuild-*` files left by a rebuild that was killed:
+/// nothing else ever deletes them. Only ones untouched for an hour, so a
+/// rebuild running in another process right now keeps its file.
+fn clear_stale_rebuilds(index_path: &Path) {
+    let (Some(dir), Some(name)) = (index_path.parent(), index_path.file_name()) else {
+        return;
+    };
+    let prefix = format!(
+        "{}{}-",
+        name.to_string_lossy(),
+        cdno_core::index::REBUILD_SUFFIX
+    );
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > std::time::Duration::from_secs(3600));
+        if stale && entry.file_name().to_string_lossy().starts_with(&prefix) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 fn open(root: &Path, check: bool) -> Result<OpenedVault, BootstrapError> {
@@ -119,6 +191,7 @@ fn open(root: &Path, check: bool) -> Result<OpenedVault, BootstrapError> {
     let mut sqlite = SqliteIndex::open(&index_path)?;
     let mut damage_at_open = None;
     if check {
+        clear_stale_rebuilds(&index_path);
         // A check that cannot run (a busy or unreadable file) is no reason
         // to refuse to start: before the check existed the server would
         // have started, and the sweep checks again.
@@ -143,14 +216,7 @@ fn open(root: &Path, check: bool) -> Result<OpenedVault, BootstrapError> {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "rebuilding the damaged index failed; setting it aside and starting \
-                         from an empty one"
-                    );
-                    drop(sqlite);
-                    SqliteIndex::set_aside(&index_path);
-                    sqlite = SqliteIndex::open(&index_path)?;
+                    sqlite = empty_in_place(sqlite, &store, &index_path, &e)?;
                 }
             }
             damage_at_open = Some(problems);
