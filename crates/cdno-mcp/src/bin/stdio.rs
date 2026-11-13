@@ -36,9 +36,8 @@ async fn main() -> Result<()> {
     let root = vault_root_from_env()?;
     tracing::info!(vault_root = %root.display(), "starting cdno-mcp");
 
-    // A stdio session is short-lived, so only the `vault` is kept;
-    // the store/index/ignore handles (used by the HTTP binary's
-    // reconciliation loop) are dropped.
+    // Checked at open, like the HTTP server. The store/index/scope handles
+    // go to the index-health supervisor; there is no sweep loop here.
     let opened = open_vault_checked(&root).inspect_err(|e| {
         tracing::error!(error = %e, vault_root = %root.display(), "failed to open vault");
     })?;
@@ -48,8 +47,10 @@ async fn main() -> Result<()> {
     cdno_mcp::startup::log_method_notice(&opened.vault);
 
     // No sweep loop here, but `index_status` and `rebuild_index` work the
-    // same as over HTTP (#526).
+    // same as over HTTP, and a tool call that meets a damaged index still
+    // starts a repair (#526).
     let health = Arc::new(cdno_mcp::index_health::IndexHealth::from_opened(&opened));
+    health.spawn_loop(None);
     let server =
         CuadernoServer::new(Arc::new(opened.vault), root.clone()).with_index_health(health);
     // Derive the count from the merged router rather than hardcoding it,

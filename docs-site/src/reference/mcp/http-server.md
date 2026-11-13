@@ -36,7 +36,7 @@ inside a container).
 | `--allowed-host <host>` | `CDNO_MCP_ALLOWED_HOSTS` (comma-separated) | — | Extra `Host` header values to accept on top of the loopback defaults (DNS-rebinding protection). A public deployment adds its hostname |
 | `--smoke` | — | off | Serve a single `echo` tool holding **no vault handle** — prove tunnel/auth infrastructure end-to-end with zero vault exposure |
 | `--read-only` | — | off | Advertise only the context-gathering read tools; mutating tools are absent from the dispatch table entirely |
-| `--reconcile-interval-secs <n>` | `CDNO_MCP_RECONCILE_INTERVAL_SECS` | `300` | Periodic index reconciliation, each followed by an integrity check that rebuilds a damaged index in place; `0` disables both (the check at start still runs) |
+| `--reconcile-interval-secs <n>` | `CDNO_MCP_RECONCILE_INTERVAL_SECS` | `300` | Periodic index reconciliation, each followed by an integrity check that rebuilds a damaged index in place; `0` disables both (the check at start, and the repair a tool call starts, still run) |
 | `--git-checkpoint-interval-secs <n>` | `CDNO_MCP_GIT_CHECKPOINT_INTERVAL_SECS` | `60` | How often the git sweep runs. `0` disables it; warns and no-ops when the vault isn't a git repo |
 | `--git-checkpoint-mode <mode>` | `CDNO_MCP_GIT_CHECKPOINT_MODE` | `commit` | What the sweep does with a dirty tree: `commit` here, or `nudge-only` — see [The recovery trail](#the-recovery-trail) |
 | `--sync-nudge` | `CDNO_MCP_SYNC_NUDGE` | off | Touch a sentinel file after every verified write so an external sync agent reacts at once instead of on its own timer — see [Pairing with a sync agent](#pairing-with-a-sync-agent) |

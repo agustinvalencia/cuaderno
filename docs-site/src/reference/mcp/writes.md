@@ -368,12 +368,13 @@ uniqueness rule, so a pasted derivation with its own `## Proof` must be demoted 
 
 | Tool | Inputs | Returns |
 |------|--------|---------|
-| `rebuild_index` | — | Rebuilds the index from every note into a fresh file, checks it, and swaps it in without a restart, keeping the old file as `.cuaderno/index.db.previous`. Search and context keep answering from the old index while it runs. Returns `rebuilt`, the `notes` indexed, `errors` (notes it could not index), `trigger` and `failure` (set when nothing was swapped; the old index is then still live). |
+| `rebuild_index` | — | Rebuilds the index from every note into a fresh file, checks it, and copies it into the live index in place, without a restart, so every process using the vault sees it; a copy of the old file is kept as `.cuaderno/index.db.previous`. Search and context keep answering from the old index while it builds. Returns `rebuilt`, the `notes` indexed, `errors` (notes it could not index), `snapshots_carried` and `snapshots_lost` (the archival snapshots), `trigger`, and `failure` (set when nothing was replaced; the old index is then still live). |
 
 The server already rebuilds a damaged index on its own, so this is for when
-[`index_status`](reads.md) stays unhealthy. It changes no note: it is what
+[`index_status`](reads.md) stays unhealthy. It does not help with `notes_not_indexed`: those are
+notes that do not parse, and `lint` names them. It changes no note: it is what
 [`cdno reindex`](../cli/reindex.md) does, without stopping the server. A second call while one is
-running, or within a minute of the last, is refused with code `rebuild_refused`, and
+running in the same server, or within a minute of the last, is refused with code `rebuild_refused`, and
 `details.reason` says which.
 
 ## Notes

@@ -362,8 +362,10 @@ async fn serve() -> Result<()> {
 
         let health = Arc::new(cdno_mcp::index_health::IndexHealth::from_opened(&opened));
         if args.reconcile_interval_secs > 0 {
-            health.spawn_loop(Duration::from_secs(args.reconcile_interval_secs));
+            health.spawn_loop(Some(Duration::from_secs(args.reconcile_interval_secs)));
         } else {
+            // Still listen for a tool call that meets a damaged index.
+            health.spawn_loop(None);
             tracing::warn!(
                 "periodic reconciliation disabled (--reconcile-interval-secs 0); \
                  out-of-band edits will not appear in the index until restart"

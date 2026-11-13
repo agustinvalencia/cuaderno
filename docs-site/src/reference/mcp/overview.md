@@ -32,10 +32,11 @@ client gets the same structures whichever surface it uses.
 
 The index is a cache of the notes, rebuilt from them at will, so the servers repair it without
 asking. Both check its database file when they start, and `cdno-mcp-server` checks it again after
-every [reconciliation sweep](http-server.md#flags); a damaged file is rebuilt into a fresh one and
-swapped in without a restart, and the damaged file is kept as `.cuaderno/index.db.previous`. A tool
-call that meets a damaged index says so in its error, adds that the notes on disk are intact (a
-write that reports it was saved), and starts the repair straight away. [`index_status`](reads.md)
+every [reconciliation sweep](http-server.md#flags). A damaged index is rebuilt from the notes and
+copied into the live file in place, without a restart, so every process using the vault sees the
+repair at once; a copy of the damaged file is kept as `.cuaderno/index.db.previous`. A tool call
+that meets a damaged index starts the repair straight away, on either server, and its error says
+that the notes on disk are intact and whether that call's write was saved. [`index_status`](reads.md)
 reports the index's health and [`rebuild_index`](writes.md#the-index) forces a rebuild, so a client
 with no shell on the server's machine can still recover. No note is ever changed by any of this.
 

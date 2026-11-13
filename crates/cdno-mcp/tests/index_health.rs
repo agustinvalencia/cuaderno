@@ -75,7 +75,7 @@ fn decode_json(result: &CallToolResult) -> serde_json::Value {
 }
 
 #[test]
-fn a_checked_open_sets_a_damaged_index_aside_and_rebuilds_it() {
+fn a_checked_open_rebuilds_a_damaged_index_and_keeps_a_copy() {
     let dir = vault_with_notes();
     damage_index(dir.path());
 
@@ -271,4 +271,70 @@ fn a_rebuild_carries_the_archival_snapshots_across() {
         Some(snapshot),
         "the live handle reads the carried row"
     );
+}
+
+#[test]
+fn a_repair_reaches_another_process_holding_the_index() {
+    // A second open stands in for a second server on the same vault: it
+    // holds its own connection and never rebuilds anything itself.
+    let dir = vault_with_notes();
+    damage_index(dir.path());
+    let first = open_vault(dir.path()).unwrap();
+    let second = open_vault(dir.path()).unwrap();
+    assert!(!second.sqlite.quick_check().unwrap().is_empty());
+
+    let record = IndexHealth::from_opened(&first).rebuild("test").unwrap();
+
+    assert!(record.rebuilt, "{:?}", record.failure);
+    assert!(
+        second.sqlite.quick_check().unwrap().is_empty(),
+        "the other process reads the repair"
+    );
+    assert!(indexed_notes(&second) >= NOTES);
+}
+
+#[test]
+fn a_note_that_does_not_parse_does_not_make_the_index_unhealthy() {
+    let dir = vault_with_notes();
+    std::fs::write(
+        dir.path().join("journal/2025/daily/2025-01-01.md"),
+        "---\ntype: [unclosed\n---\n# broken\n",
+    )
+    .unwrap();
+    let opened = open_vault_checked(dir.path()).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+
+    health.sweep();
+
+    let status = health.status();
+    assert_eq!(status.notes_not_indexed, 1, "{:?}", status.last_sweep);
+    assert!(status.healthy, "a malformed note is not a damaged index");
+    assert!(status.last_rebuild.is_none(), "and it is not rebuilt for");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_corruption_signal_starts_a_repair_without_a_sweep_loop() {
+    // The stdio server runs no sweeps; a tool call meeting damage must
+    // still start the repair (PR #997 review).
+    let dir = vault_with_notes();
+    damage_index(dir.path());
+    let opened = open_vault(dir.path()).unwrap();
+    let health = Arc::new(IndexHealth::from_opened(&opened));
+    health.spawn_loop(None);
+
+    cdno_mcp::index_health::corruption_seen();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let rebuilt = health.status().last_rebuild.is_some_and(|r| r.rebuilt);
+        if rebuilt {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no repair after the signal"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(opened.sqlite.quick_check().unwrap().is_empty());
 }

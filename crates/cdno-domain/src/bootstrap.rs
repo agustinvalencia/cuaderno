@@ -86,10 +86,10 @@ pub fn open_vault(root: &Path) -> Result<OpenedVault, BootstrapError> {
 
 /// [`open_vault`] for a long-lived process: before the startup
 /// reconciliation, run `PRAGMA quick_check` on the index, and if it
-/// reports damage, rebuild it from the notes into a fresh file
-/// ([`cdno_core::reconcile::rebuild`]), keeping the damaged one as
-/// `index.db.previous` and carrying across the archival snapshots it can
-/// still read. If that rebuild fails, the damaged file is set aside
+/// reports damage, rebuild it in place from the notes
+/// ([`cdno_core::reconcile::rebuild`]), keeping a copy of the damaged file
+/// as `index.db.previous` and carrying across the archival snapshots it
+/// can still read. If that rebuild fails, the damaged file is set aside
 /// instead and the open starts from an empty index, which the
 /// reconciliation fills (the snapshots are then lost, as with
 /// `cdno reindex`).
@@ -119,7 +119,13 @@ fn open(root: &Path, check: bool) -> Result<OpenedVault, BootstrapError> {
     let mut sqlite = SqliteIndex::open(&index_path)?;
     let mut damage_at_open = None;
     if check {
-        let problems = sqlite.quick_check()?;
+        // A check that cannot run (a busy or unreadable file) is no reason
+        // to refuse to start: before the check existed the server would
+        // have started, and the sweep checks again.
+        let problems = sqlite.quick_check().unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "the index integrity check could not run at open");
+            Vec::new()
+        });
         if !problems.is_empty() {
             tracing::warn!(
                 problems = ?problems,

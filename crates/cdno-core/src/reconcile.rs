@@ -102,9 +102,11 @@ pub struct ReconciliationIssue {
 /// What [`rebuild`] did.
 #[derive(Debug, Default)]
 pub struct RebuildReport {
-    /// The full pass that populated the fresh index, so `added` counts
-    /// every note it now holds.
-    pub reconciliation: ReconciliationReport,
+    /// Notes the rebuilt index holds.
+    pub notes: usize,
+    /// Notes the rebuild could not index, from its last pass. Usually a
+    /// note that does not parse, which no rebuild fixes (`lint` names it).
+    pub errors: Vec<ReconciliationIssue>,
     /// Archival snapshot rows copied from the old index.
     pub snapshots_carried: usize,
     /// Rows that could not be carried, or a reason none could: the old
@@ -114,41 +116,67 @@ pub struct RebuildReport {
     pub snapshots_lost: Vec<String>,
 }
 
-/// Rebuild `index` from the markdown into a fresh file and swap it in
-/// ([`SqliteIndex::rebuild_with`](crate::index::SqliteIndex::rebuild_with)):
-/// the repair for a damaged index in a process that keeps it open.
+/// Rebuild `index` from the markdown and copy the result into it in place
+/// ([`SqliteIndex::replace_contents_from`](crate::index::SqliteIndex::replace_contents_from)):
+/// the repair for a damaged index, seen at once by every process that
+/// has it open.
 ///
-/// One table is not derived from the markdown: the archival snapshots,
-/// the frozen-prefix record lint checks each archived action note
-/// against. They are carried across from the old index, every row that
-/// can still be read, so an automatic repair does not quietly drop the
-/// check the way deleting the file (`cdno reindex`) does.
+/// 1. A full pass into a fresh index beside the live one, which keeps
+///    serving meanwhile.
+/// 2. A second, catch-up pass for whatever changed during the first; it is
+///    quick, since unchanged notes are skipped by mtime.
+/// 3. Under the vault write lock, so no commit in any process can land in
+///    between: carry the archival snapshots across (the one table the notes
+///    cannot regenerate), then copy the fresh index in. A snapshot whose
+///    note the fresh index lacks (archived after the catch-up pass) brings
+///    that note's row over from the live index first.
+///
+/// Nothing else may hold the vault write lock in this thread while this
+/// runs: the lock is per open file, so taking it twice would wait for
+/// itself until the timeout.
 pub fn rebuild(
     store: &Arc<dyn VaultStore>,
     index: &crate::index::SqliteIndex,
     scope: &NoteScope,
 ) -> Result<RebuildReport, IndexError> {
-    index.rebuild_with(|fresh| {
-        let reconciliation = reconcile(store, fresh, scope)?;
-        let mut report = RebuildReport {
-            reconciliation,
-            ..RebuildReport::default()
-        };
-        match index.list_archival_snapshots() {
-            Ok(rows) => {
-                for (path, snapshot) in rows {
-                    match fresh.record_archival_snapshot(&path, &snapshot) {
-                        Ok(()) => report.snapshots_carried += 1,
-                        Err(e) => report.snapshots_lost.push(format!("{path}: {e}")),
-                    }
+    let fresh = index.open_fresh_beside()?;
+    let fresh_index = fresh.index();
+    reconcile(store, &fresh_index, scope)?;
+    let catch_up = reconcile(store, &fresh_index, scope)?;
+
+    let _lock = store.acquire_write_lock().map_err(|e| {
+        IndexError::Update(format!(
+            "acquiring the vault write lock to replace the index: {e}"
+        ))
+    })?;
+    let mut report = RebuildReport {
+        errors: catch_up.errors,
+        ..RebuildReport::default()
+    };
+    match index.list_archival_snapshots() {
+        Ok(rows) => {
+            for (path, snapshot) in rows {
+                let carried = fresh_index
+                    .record_archival_snapshot(&path, &snapshot)
+                    .or_else(|first| match index.find_by_path(&path) {
+                        Ok(Some(entry)) => fresh_index
+                            .upsert_note(&entry)
+                            .and_then(|()| fresh_index.record_archival_snapshot(&path, &snapshot)),
+                        _ => Err(first),
+                    });
+                match carried {
+                    Ok(()) => report.snapshots_carried += 1,
+                    Err(e) => report.snapshots_lost.push(format!("{path}: {e}")),
                 }
             }
-            Err(e) => report
-                .snapshots_lost
-                .push(format!("the old index's snapshots could not be read: {e}")),
         }
-        Ok(report)
-    })
+        Err(e) => report
+            .snapshots_lost
+            .push(format!("the old index's snapshots could not be read: {e}")),
+    }
+    report.notes = fresh_index.list_all_paths()?.len();
+    index.replace_contents_from(&fresh)?;
+    Ok(report)
 }
 
 /// Reconcile the index against the filesystem. See module docs for the

@@ -382,106 +382,127 @@ fn quick_check_reports_page_damage_that_open_does_not_notice() {
     assert!(!index.check_integrity().unwrap());
 }
 
+fn fresh_with_note(live: &SqliteIndex, path: &str) -> cdno_core::index::FreshIndex {
+    let fresh = live.open_fresh_beside().unwrap();
+    let conn = Connection::open(fresh.path()).unwrap();
+    conn.execute(
+        "INSERT INTO notes (path, note_type, content_hash, mtime_ns, size, frontmatter, indexed_at_ns) VALUES (?1, 'daily', 'h', 0, 0, '{}', 0)",
+        [path],
+    )
+    .unwrap();
+    fresh
+}
+
 #[test]
-fn rebuild_with_swaps_the_fresh_file_in_and_keeps_the_old_one() {
+fn fresh_indexes_get_their_own_names_and_vanish_on_drop() {
     let (_dir, path) = new_db_path();
-    let index = SqliteIndex::open(&path).unwrap();
-    insert_note(&index, "old.md", "{}");
+    let live = SqliteIndex::open(&path).unwrap();
+    let a = live.open_fresh_beside().unwrap();
+    let b = live.open_fresh_beside().unwrap();
+    assert_ne!(a.path(), b.path(), "two rebuilds never share a file");
+    assert!(a.path().exists());
+    let (pa, pb) = (a.path().to_path_buf(), b.path().to_path_buf());
+    drop(a);
+    drop(b);
+    assert!(!pa.exists() && !pb.exists(), "dropping removes the files");
+    assert!(!with_suffix(&pa, "-wal").exists());
+}
 
-    index
-        .rebuild_with(|fresh| {
-            fresh.list_all_paths().map(|paths| assert!(paths.is_empty(), "it starts empty"))?;
-            // `populate` writes through the trait in real use; raw SQL
-            // through a second handle stands in for it here.
-            let conn = Connection::open(with_suffix(&path, cdno_core::index::REBUILD_SUFFIX))
-                .unwrap();
-            conn.execute(
-                "INSERT INTO notes (path, note_type, content_hash, mtime_ns, size, frontmatter, indexed_at_ns) VALUES ('new.md', 'daily', 'h', 0, 0, '{}', 0)",
-                [],
-            )
-            .unwrap();
-            Ok(())
-        })
-        .unwrap();
+#[test]
+fn replace_contents_reaches_every_connection_to_the_file() {
+    // Two handles on one file stand in for two processes: a rename-based
+    // swap would leave the second on the old file (PR review, #526).
+    let (_dir, path) = new_db_path();
+    let live = SqliteIndex::open(&path).unwrap();
+    let other = SqliteIndex::open(&path).unwrap();
+    insert_note(&live, "old.md", "{}");
+    assert_eq!(note_paths(&other), vec!["old.md"]);
 
+    let fresh = fresh_with_note(&live, "new.md");
+    live.replace_contents_from(&fresh).unwrap();
+
+    assert_eq!(note_paths(&live), vec!["new.md"]);
     assert_eq!(
-        note_paths(&index),
+        note_paths(&other),
         vec!["new.md"],
-        "the same handle reads the new file"
+        "the other connection sees it too"
     );
-    assert!(index.quick_check().unwrap().is_empty());
+    insert_note(&other, "later.md", "{}");
+    assert_eq!(
+        note_paths(&live),
+        vec!["later.md", "new.md"],
+        "and they still share one file"
+    );
+}
+
+#[test]
+fn replace_contents_keeps_a_copy_of_the_old_file() {
+    let (_dir, path) = new_db_path();
+    let live = SqliteIndex::open(&path).unwrap();
+    insert_note(&live, "old.md", "{}");
+
+    let fresh = fresh_with_note(&live, "new.md");
+    live.replace_contents_from(&fresh).unwrap();
+
     let previous = with_suffix(&path, cdno_core::index::PREVIOUS_SUFFIX);
-    assert!(previous.exists(), "the replaced file is kept");
-    let old: Vec<String> = Connection::open(&previous)
-        .unwrap()
+    let conn = Connection::open(&previous).unwrap();
+    let old: Vec<String> = conn
         .prepare("SELECT path FROM notes")
         .unwrap()
         .query_map([], |r| r.get(0))
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
-    assert_eq!(old, vec!["old.md"]);
-    assert!(
-        !with_suffix(&path, cdno_core::index::REBUILD_SUFFIX).exists(),
-        "no rebuild file is left behind"
-    );
+    assert_eq!(old, vec!["old.md"], "the copy holds what the file held");
 }
 
 #[test]
-fn rebuild_with_leaves_the_live_index_alone_when_populate_fails() {
-    let (_dir, path) = new_db_path();
-    let index = SqliteIndex::open(&path).unwrap();
-    insert_note(&index, "kept.md", "{}");
-
-    let err = index
-        .rebuild_with(|_| -> Result<(), _> {
-            Err(cdno_core::error::IndexError::Query("walk failed".into()))
-        })
-        .unwrap_err();
-    assert!(err.to_string().contains("walk failed"));
-    assert_eq!(note_paths(&index), vec!["kept.md"]);
-    assert!(!with_suffix(&path, cdno_core::index::REBUILD_SUFFIX).exists());
-    assert!(!with_suffix(&path, cdno_core::index::PREVIOUS_SUFFIX).exists());
-}
-
-#[test]
-fn rebuild_with_refuses_while_the_fresh_index_is_still_held() {
-    let (_dir, path) = new_db_path();
-    let index = SqliteIndex::open(&path).unwrap();
-    insert_note(&index, "kept.md", "{}");
-
-    let mut kept = None;
-    let err = index
-        .rebuild_with(|fresh| {
-            kept = Some(fresh.clone());
-            Ok(())
-        })
-        .unwrap_err();
-    assert!(err.to_string().contains("still in use"), "{err}");
-    drop(kept);
-    assert_eq!(
-        note_paths(&index),
-        vec!["kept.md"],
-        "the live index is untouched"
-    );
-}
-
-#[test]
-fn rebuild_with_repairs_a_damaged_index_behind_the_same_handle() {
+fn replace_contents_repairs_a_damaged_file_behind_open_handles() {
     let (_dir, path) = new_db_path();
     damaged_index_file(&path);
-    let index = SqliteIndex::open(&path).unwrap();
-    assert!(!index.quick_check().unwrap().is_empty());
+    let live = SqliteIndex::open(&path).unwrap();
+    let other = SqliteIndex::open(&path).unwrap();
+    assert!(!live.quick_check().unwrap().is_empty());
 
-    index.rebuild_with(|_| Ok(())).unwrap();
+    let fresh = fresh_with_note(&live, "after.md");
+    live.replace_contents_from(&fresh).unwrap();
 
+    assert!(live.quick_check().unwrap().is_empty(), "sound now");
     assert!(
-        index.quick_check().unwrap().is_empty(),
-        "the handle now reads a sound file"
+        other.quick_check().unwrap().is_empty(),
+        "for the other handle too"
     );
-    assert!(note_paths(&index).is_empty());
-    insert_note(&index, "after.md", "{}");
-    assert_eq!(note_paths(&index), vec!["after.md"], "and writes to it");
+    assert_eq!(note_paths(&other), vec!["after.md"]);
+}
+
+#[test]
+fn replace_contents_refuses_an_unsound_fresh_index() {
+    let (_dir, path) = new_db_path();
+    let live = SqliteIndex::open(&path).unwrap();
+    insert_note(&live, "kept.md", "{}");
+    let fresh = live.open_fresh_beside().unwrap();
+    Connection::open(fresh.path())
+        .unwrap()
+        .execute_batch("DROP TABLE schema_migrations")
+        .unwrap();
+
+    let err = live.replace_contents_from(&fresh).unwrap_err();
+    assert!(err.to_string().contains("failed its own check"), "{err}");
+    assert_eq!(note_paths(&live), vec!["kept.md"], "nothing was touched");
+}
+
+#[test]
+fn a_file_with_no_schema_fails_the_check() {
+    // An empty database checks "ok" and reads as an empty vault (#520).
+    let (_dir, path) = new_db_path();
+    let index = SqliteIndex::open(&path).unwrap();
+    index
+        .with_connection(|c| c.execute_batch("DROP TABLE schema_migrations"))
+        .unwrap();
+    assert_eq!(
+        index.quick_check().unwrap(),
+        vec!["the index has no schema"]
+    );
 }
 
 #[test]

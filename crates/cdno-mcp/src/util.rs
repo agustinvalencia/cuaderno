@@ -40,18 +40,39 @@ pub(crate) fn into_mcp_error(e: DomainError) -> ErrorData {
 /// health loop and says what the client most needs to know: the notes
 /// are safe, and the cache is being rebuilt (#526, #520).
 fn message(e: &DomainError) -> String {
-    if e.is_index_corruption() {
-        crate::index_health::corruption_seen();
-        format!("{e} \u{2014} {INDEX_DAMAGED_HINT}")
-    } else {
-        e.to_string()
+    if !e.is_index_corruption() {
+        return e.to_string();
     }
+    crate::index_health::corruption_seen();
+    // Only an `IndexStale` commit has written its files: any other index
+    // error on a write path comes from a lookup made before anything was
+    // written, so saying "saved" there would stop a retry and lose the
+    // write (PR #997 review).
+    let saved = matches!(
+        e,
+        DomainError::Transaction(cdno_core::error::TransactionError::IndexStale(_))
+    );
+    format!(
+        "{e} \u{2014} {INDEX_DAMAGED_HINT} {}",
+        if saved {
+            INDEX_DAMAGED_SAVED
+        } else {
+            INDEX_DAMAGED_NOT_SAVED
+        }
+    )
 }
 
 /// Appended to an error caused by a damaged index.
 pub(crate) const INDEX_DAMAGED_HINT: &str = "the notes on disk are intact; the index (a cache of \
-     them) is damaged, and the server rebuilds it automatically. `index_status` shows the repair; \
-     `rebuild_index` forces one. A write that reported this was saved.";
+     them) is damaged, and the server has started rebuilding it. `index_status` shows the repair; \
+     `rebuild_index` forces one.";
+
+/// Then, for a commit whose files were written before the index failed.
+const INDEX_DAMAGED_SAVED: &str = "This write was saved; do not repeat it.";
+
+/// Then, for any other call: nothing was written.
+const INDEX_DAMAGED_NOT_SAVED: &str =
+    "Nothing was written by this call; repeat it once `index_status` is healthy.";
 
 /// [`into_mcp_error`] for a start or switch: a `focus_open` rejection also
 /// carries `details.attempted`, what the caller asked for, in the shape
@@ -147,4 +168,41 @@ pub(crate) fn parse_question_slug_from_wikilink(link: &str) -> Option<String> {
         return None;
     }
     Some(slug.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use cdno_core::error::{IndexError, TransactionError};
+
+    use super::*;
+
+    fn corrupt() -> IndexError {
+        IndexError::Sqlite(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+            None,
+        ))
+    }
+
+    #[test]
+    fn a_damaged_index_after_a_commit_says_the_write_was_saved() {
+        let e = DomainError::Transaction(TransactionError::IndexStale(vec![corrupt()]));
+        let m = message(&e);
+        assert!(m.contains("the notes on disk are intact"), "{m}");
+        assert!(m.contains("This write was saved"), "{m}");
+    }
+
+    #[test]
+    fn a_damaged_index_before_any_write_says_nothing_was_written() {
+        // A lookup a write makes before it writes: telling the caller the
+        // write was saved would stop the retry and lose it.
+        let m = message(&DomainError::Index(corrupt()));
+        assert!(m.contains("Nothing was written"), "{m}");
+        assert!(!m.contains("was saved"), "{m}");
+    }
+
+    #[test]
+    fn any_other_error_reads_as_before() {
+        let e = DomainError::Index(IndexError::Query("boom".into()));
+        assert_eq!(message(&e), e.to_string());
+    }
 }

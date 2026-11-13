@@ -54,7 +54,7 @@ static CORRUPTION_SEEN: Notify = Notify::const_new();
 
 /// Tell the health loop that a tool call met a damaged index, so it
 /// checks now rather than at the next sweep.
-pub(crate) fn corruption_seen() {
+pub fn corruption_seen() {
     CORRUPTION_SEEN.notify_one();
 }
 
@@ -110,7 +110,8 @@ pub struct CheckRecord {
     pub kind: CheckKind,
     /// True when the check found nothing wrong.
     pub ok: bool,
-    /// What it found, at most twenty lines; empty when `ok`.
+    /// What it found, at most [`CHECK_PROBLEM_LIMIT`](cdno_core::index::CHECK_PROBLEM_LIMIT)
+    /// lines; empty when `ok`.
     pub problems: Vec<String>,
 }
 
@@ -148,11 +149,17 @@ pub struct RebuildRecord {
 /// What `index_status` returns.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct IndexStatus {
-    /// The verdict: true when the check run for this call found nothing
-    /// and the latest sweep indexed every note.
+    /// The verdict on the index itself: true when the check run for this
+    /// call found nothing and the latest rebuild, if any, did not fail.
+    /// Notes that could not be indexed do not make it false: they are
+    /// nearly always notes that do not parse, which no rebuild can fix.
     pub healthy: bool,
     /// The check run for this call.
     pub check: CheckRecord,
+    /// How many notes the latest sweep (or rebuild) could not index, listed
+    /// in `last_sweep.failing`. Usually malformed notes: `lint` names them,
+    /// and fixing the note fixes it.
+    pub notes_not_indexed: usize,
     pub last_sweep: Option<SweepRecord>,
     pub last_rebuild: Option<RebuildRecord>,
     /// What the server found wrong with the index when it started, before
@@ -249,9 +256,19 @@ impl IndexHealth {
                 sweep_record(&ReconciliationReport::default(), Some(e.to_string()))
             }
         };
+        let had_errors = record.errors > 0 || record.failure.is_some();
         self.lock().last_sweep = Some(record);
 
-        let check = self.check(CheckKind::QuickCheck);
+        // A sweep that could not index some notes gets the thorough check:
+        // damage confined to an index b-tree (rows missing from
+        // `idx_links_resolved`, as in #526) fails only writes, and
+        // `quick_check` skips exactly that comparison.
+        let kind = if had_errors {
+            CheckKind::IntegrityCheck
+        } else {
+            CheckKind::QuickCheck
+        };
+        let check = self.check(kind);
         if !check.ok {
             tracing::warn!(
                 problems = ?check.problems,
@@ -283,7 +300,7 @@ impl IndexHealth {
             Ok(record) if record.rebuilt => tracing::warn!(
                 notes = record.notes,
                 errors = record.errors,
-                "the index was rebuilt; the damaged file is kept as index.db.previous"
+                "the index was rebuilt; a copy of the damaged file is kept as index.db.previous"
             ),
             Ok(record) => tracing::error!(
                 failure = record.failure.as_deref().unwrap_or(""),
@@ -318,12 +335,21 @@ impl IndexHealth {
                          lint can no longer check those archived notes' frozen prefix"
                     );
                 }
+                // The rebuild's last pass is now the latest word on which
+                // notes index; a sweep from before it would read stale.
+                let errors = ReconciliationReport {
+                    scanned: report.notes,
+                    added: report.notes,
+                    errors: report.errors,
+                    ..ReconciliationReport::default()
+                };
+                self.lock().last_sweep = Some(sweep_record(&errors, None));
                 RebuildRecord {
                     at: now(),
                     trigger: trigger.to_string(),
                     rebuilt: true,
-                    notes: report.reconciliation.added,
-                    errors: report.reconciliation.errors.len(),
+                    notes: report.notes,
+                    errors: errors.errors.len(),
                     snapshots_carried: report.snapshots_carried,
                     snapshots_lost: report.snapshots_lost,
                     failure: None,
@@ -351,12 +377,10 @@ impl IndexHealth {
     pub fn status(&self) -> IndexStatus {
         let check = self.check(CheckKind::QuickCheck);
         let state = self.lock();
-        let sweep_clean = state
-            .last_sweep
-            .as_ref()
-            .is_none_or(|s| s.errors == 0 && s.failure.is_none());
+        let rebuild_failed = state.last_rebuild.as_ref().is_some_and(|r| !r.rebuilt);
         IndexStatus {
-            healthy: check.ok && sweep_clean,
+            healthy: check.ok && !rebuild_failed,
+            notes_not_indexed: state.last_sweep.as_ref().map_or(0, |s| s.errors),
             check,
             last_sweep: state.last_sweep.clone(),
             last_rebuild: state.last_rebuild.clone(),
@@ -366,25 +390,38 @@ impl IndexHealth {
 
     /// Run [`sweep`](Self::sweep) every `every`, and
     /// [`on_corruption_seen`](Self::on_corruption_seen) whenever a tool
-    /// call reports corruption.
+    /// call reports corruption. With `every` `None` (the stdio server, or
+    /// sweeps turned off) only the second runs, so a tool call that meets
+    /// damage still starts a repair on every server.
     ///
     /// Known benign race (PR #304 review, correctness finding 2): a sweep
     /// reads file state *before* taking the per-note write lock, so a
     /// tool-call write landing in that window can be shadowed by a stale
     /// index row, which the *next* sweep heals (mtime mismatch). Worst
     /// case is stale search results for one interval; no note is touched.
-    pub fn spawn_loop(self: &Arc<Self>, every: Duration) {
+    pub fn spawn_loop(self: &Arc<Self>, every: Option<Duration>) {
         let health = Arc::clone(self);
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(every);
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut interval = every.map(|every| {
+                let mut interval = tokio::time::interval(every);
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                interval
+            });
             // The first tick fires immediately; skip it, since opening the
             // vault has just reconciled and checked.
-            interval.tick().await;
+            if let Some(interval) = interval.as_mut() {
+                interval.tick().await;
+            }
             loop {
-                let corruption = tokio::select! {
-                    _ = interval.tick() => false,
-                    _ = CORRUPTION_SEEN.notified() => true,
+                let corruption = match interval.as_mut() {
+                    Some(interval) => tokio::select! {
+                        _ = interval.tick() => false,
+                        _ = CORRUPTION_SEEN.notified() => true,
+                    },
+                    None => {
+                        CORRUPTION_SEEN.notified().await;
+                        true
+                    }
                 };
                 let h = Arc::clone(&health);
                 let ran = tokio::task::spawn_blocking(move || {
