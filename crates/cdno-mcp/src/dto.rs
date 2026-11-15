@@ -1987,8 +1987,13 @@ pub struct RenamePlanDto {
     /// Whether anything was written: false on a dry run and for an empty plan.
     pub written: bool,
     /// The files are written but the index failed to follow for some of
-    /// them; the next open reconciles it. The rename itself succeeded.
+    /// them; the next reconciliation catches it up (a server's sweep, or its
+    /// repair when the index is damaged). The rename itself succeeded.
     pub index_stale: bool,
+    /// Set when the index update failed because the index file is damaged:
+    /// the same "notes intact, write saved" sentence every write's error
+    /// carries for that case, so do not repeat the rename. Null otherwise.
+    pub index_note: Option<String>,
     /// Read-back proof the new note landed, as every write tool carries;
     /// null when nothing was written.
     pub verification: Option<WriteVerificationDto>,
@@ -2122,6 +2127,7 @@ impl RenamePlanDto {
             log_line: plan.log_line.clone(),
             written,
             index_stale,
+            index_note: None,
             verification: None,
         }
     }

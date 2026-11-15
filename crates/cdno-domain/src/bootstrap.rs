@@ -117,10 +117,19 @@ pub fn open_vault_with_index(
 /// reports damage, rebuild it in place from the notes
 /// ([`cdno_core::reconcile::rebuild`]), keeping a copy of the damaged file
 /// beside it as `<index>.previous` and carrying across the archival
-/// snapshots it can still read. If that rebuild fails, the index is emptied
-/// in place instead and the startup reconciliation fills it (the snapshots
-/// are then lost, as with `cdno reindex`). It also clears rebuild files a
-/// killed rebuild left behind.
+/// snapshots it can still read. It also clears rebuild files a killed
+/// rebuild left behind.
+///
+/// When the rebuild fails because the live file is too damaged to be
+/// written over (a corruption error from the copy), the index is emptied in
+/// place instead, under the vault write lock and only if it still fails its
+/// check there, and the startup reconciliation fills it (the snapshots are
+/// then lost, as with `cdno reindex`). Any other failure (the vault lock
+/// held past its timeout by another process repairing the same file, a busy
+/// database, an I/O error) leaves the index as it is: the server starts on
+/// it, reports the damage, and its sweep or the next tool call to meet the
+/// damage tries again. So a second server starting while the first repairs
+/// never undoes the first's repair.
 ///
 /// The index is wherever the override puts it, and every file the repair
 /// writes sits beside that file. The override's refusals come first and are
@@ -141,12 +150,18 @@ pub fn open_vault_checked(
     open(root, index_override, true)
 }
 
-/// The checked open's fallback when the rebuild failed: empty the index in
-/// place, so the startup reconciliation fills it and any other process
-/// holding the file sees the same empty-then-filled index. Renaming the
-/// file away would strand those processes on the damaged one, so that is
-/// only the last resort, when even the in-place copy is refused (a header
-/// too damaged to write over), and it runs under the vault write lock.
+/// The checked open's fallback when the rebuild could not write over the
+/// damaged file: empty the index in place, so the startup reconciliation
+/// fills it and any other process holding the file sees the same
+/// empty-then-filled index. Renaming the file away would strand those
+/// processes on the damaged one, so that is only the last resort, when even
+/// the in-place copy is refused as damage (a header too damaged to write
+/// over).
+///
+/// Everything here runs under the vault write lock, taken once: without it
+/// nothing is emptied or moved, and the server starts on the index as it is.
+/// Under the lock the file is checked again, and left alone when another
+/// process has repaired it in the meantime.
 ///
 /// Neither step ever takes an overridden file from another vault: a
 /// [`IndexError::BoundToOtherVault`] from the emptying is returned as is,
@@ -160,11 +175,28 @@ fn empty_in_place(
     root: &Path,
     cause: &IndexError,
 ) -> Result<SqliteIndex, BootstrapError> {
+    let _lock = match store.acquire_write_lock() {
+        Ok(lock) => lock,
+        Err(e) => {
+            tracing::warn!(
+                error = %cause,
+                lock = %e,
+                index_path = %location.path.display(),
+                "the damaged index could not be rebuilt, and the vault write lock is held \
+                 elsewhere; starting on the index as it is (the sweep or a tool call retries)"
+            );
+            return Ok(sqlite);
+        }
+    };
+    if sqlite.quick_check().is_ok_and(|p| p.is_empty()) {
+        tracing::info!(
+            index_path = %location.path.display(),
+            "another process repaired the index meanwhile; leaving it as it is"
+        );
+        return Ok(sqlite);
+    }
     let emptied = (|| {
         let empty = sqlite.open_fresh_beside()?;
-        let _lock = store
-            .acquire_write_lock()
-            .map_err(|e| IndexError::Update(format!("acquiring the vault write lock: {e}")))?;
         sqlite.replace_contents_from(&empty)
     })();
     match emptied {
@@ -177,7 +209,7 @@ fn empty_in_place(
             Ok(sqlite)
         }
         Err(e @ IndexError::BoundToOtherVault { .. }) => Err(e.into()),
-        Err(e) => {
+        Err(e) if e.is_corruption() => {
             tracing::warn!(
                 error = %cause,
                 emptying = %e,
@@ -186,7 +218,6 @@ fn empty_in_place(
                  setting it aside and starting from an empty one (another process with it open \
                  keeps the old file until it restarts)"
             );
-            let _lock = store.acquire_write_lock().ok();
             drop(sqlite);
             if location.overridden {
                 SqliteIndex::ensure_discardable(&location.path)?;
@@ -202,62 +233,20 @@ fn empty_in_place(
                     .into());
                 }
             }
-            SqliteIndex::set_aside(&location.path);
+            SqliteIndex::set_aside(location)?;
             Ok(SqliteIndex::open_location(location, root)?)
         }
-    }
-}
-
-/// Remove the rebuild files a killed rebuild left beside the index
-/// (`<index>.rebuild-<pid>-<n>`, and its `-wal` / `-shm`): nothing else
-/// ever deletes them. Only names of exactly that shape, so a file of
-/// someone else's that merely shares the prefix in an override's directory
-/// is left alone, and only ones untouched for an hour, so a rebuild running
-/// in another process right now keeps its file.
-fn clear_stale_rebuilds(index_path: &Path) {
-    let (Some(dir), Some(name)) = (index_path.parent(), index_path.file_name()) else {
-        return;
-    };
-    let prefix = format!(
-        "{}{}-",
-        name.to_string_lossy(),
-        cdno_core::index::REBUILD_SUFFIX
-    );
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let file_name = entry.file_name();
-        let file_name = file_name.to_string_lossy();
-        let Some(rest) = file_name.strip_prefix(&prefix) else {
-            continue;
-        };
-        if !is_rebuild_tail(rest) {
-            continue;
-        }
-        let stale = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.elapsed().ok())
-            .is_some_and(|age| age > std::time::Duration::from_secs(3600));
-        if stale {
-            let _ = std::fs::remove_file(entry.path());
+        Err(e) => {
+            tracing::warn!(
+                error = %cause,
+                emptying = %e,
+                index_path = %location.path.display(),
+                "the damaged index could not be rebuilt or emptied; starting on it as it is \
+                 (the sweep or a tool call retries)"
+            );
+            Ok(sqlite)
         }
     }
-}
-
-/// Whether `rest` is what follows `<index>.rebuild-` in a rebuild file's
-/// name: `<pid>-<n>`, optionally with `-wal` or `-shm`.
-fn is_rebuild_tail(rest: &str) -> bool {
-    let rest = rest
-        .strip_suffix("-wal")
-        .or_else(|| rest.strip_suffix("-shm"))
-        .unwrap_or(rest);
-    let digits =
-        |p: Option<&str>| p.is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
-    let mut parts = rest.split('-');
-    digits(parts.next()) && digits(parts.next()) && parts.next().is_none()
 }
 
 fn open(
@@ -282,7 +271,7 @@ fn open(
     let mut sqlite = SqliteIndex::open_location(&location, root)?;
     let mut damage_at_open = None;
     if check {
-        clear_stale_rebuilds(&location.path);
+        SqliteIndex::clear_stale_rebuilds(&location.path);
         // A check that cannot run (a busy or unreadable file) is no reason
         // to refuse to start: before the check existed the server would
         // have started, and the sweep checks again.
@@ -298,7 +287,7 @@ fn open(
                  (a copy of the damaged file is kept beside it, with `.previous` appended)"
             );
             let scope = Vault::note_scope_of(&config)?;
-            match cdno_core::reconcile::rebuild(&store, &sqlite, &scope) {
+            match cdno_core::reconcile::rebuild(&store, &sqlite, &scope, true) {
                 Ok(rebuilt) => {
                     if !rebuilt.snapshots_lost.is_empty() {
                         tracing::warn!(
@@ -310,9 +299,19 @@ fn open(
                 // Never empty or set aside a file another vault has bound
                 // since the open: refuse, as the open itself would have.
                 Err(e @ IndexError::BoundToOtherVault { .. }) => return Err(e.into()),
-                Err(e) => {
+                // Only a file too damaged to write over is emptied or set
+                // aside. Anything else, a lock another process holds while
+                // it repairs the same file above all, leaves the index as
+                // it is for the sweep or a tool call to retry.
+                Err(e) if e.is_corruption() => {
                     sqlite = empty_in_place(sqlite, &store, &location, root, &e)?;
                 }
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    index_path = %location.path.display(),
+                    "the damaged index could not be rebuilt at open; starting on it as it is \
+                     (the sweep or a tool call retries)"
+                ),
             }
             damage_at_open = Some(problems);
         }

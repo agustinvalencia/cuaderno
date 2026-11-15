@@ -1184,10 +1184,42 @@ fn index_stale_is_success() {
         .rename_note("old", "new", None, Some(&preview.hash), at(), || Ok(()))
         .expect("the files landed, so the rename succeeded");
     assert!(outcome.index_stale);
+    assert!(
+        !outcome.index_damaged,
+        "a plain update failure is not damage"
+    );
+    assert_eq!(outcome.index_stale_causes.len(), 1);
+    assert!(
+        outcome.index_stale_causes[0].contains("forced test failure"),
+        "{:?}",
+        outcome.index_stale_causes
+    );
     for (path, after) in destinations(&preview) {
         assert_eq!(f.read(&path.to_string()), after, "{path}");
     }
     assert!(!f.store.exists(&vp("projects/old.md")).unwrap());
+}
+
+#[test]
+fn an_index_stale_rename_over_a_damaged_index_says_so() {
+    // The interface answers this with "notes intact, write saved" and a
+    // repair, as it does for every other write's `IndexStale` (#526).
+    let f = fixture();
+    let preview = f.preview("old", "new");
+    let flaky = Arc::new(FlakyIndex::new(f.index.clone()));
+    let index: Arc<dyn VaultIndex> = flaky.clone();
+    let vault = open(Arc::clone(&f.store), index);
+    flaky.arm_corrupt();
+    let outcome = vault
+        .rename_note("old", "new", None, Some(&preview.hash), at(), || Ok(()))
+        .expect("the files landed, so the rename succeeded");
+    assert!(outcome.index_stale);
+    assert!(outcome.index_damaged);
+    assert!(
+        outcome.index_stale_causes[0].contains("malformed"),
+        "{:?}",
+        outcome.index_stale_causes
+    );
 }
 
 #[test]

@@ -280,7 +280,8 @@ pub enum TemplateError {
 /// The two variants distinguish "vault may be in a transient
 /// inconsistent state" (`FileWrite`) from "vault is correct but the
 /// index is stale" (`IndexStale`). Callers can treat `IndexStale` as
-/// non-fatal: reconciliation on next startup will heal the index.
+/// non-fatal: the next reconciliation (the next CLI command, a server's
+/// sweep or repair) will heal the index.
 #[derive(Debug, thiserror::Error)]
 pub enum TransactionError {
     /// A file operation failed. Previously-applied file ops were
@@ -296,7 +297,9 @@ pub enum TransactionError {
 
     /// All file operations succeeded, but one or more index updates
     /// failed. The vault on disk is correct; the index is stale for
-    /// the affected notes. Reconciliation will heal it.
+    /// the affected notes until the next reconciliation catches it up,
+    /// or, when the failure means the index file is damaged
+    /// ([`IndexError::is_corruption`]), a server's repair replaces it.
     ///
     /// The message carries the first underlying error, not only the
     /// count: a count alone hid a corrupt index for days, because every

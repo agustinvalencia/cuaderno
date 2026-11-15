@@ -513,12 +513,105 @@ fn set_aside_moves_the_index_files_to_previous() {
     drop(SqliteIndex::open(&path).unwrap());
     std::fs::write(with_suffix(&path, "-wal"), b"wal").unwrap();
 
-    SqliteIndex::set_aside(&path);
+    SqliteIndex::set_aside(&location(&path, false)).unwrap();
 
     assert!(!path.exists());
     assert!(!with_suffix(&path, "-wal").exists());
     assert!(with_suffix(&path, cdno_core::index::PREVIOUS_SUFFIX).exists());
     assert!(with_suffix(&path, &format!("{}-wal", cdno_core::index::PREVIOUS_SUFFIX)).exists());
+}
+
+fn location(path: &std::path::Path, overridden: bool) -> cdno_core::paths::IndexLocation {
+    cdno_core::paths::IndexLocation {
+        path: path.to_path_buf(),
+        overridden,
+    }
+}
+
+#[test]
+fn set_aside_at_an_override_never_replaces_a_foreign_previous_file() {
+    // The override's directory is not cuaderno's: a file that merely has
+    // the `.previous` name there is someone else's, and stays (#998).
+    let (_dir, path) = new_db_path();
+    drop(SqliteIndex::open(&path).unwrap());
+    let previous = with_suffix(&path, cdno_core::index::PREVIOUS_SUFFIX);
+    std::fs::write(&previous, b"someone else's notes").unwrap();
+
+    let err = SqliteIndex::set_aside(&location(&path, true)).unwrap_err();
+
+    assert!(
+        matches!(err, cdno_core::error::IndexError::NotAnIndex { .. }),
+        "{err:?}"
+    );
+    assert_eq!(std::fs::read(&previous).unwrap(), b"someone else's notes");
+    assert!(path.exists(), "nothing moved");
+}
+
+#[test]
+fn rebuild_files_get_random_names_the_cleanup_recognises() {
+    // Two servers that are both process 1 in their containers must not
+    // share a rebuild file name (PR #997 review).
+    let (_dir, path) = new_db_path();
+    let index = SqliteIndex::open(&path).unwrap();
+    let a = index.open_fresh_beside().unwrap();
+    let b = index.open_fresh_beside().unwrap();
+    assert_ne!(a.path(), b.path());
+    let name = path.file_name().unwrap().to_string_lossy().into_owned();
+    for fresh in [&a, &b] {
+        let file = fresh
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            cdno_core::index::is_rebuild_file_name(&name, &file),
+            "{file}"
+        );
+        assert!(
+            cdno_core::index::is_rebuild_file_name(&name, &format!("{file}-wal")),
+            "{file}-wal"
+        );
+    }
+    for other in [
+        "index.db",
+        "index.db-wal",
+        "index.db.previous",
+        "index.db.rebuild-",
+        "index.db.rebuild-notes",
+        "index.db.rebuild-0123456789abcdefX",
+        "other.db.rebuild-0123456789abcdef",
+    ] {
+        assert!(
+            !cdno_core::index::is_rebuild_file_name("index.db", other),
+            "{other}"
+        );
+    }
+    for ours in [
+        "index.db.rebuild-0123456789abcdef",
+        "index.db.rebuild-0123456789abcdef-shm",
+        "index.db.rebuild-1-0",
+    ] {
+        assert!(
+            cdno_core::index::is_rebuild_file_name("index.db", ours),
+            "{ours}"
+        );
+    }
+}
+
+#[test]
+fn a_damaged_index_keeps_no_copy_over_a_foreign_previous_at_an_override() {
+    let dir = TempDir::new().unwrap();
+    let vault = dir.path().join("surrogate-model");
+    std::fs::create_dir_all(&vault).unwrap();
+    let path = dir.path().join("index.db");
+    let index = SqliteIndex::open_location(&location(&path, true), &vault).unwrap();
+    let previous = with_suffix(&path, cdno_core::index::PREVIOUS_SUFFIX);
+    std::fs::write(&previous, b"someone else's notes").unwrap();
+
+    index.keep_previous_copy();
+
+    assert_eq!(std::fs::read(&previous).unwrap(), b"someone else's notes");
 }
 
 fn sqlite_failure(code: std::ffi::c_int) -> cdno_core::error::IndexError {

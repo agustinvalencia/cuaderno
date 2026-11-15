@@ -35,8 +35,8 @@ client gets the same structures whichever surface it uses.
 The index is a cache of the notes, rebuilt from them at will, so the servers repair it without
 asking. Both check its database file when they start, and `cdno-mcp-server` checks it again after
 every [reconciliation sweep](http-server.md#flags). A damaged index is rebuilt from the notes and
-copied into the live file in place, without a restart, so every process using the vault sees the
-repair at once. A copy of the damaged file is kept beside it, under its file name with `.previous`
+copied into the live file in place, without a restart, so every process on this machine using the
+vault sees the repair at once. A copy of the first damaged file of a streak is kept beside it, under its file name with `.previous`
 appended: `.cuaderno/index.db.previous` at the default location, or next to the file
 `CUADERNO_INDEX_PATH` (or `--index-path`) names, where an overridden index is repaired in place and
 stays bound to its vault (see
@@ -47,6 +47,18 @@ straight away, on either server, and a repair if the check confirms the damage; 
 the notes on disk are intact and whether that call's write was saved.
 [`index_status`](reads.md) reports the index's health and the file it checked, and [`rebuild_index`](writes.md#the-index) forces a rebuild, so a client
 with no shell on the server's machine can still recover. No note is ever changed by any of this.
+
+**What it is, and is not.** This contains a fault on one machine: a torn write, a crash, a bad
+page. It is not protection for an index file shared between two machines or kernels (a container
+and its host, a network share): their locks do not reach each other, so the other side's writes
+damage the file again after each repair. So a server counts the repairs damage triggers, and after
+three within an hour it stops repairing by itself, logs one error saying that something else is
+writing the index file, and reports `repair: damage_recurring` in `index_status`, with the same
+advice in every damaged-index error a client gets: give this machine its own index, as
+[Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine)
+explains. `rebuild_index` still runs then, and a success resumes automatic repair. A file too
+damaged for the running server to write over is reported as `restart_required`: the server needs a
+restart, whose start replaces such a file; the notes are intact.
 
 ## Focus
 

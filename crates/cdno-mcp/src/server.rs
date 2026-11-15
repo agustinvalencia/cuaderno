@@ -243,10 +243,15 @@ impl ServerHandler for CuadernoServer {
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::CallToolResult, rmcp::model::ErrorData> {
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        self.tool_router
-            .call(tcc)
-            .await
-            .or_else(crate::rejection::decode)
+        self.tool_router.call(tcc).await.or_else(|e| {
+            // A write that landed but returned `IndexStale` is saved, as its
+            // message says, so the sync agent hears of it like any verified
+            // write (GH #540, PR #997 review).
+            if crate::rejection::write_saved(&e) {
+                self.nudge_sync_agent();
+            }
+            crate::rejection::decode(e)
+        })
     }
 
     fn get_info(&self) -> ServerInfo {

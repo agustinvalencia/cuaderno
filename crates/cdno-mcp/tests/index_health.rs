@@ -11,7 +11,7 @@ use std::sync::Arc;
 use cdno_core::paths;
 use cdno_mcp::CuadernoServer;
 use cdno_mcp::bootstrap::{open_vault_checked, open_vault_with_index};
-use cdno_mcp::index_health::{IndexHealth, RebuildRefused};
+use cdno_mcp::index_health::{CheckKind, IndexHealth, RebuildRefused, RepairPolicy, RepairState};
 use cdno_mcp::server::EmptyInput;
 use chrono::{Days, NaiveDate};
 use rmcp::handler::server::wrapper::Parameters;
@@ -345,40 +345,38 @@ async fn a_corruption_signal_starts_a_repair_without_a_sweep_loop() {
 
 #[test]
 fn writes_committed_during_a_rebuild_are_in_the_index_afterwards() {
-    // The final pass runs under the vault write lock, so nothing can land
-    // between it and the copy (second review round on #997: 119 of 984
-    // captures were missing without it).
-    use std::sync::atomic::{AtomicBool, Ordering};
+    // The final pass runs under the vault write lock, so a write that
+    // reaches the notes after the unlocked passes is in the index after
+    // the copy (second review round on #997: 119 of 984 captures were
+    // missing without it). The seam lands the writes in exactly that
+    // window, so the test cannot pass by missing it.
     let dir = vault_with_notes();
-    let opened = Arc::new(open_vault_checked(dir.path(), None).unwrap());
-    let stop = Arc::new(AtomicBool::new(false));
-    let writer = {
-        let (opened, stop) = (Arc::clone(&opened), Arc::clone(&stop));
-        std::thread::spawn(move || {
-            let at = NaiveDate::from_ymd_opt(2026, 3, 1)
-                .unwrap()
-                .and_hms_opt(9, 0, 0)
-                .unwrap();
-            let mut written = 0usize;
-            while !stop.load(Ordering::Relaxed) {
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let at = NaiveDate::from_ymd_opt(2026, 3, 1)
+        .unwrap()
+        .and_hms_opt(9, 0, 0)
+        .unwrap();
+    let mut written = 0;
+    let report = cdno_core::reconcile::rebuild_with(
+        &opened.store,
+        &opened.sqlite,
+        &opened.scope,
+        true,
+        || {
+            for i in 0..20 {
                 opened
                     .vault
-                    .capture_to_inbox(at, &format!("surrogate model idea {written}"))
-                    .expect("capture");
+                    .capture_to_inbox(at, &format!("surrogate model idea {i}"))
+                    .expect("capture before the lock");
                 written += 1;
             }
-            written
-        })
-    };
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    let record = IndexHealth::from_opened(&opened).rebuild("test").unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    stop.store(true, Ordering::Relaxed);
-    let written = writer.join().unwrap();
+        },
+    )
+    .expect("the rebuild runs");
 
-    assert!(record.rebuilt, "{:?}", record.failure);
-    assert!(written > 0);
+    assert!(report.notes >= NOTES + written);
     let on_disk = std::fs::read_dir(dir.path().join("inbox")).unwrap().count();
+    assert_eq!(on_disk, written);
     let indexed = opened
         .index
         .list_all_paths()
@@ -393,31 +391,270 @@ fn writes_committed_during_a_rebuild_are_in_the_index_afterwards() {
 }
 
 #[test]
-fn damage_to_the_file_header_asks_for_a_restart() {
-    // The in-place copy cannot write over a header SQLite no longer
-    // recognises; a running server must say so rather than retry forever.
+fn damage_to_the_file_header_under_a_live_connection_is_repaired_in_place() {
+    // The server's connection holds the header in its cache, so the
+    // in-place copy writes it back: the running server repairs the file,
+    // and `restart_required` stays false. (That state is reached only when
+    // the copy itself fails as damage; no test reproduces that with a live
+    // connection.)
     let dir = vault_with_notes();
     let opened = open_vault_checked(dir.path(), None).unwrap();
     let path = index_path(dir.path());
     let mut bytes = std::fs::read(&path).unwrap();
-    for b in &mut bytes[..100] {
-        *b = 0xA5;
-    }
+    bytes[..100].fill(0xA5);
     std::fs::write(&path, bytes).unwrap();
     let health = IndexHealth::from_opened(&opened);
 
     let record = health.rebuild("test").unwrap();
 
-    if record.rebuilt {
-        // SQLite may still hold the header in its cache and write it back;
-        // then the repair simply worked.
+    assert!(record.rebuilt, "{:?}", record.failure);
+    assert!(!record.restart_required);
+    let status = health.status();
+    assert!(!status.restart_required);
+    assert_eq!(status.repair, RepairState::Automatic);
+    // Closing the last connection checkpoints the copy into the main file.
+    drop(health);
+    drop(opened);
+    let on_disk = std::fs::read(&path).unwrap();
+    assert_eq!(
+        &on_disk[..16],
+        b"SQLite format 3\0",
+        "the header is written back"
+    );
+}
+
+/// Damage only `integrity_check` sees: an index whose declared column no
+/// longer matches the b-tree it was built from, so its entries are all
+/// "missing" while `quick_check`, which does not compare an index with its
+/// table, passes. The #526 shape.
+fn damage_an_index_btree(root: &Path) {
+    drop(open_vault_with_index(root, None).expect("first open indexes the vault"));
+    let conn = rusqlite::Connection::open(index_path(root)).unwrap();
+    conn.execute_batch(
+        "PRAGMA writable_schema = ON;
+         UPDATE sqlite_master SET sql = 'CREATE INDEX idx_notes_type ON notes(title)'
+             WHERE name = 'idx_notes_type';
+         PRAGMA writable_schema = OFF;",
+    )
+    .unwrap();
+}
+
+#[test]
+fn damage_only_the_thorough_check_sees_is_outstanding_until_repaired() {
+    let dir = vault_with_notes();
+    damage_an_index_btree(dir.path());
+    let opened = open_vault_with_index(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+
+    assert!(
+        health.check(CheckKind::QuickCheck).ok,
+        "precondition: the quick check cannot see it"
+    );
+    let thorough = health.check(CheckKind::IntegrityCheck);
+    assert!(!thorough.ok, "the thorough check sees it");
+
+    // A quick pass does not clear it, and `index_status` reports the
+    // thorough result (reused, not rescanned) rather than a healthy quick one.
+    assert!(health.check(CheckKind::QuickCheck).ok);
+    let status = health.status();
+    assert!(!status.healthy);
+    assert_eq!(status.check.kind, CheckKind::IntegrityCheck);
+    assert_eq!(status.check.at, thorough.at);
+
+    // The sweep acts on the outstanding damage although its own quick
+    // check would pass: it escalates, and repairs.
+    health.sweep();
+    let status = health.status();
+    assert!(status.healthy, "{:?}", status.check);
+    assert!(status.last_rebuild.is_some_and(|r| r.rebuilt));
+    assert!(health.check(CheckKind::IntegrityCheck).ok);
+}
+
+#[test]
+fn two_servers_opening_one_damaged_index_never_undo_each_others_repair() {
+    // Two servers starting on one damaged file at once (PR #997 review):
+    // whichever repairs second, or gives up waiting on the lock the other
+    // holds, must not empty the index the other just repaired, which
+    // would drop the archival snapshots it carried, nor set it aside. So
+    // after both opens the file is sound, still where it was, and still
+    // holds the snapshot, whatever order the two ran in.
+    let dir = vault_with_notes();
+    let note = {
+        let opened = open_vault_with_index(dir.path(), None).unwrap();
+        let note = opened
+            .index
+            .list_all_paths()
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        opened
+            .index
+            .record_archival_snapshot(&note, &snapshot())
+            .unwrap();
+        note
+    };
+    damage_last_page(&index_path(dir.path()));
+
+    let open = |root: std::path::PathBuf| {
+        std::thread::spawn(move || open_vault_checked(&root, None).expect("each server starts"))
+    };
+    let a = open(dir.path().to_path_buf());
+    let b = open(dir.path().to_path_buf());
+    let (a, b) = (a.join().unwrap(), b.join().unwrap());
+
+    assert!(a.damage_at_open.is_some() || b.damage_at_open.is_some());
+    assert!(index_path(dir.path()).exists(), "not set aside");
+    for opened in [&a, &b] {
         assert!(opened.sqlite.quick_check().unwrap().is_empty());
-    } else {
-        assert!(record.restart_required, "{:?}", record.failure);
-        assert!(health.status().restart_required);
+        assert!(indexed_notes(opened) >= NOTES, "not emptied");
+        assert_eq!(
+            opened.index.find_archival_snapshot(&note).unwrap(),
+            Some(snapshot()),
+            "the carried snapshot survives the other server's start"
+        );
     }
 }
 
+#[test]
+fn an_open_whose_rebuild_cannot_get_the_lock_starts_on_the_index_as_it_is() {
+    // The failure the review traced: the vault lock held past its timeout
+    // (another server repairing the same file). The open must start on
+    // the index as it is, never empty it or set it aside. A vault of one
+    // large note keeps the per-note lock waits few; the lock is held for
+    // the whole open, so every wait in it times out.
+    let dir = TempDir::new().unwrap();
+    cdno_cli::commands::init::run(dir.path()).expect("cdno init");
+    let folder = dir.path().join("journal/2025/daily");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("2025-01-01.md"),
+        format!(
+            "---\ntype: daily\n---\n# 2025-01-01\n\n## Logs\n\n- **09:00**: {}\n",
+            "Surrogate model notes. ".repeat(4000)
+        ),
+    )
+    .unwrap();
+    damage_index(dir.path());
+    let before = std::fs::metadata(index_path(dir.path())).unwrap().len();
+    let store = cdno_core::store::FsVaultStore::new(dir.path());
+    let held = cdno_core::store::VaultStore::acquire_write_lock(&store).expect("the other server");
+
+    let opened = open_vault_checked(dir.path(), None).expect("the open still starts");
+    drop(held);
+
+    assert!(opened.damage_at_open.is_some(), "it saw the damage");
+    assert!(
+        !opened.sqlite.quick_check().unwrap().is_empty(),
+        "the file is as it was: not emptied in place, not replaced"
+    );
+    assert!(index_path(dir.path()).exists(), "not set aside");
+    assert!(std::fs::metadata(index_path(dir.path())).unwrap().len() >= before);
+}
+
+fn snapshot() -> cdno_core::index::ArchivalSnapshot {
+    cdno_core::index::ArchivalSnapshot {
+        frozen_size: 42,
+        frozen_hash: "abc".into(),
+        archived_at_ns: 7,
+        masked_hash: None,
+        mask_version: None,
+        masked_size: None,
+    }
+}
+
+/// A zero spacing, so a test reaches the recurrence limit without waiting.
+fn eager() -> RepairPolicy {
+    RepairPolicy {
+        min_rebuild_interval: std::time::Duration::ZERO,
+        ..RepairPolicy::default()
+    }
+}
+
+/// Damage the live index through its own connection, as another writer on
+/// the same file would: a schema-less file fails the check.
+fn damage_live(opened: &cdno_mcp::bootstrap::OpenedVault) {
+    opened
+        .sqlite
+        .with_connection(|c| c.execute_batch("DROP TABLE schema_migrations"))
+        .unwrap();
+}
+
+#[test]
+fn recurring_damage_stops_the_automatic_repair() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened).with_policy(eager());
+    let previous = beside(&index_path(dir.path()), cdno_core::index::PREVIOUS_SUFFIX);
+
+    let mut first_copy = None;
+    for round in 1..=3 {
+        damage_live(&opened);
+        health.sweep();
+        let status = health.status();
+        assert!(
+            status.last_rebuild.as_ref().is_some_and(|r| r.rebuilt),
+            "round {round} is repaired"
+        );
+        assert_eq!(status.damage_rebuilds_recent, round);
+        assert_eq!(status.repair, RepairState::Automatic);
+        // The first round's copy of the damaged file is the one kept.
+        let copy = std::fs::read(&previous).expect("a copy is kept");
+        match &first_copy {
+            None => first_copy = Some(copy),
+            Some(first) => assert_eq!(&copy, first, "round {round} overwrote the evidence"),
+        }
+    }
+
+    damage_live(&opened);
+    let rebuilt_before = health.status().last_rebuild.unwrap().at;
+    health.sweep();
+    let status = health.status();
+    assert_eq!(status.repair, RepairState::DamageRecurring);
+    assert!(!status.healthy);
+    assert_eq!(status.damage_rebuilds_recent, 3);
+    assert_eq!(
+        status.last_rebuild.unwrap().at,
+        rebuilt_before,
+        "no fourth automatic rebuild"
+    );
+    let advice = status.advice.expect("advice");
+    assert!(advice.contains("CUADERNO_INDEX_PATH"), "{advice}");
+    assert!(advice.contains("another machine"), "{advice}");
+    assert!(
+        !opened.sqlite.quick_check().unwrap().is_empty(),
+        "still damaged"
+    );
+
+    // An explicit `rebuild_index` still runs, and ends the stop.
+    let record = health.rebuild("rebuild_index was called").unwrap();
+    assert!(record.rebuilt, "{:?}", record.failure);
+    let status = health.status();
+    assert!(status.healthy);
+    assert_eq!(status.repair, RepairState::Automatic);
+    assert_eq!(status.damage_rebuilds_recent, 0);
+}
+
+#[test]
+fn damage_found_at_open_counts_as_the_first_repair_of_a_streak() {
+    let dir = vault_with_notes();
+    damage_index(dir.path());
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let previous = beside(&index_path(dir.path()), cdno_core::index::PREVIOUS_SUFFIX);
+    let at_open = std::fs::read(&previous).expect("the open kept a copy");
+    let health = IndexHealth::from_opened(&opened).with_policy(eager());
+    assert_eq!(health.status().damage_rebuilds_recent, 1);
+
+    damage_live(&opened);
+    health.sweep();
+
+    assert!(health.status().last_rebuild.is_some_and(|r| r.rebuilt));
+    assert_eq!(
+        std::fs::read(&previous).unwrap(),
+        at_open,
+        "the copy from the open is the one kept"
+    );
+}
 // ---- An overridden index (#998) -------------------------------------------
 
 /// A vault plus a directory outside it holding its overridden index, built

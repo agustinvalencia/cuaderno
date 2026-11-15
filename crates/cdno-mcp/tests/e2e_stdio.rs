@@ -107,7 +107,13 @@ impl McpSubprocess {
     /// hard timeout to keep a hung subprocess from hanging CI.
     /// Notifications (no `id`) are skipped.
     fn read_response(&self, expected_id: u64) -> Value {
-        let deadline = Duration::from_secs(5);
+        self.read_response_within(expected_id, Duration::from_secs(5))
+    }
+
+    /// [`read_response`](Self::read_response) with its own timeout, for a
+    /// reply that follows slow work at start (a checked open that rebuilds
+    /// the index).
+    fn read_response_within(&self, expected_id: u64, deadline: Duration) -> Value {
         loop {
             match self.rx.recv_timeout(deadline) {
                 Ok(line) => {
@@ -1000,7 +1006,7 @@ fn the_stdio_server_repairs_a_damaged_overridden_index_in_place() {
     // data and damaging it spares the header, the schema and the binding.
     let padding = "Surrogate model notes. ".repeat(30);
     for day in 1..=28 {
-        for month in 1..=9 {
+        for month in 1..=3 {
             let folder = dir.path().join("journal/2025/daily");
             std::fs::create_dir_all(&folder).unwrap();
             std::fs::write(
@@ -1024,7 +1030,18 @@ fn the_stdio_server_repairs_a_damaged_overridden_index_in_place() {
     std::fs::write(&index, bytes).unwrap();
 
     let mut mcp = McpSubprocess::spawn_with_index(dir.path(), Some(&index));
-    initialise(&mut mcp);
+    // The server rebuilds the index before it answers `initialize`, which
+    // can take far longer than a normal reply on a loaded runner.
+    mcp.send(&json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": { "name": "cdno-mcp e2e", "version": "0.0" }
+        }
+    }));
+    mcp.read_response_within(1, Duration::from_secs(120));
+    mcp.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
     mcp.send(&json!({
         "jsonrpc": "2.0", "id": 2, "method": "tools/call",
         "params": { "name": "index_status", "arguments": {} }

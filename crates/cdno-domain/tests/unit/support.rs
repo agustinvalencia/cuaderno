@@ -184,6 +184,9 @@ impl VaultStore for CaseInsensitiveStore {
 pub struct FlakyIndex {
     inner: Arc<MemoryIndex>,
     armed: Mutex<bool>,
+    /// Fail with SQLite's "database disk image is malformed" rather than a
+    /// plain update error: a damaged index file.
+    corrupt: Mutex<bool>,
 }
 
 impl FlakyIndex {
@@ -191,11 +194,18 @@ impl FlakyIndex {
         Self {
             inner,
             armed: Mutex::new(false),
+            corrupt: Mutex::new(false),
         }
     }
 
     pub fn arm(&self) {
         *self.armed.lock().unwrap() = true;
+    }
+
+    /// [`arm`](Self::arm), failing as a damaged file does.
+    pub fn arm_corrupt(&self) {
+        *self.corrupt.lock().unwrap() = true;
+        self.arm();
     }
 }
 
@@ -264,6 +274,12 @@ impl VaultIndex for FlakyIndex {
         let mut armed = self.armed.lock().unwrap();
         if *armed {
             *armed = false;
+            if std::mem::take(&mut *self.corrupt.lock().unwrap()) {
+                return Err(IndexError::Sqlite(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+                    None,
+                )));
+            }
             return Err(IndexError::Update("forced test failure".to_owned()));
         }
         self.inner.replace_milestones(path, milestones)
