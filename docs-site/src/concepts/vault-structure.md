@@ -112,7 +112,9 @@ a container (through a VM file share such as virtiofs), or a vault on a network 
 locks and its shared-memory file do not cross that boundary, so two machines opening one index
 file each act as if alone and damage it. Give each machine its own value, with the file on that
 machine's own storage, outside the shared folder. **Two machines must never share one index
-file**, whether it sits at the default location or at an override.
+file**, whether it sits at the default location or at an override. The override separates the
+index only: two machines writing the same vault folder at once still need the note-level
+protection tracked in [#1001](https://github.com/agustinvalencia/cuaderno/issues/1001).
 
 - **Leave it unset** for a vault used from one machine: the index stays at `.cuaderno/index.db`,
   exactly as before.

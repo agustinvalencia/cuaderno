@@ -6,6 +6,7 @@
 
 use std::ffi::OsStr;
 use std::path::Path;
+use std::time::Duration;
 
 use assert_cmd::Command;
 use cdno_core::paths;
@@ -161,6 +162,9 @@ fn a_relative_override_is_refused_and_creates_nothing() {
             .current_dir(cwd.path())
             .env(paths::INDEX_PATH_ENV, "cache/index.db")
             .arg(verb)
+            // Bounded: a refusal is immediate, and a regression must fail,
+            // not hang (a killed run also misses the stderr checks below).
+            .timeout(Duration::from_secs(15))
             .assert()
             .failure()
             .stderr(predicate::str::contains("CUADERNO_INDEX_PATH"))
@@ -180,6 +184,7 @@ fn an_override_naming_a_directory_is_refused() {
     cdno(vault.path())
         .env(paths::INDEX_PATH_ENV, elsewhere.path())
         .arg("commitments")
+        .timeout(Duration::from_secs(15))
         .assert()
         .failure()
         .stderr(predicate::str::contains("names a directory"));
