@@ -13,18 +13,21 @@
 //! `CUADERNO_INDEX_PATH` when set (#998) — so the file deleted here is
 //! the same one the re-open creates. An overridden file is deleted only
 //! when it is recognisably an index, and since the rebuilt file binds to
-//! this vault, `reindex` is the one way to rebind an overridden index
-//! that belonged to another vault; it says so when it does.
+//! this vault, `reindex --rebind` is the one way to give an overridden
+//! index that belongs to another vault to this one; it says so when it
+//! does. Without the flag, such an index is refused here as by every
+//! other verb, since the other vault may still be served from it.
 
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use cdno_core::error::IndexError;
 use cdno_core::index::{SqliteIndex, canonical_vault_root};
 use cdno_core::paths;
 
 use crate::bootstrap;
 
-pub fn run(root: &Path) -> Result<()> {
+pub fn run(root: &Path, rebind: bool) -> Result<()> {
     // Confirm we're actually in a vault before deleting anything.
     let cuaderno_dir = root.join(paths::CUADERNO_DIR);
     if !cuaderno_dir.is_dir() {
@@ -38,11 +41,21 @@ pub fn run(root: &Path) -> Result<()> {
     // the index untouched.
     let location = bootstrap::index_location(root)?;
     let rebound_from = if location.overridden {
-        // Never delete a file that is not an index (a mistyped path).
+        // Never delete a file that is not cuaderno's index (a mistyped path).
         SqliteIndex::ensure_discardable(&location.path)?;
-        SqliteIndex::bound_vault_root(&location.path)
-            .unwrap_or(None)
-            .filter(|bound| *bound != canonical_vault_root(root))
+        let here = canonical_vault_root(root);
+        match SqliteIndex::bound_vault_root(&location.path)? {
+            Some(bound) if bound != here && !rebind => {
+                return Err(IndexError::BoundToOtherVault {
+                    index: location.path.display().to_string(),
+                    bound,
+                    root: here,
+                }
+                .into());
+            }
+            Some(bound) if bound != here => Some(bound),
+            _ => None,
+        }
     } else {
         None
     };

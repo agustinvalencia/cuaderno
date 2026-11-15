@@ -186,3 +186,109 @@ fn missing_empty_and_sqlite_files_are_discardable() {
     std::fs::write(&index, b"SQLite").unwrap();
     assert!(SqliteIndex::ensure_discardable(&index).is_err());
 }
+
+/// Another application's SQLite database, in rollback-journal mode as most
+/// are: a valid header, no cuaderno mark.
+fn write_foreign_database(path: &Path) {
+    let conn = rusqlite::Connection::open(path).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE bookmarks (url TEXT PRIMARY KEY, title TEXT);
+         INSERT INTO bookmarks VALUES ('https://example.org', 'Example');",
+    )
+    .unwrap();
+}
+
+fn sidecars_of(path: &Path) -> Vec<PathBuf> {
+    ["-wal", "-shm", "-journal"]
+        .iter()
+        .map(|s| {
+            let mut name = path.as_os_str().to_owned();
+            name.push(s);
+            PathBuf::from(name)
+        })
+        .filter(|p| p.exists())
+        .collect()
+}
+
+#[test]
+fn another_applications_sqlite_database_is_refused_and_left_byte_identical() {
+    let (_dir, a, _b, index) = two_vaults();
+    write_foreign_database(&index);
+    let before = std::fs::read(&index).unwrap();
+
+    let err = SqliteIndex::open_location(&overridden(&index), &a).expect_err("foreign");
+    assert!(matches!(err, IndexError::NotAnIndex { .. }), "{err:?}");
+    assert!(matches!(
+        SqliteIndex::ensure_discardable(&index),
+        Err(IndexError::NotAnIndex { .. })
+    ));
+    assert_eq!(std::fs::read(&index).unwrap(), before, "bytes unchanged");
+    assert_eq!(
+        sidecars_of(&index),
+        Vec::<PathBuf>::new(),
+        "no sidecar created"
+    );
+}
+
+#[test]
+fn an_index_from_before_migration_005_is_accepted_and_bound() {
+    // Recognised by migration 1's own `schema_migrations` row.
+    let (_dir, a, b, index) = two_vaults();
+    drop(SqliteIndex::open(&index).unwrap());
+    {
+        let conn = rusqlite::Connection::open(&index).unwrap();
+        conn.execute_batch(
+            "DROP TABLE index_meta; DELETE FROM schema_migrations WHERE version = 5;",
+        )
+        .unwrap();
+    }
+    SqliteIndex::ensure_discardable(&index).expect("a pre-005 cuaderno index");
+
+    drop(SqliteIndex::open_location(&overridden(&index), &a).unwrap());
+    assert_eq!(
+        SqliteIndex::bound_vault_root(&index).unwrap(),
+        Some(canonical_vault_root(&a))
+    );
+    assert!(matches!(
+        SqliteIndex::open_location(&overridden(&index), &b),
+        Err(IndexError::BoundToOtherVault { .. })
+    ));
+}
+
+#[test]
+fn of_two_connections_first_binding_one_file_the_second_is_refused() {
+    // Both opened before either binds: the race the check-then-bind
+    // transaction closes.
+    let (_dir, a, b, index) = two_vaults();
+    let first = SqliteIndex::open(&index).unwrap();
+    let second = SqliteIndex::open(&index).unwrap();
+    let (root_a, root_b) = (canonical_vault_root(&a), canonical_vault_root(&b));
+
+    first.bind_vault_root(&index, &root_a).expect("first binds");
+    let err = second
+        .bind_vault_root(&index, &root_b)
+        .expect_err("second must not overwrite");
+    assert!(
+        matches!(&err, IndexError::BoundToOtherVault { bound, .. } if *bound == root_a),
+        "{err:?}"
+    );
+    // Binding the same root again is a no-op, not an error.
+    second.bind_vault_root(&index, &root_a).unwrap();
+    assert_eq!(SqliteIndex::bound_vault_root(&index).unwrap(), Some(root_a));
+}
+
+#[test]
+fn opening_an_index_already_bound_to_this_vault_writes_nothing_for_the_binding() {
+    let (_dir, a, _b, index) = two_vaults();
+    drop(SqliteIndex::open_location(&overridden(&index), &a).unwrap());
+
+    // Another connection holds the write lock for the whole reopen. Any
+    // write by the reopen, even a binding `INSERT OR IGNORE` that changes
+    // nothing, needs that lock and would fail with SQLITE_BUSY after the
+    // busy timeout; a reopen that only reads goes through.
+    let holder = rusqlite::Connection::open(&index).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE;").unwrap();
+    let reopened = SqliteIndex::open_location(&overridden(&index), &a);
+    holder.execute_batch("COMMIT;").unwrap();
+    drop(reopened.expect("a reopen for the bound vault must not write"));
+}

@@ -51,6 +51,10 @@ const MIGRATIONS: &[(u32, &str, &str)] = &[
     ),
 ];
 
+/// How long a connection waits on another writer before `SQLITE_BUSY`:
+/// the main connection and the read-only probe alike.
+const BUSY_TIMEOUT: Duration = Duration::from_millis(5000);
+
 /// The first 16 bytes of every SQLite database file.
 const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
 
@@ -158,16 +162,18 @@ impl SqliteIndex {
     /// file is cuaderno's own, and the vault may legitimately be reached
     /// under two paths. An overridden location (#998) adds two guards:
     ///
-    /// - **A file that is not recognisably an index is never discarded.**
-    ///   Before anything else, an existing file must be empty or begin with
-    ///   the SQLite header ([`ensure_discardable`](Self::ensure_discardable)),
-    ///   so the corruption self-heal cannot delete a mistyped path's file.
-    /// - **The index is bound to one vault.** It records the canonical vault
-    ///   root on first use (an existing index that records none, such as one
-    ///   copied from a default location, is bound then), and an open for any
-    ///   other root is refused, read-only, before migrations or
-    ///   reconciliation touch it. `cdno reindex`, which deletes and rebuilds
-    ///   the file, is the way to rebind it.
+    /// - **A file that is not recognisably cuaderno's index is never opened
+    ///   read-write or discarded** ([`ensure_discardable`](Self::ensure_discardable)),
+    ///   so a mistyped override cannot have another application's database
+    ///   migrated, reconciled into, or deleted by the self-heal.
+    /// - **The index is bound to one vault.** An open for a root other than
+    ///   the recorded one is refused, read-only, before migrations or
+    ///   reconciliation touch it. An index that records no root (new, or
+    ///   from before migration 005) is bound on first use, atomically
+    ///   ([`bind_vault_root`](Self::bind_vault_root)); one already bound to
+    ///   this root is opened with no write for the binding. `cdno reindex
+    ///   --rebind`, which deletes and rebuilds the file, is the way to give
+    ///   it to another vault.
     pub fn open_location(
         location: &crate::paths::IndexLocation,
         vault_root: &Path,
@@ -178,23 +184,64 @@ impl SqliteIndex {
         let path = location.path.as_path();
         Self::ensure_discardable(path)?;
         let root = canonical_vault_root(vault_root);
-        if let Some(bound) = Self::bound_vault_root(path)?
-            && bound != root
+        let bound = Self::bound_vault_root(path)?;
+        if let Some(bound) = &bound
+            && *bound != root
         {
             return Err(IndexError::BoundToOtherVault {
                 index: path.display().to_string(),
-                bound,
+                bound: bound.clone(),
                 root,
             });
         }
         let index = Self::open(path)?;
-        index.with_connection(|conn| {
-            conn.execute(
-                "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?1, ?2)",
-                params![VAULT_ROOT_KEY, root],
-            )
-        })?;
+        if bound.is_none() {
+            index.bind_vault_root(path, &root)?;
+        }
         Ok(index)
+    }
+
+    /// Bind this index to the vault at `root` (a canonical root, as
+    /// [`canonical_vault_root`] gives) unless it is bound already, and
+    /// refuse when it is bound to another vault. Check and bind are one
+    /// immediate transaction (`INSERT OR IGNORE`, then read back), so of two
+    /// processes first-binding one file for different vaults, the second
+    /// is refused rather than overwriting the first. `path` only names the
+    /// file in the error.
+    pub fn bind_vault_root(&self, path: &Path, root: &str) -> Result<(), IndexError> {
+        let mut conn = self.lock_conn();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO index_meta (key, value) VALUES (?1, ?2)",
+            params![VAULT_ROOT_KEY, root],
+        )?;
+        let bound: String = tx.query_row(
+            "SELECT value FROM index_meta WHERE key = ?1",
+            params![VAULT_ROOT_KEY],
+            |r| r.get(0),
+        )?;
+        tx.commit()?;
+        if bound == root {
+            Ok(())
+        } else {
+            Err(IndexError::BoundToOtherVault {
+                index: path.display().to_string(),
+                bound,
+                root: root.to_owned(),
+            })
+        }
+    }
+
+    /// A read-only connection for probing a file before deciding whether
+    /// to open it for real, with the main connection's busy timeout so a
+    /// writer elsewhere is waited for rather than mistaken for damage.
+    fn open_probe(path: &Path) -> rusqlite::Result<Connection> {
+        let conn = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.busy_timeout(BUSY_TIMEOUT)?;
+        Ok(conn)
     }
 
     /// The vault root an overridden index at `path` is bound to, read
@@ -206,10 +253,7 @@ impl SqliteIndex {
             Ok(meta) if meta.len() > 0 => {}
             _ => return Ok(None),
         }
-        let conn = match Connection::open_with_flags(
-            path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        ) {
+        let conn = match Self::open_probe(path) {
             Ok(conn) => conn,
             Err(err) if is_corruption(&err) => return Ok(None),
             Err(err) => return Err(err.into()),
@@ -233,10 +277,28 @@ impl SqliteIndex {
     }
 
     /// Refuse to go on when an overridden `path` names an existing file that
-    /// is not recognisably an index: neither empty nor starting with the
-    /// SQLite header. Called before the self-heal or `cdno reindex` could
-    /// delete it, so a mistyped override never destroys another file.
+    /// is not recognisably cuaderno's index. Called before anything opens
+    /// it read-write, and before the self-heal or `cdno reindex` could
+    /// delete it, so a mistyped override never alters or destroys another
+    /// file.
+    ///
+    /// Discardable: no file, an empty file, or a file with the SQLite header
+    /// whose read-only probe finds cuaderno's mark, an `index_meta` table or
+    /// (for an index from before migration 005) a `schema_migrations` row
+    /// for version 1 carrying migration 1's description. Any other SQLite
+    /// database (another application's) is refused.
+    ///
+    /// A file with the header whose schema cannot be read because it is
+    /// corrupt stays discardable, so a damaged index still heals. That
+    /// leaves one way to lose a foreign file: an override naming another
+    /// application's database that is itself corrupt. It is accepted
+    /// because such a file is already unreadable to its owner, and the
+    /// alternative, refusing every unreadable file, would turn the
+    /// self-heal off for exactly the indexes it exists for.
     pub fn ensure_discardable(path: &Path) -> Result<(), IndexError> {
+        let not_an_index = || IndexError::NotAnIndex {
+            path: path.display().to_string(),
+        };
         let mut head = [0u8; 16];
         let read = match fs::File::open(path) {
             Ok(mut file) => {
@@ -269,12 +331,17 @@ impl SqliteIndex {
                 });
             }
         };
-        if read == 0 || (read == head.len() && &head == SQLITE_HEADER) {
-            Ok(())
-        } else {
-            Err(IndexError::NotAnIndex {
-                path: path.display().to_string(),
-            })
+        if read == 0 {
+            return Ok(());
+        }
+        if read < head.len() || &head != SQLITE_HEADER {
+            return Err(not_an_index());
+        }
+        match has_cuaderno_mark(path) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(not_an_index()),
+            Err(err) if is_corruption(&err) => Ok(()),
+            Err(err) => Err(err.into()),
         }
     }
 
@@ -322,6 +389,32 @@ impl SqliteIndex {
 /// rather than surfaced to the user.
 fn is_recoverable_corruption(err: &IndexError) -> bool {
     matches!(err, IndexError::Sqlite(e) if is_corruption(e))
+}
+
+/// Whether the SQLite database at `path` carries cuaderno's own mark,
+/// read on a read-only connection: an `index_meta` table, or a
+/// `schema_migrations` row for version 1 whose description is migration
+/// 1's. A corruption error is returned as is, for the caller to decide.
+fn has_cuaderno_mark(path: &Path) -> rusqlite::Result<bool> {
+    let conn = SqliteIndex::open_probe(path)?;
+    let has_table = |name: &str| -> rusqlite::Result<bool> {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            [name],
+            |r| r.get::<_, bool>(0),
+        )
+    };
+    if has_table("index_meta")? {
+        return Ok(true);
+    }
+    if !has_table("schema_migrations")? {
+        return Ok(false);
+    }
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 1 AND description = ?1)",
+        [MIGRATIONS[0].1],
+        |r| r.get::<_, bool>(0),
+    )
 }
 
 /// The SQLite error codes behind [`is_recoverable_corruption`].
@@ -374,7 +467,7 @@ fn configure_connection(conn: &Connection) -> Result<(), IndexError> {
     // Avoid spurious SQLITE_BUSY on brief writer contention. 5s is
     // generous for a personal-scale vault but trips quickly enough
     // that a genuine deadlock still surfaces.
-    conn.busy_timeout(Duration::from_millis(5000))?;
+    conn.busy_timeout(BUSY_TIMEOUT)?;
 
     Ok(())
 }

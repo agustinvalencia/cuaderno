@@ -172,9 +172,45 @@ fn a_file_that_is_not_an_index_is_refused_and_left_byte_identical() {
             .timeout(Duration::from_secs(15))
             .assert()
             .failure()
-            .stderr(predicate::str::contains("not an index database"))
+            .stderr(predicate::str::contains("not a cuaderno index"))
             .stderr(predicate::str::contains("nothing was deleted"));
         assert_eq!(std::fs::read(&other).unwrap(), content, "{verb}");
+    }
+}
+
+/// A mistyped override that names another application's SQLite database:
+/// refused by every verb, `reindex --rebind` included, never switched to
+/// WAL, migrated or deleted.
+#[test]
+fn another_applications_sqlite_database_is_refused_and_left_byte_identical() {
+    let vault = tempdir().unwrap();
+    let elsewhere = tempdir().unwrap();
+    let other = elsewhere.path().join("bookmarks.sqlite");
+    init(vault.path());
+    {
+        let conn = rusqlite::Connection::open(&other).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE bookmarks (url TEXT PRIMARY KEY, title TEXT);
+             INSERT INTO bookmarks VALUES ('https://example.org', 'Example');",
+        )
+        .unwrap();
+    }
+    let before = std::fs::read(&other).unwrap();
+
+    for args in [&["commitments"][..], &["reindex"], &["reindex", "--rebind"]] {
+        cdno(vault.path())
+            .env(paths::INDEX_PATH_ENV, &other)
+            .args(args)
+            .timeout(Duration::from_secs(15))
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("not a cuaderno index"));
+        assert_eq!(std::fs::read(&other).unwrap(), before, "{args:?}");
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let mut sidecar = other.as_os_str().to_owned();
+            sidecar.push(suffix);
+            assert!(!Path::new(&sidecar).exists(), "{args:?} created {suffix}");
+        }
     }
 }
 
@@ -301,7 +337,38 @@ fn a_second_vault_on_the_same_override_is_refused_and_the_first_is_untouched() {
 }
 
 #[test]
-fn reindex_rebinds_an_overridden_index_to_this_vault_and_says_so() {
+fn plain_reindex_refuses_an_index_bound_to_another_vault() {
+    // The other vault may still be served from this file: rebinding takes
+    // an explicit `--rebind`.
+    let a = tempdir().unwrap();
+    let b = tempdir().unwrap();
+    let elsewhere = tempdir().unwrap();
+    let index = elsewhere.path().join("index.db");
+    init(a.path());
+    init(b.path());
+    create_project(a.path(), &index, "Surrogate model");
+
+    let a_root = a.path().canonicalize().unwrap();
+    let b_root = b.path().canonicalize().unwrap();
+    cdno(b.path())
+        .env(paths::INDEX_PATH_ENV, &index)
+        .arg("reindex")
+        .timeout(Duration::from_secs(15))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(a_root.to_string_lossy()))
+        .stderr(predicate::str::contains(b_root.to_string_lossy()))
+        .stderr(predicate::str::contains("cdno reindex --rebind"))
+        .stderr(predicate::str::contains("first stop whatever serves"));
+
+    // Untouched: still A's index.
+    search(a.path(), &index, "surrogate")
+        .success()
+        .stdout(predicate::str::contains("surrogate-model"));
+}
+
+#[test]
+fn reindex_rebind_gives_an_overridden_index_to_this_vault_and_says_so() {
     let a = tempdir().unwrap();
     let b = tempdir().unwrap();
     let elsewhere = tempdir().unwrap();
@@ -313,7 +380,7 @@ fn reindex_rebinds_an_overridden_index_to_this_vault_and_says_so() {
     let a_root = a.path().canonicalize().unwrap();
     cdno(b.path())
         .env(paths::INDEX_PATH_ENV, &index)
-        .arg("reindex")
+        .args(["reindex", "--rebind"])
         .assert()
         .success()
         .stdout(predicate::str::contains(format!(

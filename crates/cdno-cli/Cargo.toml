@@ -48,3 +48,5 @@ tempfile.workspace = true
 assert_cmd.workspace = true
 predicates.workspace = true
 serde_json.workspace = true
+# Builds a foreign SQLite database, the mistyped-override case (#998).
+rusqlite.workspace = true

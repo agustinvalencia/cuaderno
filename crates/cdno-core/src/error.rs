@@ -164,8 +164,10 @@ pub enum IndexError {
     #[error(
         "the index file {index} (set by `CUADERNO_INDEX_PATH`, or `--index-path` on \
          `cdno-mcp-server`) belongs to the vault at {bound}, not the vault at {root}; \
-         nothing was changed. Give each vault its own index file, or run `cdno reindex` \
-         in {root} to rebuild this file for that vault, which discards the index of {bound}."
+         nothing was changed. Give each vault its own index file. To give this file to the \
+         vault at {root}, first stop whatever serves the vault at {bound}, then run \
+         `cdno reindex --rebind` in {root} (which discards the other vault's index), or \
+         delete the file."
     )]
     BoundToOtherVault {
         index: String,
@@ -176,8 +178,8 @@ pub enum IndexError {
     /// An overridden path names a file that is not recognisably an index,
     /// so it is not discarded (#998).
     #[error(
-        "refusing to replace {path}: it is not an index database (not empty, and no \
-         SQLite header). Check `CUADERNO_INDEX_PATH` (or `--index-path` on \
+        "refusing to use {path}: it is not a cuaderno index (not empty, and not a \
+         database cuaderno created). Check `CUADERNO_INDEX_PATH` (or `--index-path` on \
          `cdno-mcp-server`); nothing was deleted."
     )]
     NotAnIndex { path: String },
