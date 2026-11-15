@@ -32,6 +32,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+- **`cdno init` honours `--vault`** (closes #1004). `cdno --vault <dir> init` creates the vault at
+  `<dir>`, where it used to ignore the flag and initialise the working directory, so a script that
+  passes `--vault` to every command no longer scaffolds a vault wherever it happens to run. Given
+  both `--vault` and a `[PATH]` that name different directories, `init` refuses and writes
+  nothing; naming the same one (relative or absolute, through a symlink) is accepted. `cdno init`
+  and `cdno init <path>` are unchanged, and `init` still never follows upward discovery or
+  `CUADERNO_VAULT_PATH`: only the explicit argument and flag move it.
 - **`cdno now` never opens the index** (closes #1003). Every form (plain, `--line`, `--json`) reads
   the config and the daily notes inside the `[focus]` windows through the store and nothing else:
   it no longer opens, migrates or reconciles `.cuaderno/index.db`, walks the vault, or waits on the
