@@ -182,3 +182,107 @@ proptest! {
         }
     }
 }
+
+// resolve_index_path (#998)
+
+mod resolve_index_path {
+    use std::ffi::OsStr;
+    use std::path::Path;
+
+    use cdno_core::error::IndexPathError;
+    use cdno_core::paths::{INDEX_DB, IndexLocation, resolve_index_path};
+
+    fn default_for(root: &Path) -> IndexLocation {
+        IndexLocation {
+            path: root.join(INDEX_DB),
+            overridden: false,
+        }
+    }
+
+    #[test]
+    fn no_override_is_the_default_location() {
+        let root = Path::new("/vaults/surrogate-model");
+        assert_eq!(resolve_index_path(root, None).unwrap(), default_for(root));
+    }
+
+    #[test]
+    fn a_blank_override_is_treated_as_unset() {
+        let root = Path::new("/vaults/surrogate-model");
+        for blank in ["", " ", "\t\n"] {
+            assert_eq!(
+                resolve_index_path(root, Some(OsStr::new(blank))).unwrap(),
+                default_for(root),
+                "{blank:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_absolute_override_is_the_database_file_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("not-yet").join("index.db");
+        assert_eq!(
+            resolve_index_path(Path::new("/vaults/surrogate-model"), Some(file.as_os_str()))
+                .unwrap(),
+            IndexLocation {
+                path: file,
+                overridden: true
+            }
+        );
+    }
+
+    #[test]
+    fn a_relative_override_is_refused_whatever_the_root() {
+        // `~` is not expanded: a value starting with it is relative.
+        for value in ["index.db", "cache/index.db", "./index.db", "~/index.db"] {
+            for root in ["/vaults/surrogate-model", "relative-vault", "."] {
+                let err = resolve_index_path(Path::new(root), Some(OsStr::new(value)))
+                    .expect_err("relative must be refused");
+                assert!(
+                    matches!(&err, IndexPathError::Relative(v) if v == value),
+                    "{value:?} under {root:?}: {err:?}"
+                );
+                let msg = err.to_string();
+                assert!(
+                    msg.contains("CUADERNO_INDEX_PATH")
+                        && msg.contains("`--index-path` on `cdno-mcp-server`"),
+                    "{msg}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_override_naming_a_directory_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = resolve_index_path(Path::new("/vaults/v"), Some(dir.path().as_os_str()))
+            .expect_err("a directory is not a database file");
+        assert!(matches!(err, IndexPathError::Directory(_)), "{err:?}");
+    }
+
+    #[test]
+    fn an_override_ending_in_a_separator_is_refused_even_if_absent() {
+        let err = resolve_index_path(
+            Path::new("/vaults/v"),
+            Some(OsStr::new("/no/such/cache/dir/")),
+        )
+        .expect_err("a trailing separator names a directory");
+        assert!(matches!(err, IndexPathError::Directory(_)), "{err:?}");
+    }
+
+    #[test]
+    fn an_override_with_a_note_extension_is_refused() {
+        for value in [
+            "/vaults/v/projects/surrogate-model.md",
+            "/tmp/index.MD",
+            "/tmp/notes/evidence.typ",
+        ] {
+            let err = resolve_index_path(Path::new("/vaults/v"), Some(OsStr::new(value)))
+                .expect_err("a note path is not an index");
+            assert!(
+                matches!(err, IndexPathError::NoteExtension(_)),
+                "{value}: {err:?}"
+            );
+        }
+    }
+}

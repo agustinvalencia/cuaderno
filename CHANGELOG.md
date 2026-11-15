@@ -6,6 +6,30 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **A per-machine index location** (closes #998). `CUADERNO_INDEX_PATH`, the absolute path of
+  the index database file, moves the index out of `.cuaderno/index.db` for the `cdno` CLI, the
+  stdio `cdno-mcp` server and `cdno-mcp-server`, which also takes it as `--index-path` (the flag
+  wins over the variable). One resolver in `cdno-core` (`paths::resolve_index_path`) decides the
+  location for all three. Set it when a vault folder is reachable from two machines at once, a
+  bind mount into a container or a network share, so each keeps its own index; two machines must
+  never share one index file. A relative value is refused rather than resolved, an empty one
+  counts as unset, and unset keeps the index exactly where it was. SQLite's `-wal` and `-shm`
+  files follow the database file, `cdno reindex` and the open-time self-heal act on the resolved
+  file, and the HTTP server's git checkpoints exclude an index the override places inside the
+  vault. It is deliberately not a `config.toml` key, since the config travels with the vault.
+  An overridden index records the vault it belongs to (index schema 5, a new `index_meta` table)
+  and refuses to open for another vault, naming both, as does a plain `cdno reindex` there;
+  `cdno reindex --rebind` rebuilds it for the current vault, which is the one way to rebind it.
+  `reindex` prints the overridden file it rebuilt. At an overridden path, a file cuaderno did not
+  create as its index (another application's SQLite database included) is never opened for
+  writing or deleted, unless SQLite cannot read it at all (it reports it damaged or not a
+  database), which is how a corrupt index still heals; a value ending in `/` or naming a `.md` or
+  `.typ` file is refused. The override stops the damage, not the staleness: each side sees the
+  other's writes when it next reconciles. `cdno now` never opens the index (#1003), so it ignores
+  the variable altogether.
+
 ### Fixed
 
 - **`cdno now` never opens the index** (closes #1003). Every form (plain, `--line`, `--json`) reads

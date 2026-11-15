@@ -298,6 +298,7 @@ dependencies = [
  "inquire",
  "open",
  "predicates",
+ "rusqlite",
  "serde_json",
  "shlex",
  "tempfile",

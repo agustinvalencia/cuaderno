@@ -193,6 +193,100 @@ fn open_vault_rejects_a_directory_without_the_marker() {
     ));
 }
 
+#[test]
+fn open_vault_with_index_opens_the_index_at_the_override() {
+    // #998: the long-lived consumers (both MCP binaries) open through
+    // here; the override is the file, and nothing lands in `.cuaderno/`.
+    let vault = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::fs::create_dir(vault.path().join(cdno_core::paths::CUADERNO_DIR)).unwrap();
+    let index = elsewhere.path().join("index.db");
+
+    let opened =
+        cdno_domain::bootstrap::open_vault_with_index(vault.path(), Some(index.as_os_str()))
+            .expect("opens");
+    assert_eq!(opened.index_path, index);
+    assert!(index.is_file());
+    assert!(!vault.path().join(cdno_core::paths::INDEX_DB).exists());
+}
+
+#[test]
+fn open_vault_with_index_defaults_without_an_override() {
+    let vault = tempfile::tempdir().unwrap();
+    std::fs::create_dir(vault.path().join(cdno_core::paths::CUADERNO_DIR)).unwrap();
+
+    let opened = cdno_domain::bootstrap::open_vault_with_index(vault.path(), None).expect("opens");
+    assert_eq!(
+        opened.index_path,
+        vault.path().join(cdno_core::paths::INDEX_DB)
+    );
+    assert!(opened.index_path.is_file());
+}
+
+#[test]
+fn open_vault_with_index_refuses_a_second_vault_on_one_override() {
+    // #998: the long-lived servers open through here, so the binding guard
+    // must hold here too, not only in the CLI.
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    for v in [&a, &b] {
+        std::fs::create_dir(v.path().join(cdno_core::paths::CUADERNO_DIR)).unwrap();
+    }
+    let index = elsewhere.path().join("index.db");
+
+    drop(
+        cdno_domain::bootstrap::open_vault_with_index(a.path(), Some(index.as_os_str()))
+            .expect("first vault binds"),
+    );
+    let Err(err) = cdno_domain::bootstrap::open_vault_with_index(b.path(), Some(index.as_os_str()))
+    else {
+        panic!("a second vault must be refused");
+    };
+    assert!(
+        matches!(
+            err,
+            cdno_domain::bootstrap::BootstrapError::Index(
+                cdno_core::error::IndexError::BoundToOtherVault { .. }
+            )
+        ),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn open_vault_ignores_the_environment() {
+    // The domain never reads process state: `open_vault` is the default
+    // location whatever the environment holds (the binaries read it).
+    let vault = tempfile::tempdir().unwrap();
+    std::fs::create_dir(vault.path().join(cdno_core::paths::CUADERNO_DIR)).unwrap();
+    let opened = cdno_domain::bootstrap::open_vault(vault.path()).expect("opens");
+    assert_eq!(
+        opened.index_path,
+        vault.path().join(cdno_core::paths::INDEX_DB)
+    );
+}
+
+#[test]
+fn open_vault_with_index_refuses_a_relative_override() {
+    let vault = tempfile::tempdir().unwrap();
+    std::fs::create_dir(vault.path().join(cdno_core::paths::CUADERNO_DIR)).unwrap();
+
+    let Err(err) = cdno_domain::bootstrap::open_vault_with_index(
+        vault.path(),
+        Some(std::ffi::OsStr::new("index.db")),
+    ) else {
+        panic!("a relative override must be refused");
+    };
+    assert!(matches!(
+        err,
+        cdno_domain::bootstrap::BootstrapError::IndexPath(
+            cdno_core::error::IndexPathError::Relative(_)
+        )
+    ));
+    assert!(!vault.path().join(cdno_core::paths::INDEX_DB).exists());
+}
+
 // ---------------------------------------------------------------------
 // The method-version gate in `Vault::transaction()` (RFC 0006 §8.4, T7a)
 // ---------------------------------------------------------------------

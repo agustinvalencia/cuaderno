@@ -159,8 +159,62 @@ pub enum IndexError {
     #[error("migration {version} failed: {reason}")]
     Migration { version: u32, reason: String },
 
+    /// An overridden index file is bound to another vault (#998). Nothing
+    /// was read into it or changed.
+    #[error(
+        "the index file {index} (set by `CUADERNO_INDEX_PATH`, or `--index-path` on \
+         `cdno-mcp-server`) belongs to the vault at {bound}, not the vault at {root}; \
+         nothing was changed. Give each vault its own index file. To give this file to the \
+         vault at {root}, first stop whatever serves the vault at {bound}, then run \
+         `cdno reindex --rebind` in {root} (which discards the other vault's index), or \
+         delete the file."
+    )]
+    BoundToOtherVault {
+        index: String,
+        bound: String,
+        root: String,
+    },
+
+    /// An overridden path names a file that is not recognisably an index,
+    /// so it is not discarded (#998).
+    #[error(
+        "refusing to use {path}: it is not a cuaderno index (not empty, and not a \
+         database cuaderno created). Check `CUADERNO_INDEX_PATH` (or `--index-path` on \
+         `cdno-mcp-server`); nothing was deleted."
+    )]
+    NotAnIndex { path: String },
+
     #[error("SQLite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
+}
+
+/// A per-machine index location override ([`crate::paths::INDEX_PATH_ENV`]
+/// or `cdno-mcp-server --index-path`) that cannot be used.
+#[derive(Debug, thiserror::Error)]
+pub enum IndexPathError {
+    /// A relative value is refused rather than resolved, so the index
+    /// never lands wherever the process happened to start.
+    #[error(
+        "`CUADERNO_INDEX_PATH` (or `--index-path` on `cdno-mcp-server`) must be an \
+         absolute path to the index database file, got `{0}`"
+    )]
+    Relative(String),
+
+    /// The value names a directory (an existing one, or it ends in a path
+    /// separator); it must name the file.
+    #[error(
+        "`CUADERNO_INDEX_PATH` (or `--index-path` on `cdno-mcp-server`) names a \
+         directory, not the index database file: `{0}`"
+    )]
+    Directory(String),
+
+    /// The file name has a note extension, so the value is far likelier a
+    /// mistyped path to a note than an index.
+    #[error(
+        "`CUADERNO_INDEX_PATH` (or `--index-path` on `cdno-mcp-server`) names a note \
+         file (`.md` or `.typ`), not an index database: `{0}`"
+    )]
+    NoteExtension(String),
 }
 
 /// Errors from markdown/frontmatter parsing.

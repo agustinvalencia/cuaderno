@@ -1,4 +1,6 @@
-//! Canonical relative paths within a Cuaderno vault.
+//! Canonical relative paths within a Cuaderno vault, and the one resolver
+//! of where a vault's index lives ([`resolve_index_path`]), which may be
+//! outside it.
 //!
 //! Single source of truth for the on-disk layout defined by the
 //! Research Logbook Method. All callers — `cdno init`, the indexer,
@@ -20,8 +22,12 @@
 //! arguments to [`std::path::Path::join`] (which handles the separator
 //! conversion on Windows).
 
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+
 use chrono::{Datelike, NaiveDate};
 
+use crate::error::IndexPathError;
 use crate::path::VaultPath;
 
 // Journal — daily, weekly, and monthly notes, year-partitioned. Use the
@@ -86,6 +92,94 @@ pub const CUADERNO_DIR: &str = ".cuaderno";
 pub const CONFIG_FILE: &str = ".cuaderno/config.toml";
 pub const TEMPLATES_DIR: &str = ".cuaderno/templates";
 pub const INDEX_DB: &str = ".cuaderno/index.db";
+
+/// Environment variable naming a per-machine location for the index
+/// database file, in place of `<vault>/`[`INDEX_DB`] (#998).
+///
+/// Deliberately not a `config.toml` key: the config travels with the
+/// vault, and this must differ per machine. A vault folder reachable from
+/// two kernels at once (a host and a container bind-mounting it, a
+/// network share) cannot share one SQLite file, because neither its file
+/// locks nor its `-shm` map cross that boundary.
+pub const INDEX_PATH_ENV: &str = "CUADERNO_INDEX_PATH";
+
+/// Where the index database of one vault lives, as decided by
+/// [`resolve_index_path`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexLocation {
+    /// The database file. Its `-wal` and `-shm` sidecars, and any sibling
+    /// file a rebuild writes, sit next to it: SQLite and
+    /// [`crate::index::SqliteIndex`] derive them from this path.
+    pub path: PathBuf,
+    /// True when the path came from an override rather than being
+    /// `<root>/`[`INDEX_DB`]. An overridden index is bound to one vault and
+    /// is only discarded when it is recognisably an index
+    /// ([`crate::index::SqliteIndex::open_location`]).
+    pub overridden: bool,
+}
+
+/// The index location for the vault at `root`, given the raw override
+/// value, if any: `cdno-mcp-server --index-path`, else [`INDEX_PATH_ENV`]
+/// as read by [`index_override_from_env`].
+///
+/// This is the one place every binary decides where the index lives.
+///
+/// - No value, or an empty / whitespace-only one, means
+///   `root.join(`[`INDEX_DB`]`)`: today's location, unchanged.
+/// - An absolute value is the database file itself.
+/// - A relative value is refused, never resolved: neither the vault root
+///   nor the working directory is an obviously right base, and guessing
+///   would put the index somewhere the operator did not choose.
+/// - A value that names a directory (an existing one, or any value ending
+///   in a path separator) is refused; it must name the file.
+/// - A value whose file name has a note extension (`.md`, `.typ`) is
+///   refused: it is far likelier a mistyped path to a note than an index,
+///   and an index must never be mistaken for a note by the vault walk.
+///
+/// Pure apart from the directory check: callers read the environment and
+/// pass the value in, so the policy is testable without touching it.
+pub fn resolve_index_path(
+    root: &Path,
+    override_value: Option<&OsStr>,
+) -> Result<IndexLocation, IndexPathError> {
+    let default = || IndexLocation {
+        path: root.join(INDEX_DB),
+        overridden: false,
+    };
+    let Some(value) = override_value else {
+        return Ok(default());
+    };
+    let text = value.to_string_lossy();
+    if text.trim().is_empty() {
+        return Ok(default());
+    }
+    let path = Path::new(value);
+    if !path.is_absolute() {
+        return Err(IndexPathError::Relative(text.into_owned()));
+    }
+    if text.ends_with(std::path::is_separator) || path.is_dir() {
+        return Err(IndexPathError::Directory(text.into_owned()));
+    }
+    let has_note_extension = path.extension().and_then(OsStr::to_str).is_some_and(|ext| {
+        NoteFormat::ALL
+            .iter()
+            .any(|f| ext.eq_ignore_ascii_case(f.extension()))
+    });
+    if has_note_extension {
+        return Err(IndexPathError::NoteExtension(text.into_owned()));
+    }
+    Ok(IndexLocation {
+        path: path.to_path_buf(),
+        overridden: true,
+    })
+}
+
+/// The raw value of [`INDEX_PATH_ENV`], for the binaries to pass to
+/// [`resolve_index_path`]. The one place the variable is read; the
+/// domain's bootstrap takes the value as an argument.
+pub fn index_override_from_env() -> Option<std::ffi::OsString> {
+    std::env::var_os(INDEX_PATH_ENV)
+}
 
 /// Directory holding daily notes for the given calendar year:
 /// `journal/<year>/daily`.

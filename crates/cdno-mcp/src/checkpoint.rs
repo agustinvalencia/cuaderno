@@ -194,7 +194,12 @@ enum Pass {
 /// vault is not a real git repository — a `.git` *file* (worktree /
 /// submodule pointer) is refused too, since `git -C` would then commit
 /// an external repo (PR #306 security review, finding 3).
-pub fn spawn(root: PathBuf, every: Duration, mode: CheckpointMode) {
+///
+/// `index_path` is the index database file the server opened (#998). When
+/// a per-machine override puts it somewhere inside the vault other than
+/// the default `.cuaderno/index.db`, it and its siblings are added to
+/// `.git/info/exclude` too, so no sweep commits a binary cache.
+pub fn spawn(root: PathBuf, index_path: &Path, every: Duration, mode: CheckpointMode) {
     match std::fs::symlink_metadata(root.join(".git")) {
         Ok(meta) if meta.is_dir() => {}
         Ok(_) => {
@@ -219,6 +224,24 @@ pub fn spawn(root: PathBuf, every: Duration, mode: CheckpointMode) {
     // before the first tick — so no sweep can ever stage one.
     if let Err(e) = ensure_wip_excluded(&root) {
         tracing::warn!(error = %e, "could not write .git/info/exclude; wip temp files may be committed");
+    }
+    match relocated_index_exclude_pattern(&root, index_path) {
+        Ok(None) => {}
+        Ok(Some(pattern)) => {
+            if let Err(e) = ensure_excluded(&root, &pattern) {
+                tracing::warn!(
+                    error = %e,
+                    index_path = %index_path.display(),
+                    "could not write .git/info/exclude; the relocated index may be committed"
+                );
+            }
+        }
+        Err(reason) => tracing::warn!(
+            reason = %reason,
+            index_path = %index_path.display(),
+            "no .git/info/exclude rule written for the index; if it lies inside the vault, \
+             a checkpoint may commit it"
+        ),
     }
 
     // Say plainly WHO is expected to commit. The #303 recovery trail is
@@ -602,13 +625,76 @@ fn warn_paused_op(last_warned: &AtomicU64, op: &PausedGitOp) {
 /// user's ignore file is untouched). Ensures `git add -A` never stages
 /// an in-flight temp sibling.
 fn ensure_wip_excluded(root: &Path) -> Result<()> {
+    ensure_excluded(root, &format!("{}*", cdno_core::store::WIP_TEMP_PREFIX))
+}
+
+/// The `.git/info/exclude` pattern for an index that a per-machine
+/// override (#998) placed inside the vault, or `Ok(None)` when there is
+/// nothing to add: the index is outside the vault (the intended setup),
+/// or at the default `.cuaderno/index.db`, which the sweep has always
+/// left to the vault's own `.gitignore` and still does. `Err` says why
+/// no rule could be built (a path that does not canonicalise, or a
+/// component git's exclude syntax cannot carry: a newline, non-UTF-8),
+/// for the caller to warn about.
+///
+/// Anchored at the repository root and ending in `*`, so the `-wal`,
+/// `-shm` and any rebuild siblings, which share the file name as a
+/// prefix, are covered with it. Both sides are canonicalised first: the
+/// vault root may be given relative, and either may sit behind a symlink.
+fn relocated_index_exclude_pattern(
+    root: &Path,
+    index_path: &Path,
+) -> Result<Option<String>, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("cannot canonicalise the vault root: {e}"))?;
+    let (Some(parent), Some(name)) = (index_path.parent(), index_path.file_name()) else {
+        return Err("the index path has no parent directory or file name".to_owned());
+    };
+    let parent = parent
+        .canonicalize()
+        .map_err(|e| format!("cannot canonicalise the index directory: {e}"))?;
+    let index = parent.join(name);
+    if index == root.join(cdno_core::paths::INDEX_DB) {
+        return Ok(None);
+    }
+    let Ok(rel) = index.strip_prefix(&root) else {
+        return Ok(None);
+    };
+    let mut pattern = String::from("/");
+    for (i, part) in rel.components().enumerate() {
+        if i > 0 {
+            pattern.push('/');
+        }
+        let Some(part) = part.as_os_str().to_str() else {
+            return Err("a path component is not valid UTF-8".to_owned());
+        };
+        if part.contains(['\n', '\r']) {
+            return Err("a path component contains a line break".to_owned());
+        }
+        for c in part.chars() {
+            // Glob metacharacters, and a leading `#`/`!`, are literal
+            // once escaped; a plain name passes through unchanged.
+            if matches!(c, '*' | '?' | '[' | ']' | '\\' | '#' | '!') {
+                pattern.push('\\');
+            }
+            pattern.push(c);
+        }
+    }
+    pattern.push('*');
+    Ok(Some(pattern))
+}
+
+/// Idempotently append one pattern to the repo's local
+/// `.git/info/exclude`.
+fn ensure_excluded(root: &Path, pattern: &str) -> Result<()> {
     use std::io::Write;
-    let pattern = format!("{}*", cdno_core::store::WIP_TEMP_PREFIX);
     let info = root.join(".git").join("info");
     std::fs::create_dir_all(&info).context("creating .git/info")?;
     let exclude = info.join("exclude");
     let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
-    // Match at any depth: bare pattern (git applies it per directory).
+    // The pattern is written exactly as given: bare to match at any
+    // depth (the wip prefix), or `/`-anchored for one path (an index).
     if existing.lines().any(|l| l.trim() == pattern) {
         return Ok(());
     }
@@ -804,6 +890,87 @@ mod tests {
             1,
             "the exclude rule must be written exactly once"
         );
+    }
+
+    #[test]
+    fn an_index_outside_the_vault_or_at_the_default_adds_no_exclude_rule() {
+        // #998: the intended override puts the index outside the vault,
+        // and the default location keeps today's behaviour exactly.
+        let vault = TempDir::new().unwrap();
+        let elsewhere = TempDir::new().unwrap();
+        std::fs::create_dir(vault.path().join(".cuaderno")).unwrap();
+        assert_eq!(
+            relocated_index_exclude_pattern(vault.path(), &elsewhere.path().join("index.db")),
+            Ok(None)
+        );
+        assert_eq!(
+            relocated_index_exclude_pattern(
+                vault.path(),
+                &vault.path().join(cdno_core::paths::INDEX_DB)
+            ),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn a_relocated_index_inside_the_vault_is_never_committed() {
+        // #998: an override that still lands inside the vault (a cache
+        // folder of its own, say) must stay out of the recovery trail,
+        // sidecars included.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let cache = dir.path().join("local-cache");
+        std::fs::create_dir(&cache).unwrap();
+        let index = cache.join("index.db");
+
+        let pattern = relocated_index_exclude_pattern(dir.path(), &index)
+            .unwrap()
+            .expect("inside");
+        assert_eq!(pattern, "/local-cache/index.db*");
+        ensure_excluded(dir.path(), &pattern).unwrap();
+        ensure_excluded(dir.path(), &pattern).unwrap();
+        let exclude = std::fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
+        assert_eq!(exclude.lines().filter(|l| *l == pattern).count(), 1);
+
+        for name in [
+            "index.db",
+            "index.db-wal",
+            "index.db-shm",
+            "index.db.previous",
+        ] {
+            std::fs::write(cache.join(name), "binary cache").unwrap();
+        }
+        std::fs::write(dir.path().join("note.md"), "real").unwrap();
+        assert!(git_commit_if_dirty(dir.path(), &latch()).unwrap().is_some());
+        let tracked = git_output(dir.path(), &["ls-files"]);
+        assert!(tracked.contains("note.md"), "{tracked}");
+        assert!(!tracked.contains("index.db"), "{tracked}");
+    }
+
+    #[test]
+    fn a_relocated_index_pattern_escapes_glob_characters() {
+        let dir = TempDir::new().unwrap();
+        let odd = dir.path().join("[cache]");
+        std::fs::create_dir(&odd).unwrap();
+        assert_eq!(
+            relocated_index_exclude_pattern(dir.path(), &odd.join("i*.db")),
+            Ok(Some("/\\[cache\\]/i\\*.db*".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_line_break_or_a_missing_directory_writes_no_rule_and_says_why() {
+        let dir = TempDir::new().unwrap();
+        let broken = dir.path().join("a\nb");
+        std::fs::create_dir(&broken).unwrap();
+        let err = relocated_index_exclude_pattern(dir.path(), &broken.join("index.db"))
+            .expect_err("a newline cannot be carried by an exclude rule");
+        assert!(err.contains("line break"), "{err}");
+
+        let err =
+            relocated_index_exclude_pattern(dir.path(), &dir.path().join("gone").join("index.db"))
+                .expect_err("an index directory that does not exist cannot be canonicalised");
+        assert!(err.contains("canonicalise"), "{err}");
     }
 
     #[test]

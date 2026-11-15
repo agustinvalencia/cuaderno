@@ -19,8 +19,9 @@ It reads your config and the daily notes inside the two `[focus]` windows (`carr
 the focus, [`paused_lookback_days`](../configuration.md#focus) for the last pause), and nothing
 else. Every form of `cdno now` (plain, `--line` and `--json`) leaves the search index alone: it
 does not open, create or update `.cuaderno/index.db`, and does not wait for another process's write
-to finish. So it is safe to run on every prompt, even beside a server that keeps the same vault's
-index open. Only `now` is index-free: every other verb, and shell completion (which opens the vault
+to finish. For the same reason it ignores `CUADERNO_INDEX_PATH`: it never resolves or touches an
+overridden index either. So it is safe to run on every prompt, even beside a server that keeps the
+same vault's index open. Only `now` is index-free: every other verb, and shell completion (which opens the vault
 on every Tab), still opens and reconciles the index, so running those beside such a server is not
 yet safe (see [#1005](https://github.com/agustinvalencia/cuaderno/issues/1005)).
 

@@ -135,7 +135,13 @@ enum Commands {
 
     /// Rebuild the SQLite index from scratch off the markdown source of
     /// truth. The recovery path for a corrupt or stale index.
-    Reindex,
+    Reindex {
+        /// With `CUADERNO_INDEX_PATH` set: rebuild the file even when it is
+        /// bound to another vault, giving it to this one and discarding the
+        /// other vault's index. Stop whatever serves the other vault first.
+        #[arg(long)]
+        rebind: bool,
+    },
 
     /// Record the Research Logbook Method version this cdno implements in
     /// the vault (`[vault] method_version`), running any file migrations
@@ -572,9 +578,9 @@ fn dispatch(cli: Cli) -> Result<()> {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::lint::run(&root, Local::now().date_naive(), strict)
         }
-        Commands::Reindex => {
+        Commands::Reindex { rebind } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::reindex::run(&root)
+            commands::reindex::run(&root, rebind)
         }
         Commands::Migrate { dry_run } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

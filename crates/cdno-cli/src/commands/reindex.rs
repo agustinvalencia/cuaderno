@@ -8,16 +8,26 @@
 //! demand). The rebuild is just "delete the db, then open the vault" —
 //! `open_vault` runs reconciliation, which repopulates the empty index
 //! from every note.
+//!
+//! The database is wherever [`bootstrap::index_location`] resolves it —
+//! `CUADERNO_INDEX_PATH` when set (#998) — so the file deleted here is
+//! the same one the re-open creates. An overridden file is deleted only
+//! when it is recognisably an index, and since the rebuilt file binds to
+//! this vault, `reindex --rebind` is the one way to give an overridden
+//! index that belongs to another vault to this one; it says so when it
+//! does. Without the flag, such an index is refused here as by every
+//! other verb, since the other vault may still be served from it.
 
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use cdno_core::index::SqliteIndex;
+use cdno_core::error::IndexError;
+use cdno_core::index::{SqliteIndex, canonical_vault_root};
 use cdno_core::paths;
 
 use crate::bootstrap;
 
-pub fn run(root: &Path) -> Result<()> {
+pub fn run(root: &Path, rebind: bool) -> Result<()> {
     // Confirm we're actually in a vault before deleting anything.
     let cuaderno_dir = root.join(paths::CUADERNO_DIR);
     if !cuaderno_dir.is_dir() {
@@ -27,15 +37,48 @@ pub fn run(root: &Path) -> Result<()> {
         );
     }
 
+    // Resolve before deleting anything: a bad override is refused with
+    // the index untouched.
+    let location = bootstrap::index_location(root)?;
+    let rebound_from = if location.overridden {
+        // Never delete a file that is not cuaderno's index (a mistyped path).
+        SqliteIndex::ensure_discardable(&location.path)?;
+        let here = canonical_vault_root(root);
+        match SqliteIndex::bound_vault_root(&location.path)? {
+            Some(bound) if bound != here && !rebind => {
+                return Err(IndexError::BoundToOtherVault {
+                    index: location.path.display().to_string(),
+                    bound,
+                    root: here,
+                }
+                .into());
+            }
+            Some(bound) if bound != here => Some(bound),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     // Drop the cache, then re-open: `open_vault` reconciles the fresh
     // (empty) index against the filesystem, rebuilding every row.
-    SqliteIndex::remove(root.join(paths::INDEX_DB));
+    SqliteIndex::remove(&location.path);
     let (_vault, report) = bootstrap::open_vault(root).context("rebuilding the index")?;
 
     println!(
         "Reindexed {} note(s) ({} scanned).",
         report.added, report.scanned
     );
+    // An override is invisible otherwise: name the file it resolved to.
+    if location.overridden {
+        println!(
+            "Index: {} (from CUADERNO_INDEX_PATH).",
+            location.path.display()
+        );
+    }
+    if let Some(previous) = rebound_from {
+        println!("Rebound the index from the vault at {previous} to this vault.");
+    }
     // Make ignore-glob exclusions visible: a stray `**` that drops every
     // note from search/lint should never be silent. The files are on
     // disk untouched — removing the offending pattern and reindexing

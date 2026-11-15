@@ -792,6 +792,109 @@ fn line_leaves_an_existing_index_and_the_lock_untouched() {
     assert_eq!(cuaderno_files(dir.path()), before);
 }
 
+/// A file's bytes and mtime, as [`file_state`] reads them.
+type FileState = Option<(Vec<u8>, std::time::SystemTime)>;
+
+/// Every file in `dir` with its bytes and mtime, sorted by name.
+fn dir_state(dir: &Path) -> Vec<(String, FileState)> {
+    let mut out: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .map(|e| {
+            let path = e.unwrap().path();
+            (
+                path.file_name().unwrap().to_string_lossy().into_owned(),
+                file_state(&path),
+            )
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// The overridden counterpart of the test above (#998): with
+/// `CUADERNO_INDEX_PATH` naming an index bound to this vault, `now --line`
+/// leaves that file and its directory exactly as they were (no binding
+/// write, no sidecar), and `.cuaderno/` too.
+#[test]
+fn line_leaves_an_overridden_index_and_its_directory_untouched() {
+    let dir = vault_with_action();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let index = elsewhere.path().join("index.db");
+    assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .env("CUADERNO_INDEX_PATH", &index)
+        .args(["--vault", dir.path().to_str().unwrap(), "status"])
+        .assert()
+        .success();
+    assert!(
+        index.is_file(),
+        "the normal verb built the overridden index"
+    );
+    write_daily(
+        dir.path(),
+        chrono::Local::now().date_naive(),
+        &["- **00:00**: started [[surrogate-model]] \u{2014} Fit the baseline (deep)"],
+    );
+    let before = dir_state(elsewhere.path());
+    let meta_before = cuaderno_files(dir.path());
+
+    let out = assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .env("CUADERNO_INDEX_PATH", &index)
+        .args(["--vault", dir.path().to_str().unwrap(), "now", "--line"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_focus_line(&out);
+
+    assert!(
+        dir_state(elsewhere.path()) == before,
+        "the overridden index or its directory changed"
+    );
+    assert_eq!(cuaderno_files(dir.path()), meta_before);
+}
+
+/// `cdno now` never resolves the index location, so a value every other
+/// verb refuses (relative, a directory, a note path) does not stop it: it
+/// still prints the focus, and creates nothing.
+#[test]
+fn now_prints_the_focus_whatever_the_index_path_variable_holds() {
+    let dir = vault_without_index();
+    let before = cuaderno_files(dir.path());
+    let cwd = tempfile::tempdir().unwrap();
+    let note = dir.path().join("projects").join("surrogate-model.md");
+    for value in [
+        std::ffi::OsString::from("cache/index.db"),
+        cwd.path().as_os_str().to_owned(),
+        note.as_os_str().to_owned(),
+    ] {
+        for args in [&["now", "--line"][..], &["now"]] {
+            let out = assert_cmd::Command::cargo_bin("cdno")
+                .unwrap()
+                .current_dir(cwd.path())
+                .env_remove("CUADERNO_VAULT_PATH")
+                .env("CUADERNO_INDEX_PATH", &value)
+                .arg("--vault")
+                .arg(dir.path())
+                .args(args)
+                .timeout(std::time::Duration::from_secs(15))
+                .assert()
+                .success()
+                .get_output()
+                .stdout
+                .clone();
+            let out = String::from_utf8(out).unwrap();
+            assert!(out.contains("surrogate-model"), "{value:?} {args:?}: {out}");
+        }
+    }
+    assert!(!cwd.path().join("cache").exists());
+    assert_no_index(dir.path(), &before, "now with an invalid override");
+}
+
 #[test]
 fn plain_and_json_read_the_focus_without_creating_an_index() {
     let dir = vault_without_index();
