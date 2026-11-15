@@ -147,7 +147,8 @@ pub fn run(root: &Path, now: NaiveDateTime, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Open the vault and render the current focus as a string. Split from
+/// Open the vault's journal (never its index) and render the current
+/// focus as a string. Split from
 /// [`run`] so tests can assert on the text.
 pub fn build_now(root: &Path, now: NaiveDateTime) -> Result<String> {
     let journal = bootstrap::open_journal(root)?;

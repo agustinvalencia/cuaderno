@@ -7,8 +7,8 @@
 //! turn) need not open, migrate or reconcile it: opening the index is a
 //! write, and a hook beside a long-lived server must not write it.
 //!
-//! [`Vault`] answers the same questions by delegating here
-//! ([`Vault::journal`]), so the fold lives once, in `context.rs`, and the
+//! [`Vault`] answers the same questions by delegating here (through its
+//! crate-private `journal()`), so the fold lives once, in `context.rs`, and the
 //! two cannot disagree.
 
 use std::sync::Arc;
@@ -17,10 +17,9 @@ use cdno_core::config::{FocusConfig, VaultConfig};
 use cdno_core::store::VaultStore;
 
 use crate::error::DomainError;
-use crate::type_registry::TypeRegistry;
 
-use super::Vault;
 use super::method_status::{MethodStatus, method_status_in};
+use super::{Vault, validate_config_at_open};
 
 /// The daily log read without an index: the focus and the open pauses
 /// (`current_focus`, `open_pauses`, `last_paused`), and the vault's method
@@ -33,12 +32,12 @@ pub struct Journal {
 impl Journal {
     /// A journal over `store`, with the windows from `config`.
     ///
-    /// `config` is validated exactly as [`Vault::new`] validates it, so a
-    /// vault whose config refuses to open as a [`Vault`] refuses here too:
-    /// skipping the index must not make a broken config readable.
+    /// `config` goes through the same checks as [`Vault::new`]
+    /// (`validate_config_at_open`, which both call), so a vault whose config
+    /// refuses to open as a [`Vault`] refuses here too: skipping the index
+    /// must not make a broken config readable.
     pub fn new(store: Arc<dyn VaultStore>, mut config: VaultConfig) -> Result<Self, DomainError> {
-        config.ignore_set()?;
-        TypeRegistry::validate(&mut config)?;
+        validate_config_at_open(&mut config)?;
         Ok(Self {
             store,
             focus: config.focus,
@@ -55,7 +54,7 @@ impl Journal {
 impl Vault {
     /// This vault's [`Journal`]: its store and `[focus]` windows, which the
     /// focus readers on `Vault` delegate to.
-    pub fn journal(&self) -> Journal {
+    pub(crate) fn journal(&self) -> Journal {
         Journal {
             store: Arc::clone(&self.store),
             focus: self.config.focus.clone(),

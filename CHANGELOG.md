@@ -17,7 +17,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `Journal` (a store and the `[focus]` windows), which `Vault::current_focus` and
   `Vault::open_pauses` now delegate to, so both paths share one fold. Because the index is not
   reconciled, `cdno now` no longer prints the reconciliation warning for a note elsewhere in the
-  vault that fails to parse; any other verb still does.
+  vault that fails to parse; any other verb still does. Nor does `cdno now` refresh the index as a
+  side effect any more, so a long-running stdio server no longer picks up hand edits through the
+  hook's runs; periodic reconciliation in the stdio server is #1002.
 
 ## [0.45.0] - 2026-11-09
 

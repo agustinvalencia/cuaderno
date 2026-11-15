@@ -85,7 +85,9 @@ The layering is load-bearing; each crate has a rule that the code enforces:
 `Vault` (`crates/cdno-domain/src/vault/mod.rs`) is the single domain entry point, holding
 `Arc<dyn VaultStore>` + `Arc<dyn VaultIndex>` + `VaultConfig`. **Operations are split one-per-file
 under `src/vault/` and each attaches its own `impl Vault { ... }` block** — add a new operation as a
-new file there rather than growing `mod.rs`.
+new file there rather than growing `mod.rs`. `Journal` (`vault/journal.rs`) is the index-free focus
+reader (a store and the `[focus]` windows) that `Vault`'s focus readers delegate to; `cdno now` opens
+only a `Journal`, never the index.
 
 **Project resolvers.** Every verb that reads or writes a project map's body picks one of two
 resolvers in `vault/projects/mod.rs`: `resolve_open_project` (an active or a parked map, folder and

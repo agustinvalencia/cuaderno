@@ -716,14 +716,80 @@ fn line_reads_the_focus_without_creating_an_index() {
     let dir = vault_without_index();
     let before = cuaderno_files(dir.path());
     assert!(!before.iter().any(|p| p.contains("index.db")), "{before:?}");
-    assert_cmd::Command::cargo_bin("cdno")
+    let out = assert_cmd::Command::cargo_bin("cdno")
         .unwrap()
         .env_remove("CUADERNO_VAULT_PATH")
         .args(["--vault", dir.path().to_str().unwrap(), "now", "--line"])
         .assert()
         .success()
-        .stdout("Focus: surrogate-model \u{2014} Fit the baseline (since 00:00)\n");
+        .get_output()
+        .stdout
+        .clone();
+    assert_focus_line(&out);
     assert_no_index(dir.path(), &before, "now --line");
+}
+
+/// The `--line` output for [`vault_without_index`]'s start, whichever day
+/// the run lands on: a run that crosses midnight after the note was
+/// written reads it as carried (`since Sunday 00:00`), not `since 00:00`.
+fn assert_focus_line(stdout: &[u8]) {
+    let out = String::from_utf8(stdout.to_vec()).unwrap();
+    assert!(
+        out.starts_with("Focus: surrogate-model \u{2014} Fit the baseline (since ")
+            && out.ends_with("00:00)\n"),
+        "{out:?}"
+    );
+}
+
+/// The bytes and mtime of a file, or `None` when it does not exist.
+fn file_state(path: &Path) -> Option<(Vec<u8>, std::time::SystemTime)> {
+    let meta = fs::metadata(path).ok()?;
+    Some((fs::read(path).unwrap(), meta.modified().unwrap()))
+}
+
+#[test]
+fn line_leaves_an_existing_index_and_the_lock_untouched() {
+    // The hazard #1003 is about: an index another process holds, and a
+    // vault that changed since it last reconciled.
+    let dir = vault_with_action();
+    assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault", dir.path().to_str().unwrap(), "status"])
+        .assert()
+        .success();
+    write_daily(
+        dir.path(),
+        chrono::Local::now().date_naive(),
+        &["- **00:00**: started [[surrogate-model]] \u{2014} Fit the baseline (deep)"],
+    );
+    let cuaderno = dir.path().join(".cuaderno");
+    let index = file_state(&cuaderno.join("index.db"));
+    assert!(index.is_some(), "the normal verb left an index");
+    let lock = file_state(&cuaderno.join(".lock"));
+    let before = cuaderno_files(dir.path());
+
+    let out = assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault", dir.path().to_str().unwrap(), "now", "--line"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_focus_line(&out);
+
+    assert!(
+        file_state(&cuaderno.join("index.db")) == index,
+        "index.db bytes or mtime changed"
+    );
+    assert!(
+        file_state(&cuaderno.join(".lock")) == lock,
+        ".lock was created or touched"
+    );
+    // No -wal or -shm created or removed, nor anything else.
+    assert_eq!(cuaderno_files(dir.path()), before);
 }
 
 #[test]

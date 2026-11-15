@@ -15,10 +15,14 @@ focus this morning), so a start made from
 note by hand all count — and a completion, a drop or a pause clears it. Nothing to keep in sync, and
 nothing to go stale.
 
-It reads those daily notes and your config and nothing else. Every form of `cdno now` (plain,
-`--line` and `--json`) leaves the search index alone: it does not open, create or update
-`.cuaderno/index.db`, and does not wait for another process's write to finish. So it is safe to run
-on every prompt, even beside a server that keeps the same vault's index open.
+It reads your config and the daily notes inside the two `[focus]` windows (`carry_over_days` for
+the focus, [`paused_lookback_days`](../configuration.md#focus) for the last pause), and nothing
+else. Every form of `cdno now` (plain, `--line` and `--json`) leaves the search index alone: it
+does not open, create or update `.cuaderno/index.db`, and does not wait for another process's write
+to finish. So it is safe to run on every prompt, even beside a server that keeps the same vault's
+index open. Only `now` is index-free: every other verb, and shell completion (which opens the vault
+on every Tab), still opens and reconciles the index, so running those beside such a server is not
+yet safe (see [#1005](https://github.com/agustinvalencia/cuaderno/issues/1005)).
 
 [`cdno action promote`](action.md#cdno-action-promote) *rewrites* the bullet it matched, and the
 focus follows it: the `action promoted on` line it logs renames the open start to the new note, with

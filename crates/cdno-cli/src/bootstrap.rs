@@ -2,8 +2,9 @@
 //! TOML config) into a [`Vault`] and run startup reconciliation.
 //!
 //! Every subcommand that operates on an existing vault opens it
-//! through here. `init` is the exception — it creates the vault
-//! rather than opening one.
+//! through here, by [`open_vault`]. Two exceptions: `init` creates the
+//! vault rather than opening one, and `now` opens only its journal by
+//! [`open_journal`], which never touches the index (#1003).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -157,8 +158,8 @@ fn record_method_status(status: MethodStatus) {
     }
 }
 
-/// Take the method status recorded by [`open_vault`], if a vault was opened
-/// since the last take. `None` when no vault was opened, or its version
+/// Take the method status recorded by [`open_vault`] or [`open_journal`],
+/// if a vault was opened since the last take. `None` when no vault was opened, or its version
 /// could not be read (the open itself reports a malformed version).
 pub fn take_method_status() -> Option<MethodStatus> {
     METHOD_STATUS

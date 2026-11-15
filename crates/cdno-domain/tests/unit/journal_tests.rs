@@ -50,6 +50,10 @@ fn two_day_store() -> Arc<dyn VaultStore> {
     store
 }
 
+/// Now that `Vault`'s focus readers delegate to `Journal`, the equality
+/// with `Vault` holds by construction; it guards against the delegation
+/// being undone. The fixed assertions after each comparison are what pin
+/// the fold itself: the carried start, the promotion's rename, the pause.
 #[test]
 fn a_journal_answers_as_the_vault_does_over_the_same_store() {
     let store = two_day_store();
