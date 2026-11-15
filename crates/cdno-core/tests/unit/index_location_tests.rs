@@ -190,12 +190,75 @@ fn missing_empty_and_sqlite_files_are_discardable() {
 /// Another application's SQLite database, in rollback-journal mode as most
 /// are: a valid header, no cuaderno mark.
 fn write_foreign_database(path: &Path) {
+    write_foreign(path, "");
+}
+
+/// Another application's database, set up by `prelude` (a journal mode, a
+/// table of its own) before its own table and row. The connection is closed
+/// on return, so a WAL-mode file is checkpointed and left without sidecars.
+fn write_foreign(path: &Path, prelude: &str) {
     let conn = rusqlite::Connection::open(path).unwrap();
-    conn.execute_batch(
-        "CREATE TABLE bookmarks (url TEXT PRIMARY KEY, title TEXT);
-         INSERT INTO bookmarks VALUES ('https://example.org', 'Example');",
-    )
+    conn.execute_batch(&format!(
+        "{prelude}
+         CREATE TABLE bookmarks (url TEXT PRIMARY KEY, title TEXT);
+         INSERT INTO bookmarks VALUES ('https://example.org', 'Example');"
+    ))
     .unwrap();
+}
+
+/// The refusal every foreign database gets: `NotAnIndex` from the open and
+/// from `ensure_discardable`, the bytes unchanged, and no sidecar left
+/// beside a file that had none.
+fn assert_foreign_refused(index: &Path, vault: &Path) {
+    assert_eq!(sidecars_of(index), Vec::<PathBuf>::new(), "precondition");
+    let before = std::fs::read(index).unwrap();
+    let err = SqliteIndex::open_location(&overridden(index), vault).expect_err("foreign");
+    assert!(matches!(err, IndexError::NotAnIndex { .. }), "{err:?}");
+    assert!(matches!(
+        SqliteIndex::ensure_discardable(index),
+        Err(IndexError::NotAnIndex { .. })
+    ));
+    assert_eq!(std::fs::read(index).unwrap(), before, "bytes unchanged");
+    assert_eq!(
+        sidecars_of(index),
+        Vec::<PathBuf>::new(),
+        "the probe left a sidecar"
+    );
+}
+
+#[test]
+fn a_foreign_database_in_wal_mode_is_refused_and_given_no_sidecars() {
+    let (_dir, a, _b, index) = two_vaults();
+    write_foreign(&index, "PRAGMA journal_mode = WAL;");
+    assert_eq!(
+        std::fs::read(&index).unwrap()[18..20],
+        [2, 2],
+        "the header marks the file as WAL"
+    );
+    assert_foreign_refused(&index, &a);
+}
+
+#[test]
+fn a_foreign_database_with_its_own_index_meta_table_is_refused() {
+    // `index_meta` is a generic name; only migration 1's row is the mark.
+    let (_dir, a, _b, index) = two_vaults();
+    write_foreign(
+        &index,
+        "CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+         INSERT INTO index_meta VALUES ('vault_root', '/somewhere');",
+    );
+    assert_foreign_refused(&index, &a);
+}
+
+#[test]
+fn a_foreign_database_with_a_lookalike_schema_migrations_table_is_refused() {
+    let (_dir, a, _b, index) = two_vaults();
+    write_foreign(
+        &index,
+        "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at_ns INTEGER, description TEXT);
+         INSERT INTO schema_migrations VALUES (1, 0, 'init');",
+    );
+    assert_foreign_refused(&index, &a);
 }
 
 fn sidecars_of(path: &Path) -> Vec<PathBuf> {
@@ -291,4 +354,24 @@ fn opening_an_index_already_bound_to_this_vault_writes_nothing_for_the_binding()
     let reopened = SqliteIndex::open_location(&overridden(&index), &a);
     holder.execute_batch("COMMIT;").unwrap();
     drop(reopened.expect("a reopen for the bound vault must not write"));
+}
+
+#[test]
+fn an_index_under_a_path_with_uri_characters_is_still_recognised() {
+    // The probe opens the file by a `file:` URI; `?`, `#`, `%` and a space
+    // in the path must reach the file, not the URI's syntax.
+    let dir = TempDir::new().unwrap();
+    let vault = dir.path().join("surrogate-model");
+    let odd = dir.path().join("a b?c#d%e");
+    std::fs::create_dir_all(&vault).unwrap();
+    std::fs::create_dir_all(&odd).unwrap();
+    let index = odd.join("index.db");
+
+    drop(SqliteIndex::open_location(&overridden(&index), &vault).unwrap());
+    SqliteIndex::ensure_discardable(&index).expect("its own index");
+    assert_eq!(
+        SqliteIndex::bound_vault_root(&index).unwrap(),
+        Some(canonical_vault_root(&vault))
+    );
+    drop(SqliteIndex::open_location(&overridden(&index), &vault).unwrap());
 }

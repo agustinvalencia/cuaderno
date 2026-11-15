@@ -142,7 +142,9 @@ CUADERNO_INDEX_PATH=/var/lib/cuaderno/surrogate-model.db \
   the shell expands first). An empty value counts as unset. A value naming a directory (or ending
   in `/`) and one naming a note (`.md`, `.typ`) are refused. A file already at the path that
   cuaderno did not create as its index (any other file, another application's SQLite database
-  included) is never opened for writing or deleted: cuaderno refuses instead.
+  included) is never opened for writing or deleted: cuaderno refuses instead. The one exception is a
+  file with SQLite's header that SQLite itself cannot read (it reports it damaged, or not a
+  database): that is taken for a damaged index and rebuilt, so a corrupt index still heals.
 - **It is not a `config.toml` key**, on purpose: the config travels with the vault, and this
   setting has to differ from one machine to the next.
 

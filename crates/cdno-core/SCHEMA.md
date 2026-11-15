@@ -296,7 +296,10 @@ vault can legitimately be reached under two paths.
 
 ### `schema_migrations`
 
-Tracks which migration versions have been applied to the current DB.
+Tracks which migration versions have been applied to the current DB. Its
+version 1 row, with migration 1's description word for word, is also how an
+overridden index path is recognised as cuaderno's own before anything opens it
+read-write (#998): every cuaderno index has it, at every schema version.
 On every connection open, the engine compares `MAX(version)` against
 the migrations directory and applies any that are missing.
 

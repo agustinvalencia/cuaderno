@@ -183,16 +183,25 @@ fn a_file_that_is_not_an_index_is_refused_and_left_byte_identical() {
 /// WAL, migrated or deleted.
 #[test]
 fn another_applications_sqlite_database_is_refused_and_left_byte_identical() {
+    // Rollback-journal and WAL mode alike: the probe that refuses them must
+    // not leave a `-wal` or `-shm` beside a WAL-mode file either.
+    for journal_mode in ["DELETE", "WAL"] {
+        refuse_foreign_database(journal_mode);
+    }
+}
+
+fn refuse_foreign_database(journal_mode: &str) {
     let vault = tempdir().unwrap();
     let elsewhere = tempdir().unwrap();
     let other = elsewhere.path().join("bookmarks.sqlite");
     init(vault.path());
     {
         let conn = rusqlite::Connection::open(&other).unwrap();
-        conn.execute_batch(
-            "CREATE TABLE bookmarks (url TEXT PRIMARY KEY, title TEXT);
-             INSERT INTO bookmarks VALUES ('https://example.org', 'Example');",
-        )
+        conn.execute_batch(&format!(
+            "PRAGMA journal_mode = {journal_mode};
+             CREATE TABLE bookmarks (url TEXT PRIMARY KEY, title TEXT);
+             INSERT INTO bookmarks VALUES ('https://example.org', 'Example');"
+        ))
         .unwrap();
     }
     let before = std::fs::read(&other).unwrap();
@@ -205,11 +214,18 @@ fn another_applications_sqlite_database_is_refused_and_left_byte_identical() {
             .assert()
             .failure()
             .stderr(predicate::str::contains("not a cuaderno index"));
-        assert_eq!(std::fs::read(&other).unwrap(), before, "{args:?}");
+        assert_eq!(
+            std::fs::read(&other).unwrap(),
+            before,
+            "{journal_mode} {args:?}"
+        );
         for suffix in ["-wal", "-shm", "-journal"] {
             let mut sidecar = other.as_os_str().to_owned();
             sidecar.push(suffix);
-            assert!(!Path::new(&sidecar).exists(), "{args:?} created {suffix}");
+            assert!(
+                !Path::new(&sidecar).exists(),
+                "{journal_mode} {args:?} created {suffix}"
+            );
         }
     }
 }

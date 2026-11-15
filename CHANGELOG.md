@@ -24,9 +24,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `cdno reindex --rebind` rebuilds it for the current vault, which is the one way to rebind it.
   `reindex` prints the overridden file it rebuilt. At an overridden path, a file cuaderno did not
   create as its index (another application's SQLite database included) is never opened for
-  writing or deleted, and a value ending in `/` or naming a `.md` or `.typ` file is refused. The
-  override stops the damage, not the staleness: each side sees the other's writes when it next
-  reconciles. `cdno now` never opens the index (#1003), so it ignores the variable altogether.
+  writing or deleted, unless SQLite cannot read it at all (it reports it damaged or not a
+  database), which is how a corrupt index still heals; a value ending in `/` or naming a `.md` or
+  `.typ` file is refused. The override stops the damage, not the staleness: each side sees the
+  other's writes when it next reconciles. `cdno now` never opens the index (#1003), so it ignores
+  the variable altogether.
 
 ### Fixed
 

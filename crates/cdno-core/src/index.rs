@@ -235,11 +235,25 @@ impl SqliteIndex {
     /// A read-only connection for probing a file before deciding whether
     /// to open it for real, with the main connection's busy timeout so a
     /// writer elsewhere is waited for rather than mistaken for damage.
+    ///
+    /// It never creates a file beside `path`. A plain read-only connection
+    /// to a WAL-mode database creates its `-wal` and `-shm` when they are
+    /// missing, so when there is no `-wal` the file is opened `immutable`
+    /// instead: no locks, no WAL, no shared memory, just the main file,
+    /// which then holds every committed page. When a `-wal` exists, its
+    /// pages may be the only copy of recent commits, so the probe reads
+    /// through it; the sidecars are then the database's own, already there.
     fn open_probe(path: &Path) -> rusqlite::Result<Connection> {
-        let conn = Connection::open_with_flags(
-            path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
+        let flags =
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let conn = if sibling(path, "-wal").exists() {
+            Connection::open_with_flags(path, flags)?
+        } else {
+            Connection::open_with_flags(
+                immutable_uri(path),
+                flags | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+            )?
+        };
         conn.busy_timeout(BUSY_TIMEOUT)?;
         Ok(conn)
     }
@@ -283,18 +297,25 @@ impl SqliteIndex {
     /// file.
     ///
     /// Discardable: no file, an empty file, or a file with the SQLite header
-    /// whose read-only probe finds cuaderno's mark, an `index_meta` table or
-    /// (for an index from before migration 005) a `schema_migrations` row
-    /// for version 1 carrying migration 1's description. Any other SQLite
-    /// database (another application's) is refused.
+    /// whose read-only probe finds cuaderno's mark: the `schema_migrations`
+    /// row for version 1 carrying migration 1's full description, which
+    /// every cuaderno index has at every schema version. Any other SQLite
+    /// database (another application's) is refused, whatever its tables are
+    /// called. The probe creates no file beside it
+    /// ([`open_probe`](Self::open_probe)).
     ///
-    /// A file with the header whose schema cannot be read because it is
-    /// corrupt stays discardable, so a damaged index still heals. That
-    /// leaves one way to lose a foreign file: an override naming another
-    /// application's database that is itself corrupt. It is accepted
-    /// because such a file is already unreadable to its owner, and the
-    /// alternative, refusing every unreadable file, would turn the
-    /// self-heal off for exactly the indexes it exists for.
+    /// A file with the header whose schema the probe cannot read ("not a
+    /// database", "malformed") stays discardable, so a damaged index still
+    /// heals. That leaves a way to lose a foreign file: an override naming
+    /// another application's database that reads as unreadable to this
+    /// probe. A damaged one is already unreadable to its owner. Two known
+    /// healthy cases read that way too: an encrypted database that keeps a
+    /// plaintext header (as SQLCipher can be configured to), and a file
+    /// whose header write version (byte 18) is above 2, which this SQLite
+    /// does not understand. Both are accepted risks for a mistyped path
+    /// that must also name such a file, because the alternative, refusing
+    /// every unreadable file, would turn the self-heal off for exactly the
+    /// indexes it exists for.
     pub fn ensure_discardable(path: &Path) -> Result<(), IndexError> {
         let not_an_index = || IndexError::NotAnIndex {
             path: path.display().to_string(),
@@ -392,22 +413,19 @@ fn is_recoverable_corruption(err: &IndexError) -> bool {
 }
 
 /// Whether the SQLite database at `path` carries cuaderno's own mark,
-/// read on a read-only connection: an `index_meta` table, or a
-/// `schema_migrations` row for version 1 whose description is migration
-/// 1's. A corruption error is returned as is, for the caller to decide.
+/// read on a probe connection: a `schema_migrations` row for version 1
+/// whose description is migration 1's, word for word. A table name alone
+/// (`index_meta`, `schema_migrations`) is too generic to count. A
+/// corruption error is returned as is, for the caller to decide.
 fn has_cuaderno_mark(path: &Path) -> rusqlite::Result<bool> {
     let conn = SqliteIndex::open_probe(path)?;
-    let has_table = |name: &str| -> rusqlite::Result<bool> {
-        conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
-            [name],
-            |r| r.get::<_, bool>(0),
-        )
-    };
-    if has_table("index_meta")? {
-        return Ok(true);
-    }
-    if !has_table("schema_migrations")? {
+    let has_migrations: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' \
+         AND name = 'schema_migrations')",
+        [],
+        |r| r.get(0),
+    )?;
+    if !has_migrations {
         return Ok(false);
     }
     conn.query_row(
@@ -415,6 +433,30 @@ fn has_cuaderno_mark(path: &Path) -> rusqlite::Result<bool> {
         [MIGRATIONS[0].1],
         |r| r.get::<_, bool>(0),
     )
+}
+
+/// `path` with `suffix` appended to its file name (`-wal`, `-shm`).
+fn sibling(path: &Path, suffix: &str) -> std::path::PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    std::path::PathBuf::from(name)
+}
+
+/// A `file:` URI opening `path` read-only and immutable. Every byte outside
+/// the unreserved set and `/` is percent-encoded, so a path holding `?`,
+/// `#` or `%` cannot be read as URI syntax.
+fn immutable_uri(path: &Path) -> String {
+    let mut uri = String::from("file:");
+    for byte in path.as_os_str().as_encoded_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                uri.push(char::from(*byte));
+            }
+            _ => uri.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    uri.push_str("?mode=ro&immutable=1");
+    uri
 }
 
 /// The SQLite error codes behind [`is_recoverable_corruption`].
