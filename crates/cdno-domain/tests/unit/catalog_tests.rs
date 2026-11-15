@@ -4,12 +4,13 @@
 //! What these tests pin is that it lists exactly what `Vault` lists from a
 //! freshly reconciled index over the same store and config, including the
 //! notes reconciliation leaves out (no `type`, a malformed `tags:`, an
-//! `ignore` glob) and a note of a type outside that type's folder, and that it
-//! refuses a config `Vault::new` refuses.
+//! `ignore` glob, a Typst note of a type Typst does not admit), a note of a
+//! type outside that type's folder, and custom-type notes in Markdown and in
+//! Typst, and that it refuses a config `Vault::new` refuses.
 
 use std::sync::Arc;
 
-use cdno_core::config::VaultConfig;
+use cdno_core::config::{CustomNoteType, VaultConfig};
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
@@ -33,11 +34,26 @@ fn path(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
 }
 
+/// An `ignore` glob, and the `concept` custom type, which admits Typst by
+/// default (RFC 0008).
 fn config() -> VaultConfig {
-    VaultConfig {
+    let mut config = VaultConfig {
         ignore: vec!["scratch/**".to_string()],
         ..VaultConfig::default()
-    }
+    };
+    config.note_types.insert(
+        "concept".to_owned(),
+        CustomNoteType {
+            folder: "concepts".to_owned(),
+            required: vec!["created".to_owned()],
+            optional: vec!["tags".to_owned(), "origin".to_owned()],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    config
 }
 
 /// A vault holding one of everything the completers list, written by the
@@ -110,8 +126,30 @@ fn seeded_store() -> Arc<dyn VaultStore> {
             "projects/broken.md",
             "---\n: [unclosed\n---\n\n# Broken\n".to_string(),
         ),
+        // A pair whose order differs between the path's text (`-` sorts
+        // below `/`) and its components (`a` sorts below `a-b.md`).
+        ("projects/a-b.md", map.clone()),
+        ("projects/a/c.md", map.clone()),
         // Matched by the `ignore` glob.
         ("scratch/ignored.md", map),
+        // Custom-type notes, in Markdown and in Typst.
+        (
+            "concepts/surrogate-trick.md",
+            "---\ntype: concept\ncreated: 2026-07-13\n---\n# Surrogate trick\n".to_string(),
+        ),
+        (
+            "concepts/bias-variance-split.typ",
+            "#metadata((type: \"concept\", created: \"2026-07-13\")) <cdno>\n\n= Bias variance split\n"
+                .to_string(),
+        ),
+        // A Typst note of a type Typst does not admit: reconciliation refuses it.
+        (
+            "concepts/not-admitted.typ",
+            "#metadata((type: \"project\", status: \"active\")) <cdno>\n\n= Not here\n"
+                .to_string(),
+        ),
+        // A loose `.typ` with no block: neither a note nor an attachment.
+        ("concepts/loose.typ", "= Scratch\n".to_string()),
     ];
     for (p, body) in writes {
         store.write_file(&path(p), &body).unwrap();
@@ -140,12 +178,22 @@ fn a_catalog_lists_what_a_reconciled_vault_lists() {
     let (vault, _report) = Vault::new(Arc::clone(&store), index, config()).expect("Vault::new");
     let catalog = Catalog::new(Arc::clone(&store), config()).expect("Catalog::new");
 
+    // The catalog orders by the path's text, as SQLite does; `MemoryIndex`
+    // orders by component, so its rows are put in text order to compare.
+    let by_text = |mut rows: Vec<(VaultPath, _)>| {
+        rows.sort_by_cached_key(|(p, _)| p.to_string());
+        rows
+    };
     let active = catalog.active_projects().unwrap();
-    assert_eq!(active, vault.active_projects().unwrap());
-    assert_eq!(slugs(&active), ["misfiled", "surrogate-model"]);
+    assert_eq!(active, by_text(vault.active_projects().unwrap()));
+    assert_eq!(
+        slugs(&active),
+        ["misfiled", "a-b", "c", "surrogate-model"],
+        "in text order"
+    );
 
     let parked = catalog.parked_projects().unwrap();
-    assert_eq!(parked, vault.parked_projects().unwrap());
+    assert_eq!(parked, by_text(vault.parked_projects().unwrap()));
     assert_eq!(slugs(&parked), ["old-idea"]);
 
     let closed = catalog.closed_projects().unwrap();
@@ -181,13 +229,24 @@ fn a_catalog_lists_what_a_reconciled_vault_lists() {
         "projects/bad-tags.md",
         "projects/broken.md",
         "scratch/ignored.md",
+        "concepts/not-admitted.typ",
+        "concepts/loose.typ",
     ] {
         assert!(
             !notes.contains(&path(refused)),
             "{refused} is not a note the index holds"
         );
     }
-    assert!(notes.contains(&path("notes/misfiled.md")));
+    for kept in [
+        "notes/misfiled.md",
+        "concepts/surrogate-trick.md",
+        "concepts/bias-variance-split.typ",
+    ] {
+        assert!(
+            notes.contains(&path(kept)),
+            "{kept} is a note the index holds"
+        );
+    }
 
     assert_eq!(
         catalog.type_registry().all_names(),

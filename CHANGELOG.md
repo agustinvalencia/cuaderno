@@ -37,15 +37,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   open, migrate or reconcile `.cuaderno/index.db` on every Tab, and no longer take the write lock:
   a completion creates, writes and removes nothing under `.cuaderno/`, so it cannot checkpoint or
   delete a long-lived server's `-wal`/`-shm` beside it, and it completes in a vault that has no
-  index yet; nor does it resolve an index `CUADERNO_INDEX_PATH` moves elsewhere (#998). The
-  suggestions are unchanged. They are read from the files through a new domain
-  type, `Catalog` (a store and the config), which asks the classifier which files are notes and a
-  new `cdno_core::reconcile::admit` (the check reconciliation itself now indexes through) which of
-  them an index would hold and with which type, then runs the same listing folds `Vault` runs
-  over its index rows. So a map added by hand is offered at once, as before, when the old path
-  reconciled it in first. Each Tab now reads every note's frontmatter instead of stat-ing it, a
-  few tens of milliseconds more on a vault of thousands of notes; and a note that fails to parse
-  no longer prints the reconciliation warning at Tab time.
+  index yet; nor does it resolve an index `CUADERNO_INDEX_PATH` moves elsewhere (#998). For an
+  up-to-date vault the suggestions are unchanged. They are read from the files through a new
+  domain type, `Catalog` (a store and the config), which asks the classifier which files are notes
+  and a new `cdno_core::reconcile::admit` (the check reconciliation itself now indexes through)
+  which of them an index would hold and with which type, then runs the same listing folds `Vault`
+  runs over its index rows. So a map added by hand is offered at once, as before, when the old path
+  reconciled it in first. Two differences show only in a broken vault: a note that was indexed
+  and then broken by hand kept its old row, so it used to be offered (or, for a project map, blanked
+  the project list), and is now left out; and where opening the index failed (a lock timeout, a
+  bad `CUADERNO_INDEX_PATH`) the completers offered nothing and now answer. Each Tab now reads
+  every note in the vault in full instead of stat-ing it, and the completer's own notes a second
+  time: a few tens of milliseconds more on a vault of thousands of notes. A note that fails to
+  parse no longer prints the reconciliation warning at Tab time. Completion still finds the vault
+  only by walking up from the working directory, ignoring `--vault` and `CUADERNO_VAULT_PATH`.
 - **`cdno now` never opens the index** (closes #1003). Every form (plain, `--line`, `--json`) reads
   the config and the daily notes inside the `[focus]` windows through the store and nothing else:
   it no longer opens, migrates or reconciles `.cuaderno/index.db`, walks the vault, or waits on the

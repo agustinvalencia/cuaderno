@@ -605,9 +605,9 @@ fn reconcile_one(
     // Resolution staleness is bounded by the next reconcile pass (every
     // Vault::new) — see `extractors::resolve_wikilinks` for the
     // exact-then-basename policy.
-    // An invalid `tags:` value fails the whole note here, as it always
-    // has: the row stays unstamped, so the note is retried and reported
-    // on every pass until fixed.
+    // An invalid `tags:` value was already refused by `admit` above (the
+    // row stays unstamped, so the note is retried and reported on every
+    // pass until fixed), so the `tags` facet here is always `Ok`.
     let crate::extractors::NoteFacets { tags, links } = crate::extractors::extract_note_facets(
         path,
         &frontmatter,

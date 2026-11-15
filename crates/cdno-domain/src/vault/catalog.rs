@@ -15,6 +15,17 @@
 //! [`Vault`] runs over its index rows. So for an up-to-date vault a catalog
 //! and a vault list the same notes, the same way. Nothing is written: the
 //! store is only read, and no index or lock file is opened.
+//!
+//! A listing is one fold, shared: it lives in the verb's own file under
+//! `vault/` and takes `(store, typed paths)`; [`Vault`] hands it its index
+//! rows and a catalog hands it the typed paths it read. Never write a second
+//! implementation of a listing here.
+//!
+//! An index-free reader is for implicit, high-frequency paths that run beside
+//! a server without the user asking (a prompt hook, a Tab press). Explicit
+//! read verbs keep opening the index. Its cost: the first listing reads every
+//! note of the vault in full (as reconciliation's slow path reads a changed
+//! note), and the fold then reads the notes it lists again.
 
 use std::sync::{Arc, OnceLock};
 
@@ -45,8 +56,8 @@ use super::{note_scope_for, validate_config_at_open};
 pub struct Catalog {
     store: Arc<dyn VaultStore>,
     config: VaultConfig,
-    /// Every note an up-to-date index would hold, with its type, in the
-    /// index's path order. Read once, on first use.
+    /// Every note an up-to-date index would hold, with its type, sorted by
+    /// the path's text. Read once, on first use.
     notes: OnceLock<Vec<(VaultPath, String)>>,
 }
 
@@ -69,8 +80,8 @@ impl Catalog {
         TypeRegistry::new(&self.config)
     }
 
-    /// Every note an up-to-date index holds, in path order: the paths of
-    /// [`Vault::list_note_candidates`].
+    /// Every note an up-to-date index holds, sorted by the path's text: the
+    /// paths of [`Vault::list_note_candidates`] (which orders them by mtime).
     pub fn note_paths(&self) -> Result<Vec<VaultPath>, DomainError> {
         Ok(self.notes()?.iter().map(|(path, _)| path.clone()).collect())
     }
@@ -131,8 +142,11 @@ impl Catalog {
         question_summaries(&*self.store, self.paths_of(NoteType::Question)?)
     }
 
-    /// The notes of `note_type`, in path order: what `list_by_type` returns
-    /// from an up-to-date index.
+    /// The notes of `note_type`, sorted by the path's text: what
+    /// `SqliteIndex::list_by_type` returns from an up-to-date index (`ORDER BY
+    /// path`, byte order). `MemoryIndex` orders by path component instead,
+    /// which differs where a name continues with a byte below `/`
+    /// (`projects/a-b.md` sorts before `projects/a/c.md` here, after it there).
     fn paths_of(&self, note_type: NoteType) -> Result<Vec<VaultPath>, DomainError> {
         Ok(self
             .notes()?
@@ -145,7 +159,7 @@ impl Catalog {
     /// The notes reconciliation would index, with their types: the
     /// classifier's notes whose bytes [`admit`] accepts. A note that cannot be
     /// read, or that `admit` refuses, is left out, as reconciliation leaves it
-    /// out of the index. Sorted by the path's text, as the index orders `path`.
+    /// out of the index. Sorted by the path's text, as SQLite orders `path`.
     fn notes(&self) -> Result<&[(VaultPath, String)], DomainError> {
         if let Some(notes) = self.notes.get() {
             return Ok(notes);

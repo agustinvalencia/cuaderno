@@ -39,9 +39,11 @@ portfolio slugs, …).
 
 ## What a Tab press reads
 
-The vault is found by walking up from the current directory to the nearest `.cuaderno/`, as for
-any verb; outside a vault the value completers offer nothing (and `<type>` arguments offer the
-built-in types). Each completer then reads the notes themselves:
+Completion finds the vault only by walking up from the current directory to the nearest
+`.cuaderno/`. Unlike a command, it ignores a `--vault` on the line being completed and does not fall
+back to `CUADERNO_VAULT_PATH`, so outside a vault the value completers offer nothing (the note-type
+arguments offer the built-in types), even when the command itself would find a vault. Each
+completer then reads the notes themselves:
 
 | Completes | Offers |
 |-----------|--------|
@@ -56,11 +58,14 @@ built-in types). Each completer then reads the notes themselves:
 
 A completion never touches the search index: it does not open, create or update
 `.cuaderno/index.db` or its `-wal` and `-shm` files (nor an index that `CUADERNO_INDEX_PATH` moves
-elsewhere), and does not take the write lock. It reads
-your config and the note files, and decides which files are notes, and of which type, by the same
-rules reconciliation uses, so it offers what an up-to-date index would list, including a note you
-added by hand since the last command. So pressing Tab is safe beside a server that keeps the same
-vault's index open, and a vault with no index yet still completes.
+elsewhere), and does not take the write lock. It reads your config and the note files, and decides
+which files are notes, and of which type, by the same rules reconciliation uses, so it offers what
+an up-to-date index would list, including a note you added by hand since the last command. So
+pressing Tab is safe beside a server that keeps the same vault's index open, and a vault with no
+index yet still completes.
+
+The price is that a Tab press reads every note in the vault in full, so its cost grows with the
+vault: a few tens of milliseconds for a vault of thousands of notes.
 
 ## See also
 
