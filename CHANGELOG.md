@@ -6,6 +6,30 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **A per-machine index location** (closes #998). `CUADERNO_INDEX_PATH`, the absolute path of
+  the index database file, moves the index out of `.cuaderno/index.db` for the `cdno` CLI, the
+  stdio `cdno-mcp` server and `cdno-mcp-server`, which also takes it as `--index-path` (the flag
+  wins over the variable). One resolver in `cdno-core` (`paths::resolve_index_path`) decides the
+  location for all three. Set it when a vault folder is reachable from two machines at once, a
+  bind mount into a container or a network share, so each keeps its own index; two machines must
+  never share one index file. A relative value is refused rather than resolved, an empty one
+  counts as unset, and unset keeps the index exactly where it was. SQLite's `-wal` and `-shm`
+  files follow the database file, `cdno reindex` and the open-time self-heal act on the resolved
+  file, and the HTTP server's git checkpoints exclude an index the override places inside the
+  vault. It is deliberately not a `config.toml` key, since the config travels with the vault.
+  An overridden index records the vault it belongs to (index schema 5, a new `index_meta` table)
+  and refuses to open for another vault, naming both, as does a plain `cdno reindex` there;
+  `cdno reindex --rebind` rebuilds it for the current vault, which is the one way to rebind it.
+  `reindex` prints the overridden file it rebuilt. At an overridden path, a file cuaderno did not
+  create as its index (another application's SQLite database included) is never opened for
+  writing or deleted, unless SQLite cannot read it at all (it reports it damaged or not a
+  database), which is how a corrupt index still heals; a value ending in `/` or naming a `.md` or
+  `.typ` file is refused. The override stops the damage, not the staleness: each side sees the
+  other's writes when it next reconciles. `cdno now` never opens the index (#1003), so it ignores
+  the variable altogether.
+
 ### Fixed
 
 - **A write no longer silently replaces a change it did not see** (closes #1001). The vault write
@@ -23,7 +47,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   along), the raw writes are unchanged, and a gap of one `stat` before each rename remains:
   `docs/concurrent-writers.md` lists every window left open. On one machine nothing changes except
   the cost, a read and two `stat`s more per replaced file.
-
+- **`cdno init` honours `--vault`** (closes #1004). `cdno --vault <dir> init` creates the vault at
+  `<dir>`, where it used to ignore the flag and initialise the working directory, so a script that
+  passes `--vault` to every command no longer scaffolds a vault wherever it happens to run. Given
+  both `--vault` and a `[PATH]` that name different directories, `init` refuses and writes
+  nothing; naming the same one (relative or absolute, through a symlink) is accepted. `cdno init`
+  and `cdno init <path>` are unchanged, and `init` still never follows upward discovery or
+  `CUADERNO_VAULT_PATH`: only the explicit argument and flag move it.
 - **`cdno now` never opens the index** (closes #1003). Every form (plain, `--line`, `--json`) reads
   the config and the daily notes inside the `[focus]` windows through the store and nothing else:
   it no longer opens, migrates or reconciles `.cuaderno/index.db`, walks the vault, or waits on the

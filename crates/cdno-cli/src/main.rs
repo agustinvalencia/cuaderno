@@ -45,6 +45,7 @@ struct Cli {
     /// When omitted, cdno discovers the vault by walking up from the
     /// current directory, then falls back to `CUADERNO_VAULT_PATH` —
     /// letting `cdno log`, `cdno capture`, etc. run from anywhere.
+    /// For `cdno init` it names the directory to create the vault in.
     #[arg(long, global = true, value_name = "PATH", value_hint = clap::ValueHint::DirPath)]
     vault: Option<PathBuf>,
 
@@ -94,7 +95,10 @@ struct Cli {
 enum Commands {
     /// Create a new vault: folder tree, .cuaderno/ config, default templates.
     Init {
-        /// Target directory. Defaults to the current working directory.
+        /// Target directory. Defaults to `--vault`, then to the current
+        /// working directory; never to a discovered vault or
+        /// `CUADERNO_VAULT_PATH`. Given with `--vault`, both must name the
+        /// same directory.
         path: Option<PathBuf>,
     },
 
@@ -135,7 +139,13 @@ enum Commands {
 
     /// Rebuild the SQLite index from scratch off the markdown source of
     /// truth. The recovery path for a corrupt or stale index.
-    Reindex,
+    Reindex {
+        /// With `CUADERNO_INDEX_PATH` set: rebuild the file even when it is
+        /// bound to another vault, giving it to this one and discarding the
+        /// other vault's index. Stop whatever serves the other vault first.
+        #[arg(long)]
+        rebind: bool,
+    },
 
     /// Record the Research Logbook Method version this cdno implements in
     /// the vault (`[vault] method_version`), running any file migrations
@@ -546,11 +556,14 @@ fn shows_method_notice(command: &Commands) -> bool {
 fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Init { path } => {
-            let target = match path {
-                Some(p) => p,
-                None => std::env::current_dir()
-                    .context("could not determine the current working directory")?,
-            };
+            // `init` names the directory it creates: the positional, else
+            // `--vault`, else the working directory. Never discovery or
+            // `CUADERNO_VAULT_PATH`, so not `resolve_vault_root_or_error`.
+            let target =
+                commands::init::resolve_target(path.as_deref(), cli.vault.as_deref(), || {
+                    std::env::current_dir()
+                        .context("could not determine the current working directory")
+                })?;
             commands::init::run(&target)
         }
         Commands::Log {
@@ -581,9 +594,9 @@ fn dispatch(cli: Cli) -> Result<()> {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::lint::run(&root, Local::now().date_naive(), strict)
         }
-        Commands::Reindex => {
+        Commands::Reindex { rebind } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::reindex::run(&root)
+            commands::reindex::run(&root, rebind)
         }
         Commands::Migrate { dry_run } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

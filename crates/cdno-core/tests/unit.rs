@@ -13,6 +13,7 @@ mod unit {
     mod fts_search_tests;
     mod git_tests;
     mod hash_tests;
+    mod index_location_tests;
     mod index_tests;
     mod markdown_tests;
     mod memory_index_tests;

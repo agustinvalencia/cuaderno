@@ -17,6 +17,10 @@ Vault resolution differs per binary, and the ordering is deliberate. The **CLI**
 then upward discovery from the cwd to the nearest `.cuaderno/`, and `CUADERNO_VAULT_PATH` only as the
 last resort — discovery outranks the env var so a stray exported value cannot misroute writes
 (`crates/cdno-cli/src/bootstrap.rs`). The **MCP binaries** do env-or-bare-cwd only — no upward walk.
+The **index location** is decided for all three by `paths::resolve_index_path` (`cdno-core`):
+`<vault>/.cuaderno/index.db`, or `CUADERNO_INDEX_PATH` (also `--index-path` on `cdno-mcp-server`), an
+absolute path bound to one vault; never a config key, and the workspace `.cargo/config.toml` forces
+it empty under cargo so tests never see a contributor's value.
 **The repo root is
 itself a dev vault** (`.cuaderno/config.toml` is tracked; `index.db` and `.lock` are gitignored), so
 `cdno` run from here works against the repo — and, per the ordering above, does so even when

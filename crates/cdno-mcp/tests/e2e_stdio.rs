@@ -22,6 +22,10 @@ use std::thread;
 use std::time::Duration;
 
 use serde_json::{Value, json};
+
+#[path = "support/process.rs"]
+mod process;
+use process::exit_within_deadline;
 use tempfile::TempDir;
 
 /// Helper: spawn `cdno-mcp` against `vault_root` with stdin/stdout
@@ -45,8 +49,19 @@ struct McpSubprocess {
 
 impl McpSubprocess {
     fn spawn(vault_root: &Path) -> Self {
+        Self::spawn_with_index(vault_root, None)
+    }
+
+    /// [`spawn`](Self::spawn) with `CUADERNO_INDEX_PATH` set to `index`,
+    /// or removed when `None` so no test inherits the developer's value.
+    fn spawn_with_index(vault_root: &Path, index: Option<&Path>) -> Self {
         let bin = env!("CARGO_BIN_EXE_cdno-mcp");
-        let mut child = Command::new(bin)
+        let mut cmd = Command::new(bin);
+        match index {
+            Some(path) => cmd.env(cdno_core::paths::INDEX_PATH_ENV, path),
+            None => cmd.env_remove(cdno_core::paths::INDEX_PATH_ENV),
+        };
+        let mut child = cmd
             .env("CUADERNO_VAULT_PATH", vault_root)
             // Quiet logs in tests; the binary writes to stderr so
             // RUST_LOG=off keeps test output clean.
@@ -921,4 +936,75 @@ fn rename_note_over_stdio_is_refused_while_a_merge_is_paused() {
         );
     }
     assert!(dir.path().join("projects/surrogate-model.md").exists());
+}
+
+// ---------------------------------------------------------------------
+// CUADERNO_INDEX_PATH (#998)
+// ---------------------------------------------------------------------
+
+/// Names under `<vault>/.cuaderno/` that belong to an index: the database
+/// and any sidecar or sibling file of it.
+fn index_files_in_meta_dir(vault: &Path) -> Vec<String> {
+    std::fs::read_dir(vault.join(cdno_core::paths::CUADERNO_DIR))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("index"))
+        .collect()
+}
+
+/// With the variable set, the stdio server keeps its index at that file,
+/// creates nothing for it under `.cuaderno/`, and its index-backed tools
+/// (a write, then a full-text search over it) work.
+#[test]
+fn the_index_path_variable_moves_the_stdio_servers_index() {
+    let dir = TempDir::new().unwrap();
+    let elsewhere = TempDir::new().unwrap();
+    let index = elsewhere.path().join("cache").join("index.db");
+    make_vault(dir.path());
+    let mut mcp = McpSubprocess::spawn_with_index(dir.path(), Some(&index));
+    initialise(&mut mcp);
+
+    mcp.send(&json!({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": { "name": "create_project",
+                    "arguments": { "title": "Surrogate model", "context": "university" } }
+    }));
+    call_payload(&mcp.read_response(2));
+    mcp.send(&json!({
+        "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": { "name": "search_notes", "arguments": { "query": "surrogate" } }
+    }));
+    let found = mcp.read_response(3);
+    assert!(
+        found.to_string().contains("surrogate-model"),
+        "the search must find the project through the relocated index: {found}"
+    );
+    drop(mcp);
+
+    assert!(index.is_file(), "the index lives at the override");
+    assert_eq!(index_files_in_meta_dir(dir.path()), Vec::<String>::new());
+}
+
+/// A relative value stops the stdio server at start, before anything is
+/// opened or created.
+#[test]
+fn the_stdio_server_refuses_a_relative_index_path() {
+    let dir = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    make_vault(dir.path());
+    let (status, stderr) = exit_within_deadline(
+        Command::new(env!("CARGO_BIN_EXE_cdno-mcp"))
+            .current_dir(cwd.path())
+            .env("CUADERNO_VAULT_PATH", dir.path())
+            .env(cdno_core::paths::INDEX_PATH_ENV, "cache/index.db")
+            .env("RUST_LOG", "off"),
+    );
+    assert!(!status.success(), "a relative index path must refuse");
+    assert!(
+        stderr.contains("CUADERNO_INDEX_PATH") && stderr.contains("absolute"),
+        "{stderr}"
+    );
+    assert!(!cwd.path().join("cache").exists());
+    assert_eq!(index_files_in_meta_dir(dir.path()), Vec::<String>::new());
 }

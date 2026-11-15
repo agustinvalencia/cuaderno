@@ -15,7 +15,7 @@ These apply to every command:
 
 | Flag | Effect |
 |------|--------|
-| `--vault <PATH>` | Operate on the vault at `PATH`. Overrides both discovery and `CUADERNO_VAULT_PATH`. |
+| `--vault <PATH>` | Operate on the vault at `PATH`. Overrides both discovery and `CUADERNO_VAULT_PATH`. For [`init`](init.md), the directory to create the vault in. |
 | `--json` | Emit machine-readable JSON instead of a formatted table (see below). |
 | `--no-interactive` | Never prompt; a missing required argument is an error. Implicit unless both stdin and stdout are TTYs. Also turns off interactive reports. |
 | `--color <WHEN>` | `auto` (default), `always`, or `never`. See [Colour and interactivity](../colour-and-interactivity.md). Spelled `--colour` too. |
@@ -27,7 +27,18 @@ These apply to every command:
 When `--vault` is not given, `cdno` discovers the vault by walking **up** from the current directory
 until it finds a `.cuaderno/` folder. If that finds nothing, it falls back to the
 `CUADERNO_VAULT_PATH` environment variable. Standing inside a vault always wins over the env var.
-See [Initialise a vault](../../getting-started/initialise-a-vault.md).
+`init` is the exception: it creates a vault rather than finding one, so it uses neither, only its
+`[PATH]` or `--vault`. See [Initialise a vault](../../getting-started/initialise-a-vault.md).
+
+## Where the index lives
+
+The index is `.cuaderno/index.db` unless `CUADERNO_INDEX_PATH` names another database file, as an
+absolute path. Set it when the vault folder is also reached from another machine, such as a
+container or a network share, and only in the environment of the process that serves that vault:
+the value names one file, and an index bound to one vault refuses to open for another. The CLI
+deliberately has no `--index-path` flag; the setting belongs to a machine, not to a command. See
+[Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine),
+including what it does not do.
 
 ## Interactive vs. scripted
 

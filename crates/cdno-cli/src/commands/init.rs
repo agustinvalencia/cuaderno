@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use cdno_core::paths;
@@ -42,6 +42,71 @@ const DEFAULT_TEMPLATES: &[(&str, &str)] =
     // Markdown on purpose: template files are Markdown.
     &[("daily.md", include_str!("../../templates/daily.md"))];
 
+/// The directory `cdno init` creates the vault in: the positional `path`,
+/// else the global `--vault`, else the working directory (#1004).
+///
+/// Only those two explicit arguments move it. Upward discovery and
+/// `CUADERNO_VAULT_PATH` find a vault that exists, which is the opposite of
+/// what `init` wants: honouring either would scaffold a vault into a
+/// directory nobody named, or refuse because one is already there.
+///
+/// Given both, they must name the same directory (compared once each is
+/// made absolute against the working directory and its existing part has
+/// its symlinks resolved); two different directories are refused before
+/// anything is written, rather than one being picked. The positional is
+/// returned as given, so `cdno init Y` behaves exactly as before.
+///
+/// `cwd` yields the working directory, and is called only when it is needed
+/// (no argument, or both), as before.
+pub fn resolve_target(
+    path: Option<&Path>,
+    vault_flag: Option<&Path>,
+    cwd: impl FnOnce() -> Result<PathBuf>,
+) -> Result<PathBuf> {
+    match (path, vault_flag) {
+        (Some(path), None) => Ok(path.to_path_buf()),
+        (None, Some(vault)) => Ok(vault.to_path_buf()),
+        (None, None) => cwd(),
+        (Some(path), Some(vault)) => {
+            let cwd = cwd()?;
+            if resolved(path, &cwd) != resolved(vault, &cwd) {
+                bail!(
+                    "`--vault {}` and the init path `{}` name different directories; \
+                     pass one of them",
+                    vault.display(),
+                    path.display()
+                );
+            }
+            Ok(path.to_path_buf())
+        }
+    }
+}
+
+/// `path` made absolute against `cwd`, with the longest prefix that exists
+/// canonicalised (so `/tmp` and `/private/tmp`, or a symlinked directory and
+/// its target, compare equal) and the rest of the components, which do not
+/// exist yet, normalised lexically.
+fn resolved(path: &Path, cwd: &Path) -> PathBuf {
+    let absolute = cwd.join(path);
+    let components: Vec<Component<'_>> = absolute.components().collect();
+    for split in (0..=components.len()).rev() {
+        let prefix: PathBuf = components[..split].iter().collect();
+        if let Ok(mut out) = prefix.canonicalize() {
+            for component in &components[split..] {
+                match component {
+                    Component::CurDir => {}
+                    Component::ParentDir => {
+                        out.pop();
+                    }
+                    other => out.push(other),
+                }
+            }
+            return out;
+        }
+    }
+    absolute
+}
+
 /// Initialise a Cuaderno vault rooted at `target`. The directory
 /// itself is created if needed; refuses if `.cuaderno/` already
 /// exists, since re-init is destructive.
@@ -52,9 +117,9 @@ const DEFAULT_TEMPLATES: &[(&str, &str)] =
 /// twice, once verbatim and once through the config gate's append; the
 /// result is byte-identical to writing the default and the block together.
 ///
-/// CWD-as-default lives in `main.rs`: this function takes whatever
-/// path the caller resolved, so it never touches process-global
-/// state and unit tests can run in parallel.
+/// Choosing the directory is [`resolve_target`]'s, from `main.rs`: this
+/// function takes whatever path the caller resolved, so it never touches
+/// process-global state and unit tests can run in parallel.
 pub fn run(target: &Path) -> Result<()> {
     // Refuse loudly rather than silently overwriting. Re-init is an
     // explicit destructive action — the user must remove `.cuaderno/`
