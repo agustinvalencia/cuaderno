@@ -22,7 +22,7 @@ The CLI's discovery process walks **upward** from the current working directory 
 
 ## Performance cost
 
-One warm run of `cdno now --line` takes about 21–30 milliseconds on the repo's dev vault (release build). Larger vaults will incur higher costs as the journal grows. If another process holds the vault's write lock while the index is stale, `cdno now --line` waits up to 5 seconds for the lock before timing out and returning. This is rare; the hook prints nothing and exits successfully even in this scenario.
+`cdno now --line` is index-free. It reads the config and the daily notes inside the `[focus]` windows (by default today and yesterday for the focus, and the last 14 days for the last pause), and nothing else: it never opens, creates or writes `.cuaderno/index.db`, never walks the vault, and never takes or waits for the vault's write lock. So its cost does not grow with the vault, and it is safe to run on every prompt beside a long-lived server (for example `cdno-mcp-server` in a container) that holds the same vault's index open. Only `now` is index-free: every other `cdno` verb, and shell completion (which opens the vault on every Tab), still opens and reconciles the index, so the rest of the CLI is not yet safe beside such a server (see [#1005](https://github.com/agustinvalencia/cuaderno/issues/1005)).
 
 ## Installation
 
@@ -66,7 +66,7 @@ One warm run of `cdno now --line` takes about 21–30 milliseconds on the repo's
    the variable, or set it in the `env` key of your Claude Code settings.
 
 Claude Code gives a `UserPromptSubmit` command hook 30 seconds by default (a `timeout` field
-overrides it); the worst realistic wait here is the 5-second vault lock, so no wrapper is needed.
+overrides it); `cdno now --line` waits on no lock, so no wrapper is needed.
 A timeout does not block the prompt; only exit code 2 would, and this script never returns it.
 
 ## Behaviour on error
@@ -76,7 +76,8 @@ The hook always exits with code 0, even if:
 - `CUADERNO_VAULT_PATH` is unset or empty — prints nothing
 - `cdno` is not on PATH — prints nothing
 - `cdno now --line` fails — prints nothing
-- The vault's write lock is held by another process — waits up to 5 seconds for the lock before timing out, then prints nothing or the current focus
+
+Another process holding the vault's write lock does not delay it: the verb takes no lock.
 
 This design ensures the hook can never block or break a turn.
 

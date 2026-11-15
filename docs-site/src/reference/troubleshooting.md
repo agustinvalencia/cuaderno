@@ -17,7 +17,7 @@ See [Initialise a vault](../getting-started/initialise-a-vault.md).
 
 ## Search or links look out of date
 
-The index is a cache; it's reconciled automatically each run, but a large external edit or a sync
+The index is a cache; it's reconciled automatically each run of any command but `cdno now`, but a large external edit or a sync
 conflict can occasionally confuse it. Rebuild it:
 
 ```bash
