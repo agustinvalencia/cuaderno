@@ -44,7 +44,29 @@ const MIGRATIONS: &[(u32, &str, &str)] = &[
         "archived_action_snapshots: masked_hash, mask_version and masked_size",
         include_str!("../migrations/004_snapshot_masked_hash.sql"),
     ),
+    (
+        5,
+        "index_meta: key/value facts about the index itself (the bound vault root)",
+        include_str!("../migrations/005_index_meta.sql"),
+    ),
 ];
+
+/// The first 16 bytes of every SQLite database file.
+const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
+
+/// The `index_meta` key under which an overridden index records the
+/// canonical root of the vault it belongs to (#998).
+const VAULT_ROOT_KEY: &str = "vault_root";
+
+/// The form of a vault root an overridden index records and compares:
+/// canonicalised, so a vault reached through a symlink or a relative path
+/// is still the same vault, else the path as given.
+pub fn canonical_vault_root(root: &Path) -> String {
+    root.canonicalize()
+        .unwrap_or_else(|_| root.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
+}
 
 /// SQLite-backed implementation of the vault index.
 ///
@@ -130,6 +152,132 @@ impl SqliteIndex {
         })
     }
 
+    /// Open the index at `location` for the vault at `vault_root`.
+    ///
+    /// At the default location this is [`open`](Self::open), unchanged: the
+    /// file is cuaderno's own, and the vault may legitimately be reached
+    /// under two paths. An overridden location (#998) adds two guards:
+    ///
+    /// - **A file that is not recognisably an index is never discarded.**
+    ///   Before anything else, an existing file must be empty or begin with
+    ///   the SQLite header ([`ensure_discardable`](Self::ensure_discardable)),
+    ///   so the corruption self-heal cannot delete a mistyped path's file.
+    /// - **The index is bound to one vault.** It records the canonical vault
+    ///   root on first use (an existing index that records none, such as one
+    ///   copied from a default location, is bound then), and an open for any
+    ///   other root is refused, read-only, before migrations or
+    ///   reconciliation touch it. `cdno reindex`, which deletes and rebuilds
+    ///   the file, is the way to rebind it.
+    pub fn open_location(
+        location: &crate::paths::IndexLocation,
+        vault_root: &Path,
+    ) -> Result<Self, IndexError> {
+        if !location.overridden {
+            return Self::open(&location.path);
+        }
+        let path = location.path.as_path();
+        Self::ensure_discardable(path)?;
+        let root = canonical_vault_root(vault_root);
+        if let Some(bound) = Self::bound_vault_root(path)?
+            && bound != root
+        {
+            return Err(IndexError::BoundToOtherVault {
+                index: path.display().to_string(),
+                bound,
+                root,
+            });
+        }
+        let index = Self::open(path)?;
+        index.with_connection(|conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?1, ?2)",
+                params![VAULT_ROOT_KEY, root],
+            )
+        })?;
+        Ok(index)
+    }
+
+    /// The vault root an overridden index at `path` is bound to, read
+    /// without writing: `None` when there is no file, it is empty, it
+    /// records no root (an older schema, or an index never bound), or it is
+    /// too damaged to read, which the self-heal then replaces.
+    pub fn bound_vault_root(path: &Path) -> Result<Option<String>, IndexError> {
+        match fs::metadata(path) {
+            Ok(meta) if meta.len() > 0 => {}
+            _ => return Ok(None),
+        }
+        let conn = match Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        ) {
+            Ok(conn) => conn,
+            Err(err) if is_corruption(&err) => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
+        let read = conn
+            .query_row(
+                "SELECT value FROM index_meta WHERE key = ?1",
+                params![VAULT_ROOT_KEY],
+                |r| r.get::<_, String>(0),
+            )
+            .optional();
+        match read {
+            Ok(value) => Ok(value),
+            // No `index_meta` table yet: never bound.
+            Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => {
+                Ok(None)
+            }
+            Err(err) if is_corruption(&err) => Ok(None),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    /// Refuse to go on when an overridden `path` names an existing file that
+    /// is not recognisably an index: neither empty nor starting with the
+    /// SQLite header. Called before the self-heal or `cdno reindex` could
+    /// delete it, so a mistyped override never destroys another file.
+    pub fn ensure_discardable(path: &Path) -> Result<(), IndexError> {
+        let mut head = [0u8; 16];
+        let read = match fs::File::open(path) {
+            Ok(mut file) => {
+                use std::io::Read;
+                let mut filled = 0;
+                loop {
+                    match file.read(&mut head[filled..]) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            filled += n;
+                            if filled == head.len() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            return Err(IndexError::Open {
+                                path: path.display().to_string(),
+                                source: e,
+                            });
+                        }
+                    }
+                }
+                filled
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => {
+                return Err(IndexError::Open {
+                    path: path.display().to_string(),
+                    source: e,
+                });
+            }
+        };
+        if read == 0 || (read == head.len() && &head == SQLITE_HEADER) {
+            Ok(())
+        } else {
+            Err(IndexError::NotAnIndex {
+                path: path.display().to_string(),
+            })
+        }
+    }
+
     /// Delete the index file and its WAL/SHM sidecars. The index is a
     /// rebuildable cache, so this is the recovery primitive behind both
     /// the corruption self-heal in [`open`](Self::open) and the explicit
@@ -173,9 +321,14 @@ impl SqliteIndex {
 /// cache, so these are recovered by dropping the file and reconciling
 /// rather than surfaced to the user.
 fn is_recoverable_corruption(err: &IndexError) -> bool {
+    matches!(err, IndexError::Sqlite(e) if is_corruption(e))
+}
+
+/// The SQLite error codes behind [`is_recoverable_corruption`].
+fn is_corruption(err: &rusqlite::Error) -> bool {
     matches!(
         err,
-        IndexError::Sqlite(rusqlite::Error::SqliteFailure(e, _))
+        rusqlite::Error::SqliteFailure(e, _)
             if matches!(
                 e.code,
                 rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase

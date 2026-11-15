@@ -1,0 +1,12 @@
+# Environment for every process cargo runs in this workspace: build scripts,
+# `cargo test` binaries and whatever they spawn, and `cargo run`.
+[env]
+# Keep the test suite off a contributor's real index (#998). The user guide
+# documents `CUADERNO_INDEX_PATH` for a machine that serves a shared vault;
+# exported in a shell, it would point every temporary test vault at that one
+# file, and some tests delete and rebuild their index. An empty value means
+# unset to every binary, so this forces the default `.cuaderno/index.db`.
+# Tests that exercise the override set it explicitly on the child they spawn,
+# which takes precedence. To run a binary with an override through cargo, use
+# the built binary from `target/` directly.
+CUADERNO_INDEX_PATH = { value = "", force = true }

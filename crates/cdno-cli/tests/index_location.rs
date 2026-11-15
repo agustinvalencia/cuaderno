@@ -135,20 +135,68 @@ fn reindex_leaves_the_default_file_alone_when_the_override_is_set() {
 }
 
 #[test]
-fn a_corrupt_index_at_the_override_self_heals_on_open() {
+fn a_corrupt_sqlite_index_at_the_override_self_heals_on_open() {
     let vault = tempdir().unwrap();
     let elsewhere = tempdir().unwrap();
     let index = elsewhere.path().join("index.db");
     init(vault.path());
-    std::fs::write(&index, b"corrupt garbage").unwrap();
+    // Recognisably an index (the SQLite header) but unreadable past it.
+    let mut corrupt = b"SQLite format 3\0".to_vec();
+    corrupt.extend(std::iter::repeat_n(0xFFu8, 2048));
+    std::fs::write(&index, &corrupt).unwrap();
 
     cdno(vault.path())
         .env(paths::INDEX_PATH_ENV, &index)
         .arg("commitments")
         .assert()
         .success();
-    assert_ne!(std::fs::read(&index).unwrap(), b"corrupt garbage");
+    assert_ne!(std::fs::read(&index).unwrap(), corrupt);
     assert_eq!(index_files_in_meta_dir(vault.path()), Vec::<String>::new());
+}
+
+/// A mistyped override that names some other file: neither the open-time
+/// self-heal nor `reindex` may delete it.
+#[test]
+fn a_file_that_is_not_an_index_is_refused_and_left_byte_identical() {
+    let vault = tempdir().unwrap();
+    let elsewhere = tempdir().unwrap();
+    let other = elsewhere.path().join("surrogate-model.notes");
+    let content = b"# Surrogate model\n\nNot an index.\n";
+    init(vault.path());
+    std::fs::write(&other, content).unwrap();
+
+    for verb in ["commitments", "reindex"] {
+        cdno(vault.path())
+            .env(paths::INDEX_PATH_ENV, &other)
+            .arg(verb)
+            .timeout(Duration::from_secs(15))
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("not an index database"))
+            .stderr(predicate::str::contains("nothing was deleted"));
+        assert_eq!(std::fs::read(&other).unwrap(), content, "{verb}");
+    }
+}
+
+#[test]
+fn an_override_naming_a_note_file_is_refused_before_anything_is_opened() {
+    let vault = tempdir().unwrap();
+    init(vault.path());
+    let note = vault.path().join("projects").join("surrogate-model.md");
+    std::fs::create_dir_all(note.parent().unwrap()).unwrap();
+    std::fs::write(&note, "# Surrogate model\n").unwrap();
+
+    cdno(vault.path())
+        .env(paths::INDEX_PATH_ENV, &note)
+        .arg("reindex")
+        .timeout(Duration::from_secs(15))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("names a note file"));
+    assert_eq!(
+        std::fs::read_to_string(&note).unwrap(),
+        "# Surrogate model\n"
+    );
 }
 
 #[test]
@@ -205,4 +253,139 @@ fn unset_or_blank_means_the_default_location() {
             "{value:?} must leave the index at .cuaderno/index.db"
         );
     }
+}
+
+// ---------------------------------------------------------------------
+// One override, two vaults: the index is bound to the first (#998)
+// ---------------------------------------------------------------------
+
+fn create_project(vault: &Path, index: &Path, title: &str) {
+    cdno(vault)
+        .env(paths::INDEX_PATH_ENV, index)
+        .args(["project", "create", "--title", title, "--context", "work"])
+        .arg("--no-interactive")
+        .assert()
+        .success();
+}
+
+fn search(vault: &Path, index: &Path, query: &str) -> assert_cmd::assert::Assert {
+    cdno(vault)
+        .env(paths::INDEX_PATH_ENV, index)
+        .args(["search", query, "--no-interactive"])
+        .timeout(Duration::from_secs(15))
+        .assert()
+}
+
+#[test]
+fn a_second_vault_on_the_same_override_is_refused_and_the_first_is_untouched() {
+    let a = tempdir().unwrap();
+    let b = tempdir().unwrap();
+    let elsewhere = tempdir().unwrap();
+    let index = elsewhere.path().join("index.db");
+    init(a.path());
+    init(b.path());
+    create_project(a.path(), &index, "Surrogate model");
+
+    let a_root = a.path().canonicalize().unwrap();
+    let b_root = b.path().canonicalize().unwrap();
+    search(b.path(), &index, "surrogate")
+        .failure()
+        .stderr(predicate::str::contains(a_root.to_string_lossy()))
+        .stderr(predicate::str::contains(b_root.to_string_lossy()))
+        .stderr(predicate::str::contains("cdno reindex"));
+
+    // The first vault's index still answers for it.
+    search(a.path(), &index, "surrogate")
+        .success()
+        .stdout(predicate::str::contains("surrogate-model"));
+}
+
+#[test]
+fn reindex_rebinds_an_overridden_index_to_this_vault_and_says_so() {
+    let a = tempdir().unwrap();
+    let b = tempdir().unwrap();
+    let elsewhere = tempdir().unwrap();
+    let index = elsewhere.path().join("index.db");
+    init(a.path());
+    init(b.path());
+    create_project(a.path(), &index, "Surrogate model");
+
+    let a_root = a.path().canonicalize().unwrap();
+    cdno(b.path())
+        .env(paths::INDEX_PATH_ENV, &index)
+        .arg("reindex")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "Index: {} (from CUADERNO_INDEX_PATH)",
+            index.display()
+        )))
+        .stdout(predicate::str::contains(format!(
+            "Rebound the index from the vault at {}",
+            a_root.display()
+        )));
+
+    // Now bound to B: B opens it, A is refused.
+    search(b.path(), &index, "surrogate").success();
+    search(a.path(), &index, "surrogate")
+        .failure()
+        .stderr(predicate::str::contains("cdno reindex"));
+}
+
+#[test]
+fn reindex_of_the_bound_vault_does_not_claim_a_rebind() {
+    let vault = tempdir().unwrap();
+    let elsewhere = tempdir().unwrap();
+    let index = elsewhere.path().join("index.db");
+    init(vault.path());
+    create_project(vault.path(), &index, "Surrogate model");
+
+    cdno(vault.path())
+        .env(paths::INDEX_PATH_ENV, &index)
+        .arg("reindex")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Rebound").not());
+}
+
+#[test]
+fn an_existing_index_with_no_recorded_vault_is_bound_on_first_use() {
+    // A default-location index copied out to an override records no vault;
+    // the first open through the override binds it.
+    let a = tempdir().unwrap();
+    let b = tempdir().unwrap();
+    let elsewhere = tempdir().unwrap();
+    let index = elsewhere.path().join("index.db");
+    init(a.path());
+    init(b.path());
+    cdno(a.path()).arg("commitments").assert().success();
+    std::fs::copy(a.path().join(paths::INDEX_DB), &index).unwrap();
+
+    search(a.path(), &index, "anything").success();
+    search(b.path(), &index, "anything")
+        .failure()
+        .stderr(predicate::str::contains("belongs to the vault at"));
+}
+
+#[test]
+fn reindex_at_the_default_location_does_not_print_an_index_line() {
+    let vault = tempdir().unwrap();
+    init(vault.path());
+    cdno(vault.path())
+        .arg("reindex")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Index:").not());
+}
+
+/// The workspace `.cargo/config.toml` forces the variable empty for every
+/// process cargo runs, so a contributor's exported value never reaches the
+/// suite. This pins that the setting is in effect.
+#[test]
+fn the_test_process_sees_the_index_variable_forced_empty() {
+    assert_eq!(
+        std::env::var_os(paths::INDEX_PATH_ENV).as_deref(),
+        Some(OsStr::new("")),
+        "`.cargo/config.toml` must set CUADERNO_INDEX_PATH to \"\" with force = true"
+    );
 }

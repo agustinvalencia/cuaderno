@@ -152,9 +152,12 @@ struct ServeArgs {
     /// reaches (a bind mount into a container, a network share): each
     /// machine keeps its own index outside the shared folder. Must be an
     /// absolute path; its `-wal`/`-shm` files sit beside it. Defaults to
-    /// `<vault>/.cuaderno/index.db` (#998).
+    /// `<vault>/.cuaderno/index.db` (#998). An empty value means unset,
+    /// as on the other binaries: an `OsString` because clap's `PathBuf`
+    /// parser rejects an empty value, which would stop the server on
+    /// `CUADERNO_INDEX_PATH=`.
     #[arg(long, env = "CUADERNO_INDEX_PATH")]
-    index_path: Option<PathBuf>,
+    index_path: Option<std::ffi::OsString>,
 
     /// Address to listen on. Non-loopback addresses are refused until
     /// origin-auth middleware exists (GH #302).
@@ -361,11 +364,7 @@ async fn serve() -> Result<()> {
         let root = vault_root(args.vault.clone())?;
         tracing::info!(vault_root = %root.display(), "starting cdno-mcp-server");
 
-        let opened = open_vault_with_index(
-            &root,
-            args.index_path.as_deref().map(|p| p.as_os_str()),
-        )
-        .inspect_err(|e| {
+        let opened = open_vault_with_index(&root, args.index_path.as_deref()).inspect_err(|e| {
             tracing::error!(error = %e, vault_root = %root.display(), "failed to open vault");
         })?;
         tracing::info!(index_path = %opened.index_path.display(), "index opened");

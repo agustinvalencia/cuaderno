@@ -13,16 +13,11 @@ use anyhow::{Context, Result};
 
 pub use cdno_domain::bootstrap::OpenedVault;
 
-/// Open a vault at `root` — see [`cdno_domain::bootstrap::open_vault`].
-pub fn open_vault(root: &Path) -> Result<OpenedVault> {
-    cdno_domain::bootstrap::open_vault(root)
-        .with_context(|| format!("opening vault at {}", root.display()))
-}
-
 /// Open a vault at `root` with the index override given explicitly — see
 /// [`cdno_domain::bootstrap::open_vault_with_index`]. The HTTP server's
 /// `--index-path` (which falls back to `CUADERNO_INDEX_PATH`) comes
-/// through here; the stdio server reads the variable via [`open_vault`].
+/// through here, and so does the stdio server, with the variable read by
+/// [`cdno_core::paths::index_override_from_env`].
 pub fn open_vault_with_index(root: &Path, index_override: Option<&OsStr>) -> Result<OpenedVault> {
     cdno_domain::bootstrap::open_vault_with_index(root, index_override)
         .with_context(|| format!("opening vault at {}", root.display()))

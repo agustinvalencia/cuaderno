@@ -186,7 +186,13 @@ fn a_relocated_index_inside_the_vault_is_never_checkpointed() {
         if String::from_utf8_lossy(&log.stdout).contains("cdno-mcp checkpoint") {
             break;
         }
-        assert!(Instant::now() < deadline, "no checkpoint commit within 15s");
+        if Instant::now() >= deadline {
+            // Kill first, as the neighbouring test does: a panic alone would
+            // leave a server with a 1s sweep running after the test.
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("no checkpoint commit within 15s");
+        }
         std::thread::sleep(Duration::from_millis(250));
     }
     let _ = child.kill();

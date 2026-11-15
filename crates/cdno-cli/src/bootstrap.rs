@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use anyhow::{Context, Result, bail};
 use cdno_core::config::VaultConfig;
 use cdno_core::index::{SqliteIndex, VaultIndex};
-use cdno_core::paths;
+use cdno_core::paths::{self, IndexLocation};
 use cdno_core::reconcile::ReconciliationReport;
 use cdno_core::store::{FsVaultStore, VaultStore};
 use cdno_domain::{
@@ -65,12 +65,17 @@ pub fn resolve_vault_root(
     None
 }
 
-/// The index database file for the vault at `root`: `<root>/.cuaderno/index.db`,
+/// Where the index of the vault at `root` lives: `<root>/.cuaderno/index.db`,
 /// or the absolute path in `CUADERNO_INDEX_PATH` when it is set (#998).
 /// The policy itself is [`paths::resolve_index_path`], shared with both
-/// MCP binaries; a relative value is an error, never resolved.
-pub fn index_path(root: &Path) -> Result<PathBuf> {
-    Ok(paths::resolve_index_path_from_env(root)?)
+/// MCP binaries; a relative value is an error, never resolved. The CLI
+/// deliberately takes no flag for it: the value is per machine, not per
+/// command.
+pub fn index_location(root: &Path) -> Result<IndexLocation> {
+    Ok(paths::resolve_index_path(
+        root,
+        paths::index_override_from_env().as_deref(),
+    )?)
 }
 
 /// Open a Cuaderno vault rooted at `root`: load config, open the
@@ -87,14 +92,14 @@ pub fn open_vault(root: &Path) -> Result<(Vault, ReconciliationReport)> {
         );
     }
 
-    let index_path = index_path(root)?;
+    let location = index_location(root)?;
     let config = VaultConfig::load(root)
         .with_context(|| format!("loading {}", root.join(paths::CONFIG_FILE).display()))?;
 
     let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(root));
     let index: Arc<dyn VaultIndex> = Arc::new(
-        SqliteIndex::open(&index_path)
-            .with_context(|| format!("opening {}", index_path.display()))?,
+        SqliteIndex::open_location(&location, root)
+            .with_context(|| format!("opening {}", location.path.display()))?,
     );
 
     let (vault, report) =

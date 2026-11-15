@@ -17,6 +17,10 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
+
+#[path = "support/process.rs"]
+mod process;
+use process::exit_within_deadline;
 use tempfile::TempDir;
 
 /// Spawn `cdno-mcp-server` with the given extra args, wait until the
@@ -801,6 +805,45 @@ async fn create_and_find_a_project(port: u16) {
     );
 }
 
+/// `CUADERNO_INDEX_PATH=` (as `${INDEX:-}` in a compose file produces)
+/// means unset, as on the other binaries: the server starts and uses the
+/// default location. clap's `PathBuf` parser would reject the empty value.
+#[tokio::test]
+async fn a_blank_index_path_variable_means_the_default_on_the_http_server() {
+    let dir = TempDir::new().expect("tempdir");
+    make_vault(dir.path());
+    let server = HttpServer::spawn_with_index_env(Some(dir.path()), &[], Some(Path::new("")));
+
+    create_and_find_a_project(server.port).await;
+    assert!(dir.path().join(cdno_core::paths::INDEX_DB).is_file());
+}
+
+#[tokio::test]
+async fn the_http_server_refuses_an_index_bound_to_another_vault() {
+    let a = TempDir::new().expect("tempdir");
+    let b = TempDir::new().expect("tempdir");
+    let elsewhere = TempDir::new().expect("tempdir");
+    let index = elsewhere.path().join("index.db");
+    make_vault(a.path());
+    make_vault(b.path());
+    {
+        let server = HttpServer::spawn_with_index_env(Some(a.path()), &[], Some(&index));
+        create_and_find_a_project(server.port).await;
+    }
+
+    let (status, stderr) = exit_within_deadline(
+        Command::new(env!("CARGO_BIN_EXE_cdno-mcp-server"))
+            .args(["--bind", "127.0.0.1:0"])
+            .arg("--index-path")
+            .arg(&index)
+            .env("CUADERNO_VAULT_PATH", b.path())
+            .env("RUST_LOG", "off"),
+    );
+    assert!(!status.success(), "a second vault must be refused");
+    assert!(stderr.contains("belongs to the vault at"), "{stderr}");
+    assert!(stderr.contains("cdno reindex"), "{stderr}");
+}
+
 #[tokio::test]
 async fn the_index_path_variable_moves_the_http_servers_index() {
     let dir = TempDir::new().expect("tempdir");
@@ -831,39 +874,6 @@ async fn the_index_path_flag_moves_the_http_servers_index_and_beats_the_variable
     assert!(from_flag.is_file(), "the flag's file is the index");
     assert!(!from_env.exists(), "the variable is only a fallback");
     assert_eq!(index_files_in_meta_dir(dir.path()), Vec::<String>::new());
-}
-
-/// Run `cmd` to its exit, which the caller expects to come soon, and
-/// return its status and stderr. Bounded: a process still running after
-/// 15s is killed and the test fails, so a regression that lets it start
-/// serving can never hang the suite.
-fn exit_within_deadline(cmd: &mut Command) -> (std::process::ExitStatus, String) {
-    let mut child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn");
-    // Drained on its own thread so a chatty child cannot block on a full pipe.
-    let mut pipe = child.stderr.take().expect("piped stderr");
-    let reader = std::thread::spawn(move || {
-        let mut buf = String::new();
-        let _ = std::io::Read::read_to_string(&mut pipe, &mut buf);
-        buf
-    });
-    let deadline = std::time::Instant::now() + Duration::from_secs(15);
-    let status = loop {
-        if let Some(status) = child.try_wait().expect("try_wait") {
-            break status;
-        }
-        if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("the process was still running after 15s; it should have refused at startup");
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    };
-    (status, reader.join().expect("stderr reader"))
 }
 
 #[test]

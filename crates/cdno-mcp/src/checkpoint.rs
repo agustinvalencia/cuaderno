@@ -225,14 +225,23 @@ pub fn spawn(root: PathBuf, index_path: &Path, every: Duration, mode: Checkpoint
     if let Err(e) = ensure_wip_excluded(&root) {
         tracing::warn!(error = %e, "could not write .git/info/exclude; wip temp files may be committed");
     }
-    if let Some(pattern) = relocated_index_exclude_pattern(&root, index_path)
-        && let Err(e) = ensure_excluded(&root, &pattern)
-    {
-        tracing::warn!(
-            error = %e,
+    match relocated_index_exclude_pattern(&root, index_path) {
+        Ok(None) => {}
+        Ok(Some(pattern)) => {
+            if let Err(e) = ensure_excluded(&root, &pattern) {
+                tracing::warn!(
+                    error = %e,
+                    index_path = %index_path.display(),
+                    "could not write .git/info/exclude; the relocated index may be committed"
+                );
+            }
+        }
+        Err(reason) => tracing::warn!(
+            reason = %reason,
             index_path = %index_path.display(),
-            "could not write .git/info/exclude; the relocated index may be committed"
-        );
+            "no .git/info/exclude rule written for the index; if it lies inside the vault, \
+             a checkpoint may commit it"
+        ),
     }
 
     // Say plainly WHO is expected to commit. The #303 recovery trail is
@@ -620,29 +629,50 @@ fn ensure_wip_excluded(root: &Path) -> Result<()> {
 }
 
 /// The `.git/info/exclude` pattern for an index that a per-machine
-/// override (#998) placed inside the vault, or `None` when there is
+/// override (#998) placed inside the vault, or `Ok(None)` when there is
 /// nothing to add: the index is outside the vault (the intended setup),
 /// or at the default `.cuaderno/index.db`, which the sweep has always
-/// left to the vault's own `.gitignore` and still does.
+/// left to the vault's own `.gitignore` and still does. `Err` says why
+/// no rule could be built (a path that does not canonicalise, or a
+/// component git's exclude syntax cannot carry: a newline, non-UTF-8),
+/// for the caller to warn about.
 ///
 /// Anchored at the repository root and ending in `*`, so the `-wal`,
 /// `-shm` and any rebuild siblings, which share the file name as a
 /// prefix, are covered with it. Both sides are canonicalised first: the
 /// vault root may be given relative, and either may sit behind a symlink.
-fn relocated_index_exclude_pattern(root: &Path, index_path: &Path) -> Option<String> {
-    let root = root.canonicalize().ok()?;
-    let parent = index_path.parent()?.canonicalize().ok()?;
-    let index = parent.join(index_path.file_name()?);
+fn relocated_index_exclude_pattern(
+    root: &Path,
+    index_path: &Path,
+) -> Result<Option<String>, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("cannot canonicalise the vault root: {e}"))?;
+    let (Some(parent), Some(name)) = (index_path.parent(), index_path.file_name()) else {
+        return Err("the index path has no parent directory or file name".to_owned());
+    };
+    let parent = parent
+        .canonicalize()
+        .map_err(|e| format!("cannot canonicalise the index directory: {e}"))?;
+    let index = parent.join(name);
     if index == root.join(cdno_core::paths::INDEX_DB) {
-        return None;
+        return Ok(None);
     }
-    let rel = index.strip_prefix(&root).ok()?;
+    let Ok(rel) = index.strip_prefix(&root) else {
+        return Ok(None);
+    };
     let mut pattern = String::from("/");
     for (i, part) in rel.components().enumerate() {
         if i > 0 {
             pattern.push('/');
         }
-        for c in part.as_os_str().to_string_lossy().chars() {
+        let Some(part) = part.as_os_str().to_str() else {
+            return Err("a path component is not valid UTF-8".to_owned());
+        };
+        if part.contains(['\n', '\r']) {
+            return Err("a path component contains a line break".to_owned());
+        }
+        for c in part.chars() {
             // Glob metacharacters, and a leading `#`/`!`, are literal
             // once escaped; a plain name passes through unchanged.
             if matches!(c, '*' | '?' | '[' | ']' | '\\' | '#' | '!') {
@@ -652,7 +682,7 @@ fn relocated_index_exclude_pattern(root: &Path, index_path: &Path) -> Option<Str
         }
     }
     pattern.push('*');
-    Some(pattern)
+    Ok(Some(pattern))
 }
 
 /// Idempotently append one pattern to the repo's local
@@ -871,14 +901,14 @@ mod tests {
         std::fs::create_dir(vault.path().join(".cuaderno")).unwrap();
         assert_eq!(
             relocated_index_exclude_pattern(vault.path(), &elsewhere.path().join("index.db")),
-            None
+            Ok(None)
         );
         assert_eq!(
             relocated_index_exclude_pattern(
                 vault.path(),
                 &vault.path().join(cdno_core::paths::INDEX_DB)
             ),
-            None
+            Ok(None)
         );
     }
 
@@ -893,7 +923,9 @@ mod tests {
         std::fs::create_dir(&cache).unwrap();
         let index = cache.join("index.db");
 
-        let pattern = relocated_index_exclude_pattern(dir.path(), &index).expect("inside");
+        let pattern = relocated_index_exclude_pattern(dir.path(), &index)
+            .unwrap()
+            .expect("inside");
         assert_eq!(pattern, "/local-cache/index.db*");
         ensure_excluded(dir.path(), &pattern).unwrap();
         ensure_excluded(dir.path(), &pattern).unwrap();
@@ -921,9 +953,24 @@ mod tests {
         let odd = dir.path().join("[cache]");
         std::fs::create_dir(&odd).unwrap();
         assert_eq!(
-            relocated_index_exclude_pattern(dir.path(), &odd.join("i*.db")).as_deref(),
-            Some("/\\[cache\\]/i\\*.db*")
+            relocated_index_exclude_pattern(dir.path(), &odd.join("i*.db")),
+            Ok(Some("/\\[cache\\]/i\\*.db*".to_owned()))
         );
+    }
+
+    #[test]
+    fn a_line_break_or_a_missing_directory_writes_no_rule_and_says_why() {
+        let dir = TempDir::new().unwrap();
+        let broken = dir.path().join("a\nb");
+        std::fs::create_dir(&broken).unwrap();
+        let err = relocated_index_exclude_pattern(dir.path(), &broken.join("index.db"))
+            .expect_err("a newline cannot be carried by an exclude rule");
+        assert!(err.contains("line break"), "{err}");
+
+        let err =
+            relocated_index_exclude_pattern(dir.path(), &dir.path().join("gone").join("index.db"))
+                .expect_err("an index directory that does not exist cannot be canonicalised");
+        assert!(err.contains("canonicalise"), "{err}");
     }
 
     #[test]

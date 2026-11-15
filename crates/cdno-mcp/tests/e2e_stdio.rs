@@ -22,6 +22,10 @@ use std::thread;
 use std::time::Duration;
 
 use serde_json::{Value, json};
+
+#[path = "support/process.rs"]
+mod process;
+use process::exit_within_deadline;
 use tempfile::TempDir;
 
 /// Helper: spawn `cdno-mcp` against `vault_root` with stdin/stdout
@@ -984,39 +988,6 @@ fn the_index_path_variable_moves_the_stdio_servers_index() {
 
 /// A relative value stops the stdio server at start, before anything is
 /// opened or created.
-/// Run `cmd` to its exit, which the caller expects to come soon, and
-/// return its status and stderr. Bounded: a process still running after
-/// 15s is killed and the test fails, so a regression that lets it start
-/// serving can never hang the suite.
-fn exit_within_deadline(cmd: &mut Command) -> (std::process::ExitStatus, String) {
-    let mut child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn");
-    // Drained on its own thread so a chatty child cannot block on a full pipe.
-    let mut pipe = child.stderr.take().expect("piped stderr");
-    let reader = std::thread::spawn(move || {
-        let mut buf = String::new();
-        let _ = std::io::Read::read_to_string(&mut pipe, &mut buf);
-        buf
-    });
-    let deadline = std::time::Instant::now() + Duration::from_secs(15);
-    let status = loop {
-        if let Some(status) = child.try_wait().expect("try_wait") {
-            break status;
-        }
-        if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("the process was still running after 15s; it should have refused at startup");
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    };
-    (status, reader.join().expect("stderr reader"))
-}
-
 #[test]
 fn the_stdio_server_refuses_a_relative_index_path() {
     let dir = TempDir::new().unwrap();

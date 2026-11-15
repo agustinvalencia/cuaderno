@@ -190,12 +190,19 @@ mod resolve_index_path {
     use std::path::Path;
 
     use cdno_core::error::IndexPathError;
-    use cdno_core::paths::{INDEX_DB, resolve_index_path};
+    use cdno_core::paths::{INDEX_DB, IndexLocation, resolve_index_path};
+
+    fn default_for(root: &Path) -> IndexLocation {
+        IndexLocation {
+            path: root.join(INDEX_DB),
+            overridden: false,
+        }
+    }
 
     #[test]
     fn no_override_is_the_default_location() {
         let root = Path::new("/vaults/surrogate-model");
-        assert_eq!(resolve_index_path(root, None).unwrap(), root.join(INDEX_DB));
+        assert_eq!(resolve_index_path(root, None).unwrap(), default_for(root));
     }
 
     #[test]
@@ -204,7 +211,7 @@ mod resolve_index_path {
         for blank in ["", " ", "\t\n"] {
             assert_eq!(
                 resolve_index_path(root, Some(OsStr::new(blank))).unwrap(),
-                root.join(INDEX_DB),
+                default_for(root),
                 "{blank:?}"
             );
         }
@@ -217,7 +224,10 @@ mod resolve_index_path {
         assert_eq!(
             resolve_index_path(Path::new("/vaults/surrogate-model"), Some(file.as_os_str()))
                 .unwrap(),
-            file
+            IndexLocation {
+                path: file,
+                overridden: true
+            }
         );
     }
 
@@ -233,7 +243,11 @@ mod resolve_index_path {
                     "{value:?} under {root:?}: {err:?}"
                 );
                 let msg = err.to_string();
-                assert!(msg.contains("CUADERNO_INDEX_PATH") && msg.contains("--index-path"));
+                assert!(
+                    msg.contains("CUADERNO_INDEX_PATH")
+                        && msg.contains("`--index-path` on `cdno-mcp-server`"),
+                    "{msg}"
+                );
             }
         }
     }
@@ -244,5 +258,31 @@ mod resolve_index_path {
         let err = resolve_index_path(Path::new("/vaults/v"), Some(dir.path().as_os_str()))
             .expect_err("a directory is not a database file");
         assert!(matches!(err, IndexPathError::Directory(_)), "{err:?}");
+    }
+
+    #[test]
+    fn an_override_ending_in_a_separator_is_refused_even_if_absent() {
+        let err = resolve_index_path(
+            Path::new("/vaults/v"),
+            Some(OsStr::new("/no/such/cache/dir/")),
+        )
+        .expect_err("a trailing separator names a directory");
+        assert!(matches!(err, IndexPathError::Directory(_)), "{err:?}");
+    }
+
+    #[test]
+    fn an_override_with_a_note_extension_is_refused() {
+        for value in [
+            "/vaults/v/projects/surrogate-model.md",
+            "/tmp/index.MD",
+            "/tmp/notes/evidence.typ",
+        ] {
+            let err = resolve_index_path(Path::new("/vaults/v"), Some(OsStr::new(value)))
+                .expect_err("a note path is not an index");
+            assert!(
+                matches!(err, IndexPathError::NoteExtension(_)),
+                "{value}: {err:?}"
+            );
+        }
     }
 }

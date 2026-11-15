@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use cdno_mcp::CuadernoServer;
-use cdno_mcp::bootstrap::open_vault;
+use cdno_mcp::bootstrap::open_vault_with_index;
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use tracing_subscriber::EnvFilter;
@@ -41,7 +41,8 @@ async fn main() -> Result<()> {
     // A stdio session is short-lived, so only the `vault` is kept;
     // the store/index/ignore handles (used by the HTTP binary's
     // reconciliation loop) are dropped.
-    let opened = open_vault(&root).inspect_err(|e| {
+    let index_override = cdno_core::paths::index_override_from_env();
+    let opened = open_vault_with_index(&root, index_override.as_deref()).inspect_err(|e| {
         tracing::error!(error = %e, vault_root = %root.display(), "failed to open vault");
     })?;
     tracing::info!(index_path = %opened.index_path.display(), "index opened");

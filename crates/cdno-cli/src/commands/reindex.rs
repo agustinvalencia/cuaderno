@@ -9,14 +9,17 @@
 //! `open_vault` runs reconciliation, which repopulates the empty index
 //! from every note.
 //!
-//! The database is wherever [`bootstrap::index_path`] resolves it —
+//! The database is wherever [`bootstrap::index_location`] resolves it —
 //! `CUADERNO_INDEX_PATH` when set (#998) — so the file deleted here is
-//! the same one the re-open creates.
+//! the same one the re-open creates. An overridden file is deleted only
+//! when it is recognisably an index, and since the rebuilt file binds to
+//! this vault, `reindex` is the one way to rebind an overridden index
+//! that belonged to another vault; it says so when it does.
 
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use cdno_core::index::SqliteIndex;
+use cdno_core::index::{SqliteIndex, canonical_vault_root};
 use cdno_core::paths;
 
 use crate::bootstrap;
@@ -33,17 +36,36 @@ pub fn run(root: &Path) -> Result<()> {
 
     // Resolve before deleting anything: a bad override is refused with
     // the index untouched.
-    let index_path = bootstrap::index_path(root)?;
+    let location = bootstrap::index_location(root)?;
+    let rebound_from = if location.overridden {
+        // Never delete a file that is not an index (a mistyped path).
+        SqliteIndex::ensure_discardable(&location.path)?;
+        SqliteIndex::bound_vault_root(&location.path)
+            .unwrap_or(None)
+            .filter(|bound| *bound != canonical_vault_root(root))
+    } else {
+        None
+    };
 
     // Drop the cache, then re-open: `open_vault` reconciles the fresh
     // (empty) index against the filesystem, rebuilding every row.
-    SqliteIndex::remove(&index_path);
+    SqliteIndex::remove(&location.path);
     let (_vault, report) = bootstrap::open_vault(root).context("rebuilding the index")?;
 
     println!(
         "Reindexed {} note(s) ({} scanned).",
         report.added, report.scanned
     );
+    // An override is invisible otherwise: name the file it resolved to.
+    if location.overridden {
+        println!(
+            "Index: {} (from CUADERNO_INDEX_PATH).",
+            location.path.display()
+        );
+    }
+    if let Some(previous) = rebound_from {
+        println!("Rebound the index from the vault at {previous} to this vault.");
+    }
     // Make ignore-glob exclusions visible: a stray `**` that drops every
     // note from search/lint should never be silent. The files are on
     // disk untouched — removing the offending pattern and reindexing
