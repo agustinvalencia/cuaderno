@@ -36,7 +36,7 @@ use crate::index::{
 };
 use crate::path::VaultPath;
 use crate::paths::note_format;
-use crate::read_journal::{Observed, ReadJournal};
+use crate::read_journal::{Observed, ReadJournal, Recorded};
 use crate::store::{VaultStore, VaultWriteLock};
 
 /// A buffered set of file and index operations that are applied
@@ -55,11 +55,14 @@ pub struct VaultTransaction {
     /// of the owning operation serialises against other processes (#196).
     /// Held, never read — its `Drop` does the work.
     _lock: VaultWriteLock,
-    /// The first observation of each path, recorded by the store for
-    /// every read made while this transaction is open, and by the staging
+    /// What this transaction's own thread observed of each path while it
+    /// was open, recorded by the store on every read and by the staging
     /// methods for a path staged without being read (#1001). Taken, and so
     /// closed, at the start of `commit`.
     journal: Option<Arc<ReadJournal>>,
+    /// Whether a replace or delete of a path this transaction never read is
+    /// a bug in the caller (see [`require_reads`](Self::require_reads)).
+    reads_required: bool,
 }
 
 /// File operations the transaction can apply. Each variant owns the
@@ -137,6 +140,7 @@ enum Undo {
     },
 }
 
+
 impl VaultTransaction {
     /// Create an empty transaction bound to the given store and index,
     /// acquiring the vault write lock up front (#196).
@@ -147,15 +151,16 @@ impl VaultTransaction {
     /// — which means creating the transaction *before* reading. Acquiring
     /// can fail or time out, hence the `Result`.
     ///
-    /// The read journal opens here too, after the lock, so every read the
-    /// operation makes from now on is recorded for the commit's check.
+    /// The read journal opens here too, after the lock, on the calling
+    /// thread, so every read the operation makes on it from now on is
+    /// recorded for the commit's check.
     pub fn new(store: Arc<dyn VaultStore>, index: Arc<dyn VaultIndex>) -> Result<Self, StoreError> {
         let lock = store.acquire_write_lock()?;
         let journal = match store.read_journals() {
             Some(journals) => journals.open(),
             // A store that records nothing still gets a journal: the
             // staging methods record into it.
-            None => Arc::new(ReadJournal::default()),
+            None => Arc::new(ReadJournal::new()),
         };
         Ok(Self {
             store,
@@ -164,28 +169,71 @@ impl VaultTransaction {
             index_ops: Vec::new(),
             _lock: lock,
             journal: Some(journal),
+            reads_required: false,
         })
+    }
+
+    /// Declare that every file this transaction replaces, appends to or
+    /// deletes is read through the store after the transaction opened, and
+    /// every file it creates is either seen absent inside it or staged
+    /// with [`create_file`](Self::create_file) (#196, #1001). The domain's
+    /// transactions declare it.
+    ///
+    /// Staging a replace, an append or a delete of an existing file that
+    /// was not read inside the transaction then fails a debug assertion,
+    /// so a verb that reads before it opens its transaction (or not at all)
+    /// fails its tests instead of being compared from the moment it
+    /// staged. A release build keeps that staging-time comparison.
+    /// Ignored over a store that records no reads.
+    pub fn require_reads(mut self) -> Self {
+        self.reads_required = true;
+        self
     }
 
     /// Record what is at `path` now if nothing has been recorded for it:
     /// a path staged without being read (a blind overwrite, a delete
-    /// decided from a listing) is still checked, from this moment on. A
+    /// decided from a listing) is still compared, from this moment on. A
     /// path that cannot be observed is left for the commit to observe.
     fn observe_unseen(&self, path: &VaultPath) {
         let Some(journal) = &self.journal else {
             return;
         };
-        if journal.get(path).is_none()
-            && let Ok(observed) = self.store.observe(path)
-        {
-            journal.record(path, observed);
+        if journal.get(path).is_some() {
+            return;
         }
+        let Ok(observed) = self.store.observe(path) else {
+            return;
+        };
+        debug_assert!(
+            !(self.reads_required
+                && self.store.read_journals().is_some()
+                && observed != Observed::Absent),
+            "{path} is staged for a replace, append or delete without having been read \
+             inside the transaction: open the transaction before reading (#196, #1001)"
+        );
+        journal.record(path, observed);
     }
 
     // ---- file operation buffer --------------------------------------
 
     pub fn write_file(&mut self, path: VaultPath, content: impl Into<String>) {
         self.observe_unseen(&path);
+        self.file_ops.push(FileOp::Write {
+            path,
+            content: content.into(),
+        });
+    }
+
+    /// Stage the creation of `path`: a write that expects no file there,
+    /// whatever was observed earlier (#1001). If one exists at commit, the
+    /// commit fails with [`TransactionError::Conflict`] and writes nothing,
+    /// and the store creates the file with a rename that refuses to
+    /// overwrite. Use it for every new note whose path was chosen to be
+    /// free, so the choice can never turn into a replace.
+    pub fn create_file(&mut self, path: VaultPath, content: impl Into<String>) {
+        if let Some(journal) = &self.journal {
+            journal.expect(&path, Observed::Absent);
+        }
         self.file_ops.push(FileOp::Write {
             path,
             content: content.into(),
@@ -200,10 +248,10 @@ impl VaultTransaction {
         });
     }
 
-    /// A move is not compared with what was read (#1001): it carries the
-    /// file along whatever it holds, so it cannot discard another writer's
-    /// change, and comparing would mean reading an attachment's bytes,
-    /// which a move never does.
+    /// A bare move is compared only when this transaction read its source
+    /// (#1001): otherwise it carries the file along whatever it holds, so
+    /// it discards nothing, and comparing would mean reading an
+    /// attachment's bytes, which a move never does.
     pub fn move_file(&mut self, src: VaultPath, dest: VaultPath) {
         self.file_ops.push(FileOp::Move { src, dest });
     }
@@ -212,6 +260,7 @@ impl VaultTransaction {
         self.observe_unseen(&path);
         self.file_ops.push(FileOp::Delete { path });
     }
+
 
     /// Buffer an import of the external file `src` into the vault at
     /// `dest` (an attachment, #154). Committed alongside the stub write,
@@ -420,9 +469,10 @@ impl VaultTransaction {
                     let rollback_failures = rollback(&*self.store, applied);
                     if let StoreError::Changed(path) = &source
                         && rollback_failures.is_empty()
-                        && let Ok(path) = VaultPath::new(path.as_str())
                     {
-                        return Err(TransactionError::Conflict { paths: vec![path] });
+                        return Err(TransactionError::Conflict {
+                            paths: vec![path.clone()],
+                        });
                     }
                     return Err(TransactionError::FileWrite {
                         source,
@@ -907,18 +957,20 @@ enum Precheck {
 type Expectations = HashMap<VaultPath, Option<Observed>>;
 
 /// Phase 0 of `commit`: compare every path whose first touch in `ops`
-/// reads it — a write, an append or a delete — with what was first
-/// observed of it while the transaction was open (`seen`). A path with no
-/// observation (one that could not be read when it was staged) is observed
-/// here, so it is still compared from now on.
+/// reads it — a write, an append, a delete, or a move whose source this
+/// transaction read — with what was first observed of it while the
+/// transaction was open (`seen`). A path with no observation (one that
+/// could not be read when it was staged) is observed here, so it is still
+/// compared from now on. A path two reads of the operation saw differently
+/// changed while it ran, and is a conflict whatever is on disk now.
 ///
 /// Returns every mismatching path at once, so the error names them all,
-/// or the expectations the ops start from. A move's two paths and an
-/// import's destination are marked as touched but not compared.
+/// or the expectations the ops start from. An unread move's two paths and
+/// an import's destination are marked as touched but not compared.
 fn precheck(
     store: &dyn VaultStore,
     ops: &[FileOp],
-    seen: &HashMap<VaultPath, Observed>,
+    seen: &Recorded,
 ) -> Result<Expectations, Precheck> {
     let mut expect: Expectations = HashMap::new();
     let mut conflicts: Vec<VaultPath> = Vec::new();
@@ -927,8 +979,8 @@ fn precheck(
             return Ok(());
         }
         let now = store.observe(path).map_err(Precheck::Store)?;
-        let baseline = seen.get(path).copied().unwrap_or(now);
-        if now != baseline {
+        let baseline = seen.first.get(path).copied().unwrap_or(now);
+        if now != baseline || seen.changed.contains(path) {
             conflicts.push(path.clone());
         }
         expect.insert(path.clone(), Some(baseline));
@@ -939,8 +991,15 @@ fn precheck(
             FileOp::Write { path, .. } | FileOp::Append { path, .. } | FileOp::Delete { path } => {
                 first_touch(path, &mut expect)?;
             }
+            // A move whose source the operation read (a note it then moves
+            // and rewrites) is compared like a write; an unread one (an
+            // attachment following its folder) carries whatever is there.
             FileOp::Move { src, dest } => {
-                expect.entry(src.clone()).or_insert(None);
+                if seen.first.contains_key(src) {
+                    first_touch(src, &mut expect)?;
+                } else {
+                    expect.entry(src.clone()).or_insert(None);
+                }
                 expect.entry(dest.clone()).or_insert(None);
             }
             FileOp::Import { dest, .. } => {
@@ -955,6 +1014,7 @@ fn precheck(
     }
 }
 
+
 /// What a snapshot taken with [`read_if_exists`] observed.
 fn observed_of(snapshot: Option<&str>) -> Observed {
     snapshot.map_or(Observed::Absent, |s| Observed::of_bytes(s.as_bytes()))
@@ -968,7 +1028,7 @@ fn ensure(
     actual: Observed,
 ) -> Result<(), StoreError> {
     match expected {
-        Some(e) if e != actual => Err(StoreError::Changed(path.to_string())),
+        Some(e) if e != actual => Err(StoreError::Changed(path.clone())),
         _ => Ok(()),
     }
 }
@@ -1039,11 +1099,15 @@ fn apply_file_op(
             })
         }
         FileOp::Move { src, dest } => {
-            // Not compared: a move carries the file along whatever it
-            // holds, and never reads an attachment's bytes. What an earlier
-            // op of this commit left at `src` travels to `dest`, so a later
-            // op there is compared with it.
+            // Compared only when something is expected at `src`: this
+            // transaction read it, or an earlier op of the commit wrote it.
+            // An unread move carries the file along whatever it holds and
+            // never reads an attachment's bytes. What is expected at `src`
+            // travels to `dest`, so a later op there is compared with it.
             let expected = expect.get(src).copied().flatten();
+            if expected.is_some() {
+                ensure(src, expected, store.observe(src)?)?;
+            }
             store.move_file(src, dest)?;
             expect.insert(src.clone(), Some(Observed::Absent));
             expect.insert(dest.clone(), expected);

@@ -435,6 +435,14 @@ impl VaultStore for Interfering {
     fn read_journals(&self) -> Option<&ReadJournals> {
         self.inner.read_journals()
     }
+    fn append_to_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        self.inner.append_to_file_expecting(path, content, expected)
+    }
 }
 
 fn interfering(
@@ -508,11 +516,11 @@ fn a_rollback_does_not_overwrite_a_change_made_after_its_write() {
             rollback_failures,
         } => {
             assert!(
-                matches!(&source, StoreError::Changed(p) if p == "b.md"),
+                matches!(&source, StoreError::Changed(p) if p.to_string() == "b.md"),
                 "{source:?}"
             );
             assert!(
-                matches!(rollback_failures.as_slice(), [StoreError::Changed(p)] if p == "a.md"),
+                matches!(rollback_failures.as_slice(), [StoreError::Changed(p)] if p.to_string() == "a.md"),
                 "{rollback_failures:?}"
             );
         }
@@ -536,7 +544,7 @@ fn a_conditional_write_refuses_a_changed_file_and_leaves_no_temp() {
         .write_file_expecting(&vp("a.md"), "mine\n", stale)
         .unwrap_err();
     assert!(
-        matches!(&err, StoreError::Changed(p) if p == "a.md"),
+        matches!(&err, StoreError::Changed(p) if p.to_string() == "a.md"),
         "{err:?}"
     );
     assert_eq!(folder.get("a.md"), "a\n");

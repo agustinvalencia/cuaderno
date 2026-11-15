@@ -1548,8 +1548,8 @@ fn failed_path(error: &cdno_core::error::StoreError) -> Option<VaultPath> {
         | StoreError::AlreadyExists(p)
         | StoreError::PermissionDenied(p)
         | StoreError::OutsideVault(p)
-        | StoreError::Changed(p)
         | StoreError::Io { path: p, .. } => p,
+        StoreError::Changed(p) => return Some(p.clone()),
         StoreError::LockTimeout(_) => return None,
     };
     VaultPath::new(raw.as_str()).ok()

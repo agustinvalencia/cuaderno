@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::error::StoreError;
@@ -186,6 +186,13 @@ pub trait VaultStore: Send + Sync {
         Ok(VaultWriteLock::noop())
     }
 
+    // ---- compare before rename (#1001) ---------------------------------
+    //
+    // The three methods below have no default on purpose: a default would
+    // let a wrapping store silently lose the read journal, the pre-rename
+    // check or the no-clobber create. Every store states its behaviour; a
+    // wrapper delegates them to the store it wraps.
+
     /// The read journals this store records its reads into (#1001), so a
     /// transaction can compare what an operation read with what is on
     /// disk before replacing it. A store that records reads returns its
@@ -194,14 +201,11 @@ pub trait VaultStore: Send + Sync {
     /// and [`ReadJournals::record_absent`] when [`exists`](Self::exists)
     /// answers false.
     ///
-    /// The default records nothing, which is safe: a transaction over such
-    /// a store takes its observation of each path when the write is staged,
-    /// later than the domain's read, so the check covers less of the
-    /// read-modify-write but is never skipped. A wrapping store should
-    /// delegate to the store it wraps.
-    fn read_journals(&self) -> Option<&ReadJournals> {
-        None
-    }
+    /// `None` means the store records nothing. A transaction over it then
+    /// takes each path's baseline when the write is staged, later than the
+    /// operation's read, so the comparison covers less of the
+    /// read-modify-write.
+    fn read_journals(&self) -> Option<&ReadJournals>;
 
     /// What is at `path` right now: [`Observed::Absent`], or the
     /// fingerprint of its bytes. Reads through
@@ -216,22 +220,19 @@ pub trait VaultStore: Send + Sync {
 
     /// [`write_file`](Self::write_file), but only if `path` still holds
     /// `expected`; otherwise [`StoreError::Changed`] and nothing written.
+    /// With `expected` [`Observed::Absent`] it is a create that must never
+    /// replace a file another writer made.
     ///
-    /// The default checks and then writes, so a change landing between
-    /// the two is not seen. [`FsVaultStore`] checks again after the new
-    /// content is staged in its temp file, right before the rename, and
-    /// [`MemoryVaultStore`] checks and writes under one mutex.
+    /// [`FsVaultStore`] compares right before the rename, after the new
+    /// content is written and synced to its temp file, and creates with a
+    /// rename that refuses to overwrite; [`MemoryVaultStore`] compares and
+    /// writes under one mutex.
     fn write_file_expecting(
         &self,
         path: &VaultPath,
         content: &str,
         expected: Observed,
-    ) -> Result<(), StoreError> {
-        if self.observe(path)? != expected {
-            return Err(StoreError::Changed(path.to_string()));
-        }
-        self.write_file(path, content)
-    }
+    ) -> Result<(), StoreError>;
 
     /// [`append_to_file`](Self::append_to_file), but only if `path` still
     /// holds `expected` (see [`write_file_expecting`](Self::write_file_expecting)).
@@ -240,12 +241,7 @@ pub trait VaultStore: Send + Sync {
         path: &VaultPath,
         content: &str,
         expected: Observed,
-    ) -> Result<(), StoreError> {
-        if self.observe(path)? != expected {
-            return Err(StoreError::Changed(path.to_string()));
-        }
-        self.append_to_file(path, content)
-    }
+    ) -> Result<(), StoreError>;
 }
 
 /// In-memory [`VaultStore`] used for fast, deterministic domain tests.
@@ -500,7 +496,7 @@ impl VaultStore for MemoryVaultStore {
     ) -> Result<(), StoreError> {
         let mut files = self.files.lock().expect("poisoned mutex");
         if memory_observed(&files, path) != expected {
-            return Err(StoreError::Changed(path.to_string()));
+            return Err(StoreError::Changed(path.clone()));
         }
         files.insert(
             path.clone(),
@@ -520,7 +516,7 @@ impl VaultStore for MemoryVaultStore {
     ) -> Result<(), StoreError> {
         let mut files = self.files.lock().expect("poisoned mutex");
         if memory_observed(&files, path) != expected {
-            return Err(StoreError::Changed(path.to_string()));
+            return Err(StoreError::Changed(path.clone()));
         }
         let now = SystemTime::now();
         files
@@ -628,6 +624,28 @@ pub struct FsVaultStore {
     /// Reads recorded for open transactions (#1001). Per instance: a
     /// clone starts with none open.
     journals: ReadJournals,
+    /// Test seams for the conditional write (#1001); empty in production.
+    hooks: TestHooks,
+}
+
+/// Points at which a test can step into a conditional write. Set only
+/// through the `test-support` feature's setters; empty otherwise.
+#[derive(Clone, Default)]
+struct TestHooks {
+    /// Runs after the temp file is written and synced, right before the
+    /// comparison that precedes the rename.
+    before_compare: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Makes the no-clobber rename of a create fail with this OS error.
+    noclobber_error: Option<i32>,
+}
+
+impl std::fmt::Debug for TestHooks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TestHooks")
+            .field("before_compare", &self.before_compare.is_some())
+            .field("noclobber_error", &self.noclobber_error)
+            .finish()
+    }
 }
 
 impl Clone for FsVaultStore {
@@ -636,7 +654,31 @@ impl Clone for FsVaultStore {
         // re-memoises lazily, keeping the OnceLock semantics simple.
         let mut clone = Self::new(self.root.clone());
         clone.lock_file.clone_from(&self.lock_file);
+        clone.hooks = self.hooks.clone();
         clone
+    }
+}
+
+/// Whether a failed no-clobber rename means the filesystem cannot do one
+/// at all (no rename flag, no hard links), as opposed to an ordinary
+/// failure that must be reported.
+fn noclobber_unsupported(e: &io::Error) -> bool {
+    if matches!(
+        e.kind(),
+        io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput
+    ) {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        matches!(
+            e.raw_os_error(),
+            Some(libc::ENOSYS | libc::ENOTSUP | libc::EPERM | libc::EMLINK)
+        ) || e.raw_os_error() == Some(libc::EOPNOTSUPP)
+    }
+    #[cfg(not(unix))]
+    {
+        false
     }
 }
 
@@ -647,20 +689,38 @@ impl FsVaultStore {
             root_canon: std::sync::OnceLock::new(),
             lock_file: None,
             journals: ReadJournals::new(),
+            hooks: TestHooks::default(),
         }
     }
 
     /// Take the write lock on `lock_file` (an absolute path) instead of
     /// the vault's `.cuaderno/.lock`.
     ///
-    /// A test seam and nothing else: two stores over one folder with
-    /// different lock files hold their locks independently, which is how
-    /// a test reproduces a folder written from two kernels, where `flock`
-    /// is not shared (#1001). No production path calls it; a real vault
+    /// A test seam, compiled only with the `test-support` feature: two
+    /// stores over one folder with different lock files hold their locks
+    /// independently, which is how a test reproduces a folder written from
+    /// two kernels, where `flock` is not shared (#1001). A real vault
     /// always locks `.cuaderno/.lock`.
-    #[doc(hidden)]
+    #[cfg(feature = "test-support")]
     pub fn with_lock_file(mut self, lock_file: impl Into<PathBuf>) -> Self {
         self.lock_file = Some(lock_file.into());
+        self
+    }
+
+    /// Run `hook` inside every conditional write, after the temp file is
+    /// written and synced and before the comparison that precedes the
+    /// rename (test seam, `test-support` only).
+    #[cfg(feature = "test-support")]
+    pub fn with_before_compare_hook(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
+        self.hooks.before_compare = Some(Arc::new(hook));
+        self
+    }
+
+    /// Make the no-clobber rename of every create fail with the OS error
+    /// `raw` instead of running (test seam, `test-support` only).
+    #[cfg(feature = "test-support")]
+    pub fn with_noclobber_error(mut self, raw: i32) -> Self {
+        self.hooks.noclobber_error = Some(raw);
         self
     }
 
@@ -772,6 +832,11 @@ impl FsVaultStore {
         tmp.as_file()
             .sync_all()
             .map_err(|e| io_to_store_error(e, path))?;
+        // Everything above (the temp write and its sync, the slow part) is
+        // done; the comparisons below are the last thing before the rename.
+        if let Some(hook) = &self.hooks.before_compare {
+            hook();
+        }
         match expected {
             None => {
                 tmp.persist(full)
@@ -780,25 +845,35 @@ impl FsVaultStore {
             // A create: the kernel refuses the rename if anything is there,
             // so a file another writer created first is never replaced, at
             // any moment. No window at all.
-            //
-            // A filesystem that cannot do a no-clobber rename (some network
-            // and VM shares lack both `renameat2` flags and hard links)
-            // falls back to checking for absence and renaming, the window
-            // a replace has, rather than failing every note creation there.
-            Some(Observed::Absent) => match tmp.persist_noclobber(full) {
-                Ok(_) => {}
-                Err(e) if e.error.kind() == io::ErrorKind::AlreadyExists => {
-                    return Err(StoreError::Changed(path.to_string()));
-                }
-                Err(e) => {
-                    if file_identity(full).is_some() {
-                        return Err(StoreError::Changed(path.to_string()));
+            Some(Observed::Absent) => {
+                let refused = match self.hooks.noclobber_error {
+                    Some(raw) => Err((io::Error::from_raw_os_error(raw), tmp)),
+                    None => tmp
+                        .persist_noclobber(full)
+                        .map(drop)
+                        .map_err(|e| (e.error, e.file)),
+                };
+                match refused {
+                    Ok(()) => {}
+                    Err((e, _)) if e.kind() == io::ErrorKind::AlreadyExists => {
+                        return Err(StoreError::Changed(path.clone()));
                     }
-                    e.file
-                        .persist(full)
-                        .map_err(|e| io_to_store_error(e.error, path))?;
+                    // A filesystem that cannot do a no-clobber rename at all
+                    // (some network and VM shares support neither the
+                    // rename flag nor hard links) falls back to checking
+                    // for absence and renaming: the window a replace has,
+                    // rather than failing every creation there. Any other
+                    // error is reported as it is.
+                    Err((e, tmp)) if noclobber_unsupported(&e) => {
+                        if file_identity(full).is_some() {
+                            return Err(StoreError::Changed(path.clone()));
+                        }
+                        tmp.persist(full)
+                            .map_err(|e| io_to_store_error(e.error, path))?;
+                    }
+                    Err((e, _)) => return Err(io_to_store_error(e, path)),
                 }
-            },
+            }
             // A replace: compare the content, then make sure the file is
             // still the one compared by its identity (inode, size, times),
             // which one `stat` answers. What is left is the gap between that
@@ -808,7 +883,7 @@ impl FsVaultStore {
                 let identity = file_identity(full);
                 if observe_full(full, path)? != expected || file_identity(full) != identity {
                     // Dropping `tmp` deletes the temp file.
-                    return Err(StoreError::Changed(path.to_string()));
+                    return Err(StoreError::Changed(path.clone()));
                 }
                 tmp.persist(full)
                     .map_err(|e| io_to_store_error(e.error, path))?;
@@ -943,7 +1018,7 @@ impl VaultStore for FsVaultStore {
             .as_deref()
             .map_or(Observed::Absent, |c| Observed::of_bytes(c.as_bytes()));
         if seen != expected {
-            return Err(StoreError::Changed(path.to_string()));
+            return Err(StoreError::Changed(path.clone()));
         }
         let combined = format!("{}{content}", existing.unwrap_or_default());
         self.atomic_write_expecting(&full, &combined, path, Some(expected))

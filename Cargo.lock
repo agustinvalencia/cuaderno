@@ -310,6 +310,7 @@ dependencies = [
 name = "cdno-core"
 version = "0.45.0"
 dependencies = [
+ "cdno-core",
  "chrono",
  "globset",
  "libc",

@@ -191,6 +191,22 @@ impl VaultStore for OtherWriter {
     fn read_journals(&self) -> Option<&ReadJournals> {
         self.inner.read_journals()
     }
+    fn write_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        self.inner.write_file_expecting(path, content, expected)
+    }
+    fn append_to_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        self.inner.append_to_file_expecting(path, content, expected)
+    }
 }
 
 /// A vault over an [`OtherWriter`] whose daily note for [`at`] exists.

@@ -302,7 +302,10 @@ impl Vault {
     /// `save_config_raw`. The migration runner takes the lock without the
     /// gate, through its own `transaction_ungated` (`vault/migrate.rs`).
     pub(in crate::vault) fn transaction(&self) -> Result<VaultTransaction, DomainError> {
-        let tx = VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))?;
+        // Every domain write reads what it rewrites inside its transaction
+        // (#196, #1001); a verb that does not fails a debug assertion.
+        let tx = VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))?
+            .require_reads();
         let recorded = self.recorded_method_version()?;
         self.method_notice.record(recorded);
         match method_gate(METHOD_VERSION, recorded) {

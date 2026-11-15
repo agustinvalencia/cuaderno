@@ -57,6 +57,25 @@ impl VaultStore for StubStore {
     fn import_external(&self, _src: &std::path::Path, _dest: &VaultPath) -> Result<(), StoreError> {
         unimplemented!()
     }
+    fn read_journals(&self) -> Option<&cdno_core::read_journal::ReadJournals> {
+        None
+    }
+    fn write_file_expecting(
+        &self,
+        _path: &VaultPath,
+        _content: &str,
+        _expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        unimplemented!()
+    }
+    fn append_to_file_expecting(
+        &self,
+        _path: &VaultPath,
+        _content: &str,
+        _expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        unimplemented!()
+    }
 }
 
 fn assert_send_sync<T: Send + Sync>() {}

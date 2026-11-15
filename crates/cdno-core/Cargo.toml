@@ -35,3 +35,11 @@ libc = "0.2"
 [dev-dependencies]
 rusqlite.workspace = true
 proptest.workspace = true
+# The crate's own integration tests enable its test seams (#1001). Only a
+# dev-dependency turns the feature on, so a production build never has them.
+cdno-core = { path = ".", features = ["test-support"] }
+
+[features]
+# Test seams on `FsVaultStore` (an independent lock file, hooks inside the
+# conditional write). Never enabled by a production crate.
+test-support = []

@@ -47,25 +47,33 @@ impl Vault {
     /// The body of the file is the captured text trimmed of leading
     /// and trailing whitespace, with minimal frontmatter
     /// (`type: inbox`, `created: <ISO>`).
+    ///
+    /// The path is chosen with the write lock held, and the file is staged
+    /// as a create (#196, #1001): a capture another writer made at the same
+    /// path in the meantime is never replaced. If one lands anyway, the
+    /// commit refuses, and the capture runs again and picks the next free
+    /// name.
     pub fn capture_to_inbox(
         &self,
         at: NaiveDateTime,
         text: &str,
     ) -> Result<VaultPath, DomainError> {
-        let path = self.next_inbox_path(at.date(), text)?;
-        let mut content = self.scaffold_inbox(at, text)?;
-        // Tag the detour (RFC 0005 §5.6): while a focus is open the item
-        // records which project it was captured during.
-        if let Some(focus) = self.current_focus(at.date()).ok().flatten() {
-            content = add_captured_during(content, normalise_project_slug(&focus.project));
-        }
+        self.retry_on_conflict(|| {
+            let mut tx = self.transaction()?;
+            let path = self.next_inbox_path(at.date(), text)?;
+            let mut content = self.scaffold_inbox(at, text)?;
+            // Tag the detour (RFC 0005 §5.6): while a focus is open the
+            // item records which project it was captured during.
+            if let Some(focus) = self.current_focus(at.date()).ok().flatten() {
+                content = add_captured_during(content, normalise_project_slug(&focus.project));
+            }
 
-        let entry_meta = build_index_entry_for(&path, &content, "inbox")?;
-        let mut tx = self.transaction()?;
-        tx.write_file(path.clone(), content);
-        tx.upsert_note(entry_meta);
-        tx.commit()?;
-        Ok(path)
+            let entry_meta = build_index_entry_for(&path, &content, "inbox")?;
+            tx.create_file(path.clone(), content);
+            tx.upsert_note(entry_meta);
+            tx.commit()?;
+            Ok(path)
+        })
     }
 
     /// Every uncategorised capture under `inbox/`, oldest first (the
@@ -105,6 +113,10 @@ impl Vault {
     /// itself is gone — no unrecoverable data loss.
     ///
     /// Errors with [`StoreError::NotFound`] when no inbox note matches.
+    ///
+    /// The item is read with the write lock held (#196, #1001), so the text
+    /// logged is the text deleted; an item edited in the meantime refuses
+    /// the commit, and the discard runs again with the new text.
     pub fn discard_inbox_item(
         &self,
         at: NaiveDateTime,
@@ -112,42 +124,45 @@ impl Vault {
     ) -> Result<VaultPath, DomainError> {
         // Markdown on purpose: machine-written capture notes are Markdown.
         let path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::INBOX))?;
-        if !self.store.exists(&path)? {
-            return Err(DomainError::Store(StoreError::NotFound(path.to_string())));
-        }
+        self.retry_on_conflict(|| {
+            let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
+            if !self.store.exists(&path)? {
+                return Err(DomainError::Store(StoreError::NotFound(path.to_string())));
+            }
 
-        // Read the captured text first so the discard is recoverable
-        // from the daily log after the note is deleted. Collapse
-        // whitespace so a multi-line capture stays a single log line.
-        let raw = self.store.read_file(&path)?;
-        // Markdown on purpose: inbox items are machine-written Markdown.
-        let (fm, body) = Frontmatter::parse(&raw)?;
-        let text = flatten_for_log(body);
-        // Copied from the item, not the current focus: the tag outlives the
-        // file (RFC 0005 §5.6).
-        let during = fm
-            .optional_field::<String>(CAPTURED_DURING_KEY)
-            .ok()
-            .flatten()
-            .filter(|s| !s.trim().is_empty())
-            .map(|s| during_continuation(s.trim()))
-            .unwrap_or_default();
+            // Read the captured text first so the discard is recoverable
+            // from the daily log after the note is deleted. Collapse
+            // whitespace so a multi-line capture stays a single log line.
+            let raw = self.store.read_file(&path)?;
+            // Markdown on purpose: inbox items are machine-written Markdown.
+            let (fm, body) = Frontmatter::parse(&raw)?;
+            let text = flatten_for_log(body);
+            // Copied from the item, not the current focus: the tag outlives
+            // the file (RFC 0005 §5.6).
+            let during = fm
+                .optional_field::<String>(CAPTURED_DURING_KEY)
+                .ok()
+                .flatten()
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| during_continuation(s.trim()))
+                .unwrap_or_default();
 
-        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        tx.delete_file(path.clone());
-        tx.remove_note(path.clone());
-        // Plain text, not a wikilink: the note is being deleted, so a
-        // `[[inbox/<slug>]]` would immediately dangle.
-        let log_entry = if text.is_empty() {
-            format!("triaged inbox item `{slug}` -- discarded")
-        } else {
-            format!("triaged inbox item `{slug}` -- discarded: {text}")
-        };
-        let log_entry = format!("{log_entry}{during}");
-        self.stage_daily_log(at, &log_entry, &mut tx)?;
-        tx.commit()?;
-        Ok(path)
+            tx.delete_file(path.clone());
+            tx.remove_note(path.clone());
+            // Plain text, not a wikilink: the note is being deleted, so a
+            // `[[inbox/<slug>]]` would immediately dangle.
+            let log_entry = if text.is_empty() {
+                format!("triaged inbox item `{slug}` -- discarded")
+            } else {
+                format!("triaged inbox item `{slug}` -- discarded: {text}")
+            };
+            let log_entry = format!("{log_entry}{during}");
+            self.stage_daily_log(at, &log_entry, &mut tx)?;
+            tx.commit()?;
+            Ok(path.clone())
+        })
     }
+
 
     /// Resolve an unused inbox filename for `(date, text)`. Walks
     /// `-2`, `-3`, ... suffixes if needed, capped at a safety limit

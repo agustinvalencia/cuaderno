@@ -144,7 +144,7 @@ pub enum StoreError {
     /// another writer changed it, or created or removed it. The store
     /// wrote nothing to the path.
     #[error("{0} changed on disk since it was read")]
-    Changed(String),
+    Changed(VaultPath),
 }
 
 /// Errors from the vault index (VaultIndex).

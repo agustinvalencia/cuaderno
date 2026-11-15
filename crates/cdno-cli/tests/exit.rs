@@ -40,10 +40,10 @@ fn a_concurrent_change_exits_with_tempfail_even_under_context() {
 #[test]
 fn every_other_failure_keeps_the_generic_status() {
     let others = [
-        anyhow::Error::from(DomainError::Store(StoreError::Changed("a.md".into()))),
+        anyhow::Error::from(DomainError::Store(StoreError::Changed(cdno_core::path::VaultPath::new("a.md").unwrap()))),
         anyhow::Error::from(DomainError::Transaction(TransactionError::FileWrite {
-            source: StoreError::Changed("a.md".into()),
-            rollback_failures: vec![StoreError::Changed("b.md".into())],
+            source: StoreError::Changed(cdno_core::path::VaultPath::new("a.md").unwrap()),
+            rollback_failures: vec![StoreError::Changed(cdno_core::path::VaultPath::new("b.md").unwrap())],
         })),
         anyhow::Error::from(DomainError::Transaction(TransactionError::IndexStale(
             vec![],

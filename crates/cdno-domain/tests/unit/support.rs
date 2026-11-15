@@ -111,6 +111,31 @@ impl VaultStore for FailingStore {
         }
         self.inner.import_external(src, dest)
     }
+    fn read_journals(&self) -> Option<&cdno_core::read_journal::ReadJournals> {
+        self.inner.read_journals()
+    }
+    fn write_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        if self.fails(path) {
+            return Err(StoreError::PermissionDenied(path.to_string()));
+        }
+        self.inner.write_file_expecting(path, content, expected)
+    }
+    fn append_to_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        if self.tick() {
+            return Err(StoreError::PermissionDenied(path.to_string()));
+        }
+        self.inner.append_to_file_expecting(path, content, expected)
+    }
 }
 
 /// A `MemoryVaultStore` that does not tell names apart by case, as the
@@ -174,6 +199,25 @@ impl VaultStore for CaseInsensitiveStore {
     }
     fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
         self.inner.import_external(src, &self.stored(dest))
+    }
+    fn read_journals(&self) -> Option<&cdno_core::read_journal::ReadJournals> {
+        None
+    }
+    fn write_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        self.inner.write_file_expecting(&self.stored(path), content, expected)
+    }
+    fn append_to_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        self.inner.append_to_file_expecting(&self.stored(path), content, expected)
     }
 }
 
@@ -383,6 +427,25 @@ impl VaultStore for RacingStore {
     }
     fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
         self.inner.import_external(src, dest)
+    }
+    fn read_journals(&self) -> Option<&cdno_core::read_journal::ReadJournals> {
+        self.inner.read_journals()
+    }
+    fn write_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        self.inner.write_file_expecting(path, content, expected)
+    }
+    fn append_to_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        self.inner.append_to_file_expecting(path, content, expected)
     }
 }
 

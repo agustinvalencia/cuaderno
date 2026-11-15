@@ -1043,8 +1043,8 @@ mod tests {
     fn a_failed_commit_other_than_a_conflict_stays_mechanical() {
         assert!(
             classify(&DomainError::Transaction(TransactionError::FileWrite {
-                source: StoreError::Changed("a.md".into()),
-                rollback_failures: vec![StoreError::Changed("b.md".into())],
+                source: StoreError::Changed(cdno_core::path::VaultPath::new("a.md").unwrap()),
+                rollback_failures: vec![StoreError::Changed(cdno_core::path::VaultPath::new("b.md").unwrap())],
             }))
             .is_none(),
             "a rollback that failed may leave the vault part-written"
@@ -1055,7 +1055,7 @@ mod tests {
             )))
             .is_none()
         );
-        assert!(classify(&DomainError::Store(StoreError::Changed("a.md".into()))).is_none());
+        assert!(classify(&DomainError::Store(StoreError::Changed(cdno_core::path::VaultPath::new("a.md").unwrap()))).is_none());
     }
 
     #[test]
