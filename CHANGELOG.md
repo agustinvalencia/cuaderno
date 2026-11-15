@@ -6,6 +6,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **A per-machine index location** (closes #998). `CUADERNO_INDEX_PATH`, the absolute path of
+  the index database file, moves the index out of `.cuaderno/index.db` for the `cdno` CLI, the
+  stdio `cdno-mcp` server and `cdno-mcp-server`, which also takes it as `--index-path` (the flag
+  wins over the variable). One resolver in `cdno-core` (`paths::resolve_index_path`) decides the
+  location for all three. Set it when a vault folder is reachable from two machines at once, a
+  bind mount into a container or a network share, so each keeps its own index; two machines must
+  never share one index file. A relative value is refused rather than resolved, an empty one
+  counts as unset, and unset keeps the index exactly where it was. SQLite's `-wal` and `-shm`
+  files follow the database file, `cdno reindex` and the open-time self-heal act on the resolved
+  file, and the HTTP server's git checkpoints exclude an index the override places inside the
+  vault. It is deliberately not a `config.toml` key, since the config travels with the vault.
+
 ## [0.45.0] - 2026-11-09
 
 ### Fixed

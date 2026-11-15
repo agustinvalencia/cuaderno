@@ -193,6 +193,56 @@ fn open_vault_rejects_a_directory_without_the_marker() {
     ));
 }
 
+#[test]
+fn open_vault_with_index_opens_the_index_at_the_override() {
+    // #998: the long-lived consumers (both MCP binaries) open through
+    // here; the override is the file, and nothing lands in `.cuaderno/`.
+    let vault = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::fs::create_dir(vault.path().join(cdno_core::paths::CUADERNO_DIR)).unwrap();
+    let index = elsewhere.path().join("index.db");
+
+    let opened =
+        cdno_domain::bootstrap::open_vault_with_index(vault.path(), Some(index.as_os_str()))
+            .expect("opens");
+    assert_eq!(opened.index_path, index);
+    assert!(index.is_file());
+    assert!(!vault.path().join(cdno_core::paths::INDEX_DB).exists());
+}
+
+#[test]
+fn open_vault_with_index_defaults_without_an_override() {
+    let vault = tempfile::tempdir().unwrap();
+    std::fs::create_dir(vault.path().join(cdno_core::paths::CUADERNO_DIR)).unwrap();
+
+    let opened = cdno_domain::bootstrap::open_vault_with_index(vault.path(), None).expect("opens");
+    assert_eq!(
+        opened.index_path,
+        vault.path().join(cdno_core::paths::INDEX_DB)
+    );
+    assert!(opened.index_path.is_file());
+}
+
+#[test]
+fn open_vault_with_index_refuses_a_relative_override() {
+    let vault = tempfile::tempdir().unwrap();
+    std::fs::create_dir(vault.path().join(cdno_core::paths::CUADERNO_DIR)).unwrap();
+
+    let Err(err) = cdno_domain::bootstrap::open_vault_with_index(
+        vault.path(),
+        Some(std::ffi::OsStr::new("index.db")),
+    ) else {
+        panic!("a relative override must be refused");
+    };
+    assert!(matches!(
+        err,
+        cdno_domain::bootstrap::BootstrapError::IndexPath(
+            cdno_core::error::IndexPathError::Relative(_)
+        )
+    ));
+    assert!(!vault.path().join(cdno_core::paths::INDEX_DB).exists());
+}
+
 // ---------------------------------------------------------------------
 // The method-version gate in `Vault::transaction()` (RFC 0006 §8.4, T7a)
 // ---------------------------------------------------------------------

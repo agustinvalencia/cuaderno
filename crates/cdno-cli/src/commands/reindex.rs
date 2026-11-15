@@ -8,6 +8,10 @@
 //! demand). The rebuild is just "delete the db, then open the vault" —
 //! `open_vault` runs reconciliation, which repopulates the empty index
 //! from every note.
+//!
+//! The database is wherever [`bootstrap::index_path`] resolves it —
+//! `CUADERNO_INDEX_PATH` when set (#998) — so the file deleted here is
+//! the same one the re-open creates.
 
 use std::path::Path;
 
@@ -27,9 +31,13 @@ pub fn run(root: &Path) -> Result<()> {
         );
     }
 
+    // Resolve before deleting anything: a bad override is refused with
+    // the index untouched.
+    let index_path = bootstrap::index_path(root)?;
+
     // Drop the cache, then re-open: `open_vault` reconciles the fresh
     // (empty) index against the filesystem, rebuilding every row.
-    SqliteIndex::remove(root.join(paths::INDEX_DB));
+    SqliteIndex::remove(&index_path);
     let (_vault, report) = bootstrap::open_vault(root).context("rebuilding the index")?;
 
     println!(

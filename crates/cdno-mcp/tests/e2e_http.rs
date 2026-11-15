@@ -9,6 +9,7 @@
 //! reconciliation that keeps a long-running server honest about
 //! out-of-band edits.
 
+use std::ffi::OsStr;
 use std::io::Read;
 use std::net::TcpListener;
 use std::path::Path;
@@ -27,9 +28,25 @@ struct HttpServer {
 
 impl HttpServer {
     fn spawn(vault_root: Option<&Path>, extra_args: &[&str]) -> Self {
+        let args: Vec<&OsStr> = extra_args.iter().map(OsStr::new).collect();
+        Self::spawn_with_index_env(vault_root, &args, None)
+    }
+
+    /// [`spawn`](Self::spawn) with `CUADERNO_INDEX_PATH` set to
+    /// `index_env`; `None` removes it, so no test inherits the invoking
+    /// environment's value.
+    fn spawn_with_index_env(
+        vault_root: Option<&Path>,
+        extra_args: &[&OsStr],
+        index_env: Option<&Path>,
+    ) -> Self {
         let port = free_port();
         let bin = env!("CARGO_BIN_EXE_cdno-mcp-server");
         let mut cmd = Command::new(bin);
+        match index_env {
+            Some(path) => cmd.env(cdno_core::paths::INDEX_PATH_ENV, path),
+            None => cmd.env_remove(cdno_core::paths::INDEX_PATH_ENV),
+        };
         cmd.arg("--bind")
             .arg(format!("127.0.0.1:{port}"))
             .args(extra_args)
@@ -735,4 +752,110 @@ async fn rename_note_over_http_is_refused_while_a_merge_is_paused() {
         "{rejection}"
     );
     assert!(dir.path().join("projects/surrogate-model.md").exists());
+}
+
+// ---------------------------------------------------------------------
+// --index-path / CUADERNO_INDEX_PATH (#998)
+// ---------------------------------------------------------------------
+
+/// Names under `<vault>/.cuaderno/` that belong to an index: the database
+/// and any sidecar or sibling file of it.
+fn index_files_in_meta_dir(vault: &Path) -> Vec<String> {
+    std::fs::read_dir(vault.join(cdno_core::paths::CUADERNO_DIR))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("index"))
+        .collect()
+}
+
+/// A write, then a full-text search that must find it: both go through
+/// the index, wherever it lives.
+async fn create_and_find_a_project(port: u16) {
+    let client = reqwest::Client::new();
+    let (status, resp) = post_mcp(
+        &client,
+        port,
+        &json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": { "name": "create_project",
+                        "arguments": { "title": "Surrogate model", "context": "university" } }
+        }),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(resp["result"]["isError"], json!(false), "{resp}");
+    let (status, resp) = post_mcp(
+        &client,
+        port,
+        &json!({
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": { "name": "search_notes", "arguments": { "query": "surrogate" } }
+        }),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert!(
+        resp.to_string().contains("surrogate-model"),
+        "search must find the project through the relocated index: {resp}"
+    );
+}
+
+#[tokio::test]
+async fn the_index_path_variable_moves_the_http_servers_index() {
+    let dir = TempDir::new().expect("tempdir");
+    let elsewhere = TempDir::new().expect("tempdir");
+    let index = elsewhere.path().join("cache").join("index.db");
+    make_vault(dir.path());
+    let server = HttpServer::spawn_with_index_env(Some(dir.path()), &[], Some(&index));
+
+    create_and_find_a_project(server.port).await;
+    assert!(index.is_file(), "the index lives at the override");
+    assert_eq!(index_files_in_meta_dir(dir.path()), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn the_index_path_flag_moves_the_http_servers_index_and_beats_the_variable() {
+    let dir = TempDir::new().expect("tempdir");
+    let elsewhere = TempDir::new().expect("tempdir");
+    let from_flag = elsewhere.path().join("flag.db");
+    let from_env = elsewhere.path().join("env.db");
+    make_vault(dir.path());
+    let server = HttpServer::spawn_with_index_env(
+        Some(dir.path()),
+        &[OsStr::new("--index-path"), from_flag.as_os_str()],
+        Some(&from_env),
+    );
+
+    create_and_find_a_project(server.port).await;
+    assert!(from_flag.is_file(), "the flag's file is the index");
+    assert!(!from_env.exists(), "the variable is only a fallback");
+    assert_eq!(index_files_in_meta_dir(dir.path()), Vec::<String>::new());
+}
+
+#[test]
+fn the_http_server_refuses_a_relative_index_path() {
+    let dir = TempDir::new().expect("tempdir");
+    let cwd = TempDir::new().expect("tempdir");
+    make_vault(dir.path());
+    let bin = env!("CARGO_BIN_EXE_cdno-mcp-server");
+    let run = |cmd: &mut Command| {
+        let out = cmd
+            .current_dir(cwd.path())
+            .args(["--bind", "127.0.0.1:0"])
+            .env("CUADERNO_VAULT_PATH", dir.path())
+            .env("RUST_LOG", "off")
+            .stdin(Stdio::null())
+            .output()
+            .expect("run cdno-mcp-server");
+        assert!(!out.status.success(), "a relative index path must refuse");
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(stderr.contains("absolute"), "{stderr}");
+    };
+    run(Command::new(bin)
+        .env_remove(cdno_core::paths::INDEX_PATH_ENV)
+        .args(["--index-path", "cache/index.db"]));
+    run(Command::new(bin).env(cdno_core::paths::INDEX_PATH_ENV, "cache/index.db"));
+    assert!(!cwd.path().join("cache").exists());
+    assert_eq!(index_files_in_meta_dir(dir.path()), Vec::<String>::new());
 }

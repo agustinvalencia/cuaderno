@@ -163,6 +163,26 @@ pub enum IndexError {
     Sqlite(#[from] rusqlite::Error),
 }
 
+/// A per-machine index location override ([`crate::paths::INDEX_PATH_ENV`]
+/// or `cdno-mcp-server --index-path`) that cannot be used.
+#[derive(Debug, thiserror::Error)]
+pub enum IndexPathError {
+    /// A relative value is refused rather than resolved, so the index
+    /// never lands wherever the process happened to start.
+    #[error(
+        "the index path override (`CUADERNO_INDEX_PATH` / `--index-path`) must be an \
+         absolute path to the database file, got `{0}`"
+    )]
+    Relative(String),
+
+    /// The value names an existing directory; it must name the file.
+    #[error(
+        "the index path override (`CUADERNO_INDEX_PATH` / `--index-path`) names a \
+         directory, not a database file: `{0}`"
+    )]
+    Directory(String),
+}
+
 /// Errors from markdown/frontmatter parsing.
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {

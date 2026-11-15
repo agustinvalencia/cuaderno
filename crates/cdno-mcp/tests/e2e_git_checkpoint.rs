@@ -130,6 +130,77 @@ fn dirty_vault_gets_a_checkpoint_commit() {
     );
 }
 
+/// #998: an `--index-path` that lands inside the vault (outside
+/// `.cuaderno/`) is kept out of every checkpoint, sidecars included, while
+/// the note that dirtied the tree is still committed.
+#[test]
+fn a_relocated_index_inside_the_vault_is_never_checkpointed() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    cdno_cli::commands::init::run(dir.path()).expect("cdno init");
+    assert!(git(dir.path(), &["init", "-q"]).status.success());
+    assert!(git(dir.path(), &["add", "-A"]).status.success());
+    assert!(
+        git(dir.path(), &["commit", "-q", "-m", "baseline"])
+            .status
+            .success()
+    );
+    let index = dir.path().join("local-cache").join("index.db");
+
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let mut child = Command::new(env!("CARGO_BIN_EXE_cdno-mcp-server"))
+        .args([
+            "--bind",
+            &format!("127.0.0.1:{port}"),
+            "--read-only",
+            "--reconcile-interval-secs",
+            "0",
+            "--git-checkpoint-interval-secs",
+            "1",
+        ])
+        .arg("--index-path")
+        .arg(&index)
+        .env_remove(cdno_core::paths::INDEX_PATH_ENV)
+        .env("CUADERNO_VAULT_PATH", dir.path())
+        .env("RUST_LOG", "off")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn cdno-mcp-server");
+
+    std::fs::write(dir.path().join("inbox/checkpoint-probe.md"), "dirty").unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            let mut err = String::new();
+            if let Some(mut pipe) = child.stderr.take() {
+                let _ = pipe.read_to_string(&mut err);
+            }
+            panic!("cdno-mcp-server exited with {status}; stderr:\n{err}");
+        }
+        let log = git(dir.path(), &["log", "--oneline"]);
+        if String::from_utf8_lossy(&log.stdout).contains("cdno-mcp checkpoint") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "no checkpoint commit within 15s");
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(index.is_file(), "the server opened the relocated index");
+    let tracked = String::from_utf8_lossy(&git(dir.path(), &["ls-files"]).stdout).into_owned();
+    assert!(tracked.contains("inbox/checkpoint-probe.md"), "{tracked}");
+    assert!(
+        !tracked.contains("local-cache"),
+        "the relocated index must never be committed: {tracked}"
+    );
+}
+
 #[test]
 fn nudge_only_mode_signals_the_agent_and_never_commits() {
     let dir = tempfile::TempDir::new().expect("tempdir");

@@ -19,6 +19,10 @@ Almost never — Cuaderno reconciles the index automatically on every run (see
 - search or link results look wrong after a large external edit or a sync conflict, or
 - you deleted `.cuaderno/index.db` and want to rebuild it eagerly rather than on next use.
 
+When `CUADERNO_INDEX_PATH` is set, `reindex` rebuilds the file it names and leaves
+`.cuaderno/` alone (see
+[Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine)).
+
 Because the Markdown files are authoritative, a full rebuild loses no note. It does drop one thing
 the Markdown cannot rebuild: the archival snapshots, so every archived action note loses the
 frozen-prefix check [`cdno lint`](lint.md) runs on it.

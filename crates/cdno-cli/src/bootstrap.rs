@@ -65,6 +65,14 @@ pub fn resolve_vault_root(
     None
 }
 
+/// The index database file for the vault at `root`: `<root>/.cuaderno/index.db`,
+/// or the absolute path in `CUADERNO_INDEX_PATH` when it is set (#998).
+/// The policy itself is [`paths::resolve_index_path`], shared with both
+/// MCP binaries; a relative value is an error, never resolved.
+pub fn index_path(root: &Path) -> Result<PathBuf> {
+    Ok(paths::resolve_index_path_from_env(root)?)
+}
+
 /// Open a Cuaderno vault rooted at `root`: load config, open the
 /// SQLite index, run startup reconciliation.
 ///
@@ -79,13 +87,14 @@ pub fn open_vault(root: &Path) -> Result<(Vault, ReconciliationReport)> {
         );
     }
 
+    let index_path = index_path(root)?;
     let config = VaultConfig::load(root)
         .with_context(|| format!("loading {}", root.join(paths::CONFIG_FILE).display()))?;
 
     let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(root));
     let index: Arc<dyn VaultIndex> = Arc::new(
-        SqliteIndex::open(root.join(paths::INDEX_DB))
-            .with_context(|| format!("opening {}", root.join(paths::INDEX_DB).display()))?,
+        SqliteIndex::open(&index_path)
+            .with_context(|| format!("opening {}", index_path.display()))?,
     );
 
     let (vault, report) =

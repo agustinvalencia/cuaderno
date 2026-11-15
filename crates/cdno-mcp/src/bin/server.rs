@@ -80,7 +80,7 @@ use cdno_core::classify::NoteScope;
 use cdno_core::index::VaultIndex;
 use cdno_core::reconcile::reconcile;
 use cdno_core::store::VaultStore;
-use cdno_mcp::bootstrap::open_vault;
+use cdno_mcp::bootstrap::open_vault_with_index;
 use cdno_mcp::{CuadernoServer, SmokeServer};
 use rmcp::transport::streamable_http_server::session::never::NeverSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
@@ -147,6 +147,14 @@ struct ServeArgs {
     /// Vault root. Falls back to the current working directory.
     #[arg(long, env = "CUADERNO_VAULT_PATH")]
     vault: Option<PathBuf>,
+
+    /// Index database file, for a vault folder another machine also
+    /// reaches (a bind mount into a container, a network share): each
+    /// machine keeps its own index outside the shared folder. Must be an
+    /// absolute path; its `-wal`/`-shm` files sit beside it. Defaults to
+    /// `<vault>/.cuaderno/index.db` (#998).
+    #[arg(long, env = "CUADERNO_INDEX_PATH")]
+    index_path: Option<PathBuf>,
 
     /// Address to listen on. Non-loopback addresses are refused until
     /// origin-auth middleware exists (GH #302).
@@ -353,9 +361,14 @@ async fn serve() -> Result<()> {
         let root = vault_root(args.vault.clone())?;
         tracing::info!(vault_root = %root.display(), "starting cdno-mcp-server");
 
-        let opened = open_vault(&root).inspect_err(|e| {
+        let opened = open_vault_with_index(
+            &root,
+            args.index_path.as_deref().map(|p| p.as_os_str()),
+        )
+        .inspect_err(|e| {
             tracing::error!(error = %e, vault_root = %root.display(), "failed to open vault");
         })?;
+        tracing::info!(index_path = %opened.index_path.display(), "index opened");
 
         // A vault on a newer minor method version is said so once, at start
         // (RFC 0006 §8.4).
@@ -396,6 +409,7 @@ async fn serve() -> Result<()> {
             // mode — that message is the operator-facing half of #541.
             cdno_mcp::checkpoint::spawn(
                 root.clone(),
+                &opened.index_path,
                 Duration::from_secs(args.git_checkpoint_interval_secs),
                 mode,
             );

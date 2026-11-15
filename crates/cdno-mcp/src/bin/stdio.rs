@@ -2,7 +2,9 @@
 //! `CUADERNO_VAULT_PATH` environment variable (or falls back to the
 //! current working directory), opens the vault, and serves the
 //! [`cdno_mcp::CuadernoServer`] over stdio — the transport Claude
-//! Desktop and Claude Code use for local MCP servers.
+//! Desktop and Claude Code use for local MCP servers. The index is
+//! opened at `CUADERNO_INDEX_PATH` when that is set (#998), else at
+//! `.cuaderno/index.db`.
 //!
 //! The file name (`stdio.rs`) describes the transport; the binary's
 //! user-facing name (`cdno-mcp`) is set in `Cargo.toml`'s `[[bin]]`
@@ -42,6 +44,7 @@ async fn main() -> Result<()> {
     let opened = open_vault(&root).inspect_err(|e| {
         tracing::error!(error = %e, vault_root = %root.display(), "failed to open vault");
     })?;
+    tracing::info!(index_path = %opened.index_path.display(), "index opened");
 
     // A vault on a newer minor method version is said so once, at start
     // (RFC 0006 §8.4).

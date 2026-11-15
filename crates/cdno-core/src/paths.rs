@@ -20,8 +20,12 @@
 //! arguments to [`std::path::Path::join`] (which handles the separator
 //! conversion on Windows).
 
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+
 use chrono::{Datelike, NaiveDate};
 
+use crate::error::IndexPathError;
 use crate::path::VaultPath;
 
 // Journal — daily, weekly, and monthly notes, year-partitioned. Use the
@@ -86,6 +90,62 @@ pub const CUADERNO_DIR: &str = ".cuaderno";
 pub const CONFIG_FILE: &str = ".cuaderno/config.toml";
 pub const TEMPLATES_DIR: &str = ".cuaderno/templates";
 pub const INDEX_DB: &str = ".cuaderno/index.db";
+
+/// Environment variable naming a per-machine location for the index
+/// database file, in place of `<vault>/`[`INDEX_DB`] (#998).
+///
+/// Deliberately not a `config.toml` key: the config travels with the
+/// vault, and this must differ per machine. A vault folder reachable from
+/// two kernels at once (a host and a container bind-mounting it, a
+/// network share) cannot share one SQLite file, because neither its file
+/// locks nor its `-shm` map cross that boundary.
+pub const INDEX_PATH_ENV: &str = "CUADERNO_INDEX_PATH";
+
+/// The index database file for the vault at `root`, given the raw
+/// override value, if any (the `--index-path` flag, else
+/// [`INDEX_PATH_ENV`]).
+///
+/// This is the one place every binary decides where the index lives.
+///
+/// - No value, or an empty / whitespace-only one, means
+///   `root.join(`[`INDEX_DB`]`)`: today's location, unchanged.
+/// - An absolute value is the database file itself. Its `-wal` and
+///   `-shm` sidecars, and any sibling files a rebuild writes, sit next to
+///   it, since SQLite and [`crate::index::SqliteIndex`] derive them from
+///   the file path.
+/// - A relative value is refused, never resolved: neither the vault root
+///   nor the working directory is an obviously right base, and guessing
+///   would put the index somewhere the operator did not choose.
+/// - A value naming an existing directory is refused; it must name the
+///   file.
+///
+/// Pure apart from the directory check: callers read the environment and
+/// pass the value in, so the policy is testable without touching it.
+pub fn resolve_index_path(
+    root: &Path,
+    override_value: Option<&OsStr>,
+) -> Result<PathBuf, IndexPathError> {
+    let Some(value) = override_value else {
+        return Ok(root.join(INDEX_DB));
+    };
+    if value.to_string_lossy().trim().is_empty() {
+        return Ok(root.join(INDEX_DB));
+    }
+    let path = Path::new(value);
+    if !path.is_absolute() {
+        return Err(IndexPathError::Relative(path.display().to_string()));
+    }
+    if path.is_dir() {
+        return Err(IndexPathError::Directory(path.display().to_string()));
+    }
+    Ok(path.to_path_buf())
+}
+
+/// [`resolve_index_path`] with the override read from [`INDEX_PATH_ENV`],
+/// for the binaries that take no flag for it (`cdno`, `cdno-mcp`).
+pub fn resolve_index_path_from_env(root: &Path) -> Result<PathBuf, IndexPathError> {
+    resolve_index_path(root, std::env::var_os(INDEX_PATH_ENV).as_deref())
+}
 
 /// Directory holding daily notes for the given calendar year:
 /// `journal/<year>/daily`.

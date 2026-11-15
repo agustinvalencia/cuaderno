@@ -32,6 +32,7 @@ inside a container).
 | Flag | Env | Default | Purpose |
 |------|-----|---------|---------|
 | `--vault <path>` | `CUADERNO_VAULT_PATH` | cwd | Vault root |
+| `--index-path <file>` | `CUADERNO_INDEX_PATH` | `<vault>/.cuaderno/index.db` | The index database file, as an absolute path (a relative one is refused). Set it when the vault is bind-mounted into a container or reached over a network share, so this machine's index stays off the shared folder; two machines must never share one index file. See [Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine) |
 | `--bind <addr>` | `CDNO_MCP_BIND` | `127.0.0.1:8787` | Listen address (non-loopback refused until #302) |
 | `--allowed-host <host>` | `CDNO_MCP_ALLOWED_HOSTS` (comma-separated) | — | Extra `Host` header values to accept on top of the loopback defaults (DNS-rebinding protection). A public deployment adds its hostname |
 | `--smoke` | — | off | Serve a single `echo` tool holding **no vault handle** — prove tunnel/auth infrastructure end-to-end with zero vault exposure |

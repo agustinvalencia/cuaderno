@@ -90,8 +90,45 @@ vault/
   ignore globs, template behaviour, schema extensions, variables. See [Configuration](configuration.md).
 - **`index.db`** — a SQLite cache of the vault, used for fast search, linting, and link queries. It
   is rebuilt automatically when it's stale (see [Business rules](business-rules.md)); deleting it is
-  safe. **The Markdown files are always the source of truth.**
+  safe. **The Markdown files are always the source of truth.** It can live outside the vault
+  instead; see [Keeping the index on each machine](#keeping-the-index-on-each-machine).
 - **`templates/`** — the note templates `cdno` fills when scaffolding a note. The built-ins are
   written here at `init` so you can edit them; pure variable substitution, no logic.
+
+## Keeping the index on each machine
+
+The index is a per-machine cache, so it can be kept outside the vault folder. Set
+`CUADERNO_INDEX_PATH` to the absolute path of the database file and every binary uses that file
+instead of `.cuaderno/index.db`: the `cdno` CLI, the stdio `cdno-mcp` server, and
+`cdno-mcp-server`, which also takes it as [`--index-path`](../reference/mcp/http-server.md#flags)
+(the flag wins over the variable).
+
+```bash
+export CUADERNO_INDEX_PATH="$HOME/.cache/cuaderno/surrogate-model.db"
+```
+
+**Set it when one vault folder is reachable from two machines at once**: a vault bind-mounted into
+a container (through a VM file share such as virtiofs), or a vault on a network share. SQLite's file
+locks and its shared-memory file do not cross that boundary, so two machines opening one index
+file each act as if alone and damage it. Give each machine its own value, with the file on that
+machine's own storage, outside the shared folder. **Two machines must never share one index
+file**, whether it sits at the default location or at an override.
+
+- **Leave it unset** for a vault used from one machine: the index stays at `.cuaderno/index.db`,
+  exactly as before.
+- **The value must be absolute.** A relative value is refused with an error rather than resolved
+  against the vault or the working directory. `cdno` does not expand `~`, so write `$HOME` (or an
+  unquoted `~`, which the shell expands first). An empty value counts as unset, and a value naming
+  a directory is refused.
+- **The siblings follow the file.** SQLite's `-wal` and `-shm` files, and any file a rebuild writes
+  beside the index, sit next to the database file wherever it is. A missing parent folder is
+  created.
+- **It is not a `config.toml` key**, on purpose: the config travels with the vault, and this
+  setting has to differ from one machine to the next.
+- Moving the index needs no migration. The new location starts empty and the next open rebuilds it
+  from the Markdown; an old `.cuaderno/index.db` is no longer read and can be deleted.
+
+[`cdno reindex`](../reference/cli/reindex.md) rebuilds the file the variable names, and the HTTP
+server's git checkpoints never commit an index that the override places inside the vault.
 
 Next: [Business rules](business-rules.md).
