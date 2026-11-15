@@ -19,8 +19,10 @@ Almost never — Cuaderno reconciles the index automatically on every run (see
 - search or link results look wrong after a large external edit or a sync conflict, or
 - you deleted `.cuaderno/index.db` and want to rebuild it eagerly rather than on next use.
 
-When `CUADERNO_INDEX_PATH` is set, `reindex` rebuilds the file it names and leaves
-`.cuaderno/` alone (see
+When `CUADERNO_INDEX_PATH` is set, `reindex` rebuilds the file it names, leaves `.cuaderno/`
+alone, and prints the file's path. It refuses, deleting nothing, when that file is not an index. An
+overridden index belongs to one vault; `reindex` is how you give it to another, and it says so when
+it does (see
 [Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine)).
 
 Because the Markdown files are authoritative, a full rebuild loses no note. It does drop one thing

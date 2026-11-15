@@ -27,6 +27,25 @@ cdno reindex
 The Markdown files are always authoritative, so a rebuild is safe. See
 [Business rules](../concepts/business-rules.md).
 
+## The index path is refused
+
+`CUADERNO_INDEX_PATH` (or `--index-path` on `cdno-mcp-server`) names the index database file. A
+value that cannot be that file is refused before anything is opened:
+
+- **"must be an absolute path"**: write the full path, starting at `/`. A relative value is never
+  resolved, and `cdno` does not expand a quoted `~`.
+- **"names a directory"**: the value is a directory or ends in `/`. Add the file name, such as
+  `index.db`.
+- **"names a note file"**: the value ends in `.md` or `.typ`. It is almost certainly a mistyped
+  path; an index never has a note's extension.
+- **"refusing to replace … it is not an index database"**: a file already exists at the path and is
+  not an index. Nothing was deleted. Point the variable at a new file, or move that file away.
+- **"belongs to the vault at …"**: the file is another vault's index. Each vault needs its own
+  file; set the variable only for the process that serves this vault. To give the file to this vault
+  on purpose, run `cdno reindex` here, which rebuilds it and discards the other vault's index.
+
+See [Keeping the index on each machine](../concepts/vault-structure.md#keeping-the-index-on-each-machine).
+
 ## `lint` is failing
 
 Run it to see the specifics:

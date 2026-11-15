@@ -271,6 +271,25 @@ CREATE VIRTUAL TABLE notes_fts USING fts5(
   `extractors::first_h1`. The H1 also lives in the body, so the title is
   findable either way; the dedicated column exists only for the bm25 boost.
 
+### `index_meta`
+
+Key/value facts about the index itself (migration 005, #998).
+
+```sql
+CREATE TABLE index_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+```
+
+Its one key is `vault_root`: an index opened at an overridden location
+(`CUADERNO_INDEX_PATH`, `--index-path`) records the canonical root of the vault
+it belongs to, and `SqliteIndex::open_location` refuses, read-only, an open for
+any other vault. An overridden index that records none is bound on first use;
+`cdno reindex` deletes and rebuilds the file, which rebinds it. An index at the
+default `.cuaderno/index.db` records nothing and is never checked, since a
+vault can legitimately be reached under two paths.
+
 ### `schema_migrations`
 
 Tracks which migration versions have been applied to the current DB.

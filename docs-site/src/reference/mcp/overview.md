@@ -11,7 +11,9 @@ Two binaries serve the same tool catalogue:
 
 - **`cdno-mcp`** speaks JSON-RPC over **stdio** — the client launches it as a subprocess. It opens
   the vault named by `CUADERNO_VAULT_PATH`, or, if that's unset, discovers one from its working
-  directory (the same rule as the CLI).
+  directory (the same rule as the CLI). Its index is `.cuaderno/index.db` unless
+  `CUADERNO_INDEX_PATH` names another file; see
+  [Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine).
 - **`cdno-mcp-server`** speaks MCP **Streamable HTTP** for remote clients — see
   [The HTTP server](http-server.md) for its flags and security model.
 
