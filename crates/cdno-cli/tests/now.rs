@@ -664,3 +664,165 @@ fn an_old_origin_renders_its_date_not_a_weekday() {
         "seven days back is a date:\n{seven}"
     );
 }
+
+/// Every file under `root/.cuaderno/`, as sorted vault-relative paths.
+fn cuaderno_files(root: &Path) -> Vec<String> {
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, root, out);
+            } else {
+                out.push(path.strip_prefix(root).unwrap().display().to_string());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&root.join(".cuaderno"), root, &mut out);
+    out.sort();
+    out
+}
+
+/// A vault with no index at all: scaffolded, its `index.db` and WAL files
+/// removed, and today's log holding one open start, written by hand.
+fn vault_without_index() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+    for name in ["index.db", "index.db-wal", "index.db-shm"] {
+        let _ = fs::remove_file(dir.path().join(".cuaderno").join(name));
+    }
+    write_daily(
+        dir.path(),
+        chrono::Local::now().date_naive(),
+        &["- **00:00**: started [[surrogate-model]] \u{2014} Fit the baseline (deep)"],
+    );
+    dir
+}
+
+fn assert_no_index(root: &Path, before: &[String], form: &str) {
+    let after = cuaderno_files(root);
+    assert_eq!(
+        after, before,
+        "`{form}` created or removed a file under .cuaderno/"
+    );
+    assert!(
+        !after.iter().any(|p| p.contains("index.db")),
+        "`{form}` created an index file: {after:?}"
+    );
+}
+
+#[test]
+fn line_reads_the_focus_without_creating_an_index() {
+    let dir = vault_without_index();
+    let before = cuaderno_files(dir.path());
+    assert!(!before.iter().any(|p| p.contains("index.db")), "{before:?}");
+    let out = assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault", dir.path().to_str().unwrap(), "now", "--line"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_focus_line(&out);
+    assert_no_index(dir.path(), &before, "now --line");
+}
+
+/// The `--line` output for [`vault_without_index`]'s start, whichever day
+/// the run lands on: a run that crosses midnight after the note was
+/// written reads it as carried (`since Sunday 00:00`), not `since 00:00`.
+fn assert_focus_line(stdout: &[u8]) {
+    let out = String::from_utf8(stdout.to_vec()).unwrap();
+    assert!(
+        out.starts_with("Focus: surrogate-model \u{2014} Fit the baseline (since ")
+            && out.ends_with("00:00)\n"),
+        "{out:?}"
+    );
+}
+
+/// The bytes and mtime of a file, or `None` when it does not exist.
+fn file_state(path: &Path) -> Option<(Vec<u8>, std::time::SystemTime)> {
+    let meta = fs::metadata(path).ok()?;
+    Some((fs::read(path).unwrap(), meta.modified().unwrap()))
+}
+
+#[test]
+fn line_leaves_an_existing_index_and_the_lock_untouched() {
+    // The hazard #1003 is about: an index another process holds, and a
+    // vault that changed since it last reconciled.
+    let dir = vault_with_action();
+    assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault", dir.path().to_str().unwrap(), "status"])
+        .assert()
+        .success();
+    write_daily(
+        dir.path(),
+        chrono::Local::now().date_naive(),
+        &["- **00:00**: started [[surrogate-model]] \u{2014} Fit the baseline (deep)"],
+    );
+    let cuaderno = dir.path().join(".cuaderno");
+    let index = file_state(&cuaderno.join("index.db"));
+    assert!(index.is_some(), "the normal verb left an index");
+    let lock = file_state(&cuaderno.join(".lock"));
+    let before = cuaderno_files(dir.path());
+
+    let out = assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault", dir.path().to_str().unwrap(), "now", "--line"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_focus_line(&out);
+
+    assert!(
+        file_state(&cuaderno.join("index.db")) == index,
+        "index.db bytes or mtime changed"
+    );
+    assert!(
+        file_state(&cuaderno.join(".lock")) == lock,
+        ".lock was created or touched"
+    );
+    // No -wal or -shm created or removed, nor anything else.
+    assert_eq!(cuaderno_files(dir.path()), before);
+}
+
+#[test]
+fn plain_and_json_read_the_focus_without_creating_an_index() {
+    let dir = vault_without_index();
+    let before = cuaderno_files(dir.path());
+    let out = assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault", dir.path().to_str().unwrap(), "now"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out = String::from_utf8(out).unwrap();
+    assert!(
+        out.contains("surrogate-model") && out.contains("Fit the baseline"),
+        "{out}"
+    );
+    assert_no_index(dir.path(), &before, "now");
+
+    let out = assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault", dir.path().to_str().unwrap(), "--json", "now"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(value["project"], "surrogate-model");
+    assert_eq!(value["started"], "00:00");
+    assert_no_index(dir.path(), &before, "now --json");
+}

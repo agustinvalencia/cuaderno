@@ -42,6 +42,7 @@ mod custom_notes;
 mod daily;
 mod frontmatter_edit;
 mod index_entry;
+mod journal;
 mod links;
 mod lint;
 mod lint_typst;
@@ -120,6 +121,7 @@ pub use context::{
 #[doc(hidden)]
 pub use context::{days_since_mtime_in, mtime_threshold_ns_in};
 pub use daily::{DailyNoteView, DailySection};
+pub use journal::Journal;
 pub use links::ResolvedLink;
 pub use method_status::MethodStatus;
 pub use migrate::{
@@ -202,6 +204,23 @@ fn note_scope_for(config: &VaultConfig) -> Result<NoteScope, DomainError> {
     })
 }
 
+/// The config checks every open of a vault runs, [`Vault::new`] and
+/// [`Journal::new`] alike, so a config one refuses the other refuses too.
+pub(in crate::vault) fn validate_config_at_open(
+    config: &mut VaultConfig,
+) -> Result<(), DomainError> {
+    // Compile the config `ignore` globs once and hand the matcher to
+    // reconciliation. A malformed pattern surfaces here, at vault
+    // open, rather than silently skipping the rule.
+    config.ignore_set()?;
+    // Validate `[note_types.*]` at vault-open so a malformed or built-in-
+    // shadowing custom type fails fast, not mid-operation. This also
+    // normalises each custom type's `folder` in place, so the `config`
+    // stored on `Vault` already carries the canonical form.
+    crate::type_registry::TypeRegistry::validate(config)?;
+    Ok(())
+}
+
 impl Vault {
     /// Construct a vault and run startup reconciliation. The returned
     /// [`ReconciliationReport`] lets callers surface scan counts or
@@ -211,15 +230,7 @@ impl Vault {
         index: Arc<dyn VaultIndex>,
         mut config: VaultConfig,
     ) -> Result<(Self, ReconciliationReport), DomainError> {
-        // Compile the config `ignore` globs once and hand the matcher to
-        // reconciliation. A malformed pattern surfaces here, at vault
-        // open, rather than silently skipping the rule.
-        config.ignore_set()?;
-        // Validate `[note_types.*]` at vault-open so a malformed or built-in-
-        // shadowing custom type fails fast, not mid-operation. This also
-        // normalises each custom type's `folder` in place, so the `config`
-        // stored on `Vault` below already carries the canonical form.
-        crate::type_registry::TypeRegistry::validate(&mut config)?;
+        validate_config_at_open(&mut config)?;
         let report = reconcile(&store, &index, &note_scope_for(&config)?)?;
         let method_notice = method_status::MethodNotice::default();
         method_notice.record(config.vault.method_version);

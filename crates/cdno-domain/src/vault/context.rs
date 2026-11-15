@@ -46,7 +46,7 @@ use crate::frontmatter::{
 use crate::note_type::{NoteType, STEWARDSHIP_KEY};
 
 use super::DAILY_LOGS_SECTION;
-use super::Vault;
+use super::daily::read_daily_note_in;
 use super::projects::actions::{
     LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_ACTION_PAUSED_PREFIX,
     LOG_ACTION_PROMOTED_PREFIX, LOG_DURING_KEY, LOG_NEXT_KEY, LOG_REASON_KEY, LOG_RESUMED_PREFIX,
@@ -56,6 +56,7 @@ use super::projects::actions::{
     parse_attached_action_slug, parse_bullet_energy, strip_energy_suffix,
 };
 use super::projects::{ProjectSummary, is_under_projects_done};
+use super::{Journal, Vault};
 
 // ---------------------------------------------------------------------
 // Return types
@@ -1007,6 +1008,41 @@ impl Vault {
         self.config.tracking.get(activity)
     }
 
+    /// What you are in the middle of: [`Journal::current_focus`] over this
+    /// vault's store and `[focus]` config.
+    pub fn current_focus(&self, date: NaiveDate) -> Result<Option<CurrentFocus>, DomainError> {
+        self.journal().current_focus(date)
+    }
+
+    /// [`Journal::focus_heads`] over this vault's store.
+    pub(crate) fn focus_heads(
+        &self,
+        date: NaiveDate,
+    ) -> Result<Vec<(NaiveDateTime, String)>, DomainError> {
+        self.journal().focus_heads(date)
+    }
+
+    /// Per project, the most recent open pause: [`Journal::last_paused`].
+    pub fn last_paused(
+        &self,
+        today: NaiveDate,
+    ) -> Result<BTreeMap<String, LastPause>, DomainError> {
+        self.journal().last_paused(today)
+    }
+
+    /// The open pauses, per project and newest overall:
+    /// [`Journal::open_pauses`].
+    pub fn open_pauses(&self, today: NaiveDate) -> Result<OpenPauses, DomainError> {
+        self.journal().open_pauses(today)
+    }
+}
+
+/// The focus readers. They read daily notes, whose paths follow from their
+/// dates, and the `[focus]` windows, and nothing else, so they live on
+/// [`Journal`] rather than on [`Vault`]: a caller with a store alone (a
+/// prompt hook's `cdno now`) gets exactly the answer [`Vault`] gives,
+/// without opening the index.
+impl Journal {
     /// What you are in the middle of, according to the daily log.
     ///
     /// Starting an action writes `- **HH:MM**: started [[slug]] — text`
@@ -1038,7 +1074,7 @@ impl Vault {
     /// sort by stamp: a hand-edited line keeps its place in its note. With
     /// `carry_over_days = 0` only `date`'s note is read, as before RFC 0005.
     pub fn current_focus(&self, date: NaiveDate) -> Result<Option<CurrentFocus>, DomainError> {
-        let window = u64::from(self.config.focus.carry_over_days);
+        let window = u64::from(self.focus.carry_over_days);
         let mut slot: Option<CurrentFocus> = None;
         // Oldest note first. A day before chrono's earliest date cannot hold
         // a note, so it is skipped like a missing one.
@@ -1081,7 +1117,7 @@ impl Vault {
     /// The `## Logs` section of `date`'s daily note, or `None` when the note
     /// is missing or has no such section.
     fn daily_logs_section(&self, date: NaiveDate) -> Result<Option<String>, DomainError> {
-        let view = self.read_daily_note(date)?;
+        let view = read_daily_note_in(&*self.store, date)?;
         if !view.exists {
             return Ok(None);
         }
@@ -1104,10 +1140,10 @@ impl Vault {
     /// be offered for resume. Missing notes are skipped.
     ///
     /// "Newest" is fold order — note order, then line order within a note —
-    /// never a sort by stamp, as for [`Vault::current_focus`]. The entry's
+    /// never a sort by stamp, as for [`Journal::current_focus`]. The entry's
     /// `next:` and `reason:` continuation lines are read back with it. For the
     /// most recent pause across projects as well, use
-    /// [`Vault::open_pauses`], which reads the same scan once.
+    /// [`Journal::open_pauses`], which reads the same scan once.
     pub fn last_paused(
         &self,
         today: NaiveDate,
@@ -1115,10 +1151,10 @@ impl Vault {
         Ok(self.open_pauses(today)?.by_project)
     }
 
-    /// [`Vault::last_paused`] together with the newest open pause across all
+    /// [`Journal::last_paused`] together with the newest open pause across all
     /// projects, from one scan (RFC 0005 §5.3, §5.5).
     pub fn open_pauses(&self, today: NaiveDate) -> Result<OpenPauses, DomainError> {
-        let window = u64::from(self.config.focus.paused_lookback_days);
+        let window = u64::from(self.focus.paused_lookback_days);
         // Every pause not yet followed by a reopen, oldest first.
         let mut open: Vec<LastPause> = Vec::new();
         for back in (0..=window).rev() {

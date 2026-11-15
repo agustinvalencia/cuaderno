@@ -2,8 +2,9 @@
 //! TOML config) into a [`Vault`] and run startup reconciliation.
 //!
 //! Every subcommand that operates on an existing vault opens it
-//! through here. `init` is the exception — it creates the vault
-//! rather than opening one.
+//! through here, by [`open_vault`]. Two exceptions: `init` creates the
+//! vault rather than opening one, and `now` opens only its journal by
+//! [`open_journal`], which never touches the index (#1003).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -15,7 +16,7 @@ use cdno_core::paths;
 use cdno_core::reconcile::ReconciliationReport;
 use cdno_core::store::{FsVaultStore, VaultStore};
 use cdno_domain::{
-    MethodSkew, MethodStatus, Vault, describe_vault_method_version, newer_minor_message,
+    Journal, MethodSkew, MethodStatus, Vault, describe_vault_method_version, newer_minor_message,
 };
 
 /// Walk upward from `start` looking for a `.cuaderno/` marker.
@@ -71,16 +72,7 @@ pub fn resolve_vault_root(
 /// Errors if `root/.cuaderno/` is missing — that signals the user
 /// pointed at a non-vault directory and should run `cdno init`.
 pub fn open_vault(root: &Path) -> Result<(Vault, ReconciliationReport)> {
-    let cuaderno_dir = root.join(paths::CUADERNO_DIR);
-    if !cuaderno_dir.is_dir() {
-        bail!(
-            "no Cuaderno vault at {}; run `cdno init` to create one.",
-            root.display()
-        );
-    }
-
-    let config = VaultConfig::load(root)
-        .with_context(|| format!("loading {}", root.join(paths::CONFIG_FILE).display()))?;
+    let config = load_config(root)?;
 
     let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(root));
     let index: Arc<dyn VaultIndex> = Arc::new(
@@ -117,6 +109,42 @@ pub fn open_vault(root: &Path) -> Result<(Vault, ReconciliationReport)> {
     Ok((vault, report))
 }
 
+/// Open the daily log of the vault at `root` without its index: the same
+/// marker check and config as [`open_vault`], and the filesystem store,
+/// but no SQLite index, so no migration and no reconciliation. Nothing
+/// under `.cuaderno/` is created or written.
+///
+/// For `cdno now`, which a prompt hook runs on every turn: opening the
+/// index is a write, and beside a long-lived server whose locks this
+/// process cannot see, that write damages the server's index (#1003).
+/// The method status is recorded as [`open_vault`] records it, so the
+/// skew notice after the command is unchanged.
+pub fn open_journal(root: &Path) -> Result<Journal> {
+    let config = load_config(root)?;
+    let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(root));
+    let journal = Journal::new(store, config).context("validating the vault config")?;
+    if let Ok(status) = journal.method_status() {
+        record_method_status(status);
+    }
+    Ok(journal)
+}
+
+/// The `.cuaderno/` marker check and the config load both opens share.
+///
+/// Errors if `root/.cuaderno/` is missing — that signals the user
+/// pointed at a non-vault directory and should run `cdno init`.
+fn load_config(root: &Path) -> Result<VaultConfig> {
+    let cuaderno_dir = root.join(paths::CUADERNO_DIR);
+    if !cuaderno_dir.is_dir() {
+        bail!(
+            "no Cuaderno vault at {}; run `cdno init` to create one.",
+            root.display()
+        );
+    }
+    VaultConfig::load(root)
+        .with_context(|| format!("loading {}", root.join(paths::CONFIG_FILE).display()))
+}
+
 /// The method status of the first vault this process opened, held for the
 /// skew notice `main` prints after a command has run. Process-global because
 /// every command opens its own vault inside its handler; the first open
@@ -130,8 +158,8 @@ fn record_method_status(status: MethodStatus) {
     }
 }
 
-/// Take the method status recorded by [`open_vault`], if a vault was opened
-/// since the last take. `None` when no vault was opened, or its version
+/// Take the method status recorded by [`open_vault`] or [`open_journal`],
+/// if a vault was opened since the last take. `None` when no vault was opened, or its version
 /// could not be read (the open itself reports a malformed version).
 pub fn take_method_status() -> Option<MethodStatus> {
     METHOD_STATUS
