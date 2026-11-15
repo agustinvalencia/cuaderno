@@ -10,11 +10,19 @@ cdno init [OPTIONS] [PATH]
 
 | Argument | Description |
 |----------|-------------|
-| `[PATH]` | Target directory. Defaults to the current working directory. |
+| `[PATH]` | Target directory. Defaults to `--vault` when that is given, otherwise to the current working directory. |
 
 ## Options
 
 Only the [global options](overview.md#global-options) apply. `init` ignores `--json`.
+
+`--vault <PATH>` names the directory to create the vault in, exactly as `[PATH]` does, so a script
+that passes `--vault` to every command creates the vault where it says. Give both only if they name
+the same directory: when they differ, `init` refuses and writes nothing.
+
+`init` never looks for an existing vault: unlike every other command it does not walk up from the
+current directory, and it ignores `CUADERNO_VAULT_PATH`. Only `[PATH]` and `--vault` move it away
+from the current directory.
 
 ## Examples
 
@@ -24,6 +32,9 @@ cdno init ~/notebook
 
 # Initialise the current directory as a vault:
 cdno init
+
+# The same as the first, as a script that passes --vault everywhere writes it:
+cdno --vault ~/notebook init
 ```
 
 It fails if the target already contains a `.cuaderno/` directory (it won't clobber an existing

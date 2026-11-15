@@ -53,6 +53,152 @@ fn init_with_no_path_arg_uses_current_working_directory() {
     assert!(dir.path().join(".cuaderno/config.toml").is_file());
 }
 
+/// Every entry directly inside `dir`, sorted, so a test can say "nothing
+/// was written here".
+fn entries(dir: &std::path::Path) -> Vec<String> {
+    let mut out: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn init_with_the_vault_flag_creates_the_vault_there_and_nothing_in_the_cwd() {
+    // #1004: `--vault` was ignored and the working directory initialised.
+    let cwd = tempdir().unwrap();
+    let target = tempdir().unwrap();
+    let vault = target.path().join("surrogate-model");
+
+    cdno()
+        .current_dir(cwd.path())
+        .arg("--vault")
+        .arg(&vault)
+        .arg("init")
+        .assert()
+        .success();
+
+    assert!(vault.join(".cuaderno/config.toml").is_file());
+    assert!(vault.join("projects").is_dir());
+    assert!(
+        entries(cwd.path()).is_empty(),
+        "init wrote into the working directory: {:?}",
+        entries(cwd.path())
+    );
+}
+
+#[test]
+fn init_refuses_a_vault_flag_and_a_path_that_differ_and_writes_nothing() {
+    let cwd = tempdir().unwrap();
+    let a = tempdir().unwrap();
+    let b = tempdir().unwrap();
+
+    cdno()
+        .current_dir(cwd.path())
+        .arg("--vault")
+        .arg(a.path())
+        .arg("init")
+        .arg(b.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("different directories"));
+
+    for dir in [cwd.path(), a.path(), b.path()] {
+        assert!(
+            entries(dir).is_empty(),
+            "{}: {:?}",
+            dir.display(),
+            entries(dir)
+        );
+    }
+    // Neither directory existing yet is no different: nothing is created.
+    let missing_a = a.path().join("one");
+    let missing_b = a.path().join("two");
+    cdno()
+        .current_dir(cwd.path())
+        .arg("--vault")
+        .arg(&missing_a)
+        .arg("init")
+        .arg(&missing_b)
+        .assert()
+        .failure();
+    assert!(entries(a.path()).is_empty(), "{:?}", entries(a.path()));
+}
+
+#[test]
+fn init_accepts_a_vault_flag_and_a_path_that_name_the_same_directory() {
+    // A relative path and an absolute one, through a symlink (on macOS
+    // the temp dir itself sits behind `/var -> /private/var`).
+    let cwd = tempdir().unwrap();
+    std::fs::create_dir(cwd.path().join("surrogate-model")).unwrap();
+    let absolute = cwd.path().join("surrogate-model");
+
+    cdno()
+        .current_dir(cwd.path())
+        .arg("--vault")
+        .arg(&absolute)
+        .arg("init")
+        .arg("./surrogate-model/../surrogate-model")
+        .assert()
+        .success();
+
+    assert!(absolute.join(".cuaderno/config.toml").is_file());
+    assert_eq!(entries(cwd.path()), ["surrogate-model"]);
+}
+
+#[test]
+fn init_with_a_path_creates_the_vault_at_that_path() {
+    // `cdno init Y` is unchanged: the vault lands at Y, the cwd is untouched.
+    let cwd = tempdir().unwrap();
+    let target = tempdir().unwrap();
+    cdno()
+        .current_dir(cwd.path())
+        .arg("init")
+        .arg(target.path())
+        .assert()
+        .success();
+    assert!(target.path().join(".cuaderno/config.toml").is_file());
+    assert!(entries(cwd.path()).is_empty());
+}
+
+#[test]
+fn init_is_not_redirected_by_the_env_var_or_by_discovery() {
+    // Only `[PATH]` and `--vault` move `init`. `CUADERNO_VAULT_PATH`
+    // names an existing vault, and so does the one above the cwd; neither
+    // is where a plain `cdno init` writes.
+    let env_vault = tempdir().unwrap();
+    cdno().arg("init").arg(env_vault.path()).assert().success();
+    let env_before = entries(env_vault.path());
+
+    let outer = tempdir().unwrap();
+    cdno().arg("init").arg(outer.path()).assert().success();
+    let inner = outer.path().join("inbox/nested");
+    std::fs::create_dir_all(&inner).unwrap();
+
+    cdno()
+        .current_dir(&inner)
+        .env("CUADERNO_VAULT_PATH", env_vault.path())
+        .arg("init")
+        .assert()
+        .success();
+
+    assert!(inner.join(".cuaderno/config.toml").is_file());
+    assert_eq!(entries(env_vault.path()), env_before);
+
+    // And from a directory with no vault above it, the env var still does
+    // not redirect a plain `init`.
+    let bare = tempdir().unwrap();
+    cdno()
+        .current_dir(bare.path())
+        .env("CUADERNO_VAULT_PATH", env_vault.path())
+        .arg("init")
+        .assert()
+        .success();
+    assert!(bare.path().join(".cuaderno/config.toml").is_file());
+    assert_eq!(entries(env_vault.path()), env_before);
+}
+
 #[test]
 fn log_discovers_the_vault_root_when_run_from_a_subdirectory() {
     let dir = tempdir().unwrap();

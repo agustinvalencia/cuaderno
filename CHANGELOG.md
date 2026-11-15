@@ -32,6 +32,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+<<<<<<< HEAD
 - **Shell completion never opens the index** (closes #1007). The dynamic completers (`--project`,
   `--slug`, `--portfolio`, `--stewardship`, the note types, `cdno open`'s reference) no longer
   open, migrate or reconcile `.cuaderno/index.db` on every Tab, and no longer take the write lock:
@@ -51,6 +52,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   time: a few tens of milliseconds more on a vault of thousands of notes. A note that fails to
   parse no longer prints the reconciliation warning at Tab time. Completion still finds the vault
   only by walking up from the working directory, ignoring `--vault` and `CUADERNO_VAULT_PATH`.
+||||||| cf893c4
+=======
+- **`cdno init` honours `--vault`** (closes #1004). `cdno --vault <dir> init` creates the vault at
+  `<dir>`, where it used to ignore the flag and initialise the working directory, so a script that
+  passes `--vault` to every command no longer scaffolds a vault wherever it happens to run. Given
+  both `--vault` and a `[PATH]` that name different directories, `init` refuses and writes
+  nothing; naming the same one (relative or absolute, through a symlink) is accepted. `cdno init`
+  and `cdno init <path>` are unchanged, and `init` still never follows upward discovery or
+  `CUADERNO_VAULT_PATH`: only the explicit argument and flag move it.
+>>>>>>> origin/main
 - **`cdno now` never opens the index** (closes #1003). Every form (plain, `--line`, `--json`) reads
   the config and the daily notes inside the `[focus]` windows through the store and nothing else:
   it no longer opens, migrates or reconciles `.cuaderno/index.db`, walks the vault, or waits on the
