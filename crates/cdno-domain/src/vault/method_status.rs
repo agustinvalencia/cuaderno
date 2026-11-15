@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use cdno_core::config::{MethodVersion, method_version_from_str};
+use cdno_core::store::VaultStore;
 
 use super::Vault;
 use super::config::read_config_from;
@@ -83,12 +84,7 @@ impl Vault {
     /// `cdno migrate` consult, so no interface crate compares versions
     /// itself.
     pub fn method_status(&self) -> Result<MethodStatus, DomainError> {
-        let vault = self.recorded_method_version()?;
-        Ok(MethodStatus {
-            vault,
-            binary: METHOD_VERSION,
-            skew: MethodSkew::between(METHOD_VERSION, vault),
-        })
+        method_status_in(&*self.store)
     }
 
     /// Read `[vault] method_version` alone from `.cuaderno/config.toml`
@@ -104,7 +100,26 @@ impl Vault {
     pub(in crate::vault) fn recorded_method_version(
         &self,
     ) -> Result<Option<MethodVersion>, DomainError> {
-        let document = read_config_from(&*self.store)?;
-        Ok(method_version_from_str(&document.content)?)
+        recorded_method_version_in(&*self.store)
     }
+}
+
+/// [`Vault::method_status`] over a bare store, for readers that hold no
+/// index ([`Journal`](super::Journal)).
+pub(in crate::vault) fn method_status_in(
+    store: &dyn VaultStore,
+) -> Result<MethodStatus, DomainError> {
+    let vault = recorded_method_version_in(store)?;
+    Ok(MethodStatus {
+        vault,
+        binary: METHOD_VERSION,
+        skew: MethodSkew::between(METHOD_VERSION, vault),
+    })
+}
+
+fn recorded_method_version_in(
+    store: &dyn VaultStore,
+) -> Result<Option<MethodVersion>, DomainError> {
+    let document = read_config_from(store)?;
+    Ok(method_version_from_str(&document.content)?)
 }

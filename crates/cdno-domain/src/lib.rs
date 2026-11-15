@@ -35,7 +35,7 @@ pub use vault::{
     ActionListEntry, AttachedAction, BacklinkRef, ClosedProjectEntry, CommitmentEntry,
     CommitmentSource, CompletedActionEntry, CompletedActionSource, ConfigDocument, ConfigSaveError,
     ConfigValidationError, CurrentFocus, DAILY_LOGS_SECTION, DailyLogLine, DailyNoteView,
-    DailySection, FILE_MIGRATIONS, FileMigration, GroupParent, HolderChange, InboxItem,
+    DailySection, FILE_MIGRATIONS, FileMigration, GroupParent, HolderChange, InboxItem, Journal,
     LOG_HOLDER_PREFIX, LapsedHabit, LastPause, LinkedCommitment, MethodStatus, MigrationPlan,
     MigrationReport, MigrationStep, Miss, MonthlyContext, MonthlyNoteView, MonthlySection,
     NO_HOLDER, NormaliseReport, NoteRef, NoteToDailyOutcome, OpenAction, OpenItems, OpenItemsHash,

@@ -44,6 +44,7 @@ use chrono::{Datelike, NaiveDate};
 
 use cdno_core::markdown::{MarkdownDocument, headings};
 use cdno_core::path::VaultPath;
+use cdno_core::store::VaultStore;
 
 use crate::error::DomainError;
 
@@ -122,6 +123,30 @@ impl FromStr for DailySection {
     }
 }
 
+/// [`Vault::read_daily_note`] over a bare store. A daily note's path is a
+/// function of its date alone, so reading one needs no index; shared with
+/// [`Journal`](super::Journal), which answers the focus without one.
+pub(in crate::vault) fn read_daily_note_in(
+    store: &dyn VaultStore,
+    date: NaiveDate,
+) -> Result<DailyNoteView, DomainError> {
+    let path = daily_note_path(date)?;
+    if store.exists(&path)? {
+        let markdown = store.read_file(&path)?;
+        Ok(DailyNoteView {
+            path,
+            exists: true,
+            markdown,
+        })
+    } else {
+        Ok(DailyNoteView {
+            path,
+            exists: false,
+            markdown: String::new(),
+        })
+    }
+}
+
 impl Vault {
     /// Read the daily note for `date`.
     ///
@@ -129,21 +154,7 @@ impl Vault {
     /// been created for that day yet, so callers can test for
     /// pre-planned content without catching an error.
     pub fn read_daily_note(&self, date: NaiveDate) -> Result<DailyNoteView, DomainError> {
-        let path = daily_note_path(date)?;
-        if self.store.exists(&path)? {
-            let markdown = self.store.read_file(&path)?;
-            Ok(DailyNoteView {
-                path,
-                exists: true,
-                markdown,
-            })
-        } else {
-            Ok(DailyNoteView {
-                path,
-                exists: false,
-                markdown: String::new(),
-            })
-        }
+        read_daily_note_in(&*self.store, date)
     }
 
     /// The dates in `year`/`month` that already have a daily note, sorted

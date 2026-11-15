@@ -35,13 +35,21 @@
 //! 160 characters for prompt segments and hooks. It is the one mode that
 //! never fails: no vault or an unreadable log prints nothing and exits 0,
 //! because a status line that breaks the prompt it is embedded in is worse
-//! than a missing one. It does not return instantly under contention: with
-//! the write lock held elsewhere and a stale index, it waits out the 5 s
-//! lock timeout and then prints. It wins over `--json` when both are given.
+//! than a missing one. It wins over `--json` when both are given.
+//!
+//! Every form is index-free (#1003): it opens a `Journal` — the store and
+//! the `[focus]` windows — through `bootstrap::open_journal`, never the
+//! SQLite index, so it neither migrates nor reconciles nor waits on the
+//! write lock, and creates nothing under `.cuaderno/`. Nothing it prints
+//! needs the index: the daily notes it folds are found by date, and a
+//! marker's slug is printed as written, never resolved. `Vault`'s own
+//! `current_focus` delegates to the same `Journal`, so the two agree. That
+//! makes it safe to run on every prompt beside a long-lived server holding
+//! the same index.
 //!
 //! Rendering is split from I/O the way `orient` and `status` split it:
 //! [`build_now`] returns the text so tests assert on a string without
-//! capturing stdout. [`run`] does not call it — it opens the vault,
+//! capturing stdout. [`run`] does not call it — it opens the journal,
 //! branches on `--json`, and calls `render` itself.
 
 use std::path::Path;
@@ -123,11 +131,11 @@ fn stamp(at: NaiveDateTime) -> String {
 
 /// Print what is currently started, for the vault at `root` as of `now`.
 pub fn run(root: &Path, now: NaiveDateTime, json: bool) -> Result<()> {
-    let (vault, _report) = bootstrap::open_vault(root)?;
-    let focus = vault
+    let journal = bootstrap::open_journal(root)?;
+    let focus = journal
         .current_focus(now.date())
         .context("reading the current focus")?;
-    let pauses = vault
+    let pauses = journal
         .open_pauses(now.date())
         .context("reading the open pauses")?;
     if json {
@@ -142,11 +150,11 @@ pub fn run(root: &Path, now: NaiveDateTime, json: bool) -> Result<()> {
 /// Open the vault and render the current focus as a string. Split from
 /// [`run`] so tests can assert on the text.
 pub fn build_now(root: &Path, now: NaiveDateTime) -> Result<String> {
-    let (vault, _report) = bootstrap::open_vault(root)?;
-    let focus = vault
+    let journal = bootstrap::open_journal(root)?;
+    let focus = journal
         .current_focus(now.date())
         .context("reading the current focus")?;
-    let pauses = vault
+    let pauses = journal
         .open_pauses(now.date())
         .context("reading the open pauses")?;
     Ok(render(focus.as_ref(), pauses.latest.as_ref(), now))
@@ -156,9 +164,9 @@ pub fn build_now(root: &Path, now: NaiveDateTime) -> Result<String> {
 /// at 160 characters, no trailing newline. `main` prints nothing and
 /// exits 0 when this errors, or when no vault is found at all.
 pub fn build_line(root: &Path, now: NaiveDateTime) -> Result<String> {
-    let (vault, _report) = bootstrap::open_vault(root)?;
-    let focus = vault.current_focus(now.date())?;
-    let pauses = vault.open_pauses(now.date())?;
+    let journal = bootstrap::open_journal(root)?;
+    let focus = journal.current_focus(now.date())?;
+    let pauses = journal.open_pauses(now.date())?;
     Ok(line(focus.as_ref(), pauses.latest.as_ref(), now))
 }
 

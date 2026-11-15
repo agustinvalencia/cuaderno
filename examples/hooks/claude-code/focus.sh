@@ -8,9 +8,12 @@ if [ -z "${CUADERNO_VAULT_PATH:-}" ]; then
   exit 0
 fi
 
-# Run cdno now --line with stderr suppressed (reconciliation warnings from
-# unparseable notes in the vault). Capture output and always succeed.
-# If cdno is not on PATH or exits non-zero, anything it printed is discarded.
+# cdno now --line is index-free: it reads the daily notes and the config and
+# never opens, creates or writes .cuaderno/index.db, so it is safe to run on
+# every prompt beside a server that holds the same vault's index open.
+# stderr is suppressed so nothing but the focus line reaches the prompt.
+# Capture output and always succeed. If cdno is not on PATH or exits
+# non-zero, anything it printed is discarded.
 output=$(cdno now --line --vault "$CUADERNO_VAULT_PATH" 2>/dev/null) || output=""
 
 # Print output only if non-empty.

@@ -15,6 +15,11 @@ focus this morning), so a start made from
 note by hand all count — and a completion, a drop or a pause clears it. Nothing to keep in sync, and
 nothing to go stale.
 
+It reads those daily notes and your config and nothing else. Every form of `cdno now` (plain,
+`--line` and `--json`) leaves the search index alone: it does not open, create or update
+`.cuaderno/index.db`, and does not wait for another process's write to finish. So it is safe to run
+on every prompt, even beside a server that keeps the same vault's index open.
+
 [`cdno action promote`](action.md#cdno-action-promote) *rewrites* the bullet it matched, and the
 focus follows it: the `action promoted on` line it logs renames the open start to the new note, with
 the original start time, so `action complete` and `action drop` still close it.

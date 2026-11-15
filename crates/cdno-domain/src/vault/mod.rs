@@ -42,6 +42,7 @@ mod custom_notes;
 mod daily;
 mod frontmatter_edit;
 mod index_entry;
+mod journal;
 mod links;
 mod lint;
 mod lint_typst;
@@ -120,6 +121,7 @@ pub use context::{
 #[doc(hidden)]
 pub use context::{days_since_mtime_in, mtime_threshold_ns_in};
 pub use daily::{DailyNoteView, DailySection};
+pub use journal::Journal;
 pub use links::ResolvedLink;
 pub use method_status::MethodStatus;
 pub use migrate::{

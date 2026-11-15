@@ -6,6 +6,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **`cdno now` never opens the index** (closes #1003). Every form (plain, `--line`, `--json`) reads
+  the config and the daily notes inside the `[focus]` windows through the store and nothing else:
+  it no longer opens, migrates or reconciles `.cuaderno/index.db`, walks the vault, or waits on the
+  write lock, and creates no file under `.cuaderno/`. So the Claude Code prompt hook, which runs
+  `cdno now --line` on every turn, can no longer write the index or delete a long-lived server's
+  WAL beside it. The output is unchanged. The focus readers move onto a new domain type,
+  `Journal` (a store and the `[focus]` windows), which `Vault::current_focus` and
+  `Vault::open_pauses` now delegate to, so both paths share one fold. Because the index is not
+  reconciled, `cdno now` no longer prints the reconciliation warning for a note elsewhere in the
+  vault that fails to parse; any other verb still does.
+
 ## [0.45.0] - 2026-11-09
 
 ### Fixed
