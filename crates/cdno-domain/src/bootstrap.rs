@@ -55,6 +55,10 @@ pub struct OpenedVault {
     /// rebuilt it; `None` when it found nothing, or when the open did not
     /// check.
     pub damage_at_open: Option<Vec<String>>,
+    /// True when the open found damage and repaired it (rebuilt the index,
+    /// or emptied it for the startup reconciliation to fill); false when it
+    /// found none, did not check, or started on the damaged file as it is.
+    pub repaired_at_open: bool,
     /// The index database file this open used, after the per-machine
     /// override was resolved ([`paths::resolve_index_path`]). Kept so
     /// a long-running caller can name it in logs and keep it out of a
@@ -270,6 +274,7 @@ fn open(
     // happen here, before any check or repair can touch the file.
     let mut sqlite = SqliteIndex::open_location(&location, root)?;
     let mut damage_at_open = None;
+    let mut repaired_at_open = false;
     if check {
         SqliteIndex::clear_stale_rebuilds(&location.path);
         // A check that cannot run (a busy or unreadable file) is no reason
@@ -313,6 +318,9 @@ fn open(
                      (the sweep or a tool call retries)"
                 ),
             }
+            // Repaired: rebuilt, or emptied for the startup reconcile to
+            // fill; not when it started on the damaged file as it is.
+            repaired_at_open = sqlite.quick_check().is_ok_and(|p| p.is_empty());
             damage_at_open = Some(problems);
         }
     }
@@ -336,6 +344,7 @@ fn open(
         report,
         sqlite,
         damage_at_open,
+        repaired_at_open,
         index_path: location.path,
     })
 }

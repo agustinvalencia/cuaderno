@@ -56,7 +56,11 @@ three within an hour it stops repairing by itself, logs one error saying that so
 writing the index file, and reports `repair: damage_recurring` in `index_status`, with the same
 advice in every damaged-index error a client gets: give this machine its own index, as
 [Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine)
-explains. `rebuild_index` still runs then, and a success resumes automatic repair. A file too
+explains. Only repairs that succeed are counted. The stop ends by itself when a check as thorough
+as the one that found the damage finds the file sound again (another process repaired it, or the
+other writer went away); otherwise it stays until a `rebuild_index` succeeds or the server
+restarts. A successful `rebuild_index` allows one more automatic repair before the server stops
+again, not a fresh count, so answering each stop with it cannot keep a shared index repairing. A file too
 damaged for the running server to write over is reported as `restart_required`: the server needs a
 restart, whose start replaces such a file; the notes are intact.
 

@@ -47,11 +47,14 @@ network share. Their SQLite locks do not reach each other, so each repair is dam
 is to give each machine its own index with `CUADERNO_INDEX_PATH` (or `--index-path` on
 `cdno-mcp-server`); see
 [Keeping the index on each machine](../concepts/vault-structure.md#keeping-the-index-on-each-machine).
-Then restart the server, or ask the assistant for `rebuild_index`, which resumes automatic repair.
+Then restart the server. The stop also ends by itself once a check finds the file sound again, and
+`rebuild_index` repairs it once more, allowing one further automatic repair, but neither helps
+while the other machine still writes the file.
 The copy of the first damaged file is kept beside the index, with `.previous` appended to its name.
 
 If `index_status` reports `restart_required`, the file is too damaged for the running server to
-write over: restart the server, whose start replaces it. The notes are intact either way.
+write over, and it stops repairing by itself: restart the server, whose start replaces it. The
+notes are intact either way.
 
 ## The index path is refused
 

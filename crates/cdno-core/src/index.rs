@@ -581,7 +581,14 @@ impl SqliteIndex {
     /// `fresh` must pass `quick_check` first, or nothing is touched; a
     /// check it already passed through [`FreshIndex::quick_check`] counts,
     /// so a caller that checked it before taking a lock is not made to
-    /// repeat the scan under the lock. For an
+    /// repeat the scan under the lock. In [`crate::reconcile::rebuild`]
+    /// that check passed before the last, locked pass and the snapshot
+    /// carry wrote to the fresh index, so those last writes are copied in
+    /// unchecked. That is accepted: they are ordinary transactions on a
+    /// file this process created moments ago and nothing else writes, the
+    /// same writes every commit makes unchecked, while a second scan would
+    /// hold the vault lock, and every writer waiting on it, for the length
+    /// of a whole-file read. For an
     /// overridden index, `fresh` must also be bound to this index's vault
     /// root ([`open_fresh_beside`](Self::open_fresh_beside) does that), and
     /// a live file that now records another vault's root is refused with

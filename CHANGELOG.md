@@ -72,10 +72,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
     row from the damaged file);
   - this contains a fault on one machine (a torn write, a crash, a bad page), and is not
     protection for an index shared between two machines or kernels: after three damage-triggered
-    repairs within an hour a server stops repairing by itself, logs one error saying that
+    repairs that succeeded within an hour (failed attempts do not count) a server stops
+    repairing by itself, logs one error saying that
     something else is writing the index file and to give this machine its own index
     (`CUADERNO_INDEX_PATH` / `--index-path`), and says the same in `index_status` and in every
-    damaged-index error a client gets;
+    damaged-index error a client gets; the stop ends by itself when a check finds the file sound
+    again, else at a successful `rebuild_index`, which allows one more automatic repair rather
+    than a fresh count, or a restart; `restart_required` stops automatic repair the same way;
   - at start, only a file too damaged to write over is emptied or set aside, under the vault write
     lock and only if it still fails its check there; any other failed repair, such as a second
     server waiting on the lock the first holds while it repairs, starts on the index as it is and

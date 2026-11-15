@@ -68,6 +68,16 @@ fn recurring_damage_is_said_once_in_the_log_and_on_every_client_error() {
     assert_eq!(stops.len(), 1, "one error, not one per round:\n{logged}");
     assert!(stops[0].contains("ERROR"), "{}", stops[0]);
     assert!(stops[0].contains("CUADERNO_INDEX_PATH"), "{}", stops[0]);
+    // Two repairs, then the round that decided the stop; the two rounds
+    // after it say nothing about rebuilding.
+    let rebuilding = logged
+        .lines()
+        .filter(|l| l.contains("rebuilding it from the notes"))
+        .count();
+    assert_eq!(
+        rebuilding, 3,
+        "no rebuild announced while stopped:\n{logged}"
+    );
 
     let hint = damage_hint();
     assert!(hint.contains("stopped repairing it by itself"), "{hint}");

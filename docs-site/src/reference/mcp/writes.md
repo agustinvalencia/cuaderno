@@ -372,8 +372,8 @@ uniqueness rule, so a pasted derivation with its own `## Proof` must be demoted 
 
 The server already rebuilds a damaged index on its own, so this is for when
 [`index_status`](reads.md) stays unhealthy. It still runs when the server has stopped repairing by
-itself because the damage keeps coming back (`repair: damage_recurring`), and a success resumes
-automatic repair, but that state means another machine or container is writing the same index file,
+itself because the damage keeps coming back (`repair: damage_recurring`), and a success allows one
+more automatic repair before the next stop, but that state means another machine or container is writing the same index file,
 which no rebuild fixes: give this machine its own index, as
 [Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine)
 explains. The repair contains a fault on one machine (a torn write, a crash, a bad page); it is not

@@ -626,13 +626,87 @@ fn recurring_damage_stops_the_automatic_repair() {
         "still damaged"
     );
 
-    // An explicit `rebuild_index` still runs, and ends the stop.
+    // An explicit `rebuild_index` still runs, and ends the stop, but keeps
+    // the history: it buys one more automatic repair, not a fresh count.
     let record = health.rebuild("rebuild_index was called").unwrap();
     assert!(record.rebuilt, "{:?}", record.failure);
     let status = health.status();
     assert!(status.healthy);
     assert_eq!(status.repair, RepairState::Automatic);
+    assert_eq!(status.damage_rebuilds_recent, 3);
+
+    damage_live(&opened);
+    health.sweep();
+    let status = health.status();
+    assert!(
+        status.last_rebuild.as_ref().is_some_and(|r| r.rebuilt),
+        "the one repair the requested rebuild allowed"
+    );
+    assert_eq!(status.repair, RepairState::Automatic);
+
+    damage_live(&opened);
+    health.sweep();
+    assert_eq!(
+        health.status().repair,
+        RepairState::DamageRecurring,
+        "and then it stops again"
+    );
+}
+
+#[test]
+fn failed_repairs_do_not_count_as_recurring_damage() {
+    // A read-only index directory (or a full disk, or a peer holding the
+    // lock) fails every attempt; that is not damage coming back, and the
+    // advice to move the index would be wrong for it.
+    use std::os::unix::fs::PermissionsExt;
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened).with_policy(eager());
+    damage_live(&opened);
+    let meta_dir = dir.path().join(paths::CUADERNO_DIR);
+    std::fs::set_permissions(&meta_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    for _ in 0..5 {
+        health.sweep();
+    }
+    let status = health.status();
+    std::fs::set_permissions(&meta_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let rebuild = status.last_rebuild.expect("attempts were made");
+    assert!(!rebuild.rebuilt, "the directory refused the fresh file");
     assert_eq!(status.damage_rebuilds_recent, 0);
+    assert_eq!(status.repair, RepairState::Automatic, "{:?}", status.advice);
+
+    health.sweep();
+    assert!(
+        health.status().last_rebuild.is_some_and(|r| r.rebuilt),
+        "once the cause is gone the next sweep repairs"
+    );
+}
+
+#[test]
+fn a_stop_ends_by_itself_when_the_index_checks_sound_again() {
+    // Another process repaired the file, or the writer sharing it went
+    // away: no person needs to call `rebuild_index`.
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened).with_policy(RepairPolicy {
+        recurrence_limit: 1,
+        ..eager()
+    });
+    damage_live(&opened);
+    health.sweep();
+    damage_live(&opened);
+    health.sweep();
+    assert_eq!(health.status().repair, RepairState::DamageRecurring);
+
+    // The repair another process makes, through the same file.
+    cdno_core::reconcile::rebuild(&opened.store, &opened.sqlite, &opened.scope, false).unwrap();
+    health.sweep();
+
+    let status = health.status();
+    assert_eq!(status.repair, RepairState::Automatic);
+    assert!(status.healthy);
 }
 
 #[test]

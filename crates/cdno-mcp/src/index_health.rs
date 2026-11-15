@@ -31,7 +31,11 @@
 //!   by itself, logs one error naming the likely cause and the fix (give
 //!   this machine its own index, `CUADERNO_INDEX_PATH` / `--index-path`),
 //!   and reports the same through `index_status` and the hint every client
-//!   error carries. A `rebuild_index` call still runs.
+//!   error carries. Only repairs that copied in are counted; failed
+//!   attempts keep the spacing and their own log line. The stop ends by
+//!   itself when a check as strong as the one that found the damage
+//!   passes; otherwise it stays until a `rebuild_index` succeeds (which
+//!   allows one more automatic repair, not a fresh count) or a restart.
 //! - **Report.** Failing notes are logged with their reasons, and the
 //!   latest sweep, check and rebuild are kept for `index_status`.
 //!
@@ -43,7 +47,9 @@
 //! server's one long-lived connection, so it reports the server's view of
 //! the file, not the file. When the database or its sidecars are unlinked
 //! or replaced under the server, the check can pass on a private copy no
-//! other process sees, or fail on a file that is sound; detecting that, and
+//! other process sees, or fail on a file that is sound, and a rebuild then
+//! lands in that private file or WAL too, so "every process on this machine
+//! sees the repair" does not hold in that state either; detecting it, and
 //! reopening the connection before rebuilding, is #1000's.
 
 use std::collections::VecDeque;
@@ -173,11 +179,29 @@ struct State {
     /// The latest `integrity_check`, kept so repeated asks within
     /// `min_rebuild_interval` reuse it rather than rescan the file.
     last_integrity: Option<(Instant, CheckRecord)>,
-    /// When each damage-triggered rebuild in the recurrence window ran.
+    /// When each damage-triggered rebuild in the recurrence window copied
+    /// its fresh index in. Failed attempts are not counted: a peer holding
+    /// the lock, a full disk or a read-only directory is not recurring
+    /// damage, and the spacing already bounds them.
     damage_rebuilds: VecDeque<Instant>,
-    /// Set when the damage kept coming back: automatic repair is off until
-    /// a requested rebuild succeeds.
-    recurring: bool,
+    /// When a `.previous` copy of a damaged file was last asked for, so a
+    /// streak keeps its first one.
+    copy_kept_at: Option<Instant>,
+    /// Set when the damage kept coming back after repairs, with the
+    /// strength of the check that had found it: automatic repair is off
+    /// until a check that strong passes, a requested rebuild succeeds, or
+    /// the server restarts.
+    recurring: Option<CheckKind>,
+    /// Set when a rebuild failed because the file is too damaged to write
+    /// over: automatic repair is off until a check passes (the file reads
+    /// and is sound again), a requested rebuild succeeds, or the server
+    /// restarts.
+    restart_required: bool,
+    /// One automatic repair allowed past the recurrence limit, granted by a
+    /// requested rebuild that succeeded while at the limit. A requested
+    /// rebuild buys one round, not a fresh count, so answering every stop
+    /// with `rebuild_index` cannot loop the repair on a shared index.
+    grace: bool,
 }
 
 /// One reconciliation sweep, as `index_status` reports it.
@@ -372,9 +396,9 @@ impl IndexHealth {
     }
 
     /// Build from what [`open_vault_checked`](cdno_domain::bootstrap::open_vault_checked)
-    /// returned, keeping what it found at open. Damage found at open counts
-    /// as the first repair of a streak, so its `.previous` copy is the one
-    /// kept.
+    /// returned, keeping what it found at open. Damage repaired at open
+    /// counts as the first repair of a streak (damage found but not
+    /// repaired does not), and its `.previous` copy is the one kept.
     pub fn from_opened(opened: &cdno_domain::bootstrap::OpenedVault) -> Self {
         let health = Self::new(
             opened.store.clone(),
@@ -386,6 +410,9 @@ impl IndexHealth {
             let mut state = health.lock();
             state.damage_at_open = opened.damage_at_open.clone();
             if opened.damage_at_open.is_some() {
+                state.copy_kept_at = Some(Instant::now());
+            }
+            if opened.repaired_at_open {
                 state.damage_rebuilds.push_back(Instant::now());
             }
         }
@@ -426,10 +453,39 @@ impl IndexHealth {
         }
         if !record.ok {
             state.outstanding_damage = state.outstanding_damage.max(Some(kind));
-        } else if state.outstanding_damage.is_none_or(|d| kind >= d) {
-            state.outstanding_damage = None;
+        } else {
+            if state.outstanding_damage.is_none_or(|d| kind >= d) {
+                state.outstanding_damage = None;
+            }
+            // A stop ends by itself when the file is found sound again by a
+            // check as strong as the one that found the damage: another
+            // process repaired it, or what was writing it has stopped.
+            if state.recurring.is_some_and(|found| kind >= found) {
+                state.recurring = None;
+                tracing::info!(
+                    check = ?kind,
+                    "the index checks sound again; automatic index repair resumes"
+                );
+                publish_hint(&state);
+            }
+            // A passing check reads the header, so the file is no longer
+            // too damaged to write over.
+            if state.restart_required {
+                state.restart_required = false;
+                tracing::info!(
+                    check = ?kind,
+                    "the index checks sound again; a restart is no longer needed"
+                );
+                publish_hint(&state);
+            }
         }
         record
+    }
+
+    /// Whether automatic repair is stopped (recurring damage, or a file only
+    /// a restart can replace).
+    fn repair_stopped(&self) -> bool {
+        repair_state(&self.lock()) != RepairState::Automatic
     }
 
     /// The latest `integrity_check`, when it ran less than
@@ -485,14 +541,30 @@ impl IndexHealth {
             CheckKind::QuickCheck
         };
         kind = kind.max(outstanding.unwrap_or(CheckKind::QuickCheck));
-        let check = self.check(kind);
-        if !check.ok {
-            tracing::warn!(
-                problems = ?check.problems,
-                "the index failed its integrity check; rebuilding it from the notes"
-            );
-            self.rebuild_for_damage("the sweep's integrity check failed");
+        let stopped = self.repair_stopped();
+        // Stopped, the thorough check is only there to notice the file has
+        // become sound again, so it keeps the hourly cadence rather than
+        // scanning the whole file on every sweep.
+        if stopped && kind == CheckKind::IntegrityCheck && !integrity_due {
+            return;
         }
+        let check = self.check(kind);
+        if check.ok {
+            return;
+        }
+        if stopped {
+            // Said once, when the stop began; not once per sweep.
+            tracing::debug!(
+                problems = ?check.problems,
+                "the index is still damaged; automatic repair is stopped"
+            );
+            return;
+        }
+        tracing::warn!(
+            problems = ?check.problems,
+            "the index failed its integrity check; rebuilding it from the notes"
+        );
+        self.rebuild_for_damage("the sweep's integrity check failed");
     }
 
     /// A tool call met a corruption error: run the thorough check now and
@@ -501,9 +573,15 @@ impl IndexHealth {
         // A client retrying in a loop sends a signal per call; one full
         // scan a minute answers them all.
         if self.recent_integrity().is_some() {
-            if self.lock().outstanding_damage.is_some() {
+            if self.lock().outstanding_damage.is_some() && !self.repair_stopped() {
                 self.rebuild_for_damage("a tool call met a damaged index");
             }
+            return;
+        }
+        if self.repair_stopped() {
+            // Nothing this signal could start; the stop was said when it
+            // began, and the sweep notices when the file is sound again.
+            tracing::debug!("a tool call met a damaged index; automatic repair is stopped");
             return;
         }
         let check = self.check(CheckKind::IntegrityCheck);
@@ -552,8 +630,9 @@ impl IndexHealth {
     /// rebuild is running or the last finished less than the policy's
     /// spacing ago. It runs whatever the recurrence count says: the person
     /// asked. A rebuild that runs and fails is still `Ok`: its record says
-    /// why, and the old index stays live. One that succeeds ends a
-    /// recurring-damage stop. Blocking.
+    /// why, and the old index stays live. One that succeeds ends a stop;
+    /// the count of earlier repairs stays, and at the limit it allows one
+    /// further automatic repair before the next stop. Blocking.
     pub fn rebuild(&self, trigger: &str) -> Result<RebuildRecord, RebuildRefused> {
         self.run_rebuild(trigger, Trigger::Requested)
     }
@@ -582,34 +661,34 @@ impl IndexHealth {
                 state.damage_rebuilds.pop_front();
             }
             if who == Trigger::Damage {
-                if state.recurring {
-                    return Err(RebuildRefused::DamageRecurring);
-                }
-                if state
-                    .last_rebuild
-                    .as_ref()
-                    .is_some_and(|r| r.restart_required)
-                {
+                if state.restart_required {
                     return Err(RebuildRefused::RestartRequired);
                 }
-                if state.damage_rebuilds.len() >= self.policy.recurrence_limit {
-                    state.recurring = true;
-                    tracing::error!(
-                        rebuilds = state.damage_rebuilds.len(),
-                        window_secs = window.as_secs(),
-                        index_path = %self.sqlite.path().display(),
-                        "automatic index repair stopped: {DAMAGE_RECURRING_ADVICE}"
-                    );
-                    publish_hint(&state);
+                if state.recurring.is_some() {
                     return Err(RebuildRefused::DamageRecurring);
                 }
+                if state.damage_rebuilds.len() >= self.policy.recurrence_limit {
+                    if state.grace {
+                        state.grace = false;
+                    } else {
+                        state.recurring =
+                            Some(state.outstanding_damage.unwrap_or(CheckKind::QuickCheck));
+                        tracing::error!(
+                            repairs = state.damage_rebuilds.len(),
+                            window_secs = window.as_secs(),
+                            index_path = %self.sqlite.path().display(),
+                            "automatic index repair stopped: {DAMAGE_RECURRING_ADVICE}"
+                        );
+                        publish_hint(&state);
+                        return Err(RebuildRefused::DamageRecurring);
+                    }
+                }
             }
-            // The first repair of a streak keeps its copy of the damaged
-            // file; later ones would overwrite that evidence with a copy
-            // of the re-damage.
-            let first_of_streak = state.damage_rebuilds.is_empty();
-            if who == Trigger::Damage {
-                state.damage_rebuilds.push_back(Instant::now());
+            // The first copy of a streak is kept; later ones would overwrite
+            // that evidence with a copy of the re-damage.
+            let first_of_streak = state.copy_kept_at.is_none_or(|at| at.elapsed() >= window);
+            if first_of_streak && state.outstanding_damage.is_some() {
+                state.copy_kept_at = Some(Instant::now());
             }
             first_of_streak
         };
@@ -637,9 +716,19 @@ impl IndexHealth {
                     // A thorough check of the replaced file says nothing
                     // about the new one.
                     state.last_integrity = None;
-                    if who == Trigger::Requested {
-                        state.recurring = false;
-                        state.damage_rebuilds.clear();
+                    state.restart_required = false;
+                    match who {
+                        // Only a repair that copied in counts towards the
+                        // recurrence limit.
+                        Trigger::Damage => state.damage_rebuilds.push_back(Instant::now()),
+                        // The person's rebuild ends a stop, but keeps the
+                        // history: at the limit it buys one more automatic
+                        // repair, not a fresh count.
+                        Trigger::Requested => {
+                            state.recurring = None;
+                            state.grace =
+                                state.damage_rebuilds.len() >= self.policy.recurrence_limit;
+                        }
                     }
                 }
                 RebuildRecord {
@@ -667,6 +756,9 @@ impl IndexHealth {
             },
         };
         let mut state = self.lock();
+        if record.restart_required {
+            state.restart_required = true;
+        }
         state.last_rebuild = Some(record.clone());
         state.last_rebuild_at = Some(Instant::now());
         publish_hint(&state);
@@ -690,7 +782,7 @@ impl IndexHealth {
         let state = self.lock();
         let repair = repair_state(&state);
         IndexStatus {
-            healthy: check.ok && state.outstanding_damage.is_none() && !state.recurring,
+            healthy: check.ok && state.outstanding_damage.is_none() && state.recurring.is_none(),
             repair,
             advice: match repair {
                 RepairState::Automatic => None,
@@ -703,10 +795,7 @@ impl IndexHealth {
                 .filter(|at| at.elapsed() < self.policy.recurrence_window)
                 .count(),
             index_path: self.sqlite.path().display().to_string(),
-            restart_required: state
-                .last_rebuild
-                .as_ref()
-                .is_some_and(|r| r.restart_required),
+            restart_required: state.restart_required,
             notes_not_indexed: state.last_sweep.as_ref().map_or(0, |s| s.errors),
             check,
             last_sweep: state.last_sweep.clone(),
@@ -768,13 +857,9 @@ impl IndexHealth {
 }
 
 fn repair_state(state: &State) -> RepairState {
-    if state
-        .last_rebuild
-        .as_ref()
-        .is_some_and(|r| r.restart_required)
-    {
+    if state.restart_required {
         RepairState::RestartRequired
-    } else if state.recurring {
+    } else if state.recurring.is_some() {
         RepairState::DamageRecurring
     } else {
         RepairState::Automatic
