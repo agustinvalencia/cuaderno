@@ -124,9 +124,11 @@ CUADERNO_INDEX_PATH=/var/lib/cuaderno/surrogate-model.db \
 ```
 
 - **One file per vault.** An overridden index records the vault it belongs to, and opening it for a
-  different vault is refused with an error that names both. To give the file to another vault on
-  purpose, run [`cdno reindex`](../reference/cli/reindex.md) in that vault: it rebuilds the file for
-  it, discarding the other vault's index, and says so.
+  different vault is refused with an error that names both; so is a plain `cdno reindex` there. To
+  give the file to another vault on purpose, first stop whatever serves the vault it belongs to,
+  then run [`cdno reindex --rebind`](../reference/cli/reindex.md) in the other vault: it rebuilds
+  the file for that vault, discarding the old vault's index, and says so. Where only the server is
+  installed, delete the file instead.
 - **Persistent storage, in a directory the process owns.** SQLite's `-wal` and `-shm` files, and any
   file a rebuild writes, are created beside the database file, so its directory must be writable
   and must not be a single file mounted on its own. A missing parent directory is created. An index
@@ -138,8 +140,9 @@ CUADERNO_INDEX_PATH=/var/lib/cuaderno/surrogate-model.db \
 - **The value must be absolute.** A relative value is refused rather than resolved against the vault
   or the working directory. `cdno` does not expand `~`, so write `$HOME` (or an unquoted `~`, which
   the shell expands first). An empty value counts as unset. A value naming a directory (or ending
-  in `/`) and one naming a note (`.md`, `.typ`) are refused, and a file at the path that is not an
-  index is never replaced: cuaderno refuses rather than delete it.
+  in `/`) and one naming a note (`.md`, `.typ`) are refused. A file already at the path that
+  cuaderno did not create as its index (any other file, another application's SQLite database
+  included) is never opened for writing or deleted: cuaderno refuses instead.
 - **It is not a `config.toml` key**, on purpose: the config travels with the vault, and this
   setting has to differ from one machine to the next.
 

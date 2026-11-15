@@ -38,11 +38,14 @@ value that cannot be that file is refused before anything is opened:
   `index.db`.
 - **"names a note file"**: the value ends in `.md` or `.typ`. It is almost certainly a mistyped
   path; an index never has a note's extension.
-- **"refusing to replace … it is not an index database"**: a file already exists at the path and is
-  not an index. Nothing was deleted. Point the variable at a new file, or move that file away.
+- **"refusing to use … it is not a cuaderno index"**: a file already exists at the path and is not
+  one cuaderno created as its index; it may be another application's database. Nothing was opened
+  for writing or deleted. Point the variable at a new file, or move that file away.
 - **"belongs to the vault at …"**: the file is another vault's index. Each vault needs its own
   file; set the variable only for the process that serves this vault. To give the file to this vault
-  on purpose, run `cdno reindex` here, which rebuilds it and discards the other vault's index.
+  on purpose, first stop whatever serves the vault it belongs to, then run `cdno reindex --rebind`
+  here, which rebuilds it and discards the other vault's index. Where only the server is installed,
+  delete the file instead; the next start rebuilds it.
 
 See [Keeping the index on each machine](../concepts/vault-structure.md#keeping-the-index-on-each-machine).
 

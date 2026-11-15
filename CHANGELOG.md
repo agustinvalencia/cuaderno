@@ -20,10 +20,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   file, and the HTTP server's git checkpoints exclude an index the override places inside the
   vault. It is deliberately not a `config.toml` key, since the config travels with the vault.
   An overridden index records the vault it belongs to (index schema 5, a new `index_meta` table)
-  and refuses to open for another vault, naming both; `cdno reindex` rebuilds it for the current
-  vault, which is the one way to rebind it, and prints the file it rebuilt. At an overridden path
-  a file that is not an index is never deleted by the self-heal or `reindex`, and a value ending
-  in `/` or naming a `.md` or `.typ` file is refused. The override stops the damage, not the
+  and refuses to open for another vault, naming both, as does a plain `cdno reindex` there;
+  `cdno reindex --rebind` rebuilds it for the current vault, which is the one way to rebind it.
+  `reindex` prints the overridden file it rebuilt. At an overridden path, a file cuaderno did not
+  create as its index (another application's SQLite database included) is never opened for
+  writing or deleted, and a value ending in `/` or naming a `.md` or `.typ` file is refused. The override stops the damage, not the
   staleness: each side sees the other's writes when it next reconciles.
 
 ## [0.45.0] - 2026-11-09

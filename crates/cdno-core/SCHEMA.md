@@ -286,7 +286,11 @@ Its one key is `vault_root`: an index opened at an overridden location
 (`CUADERNO_INDEX_PATH`, `--index-path`) records the canonical root of the vault
 it belongs to, and `SqliteIndex::open_location` refuses, read-only, an open for
 any other vault. An overridden index that records none is bound on first use;
-`cdno reindex` deletes and rebuilds the file, which rebinds it. An index at the
+`cdno reindex --rebind` deletes and rebuilds the file, which rebinds it (a
+plain `reindex` in another vault is refused). The bind is one immediate
+transaction, `INSERT OR IGNORE` then a read back, so two processes binding one
+file for different vaults cannot both succeed, and an index already bound to
+the vault is opened with no write for it. An index at the
 default `.cuaderno/index.db` records nothing and is never checked, since a
 vault can legitimately be reached under two paths.
 
