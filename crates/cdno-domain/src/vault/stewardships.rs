@@ -26,6 +26,7 @@ use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
+use cdno_core::store::VaultStore;
 use cdno_core::template::VariableContext;
 
 use crate::error::DomainError;
@@ -89,6 +90,64 @@ pub struct StewardshipSummary {
     /// arithmetic on a `bigint`-typed value that is really a number throws
     /// `TypeError: Cannot mix BigInt` (#440).
     pub staleness_days: Option<i64>,
+}
+
+/// One [`StewardshipSummary`] per stewardship note in `stewardship_paths`,
+/// with the tracking notes in `tracking_paths` counted against them, sorted
+/// by slug: the fold behind [`Vault::list_stewardships`], and behind the same
+/// answer read from the files by [`crate::Catalog`].
+pub(in crate::vault) fn stewardship_summaries(
+    store: &dyn VaultStore,
+    stewardship_paths: Vec<VaultPath>,
+    tracking_paths: &[VaultPath],
+    today: NaiveDate,
+) -> Result<Vec<StewardshipSummary>, DomainError> {
+    // Single pass over tracking: bucket by the `stewardship`
+    // field of each note's frontmatter, which is the canonical
+    // grouping key (robust against hand-edited filenames).
+    let mut by_stewardship: HashMap<String, (usize, Option<NaiveDate>)> = HashMap::new();
+    for path in tracking_paths {
+        let raw = store.read_file(path)?;
+        // Markdown on purpose: stewardship notes are machine-written Markdown.
+        let (fm, _body) = Frontmatter::parse(&raw)?;
+        let tf = TrackingFrontmatter::try_from(fm)?;
+        let bucket = by_stewardship
+            .entry(tf.stewardship.clone())
+            .or_insert((0, None));
+        bucket.0 += 1;
+        bucket.1 = Some(match bucket.1 {
+            Some(prev) => prev.max(tf.date),
+            None => tf.date,
+        });
+    }
+
+    let mut out = Vec::with_capacity(stewardship_paths.len());
+    for path in stewardship_paths {
+        let raw = store.read_file(&path)?;
+        // Markdown on purpose: stewardship notes are machine-written Markdown.
+        let (fm, body) = Frontmatter::parse(&raw)?;
+        let sf = StewardshipFrontmatter::try_from(fm)?;
+        let slug = stewardship_slug_from_path(&path);
+        let variant = stewardship_variant_from_path(&path);
+        // Flat stewardships have no tracking subdir; report zero
+        // even if a defensive bucket somehow exists.
+        let (tracking_count, last_tracking_date) = match variant {
+            StewardshipVariant::Flat => (0, None),
+            StewardshipVariant::Expanded => by_stewardship.get(&slug).copied().unwrap_or((0, None)),
+        };
+        let staleness_days = last_tracking_date.map(|d| (today - d).num_days());
+        out.push(StewardshipSummary {
+            slug,
+            name: extract_h1(body),
+            context: sf.context,
+            variant,
+            tracking_count,
+            last_tracking_date,
+            staleness_days,
+        });
+    }
+    out.sort_by(|a, b| a.slug.cmp(&b.slug));
+    Ok(out)
 }
 
 impl Vault {
@@ -417,57 +476,12 @@ impl Vault {
         &self,
         today: NaiveDate,
     ) -> Result<Vec<StewardshipSummary>, DomainError> {
-        let stewardship_entries = self.index.list_by_type(NoteType::Stewardship.as_str())?;
-        let tracking_entries = self.index.list_by_type(NoteType::Tracking.as_str())?;
-
-        // Single pass over tracking: bucket by the `stewardship`
-        // field of each note's frontmatter, which is the canonical
-        // grouping key (robust against hand-edited filenames).
-        let mut by_stewardship: HashMap<String, (usize, Option<NaiveDate>)> = HashMap::new();
-        for entry in &tracking_entries {
-            let raw = self.store.read_file(&entry.path)?;
-            // Markdown on purpose: stewardship notes are machine-written Markdown.
-            let (fm, _body) = Frontmatter::parse(&raw)?;
-            let tf = TrackingFrontmatter::try_from(fm)?;
-            let bucket = by_stewardship
-                .entry(tf.stewardship.clone())
-                .or_insert((0, None));
-            bucket.0 += 1;
-            bucket.1 = Some(match bucket.1 {
-                Some(prev) => prev.max(tf.date),
-                None => tf.date,
-            });
-        }
-
-        let mut out = Vec::with_capacity(stewardship_entries.len());
-        for s_entry in stewardship_entries {
-            let raw = self.store.read_file(&s_entry.path)?;
-            // Markdown on purpose: stewardship notes are machine-written Markdown.
-            let (fm, body) = Frontmatter::parse(&raw)?;
-            let sf = StewardshipFrontmatter::try_from(fm)?;
-            let slug = stewardship_slug_from_path(&s_entry.path);
-            let variant = stewardship_variant_from_path(&s_entry.path);
-            // Flat stewardships have no tracking subdir; report zero
-            // even if a defensive bucket somehow exists.
-            let (tracking_count, last_tracking_date) = match variant {
-                StewardshipVariant::Flat => (0, None),
-                StewardshipVariant::Expanded => {
-                    by_stewardship.get(&slug).copied().unwrap_or((0, None))
-                }
-            };
-            let staleness_days = last_tracking_date.map(|d| (today - d).num_days());
-            out.push(StewardshipSummary {
-                slug,
-                name: extract_h1(body),
-                context: sf.context,
-                variant,
-                tracking_count,
-                last_tracking_date,
-                staleness_days,
-            });
-        }
-        out.sort_by(|a, b| a.slug.cmp(&b.slug));
-        Ok(out)
+        stewardship_summaries(
+            &*self.store,
+            self.indexed_paths(NoteType::Stewardship)?,
+            &self.indexed_paths(NoteType::Tracking)?,
+            today,
+        )
     }
 }
 

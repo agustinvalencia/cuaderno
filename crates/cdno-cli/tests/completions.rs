@@ -29,6 +29,9 @@ fn cdno() -> Command {
     // Hermetic: don't inherit the developer's ambient CUADERNO_VAULT_PATH
     // so a stray shell export can't route a test at the real vault.
     cmd.env_remove("CUADERNO_VAULT_PATH");
+    // Likewise the index location (#998): the tests below assert on
+    // `.cuaderno/index.db` and must find it there.
+    cmd.env_remove("CUADERNO_INDEX_PATH");
     cmd
 }
 
@@ -552,4 +555,485 @@ fn completion_in_a_skewed_vault_prints_nothing_on_stderr() {
         .success();
     let stderr = std::str::from_utf8(&output.get_output().stderr).unwrap();
     assert_eq!(stderr, "", "completion printed on stderr");
+}
+
+// ---------------------------------------------------------------------
+// Completion never writes (#1007).
+//
+// A Tab press re-invokes the binary. Opening the index from there would
+// migrate and reconcile it, and SQLite would checkpoint and remove the
+// `-wal`/`-shm` files on exit, under any server holding them. The
+// completers read the notes on disk instead.
+// ---------------------------------------------------------------------
+
+/// The cursor index and words of one invocation per completer.
+const COMPLETERS: &[(&str, &[&str])] = &[
+    // complete_active_project
+    ("4", &["cdno", "action", "start", "--project", ""]),
+    // complete_any_project
+    ("4", &["cdno", "action", "add", "--project", ""]),
+    // complete_reactivatable_project
+    ("4", &["cdno", "project", "activate", "--slug", ""]),
+    // complete_note_type
+    ("3", &["cdno", "templates", "vars", ""]),
+    // complete_portfolio
+    ("4", &["cdno", "portfolio", "show", "--portfolio", ""]),
+    // complete_stewardship
+    ("4", &["cdno", "track", "gym", "--stewardship", ""]),
+    // complete_question
+    ("4", &["cdno", "question", "park", "--slug", ""]),
+    // complete_note_ref
+    ("2", &["cdno", "open", ""]),
+];
+
+/// A bound on every completion subprocess, so a regression that blocks (on
+/// the write lock, say) fails the test instead of hanging it.
+const COMPLETION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Run one completion request from `dir` and return its stdout.
+fn complete(dir: &std::path::Path, index: &str, words: &[&str]) -> String {
+    let output = cdno()
+        .current_dir(dir)
+        .env("COMPLETE", "zsh")
+        .env("_CLAP_COMPLETE_INDEX", index)
+        .arg("--")
+        .args(words)
+        .timeout(COMPLETION_TIMEOUT)
+        .assert()
+        .success();
+    String::from_utf8(output.get_output().stdout.clone()).unwrap()
+}
+
+/// The candidates a zsh completion offers, in the order it offers them, as
+/// `(value, help)`: each line is `value` or `value:help`, with a literal `:`
+/// in the value escaped. The flags clap offers beside a positional's values
+/// are left out.
+fn candidates(stdout: &str) -> Vec<(String, Option<String>)> {
+    stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let mut value = String::new();
+            let mut help = None;
+            let mut chars = l.chars();
+            while let Some(c) = chars.next() {
+                match c {
+                    '\\' => value.extend(chars.next()),
+                    ':' => {
+                        help = Some(chars.by_ref().collect());
+                        break;
+                    }
+                    c => value.push(c),
+                }
+            }
+            (value, help)
+        })
+        .filter(|(v, _)| !v.starts_with('-'))
+        .collect()
+}
+
+/// The values of [`candidates`], as a set.
+fn values(stdout: &str) -> std::collections::BTreeSet<String> {
+    candidates(stdout).into_iter().map(|(v, _)| v).collect()
+}
+
+/// A vault with something for every completer: active, parked and closed
+/// projects, a portfolio, an expanded stewardship, a question, a custom note
+/// type, and concept notes in Markdown and in Typst. Two hand-made maps,
+/// `projects/a-b.md` and `projects/a/c.md`, are a pair the path's text and
+/// its components order differently, so the active order is pinned.
+fn vault_for_every_completer() -> tempfile::TempDir {
+    let vault = init_vault();
+    let run = |args: &[&str]| {
+        cdno()
+            .current_dir(vault.path())
+            .arg("--no-interactive")
+            .args(args)
+            .assert()
+            .success();
+    };
+    for title in ["Surrogate Model", "Old Initiative", "Finished Thing"] {
+        run(&["project", "create", "--title", title, "--context", "work"]);
+    }
+    run(&["project", "park", "--slug", "old-initiative"]);
+    run(&["project", "drop", "--slug", "finished-thing", "--drop-open"]);
+    run(&[
+        "portfolio",
+        "create",
+        "--question",
+        "Why does the surrogate plateau?",
+    ]);
+    run(&[
+        "stewardship",
+        "create",
+        "--name",
+        "Health",
+        "--context",
+        "personal",
+        "--tracking",
+    ]);
+    run(&[
+        "question",
+        "create",
+        "--domain",
+        "research",
+        "--text",
+        "How accurate can a surrogate get?",
+    ]);
+    let cfg = vault.path().join(".cuaderno/config.toml");
+    let mut content = std::fs::read_to_string(&cfg).unwrap();
+    content.push_str("\n[note_types.person]\nfolder = \"people\"\n");
+    std::fs::write(&cfg, content).unwrap();
+
+    let root = vault.path();
+    let map = std::fs::read_to_string(root.join("projects/surrogate-model.md")).unwrap();
+    std::fs::create_dir_all(root.join("projects/a")).unwrap();
+    std::fs::write(root.join("projects/a-b.md"), &map).unwrap();
+    std::fs::write(root.join("projects/a/c.md"), &map).unwrap();
+    std::fs::create_dir_all(root.join("concepts")).unwrap();
+    std::fs::write(
+        root.join("concepts/surrogate-trick.md"),
+        "---\ntype: concept\ncreated: 2026-07-13\n---\n# Surrogate trick\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("concepts/bias-variance-split.typ"),
+        "#metadata((type: \"concept\", created: \"2026-07-13\")) <cdno>\n\n= Bias variance split\n",
+    )
+    .unwrap();
+    vault
+}
+
+/// Every file under `.cuaderno/`, relative to the vault root, sorted.
+fn cuaderno_files(root: &std::path::Path) -> Vec<String> {
+    fn walk(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, root, out);
+            } else {
+                out.push(path.strip_prefix(root).unwrap().display().to_string());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&root.join(".cuaderno"), root, &mut out);
+    out.sort();
+    out
+}
+
+/// The bytes and mtime of a file, or `None` when it does not exist.
+fn file_state(path: &std::path::Path) -> Option<(Vec<u8>, std::time::SystemTime)> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((std::fs::read(path).unwrap(), meta.modified().unwrap()))
+}
+
+#[test]
+fn completion_in_a_vault_without_an_index_creates_nothing() {
+    let vault = vault_for_every_completer();
+    let cuaderno = vault.path().join(".cuaderno");
+    for name in ["index.db", "index.db-wal", "index.db-shm"] {
+        let _ = std::fs::remove_file(cuaderno.join(name));
+    }
+    let before = cuaderno_files(vault.path());
+    assert!(!before.iter().any(|p| p.contains("index.db")), "{before:?}");
+
+    let mut offered = std::collections::BTreeSet::new();
+    for (index, words) in COMPLETERS {
+        offered.extend(values(&complete(vault.path(), index, words)));
+        assert_eq!(
+            cuaderno_files(vault.path()),
+            before,
+            "completing {words:?} created or removed a file under .cuaderno/"
+        );
+    }
+    // Answered from the files: no index was there to answer from.
+    for slug in [
+        "surrogate-model",
+        "old-initiative",
+        "finished-thing",
+        "why-does-the-surrogate-plateau",
+        "health",
+        "how-accurate-can-a-surrogate-get",
+        "person",
+        "surrogate-trick",
+        "bias-variance-split",
+    ] {
+        assert!(offered.contains(slug), "{slug} not offered: {offered:?}");
+    }
+}
+
+#[test]
+fn completion_in_a_vault_without_a_config_creates_nothing() {
+    // A `.cuaderno/` marker and no `config.toml`: the default config is
+    // used, and none is written.
+    let vault = tempdir().unwrap();
+    std::fs::create_dir(vault.path().join(".cuaderno")).unwrap();
+    std::fs::create_dir(vault.path().join("projects")).unwrap();
+    std::fs::write(
+        vault.path().join("projects/surrogate-model.md"),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-07-13\n---\n\
+         # Surrogate model\n",
+    )
+    .unwrap();
+
+    let mut offered = std::collections::BTreeSet::new();
+    for (index, words) in COMPLETERS {
+        offered.extend(values(&complete(vault.path(), index, words)));
+    }
+    assert!(
+        cuaderno_files(vault.path()).is_empty(),
+        "a completion wrote under .cuaderno/: {:?}",
+        cuaderno_files(vault.path())
+    );
+    assert!(offered.contains("surrogate-model"), "{offered:?}");
+}
+
+#[test]
+fn completion_never_resolves_an_overridden_index() {
+    // `CUADERNO_INDEX_PATH` moves the index out of the vault (#998); a
+    // completion opens no index, so it creates nothing there either.
+    let vault = vault_for_every_completer();
+    let elsewhere = tempdir().unwrap();
+    let index = elsewhere.path().join("index.db");
+    let before = cuaderno_files(vault.path());
+    for (cursor, words) in COMPLETERS {
+        cdno()
+            .current_dir(vault.path())
+            .env("CUADERNO_INDEX_PATH", &index)
+            .env("COMPLETE", "zsh")
+            .env("_CLAP_COMPLETE_INDEX", cursor)
+            .arg("--")
+            .args(*words)
+            .timeout(COMPLETION_TIMEOUT)
+            .assert()
+            .success();
+    }
+    assert_eq!(
+        std::fs::read_dir(elsewhere.path()).unwrap().count(),
+        0,
+        "a completion created a file at the overridden index location"
+    );
+    assert_eq!(cuaderno_files(vault.path()), before);
+}
+
+#[test]
+fn completion_leaves_a_live_index_its_sidecars_and_the_lock_untouched() {
+    let vault = vault_for_every_completer();
+    // A verb that opens the index leaves it, and the lock, behind.
+    cdno()
+        .current_dir(vault.path())
+        .args(["search", "surrogate"])
+        .assert()
+        .success();
+    // A map written by hand since that verb ran: the old completers would
+    // have reconciled it into the index, a write.
+    let map = std::fs::read_to_string(vault.path().join("projects/surrogate-model.md")).unwrap();
+    std::fs::write(vault.path().join("projects/hand-written.md"), map).unwrap();
+
+    // A live connection, as a long-lived server holds one: WAL mode, no
+    // automatic checkpoint, and a committed write that is in the `-wal`
+    // only. So `-wal` and `-shm` exist while the completions run, and a
+    // process that checkpointed, or removed them as the last connection it
+    // could see, would change them.
+    let cuaderno = vault.path().join(".cuaderno");
+    let conn = rusqlite::Connection::open(cuaderno.join("index.db")).unwrap();
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode, "wal");
+    conn.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE completion_probe (x INTEGER); INSERT INTO completion_probe VALUES (7);",
+    )
+    .unwrap();
+
+    let watched = ["index.db", "index.db-wal", "index.db-shm", ".lock"];
+    let states: Vec<_> = watched
+        .iter()
+        .map(|name| file_state(&cuaderno.join(name)))
+        .collect();
+    for (name, state) in watched.iter().zip(&states) {
+        assert!(
+            state.is_some(),
+            "{name} exists while the connection is live"
+        );
+    }
+    assert!(
+        !states[1].as_ref().unwrap().0.is_empty(),
+        "the write is in the -wal"
+    );
+    let before = cuaderno_files(vault.path());
+
+    let mut offered = std::collections::BTreeSet::new();
+    for (index, words) in COMPLETERS {
+        offered.extend(values(&complete(vault.path(), index, words)));
+    }
+
+    for (name, state) in watched.iter().zip(&states) {
+        assert!(
+            &file_state(&cuaderno.join(name)) == state,
+            "{name} was removed, or its bytes or mtime changed"
+        );
+    }
+    assert_eq!(cuaderno_files(vault.path()), before);
+    // The live connection still reads its own uncheckpointed write.
+    let x: i64 = conn
+        .query_row("SELECT x FROM completion_probe", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(x, 7);
+    drop(conn);
+    assert!(
+        offered.contains("hand-written"),
+        "a map on disk is offered without reconciling it: {offered:?}"
+    );
+}
+
+/// The vault the completers' answers are compared against: opened,
+/// migrated and reconciled the ordinary way, as the completers opened it
+/// before #1007. The domain's `open_vault` opens the index at its default
+/// location and never reads `CUADERNO_INDEX_PATH`, so the reference does not
+/// depend on the test process's environment (which `.cargo/config.toml`
+/// also blanks).
+fn reference_vault(root: &std::path::Path) -> cdno_domain::Vault {
+    cdno_domain::bootstrap::open_vault(root)
+        .expect("open vault")
+        .vault
+}
+
+/// What each of [`COMPLETERS`] offered before #1007, as sets, computed as it
+/// was, from [`reference_vault`].
+fn reference_values(root: &std::path::Path) -> Vec<std::collections::BTreeSet<String>> {
+    use std::collections::BTreeSet;
+    let vault = reference_vault(root);
+    let today = chrono::Local::now().date_naive();
+    let stem = |p: &cdno_core::path::VaultPath| {
+        p.as_path()
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    };
+    let active: BTreeSet<String> = vault
+        .active_projects()
+        .unwrap()
+        .iter()
+        .map(|(p, _)| stem(p))
+        .collect();
+    let parked: BTreeSet<String> = vault
+        .parked_projects()
+        .unwrap()
+        .iter()
+        .map(|(p, _)| stem(p))
+        .collect();
+    let closed: BTreeSet<String> = vault
+        .closed_projects()
+        .unwrap()
+        .iter()
+        .map(|(p, _)| stem(p))
+        .collect();
+    let mut notes: BTreeSet<String> = ["today", "yesterday", "tomorrow"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    notes.extend(
+        vault
+            .list_note_candidates()
+            .unwrap()
+            .iter()
+            .map(|c| cdno_cli::commands::open::slug_of(&c.path)),
+    );
+    vec![
+        active.clone(),
+        active.union(&parked).cloned().collect(),
+        parked.union(&closed).cloned().collect(),
+        vault
+            .type_registry()
+            .all_names()
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        vault
+            .list_portfolios(today)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.slug)
+            .collect(),
+        vault
+            .list_stewardships(today)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.slug)
+            .collect(),
+        vault
+            .list_questions()
+            .unwrap()
+            .into_iter()
+            .map(|q| q.slug)
+            .collect(),
+        notes,
+    ]
+}
+
+#[test]
+fn each_completer_offers_what_a_reconciled_vault_lists() {
+    let vault = vault_for_every_completer();
+    let offered: Vec<_> = COMPLETERS
+        .iter()
+        .map(|(index, words)| values(&complete(vault.path(), index, words)))
+        .collect();
+    let expected = reference_values(vault.path());
+    for ((_, words), (got, want)) in COMPLETERS.iter().zip(offered.iter().zip(&expected)) {
+        assert!(!want.is_empty(), "the fixture gives {words:?} something");
+        assert_eq!(got, want, "completing {words:?}");
+    }
+}
+
+#[test]
+fn project_completers_keep_the_order_and_labels_of_a_reconciled_vault() {
+    let vault = vault_for_every_completer();
+    let stem = |p: &cdno_core::path::VaultPath| {
+        p.as_path()
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    // Active maps keep the index's order: `SqliteIndex` orders `path` by
+    // its bytes, so `projects/a-b.md` comes before `projects/a/c.md`.
+    let (index, words) = COMPLETERS[0];
+    let got: Vec<String> = candidates(&complete(vault.path(), index, words))
+        .into_iter()
+        .map(|(v, _)| v)
+        .collect();
+    let reference = reference_vault(vault.path());
+    let want: Vec<String> = reference
+        .active_projects()
+        .unwrap()
+        .iter()
+        .map(|(p, _)| stem(p))
+        .collect();
+    assert_eq!(got, want, "active project order");
+    let a_b = got.iter().position(|s| s == "a-b").unwrap();
+    let c = got.iter().position(|s| s == "c").unwrap();
+    assert!(a_b < c, "{got:?}");
+
+    // `project activate`: parked then closed, each with its label.
+    let (index, words) = COMPLETERS[2];
+    let got = candidates(&complete(vault.path(), index, words));
+    let mut want: Vec<(String, Option<String>)> = reference
+        .parked_projects()
+        .unwrap()
+        .iter()
+        .map(|(p, _)| (stem(p), Some("parked".to_owned())))
+        .collect();
+    want.extend(
+        reference
+            .closed_projects()
+            .unwrap()
+            .iter()
+            .map(|(p, fm)| (stem(p), Some(fm.status.as_str().to_owned()))),
+    );
+    assert_eq!(got, want, "project activate candidates");
 }

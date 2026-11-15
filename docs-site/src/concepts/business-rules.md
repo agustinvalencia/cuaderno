@@ -13,8 +13,9 @@ the files. You can delete `index.db` at any time, or rebuild it explicitly with
 
 ## Startup reconciliation
 
-On every CLI invocation (except [`cdno now`](../reference/cli/now.md), which reads only the daily log
-and never opens the index), MCP session, and app launch, Cuaderno reconciles the index against the
+On every CLI invocation (except [`cdno now`](../reference/cli/now.md), which reads only the daily log,
+and [shell completion](../reference/cli/completions.md#what-a-tab-press-reads), which reads the
+note files; neither opens the index), MCP session, and app launch, Cuaderno reconciles the index against the
 filesystem — comparing modification times and content hashes — and quietly repairs anything stale
 before doing your command. This is why edits you make to notes by hand (in your editor, via sync)
 are picked up without a manual reindex.

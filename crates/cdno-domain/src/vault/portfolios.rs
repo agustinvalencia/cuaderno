@@ -17,6 +17,7 @@ use cdno_core::extractors::first_h1;
 use cdno_core::frontmatter::{Frontmatter, parse_note};
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
+use cdno_core::store::VaultStore;
 use cdno_core::template::VariableContext;
 use cdno_core::transaction::VaultTransaction;
 
@@ -79,6 +80,57 @@ const PROJECT_LINKS_SECTION: &str = "Links";
 /// The placeholder the project template ships in `## Links`. Treated as
 /// empty so the first portfolio link replaces it rather than trailing it.
 const PROJECT_LINKS_PLACEHOLDER: &str = "- Portfolio: (none yet)";
+
+/// One [`PortfolioSummary`] per portfolio note in `portfolio_paths`, with
+/// the evidence notes in `evidence_paths` counted against them, sorted by
+/// slug: the fold behind [`Vault::list_portfolios`], and behind the same
+/// answer read from the files by [`crate::Catalog`].
+pub(in crate::vault) fn portfolio_summaries(
+    store: &dyn VaultStore,
+    portfolio_paths: Vec<VaultPath>,
+    evidence_paths: &[VaultPath],
+    today: NaiveDate,
+) -> Result<Vec<PortfolioSummary>, DomainError> {
+    // Single pass over evidence: bucket by the `portfolio` field
+    // of each note's frontmatter. The field is required on
+    // evidence (design §5.5), so this is the canonical grouping
+    // key — robust against hand-edited filenames that don't follow
+    // the `<date>-<slug>` convention.
+    let mut by_portfolio: HashMap<String, (usize, Option<NaiveDate>)> = HashMap::new();
+    for path in evidence_paths {
+        let raw = store.read_file(path)?;
+        let (fm, _body) = parse_note(path, &raw)?;
+        let ef = EvidenceFrontmatter::try_from(fm)?;
+        let bucket = by_portfolio
+            .entry(ef.portfolio.clone())
+            .or_insert((0, None));
+        bucket.0 += 1;
+        bucket.1 = Some(match bucket.1 {
+            Some(prev) => prev.max(ef.created),
+            None => ef.created,
+        });
+    }
+
+    let mut out = Vec::with_capacity(portfolio_paths.len());
+    for path in portfolio_paths {
+        let slug = portfolio_slug_from_path(&path);
+        let raw = store.read_file(&path)?;
+        // Markdown on purpose: question and portfolio notes are machine-written Markdown.
+        let (fm, _body) = Frontmatter::parse(&raw)?;
+        let pf = PortfolioFrontmatter::try_from(fm)?;
+        let (evidence_count, last_updated) = by_portfolio.get(&slug).copied().unwrap_or((0, None));
+        let staleness_days = last_updated.map(|d| (today - d).num_days());
+        out.push(PortfolioSummary {
+            slug,
+            question: pf.question,
+            evidence_count,
+            last_updated,
+            staleness_days,
+        });
+    }
+    out.sort_by(|a, b| a.slug.cmp(&b.slug));
+    Ok(out)
+}
 
 impl Vault {
     /// Create a new portfolio at `portfolios/<slug>/_index.md` from
@@ -683,49 +735,12 @@ impl Vault {
     /// error rather than being silently skipped — lint is the place to
     /// surface partial-coverage warnings.
     pub fn list_portfolios(&self, today: NaiveDate) -> Result<Vec<PortfolioSummary>, DomainError> {
-        let portfolio_entries = self.index.list_by_type(NoteType::Portfolio.as_str())?;
-        let evidence_entries = self.index.list_by_type(NoteType::Evidence.as_str())?;
-
-        // Single pass over evidence: bucket by the `portfolio` field
-        // of each note's frontmatter. The field is required on
-        // evidence (design §5.5), so this is the canonical grouping
-        // key — robust against hand-edited filenames that don't follow
-        // the `<date>-<slug>` convention.
-        let mut by_portfolio: HashMap<String, (usize, Option<NaiveDate>)> = HashMap::new();
-        for entry in &evidence_entries {
-            let raw = self.store.read_file(&entry.path)?;
-            let (fm, _body) = parse_note(&entry.path, &raw)?;
-            let ef = EvidenceFrontmatter::try_from(fm)?;
-            let bucket = by_portfolio
-                .entry(ef.portfolio.clone())
-                .or_insert((0, None));
-            bucket.0 += 1;
-            bucket.1 = Some(match bucket.1 {
-                Some(prev) => prev.max(ef.created),
-                None => ef.created,
-            });
-        }
-
-        let mut out = Vec::with_capacity(portfolio_entries.len());
-        for p_entry in portfolio_entries {
-            let slug = portfolio_slug_from_path(&p_entry.path);
-            let raw = self.store.read_file(&p_entry.path)?;
-            // Markdown on purpose: question and portfolio notes are machine-written Markdown.
-            let (fm, _body) = Frontmatter::parse(&raw)?;
-            let pf = PortfolioFrontmatter::try_from(fm)?;
-            let (evidence_count, last_updated) =
-                by_portfolio.get(&slug).copied().unwrap_or((0, None));
-            let staleness_days = last_updated.map(|d| (today - d).num_days());
-            out.push(PortfolioSummary {
-                slug,
-                question: pf.question,
-                evidence_count,
-                last_updated,
-                staleness_days,
-            });
-        }
-        out.sort_by(|a, b| a.slug.cmp(&b.slug));
-        Ok(out)
+        portfolio_summaries(
+            &*self.store,
+            self.indexed_paths(NoteType::Portfolio)?,
+            &self.indexed_paths(NoteType::Evidence)?,
+            today,
+        )
     }
 
     /// Read a single portfolio's `_index.md` frontmatter. Useful for

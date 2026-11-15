@@ -2,9 +2,11 @@
 //! TOML config) into a [`Vault`] and run startup reconciliation.
 //!
 //! Every subcommand that operates on an existing vault opens it
-//! through here, by [`open_vault`]. Two exceptions: `init` creates the
-//! vault rather than opening one, and `now` opens only its journal by
-//! [`open_journal`], which never touches the index (#1003).
+//! through here, by [`open_vault`]. Three exceptions: `init` creates the
+//! vault rather than opening one, `now` opens only its journal by
+//! [`open_journal`], and shell completion opens only its note listings by
+//! [`open_catalog`]; neither of the last two touches the index (#1003,
+//! #1007).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -16,7 +18,8 @@ use cdno_core::paths::{self, IndexLocation};
 use cdno_core::reconcile::ReconciliationReport;
 use cdno_core::store::{FsVaultStore, VaultStore};
 use cdno_domain::{
-    Journal, MethodSkew, MethodStatus, Vault, describe_vault_method_version, newer_minor_message,
+    Catalog, Journal, MethodSkew, MethodStatus, Vault, describe_vault_method_version,
+    newer_minor_message,
 };
 
 /// Walk upward from `start` looking for a `.cuaderno/` marker.
@@ -115,9 +118,9 @@ pub fn open_vault(root: &Path) -> Result<(Vault, ReconciliationReport)> {
     }
 
     // Record the vault's method version for the skew notice, never print
-    // it: shell completion opens the vault through here on every Tab, so a
-    // notice printed here would smear across the prompt. `main` prints it
-    // after the command, from the dispatch (RFC 0006 plan T9).
+    // it: a notice printed while a command is still running would land in
+    // the middle of its output. `main` prints it after the command, from the
+    // dispatch (RFC 0006 plan T9).
     if let Ok(status) = vault.method_status() {
         record_method_status(status);
     }
@@ -145,7 +148,21 @@ pub fn open_journal(root: &Path) -> Result<Journal> {
     Ok(journal)
 }
 
-/// The `.cuaderno/` marker check and the config load both opens share.
+/// Open the note listings of the vault at `root` without its index: the
+/// same marker check and config as [`open_vault`], and the filesystem store,
+/// but no SQLite index and no lock, so nothing under `.cuaderno/` is created
+/// or written.
+///
+/// For shell completion, which re-invokes the binary on every Tab (#1007).
+/// The method status is not recorded: no command runs after a completion,
+/// so there is no notice to print.
+pub fn open_catalog(root: &Path) -> Result<Catalog> {
+    let config = load_config(root)?;
+    let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(root));
+    Catalog::new(store, config).context("validating the vault config")
+}
+
+/// The `.cuaderno/` marker check and the config load the opens share.
 ///
 /// Errors if `root/.cuaderno/` is missing — that signals the user
 /// pointed at a non-vault directory and should run `cdno init`.

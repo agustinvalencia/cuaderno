@@ -20,6 +20,7 @@ use chrono::{NaiveDate, NaiveDateTime};
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
+use cdno_core::store::VaultStore;
 use cdno_core::template::VariableContext;
 
 use super::WriteOutcome;
@@ -47,6 +48,38 @@ pub struct QuestionSummary {
     /// has no H1 — lint will flag that separately.
     pub question_text: String,
     pub updated: NaiveDate,
+}
+
+/// One [`QuestionSummary`] per question note in `paths`, sorted by
+/// `(domain, slug)`: the fold behind [`Vault::list_questions`], and behind
+/// the same answer read from the files by [`crate::Catalog`].
+pub(in crate::vault) fn question_summaries(
+    store: &dyn VaultStore,
+    paths: Vec<VaultPath>,
+) -> Result<Vec<QuestionSummary>, DomainError> {
+    let mut out = Vec::with_capacity(paths.len());
+    for path in paths {
+        let raw = store.read_file(&path)?;
+        // Markdown on purpose: question notes are machine-written Markdown.
+        let (fm, body) = Frontmatter::parse(&raw)?;
+        let qf = QuestionFrontmatter::try_from(fm)?;
+        out.push(QuestionSummary {
+            slug: question_slug_from_path(&path),
+            domain: qf.domain,
+            status: qf.status,
+            question_text: extract_h1(body),
+            updated: qf.updated,
+        });
+    }
+    // Group by domain by sorting on it first; slug tie-breaks for
+    // stable output. QuestionDomain isn't Ord, so compare by str.
+    out.sort_by(|a, b| {
+        a.domain
+            .as_str()
+            .cmp(b.domain.as_str())
+            .then_with(|| a.slug.cmp(&b.slug))
+    });
+    Ok(out)
 }
 
 impl Vault {
@@ -201,30 +234,7 @@ impl Vault {
     /// "any non-active question" (for `activate`) or "any non-retired
     /// question" (for `retire`); the caller filters as needed.
     pub fn list_questions(&self) -> Result<Vec<QuestionSummary>, DomainError> {
-        let entries = self.index.list_by_type(NoteType::Question.as_str())?;
-        let mut out = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let raw = self.store.read_file(&entry.path)?;
-            // Markdown on purpose: question notes are machine-written Markdown.
-            let (fm, body) = Frontmatter::parse(&raw)?;
-            let qf = QuestionFrontmatter::try_from(fm)?;
-            out.push(QuestionSummary {
-                slug: question_slug_from_path(&entry.path),
-                domain: qf.domain,
-                status: qf.status,
-                question_text: extract_h1(body),
-                updated: qf.updated,
-            });
-        }
-        // Group by domain by sorting on it first; slug tie-breaks for
-        // stable output. QuestionDomain isn't Ord, so compare by str.
-        out.sort_by(|a, b| {
-            a.domain
-                .as_str()
-                .cmp(b.domain.as_str())
-                .then_with(|| a.slug.cmp(&b.slug))
-        });
-        Ok(out)
+        question_summaries(&*self.store, self.indexed_paths(NoteType::Question)?)
     }
 
     /// Locate `slug` across both question domains, returning the

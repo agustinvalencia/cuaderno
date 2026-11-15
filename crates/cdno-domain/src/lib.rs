@@ -32,7 +32,7 @@ pub use type_registry::{
 };
 pub use vault::slug::{SlugRejection, TakenBy, slugify, validate_explicit_slug};
 pub use vault::{
-    ActionListEntry, AttachedAction, BacklinkRef, ClosedProjectEntry, CommitmentEntry,
+    ActionListEntry, AttachedAction, BacklinkRef, Catalog, ClosedProjectEntry, CommitmentEntry,
     CommitmentSource, CompletedActionEntry, CompletedActionSource, ConfigDocument, ConfigSaveError,
     ConfigValidationError, CurrentFocus, DAILY_LOGS_SECTION, DailyLogLine, DailyNoteView,
     DailySection, FILE_MIGRATIONS, FileMigration, GroupParent, HolderChange, InboxItem, Journal,
