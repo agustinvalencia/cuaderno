@@ -349,7 +349,11 @@ impl ServerHandler for CuadernoServer {
                 cannot be read back comes back as an ERROR, so a successful write \
                 result is evidence the change is on disk and does not need a \
                 follow-up read to confirm. If a write does error as unverified, \
-                re-read the note before retrying: it may have landed anyway.",
+                re-read the note before retrying: it may have landed anyway. A \
+                `concurrent_change` rejection is the opposite: the note changed \
+                underneath the write and nothing was written, so make the same call \
+                again, re-reading the note first if you composed the content from an \
+                earlier read of it.",
             )
             // ServerInfo::default already enables an empty capability
             // set; flip the `tools` flag on so clients know we serve

@@ -688,16 +688,28 @@ fn two_writers_appending_without_a_shared_lock_lose_nothing_when_they_retry() {
     assert_eq!(note.lines().count(), 2 * LINES);
 }
 
+/// The same race on a real folder, two stores with independent lock files,
+/// as a measurement of the window that remains (docs/concurrent-writers.md).
+///
+/// Ignored in the normal suite: its outcome depends on scheduling, and a
+/// test that can fail by chance costs more in CI than it proves. The exact
+/// protocol is pinned by the in-memory race above and the hand-interleaved
+/// real-folder tests. Run it with
+///
+/// ```text
+/// cargo test -p cdno-core --test unit -- --ignored on_a_real_folder --nocapture
+/// ```
+///
+/// Every commit here contends, the worst case there is. The check runs a
+/// `stat` before the rename, and no rename can be conditional on what it
+/// replaces, so a writer that renames inside that gap is still overwritten.
+/// Measured on a laptop SSD (macOS, APFS, debug build) over a dozen runs: 0
+/// to 2 of 300 lines lost with nearly every commit retried, against about
+/// 150 of 300 with the check disabled. The assertion is a loose bound far
+/// from both.
 #[test]
+#[ignore = "measures a scheduling-dependent window; run by hand, see the doc comment"]
 fn on_a_real_folder_only_the_gap_before_the_rename_remains() {
-    // The same race on a real folder, two stores with independent lock
-    // files. Every commit here contends, the worst case there is. The
-    // check runs a `stat` before the rename, and no rename can be
-    // conditional on what it replaces, so a writer that renames inside
-    // that gap is still overwritten: measured on a laptop SSD at 0 to 2 of
-    // 300 lines, against about 150 of 300 without the check. The bound
-    // below is far from both, so the test pins that the check works
-    // without pretending the gap is closed (see docs/concurrent-writers.md).
     const LINES: usize = 150;
     let folder = Folder::new();
     folder.put(NOTE, "");

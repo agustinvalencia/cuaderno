@@ -169,7 +169,9 @@ file beside the `flock` (option 2 of #1001), which can be added on top of this l
   (second commit refused, first intact; creates, deletes, appends, blind writes; multi-file
   atomicity; a change landing mid-commit rolls back; a rollback does not overwrite a later change);
   two threads race appends over a shared in-memory store (exact: no line lost) and over a real
-  folder (bounded, measuring window 1); single-machine commits are unchanged.
+  folder (a measurement of window 1, `#[ignore]`d because its outcome depends on scheduling; run it
+  with `cargo test -p cdno-core --test unit -- --ignored on_a_real_folder --nocapture`);
+  single-machine commits are unchanged.
 - `cdno-domain/tests/unit/unshared_lock_tests.rs`: two `Vault`s logging to one daily note lose no
   line; a stale read is retried onto the fresh note; a log that never converges returns the conflict
   and writes nothing; a section write from a stale read is refused, not retried.
