@@ -60,6 +60,10 @@ cdno log "spotted a bug in the sampler"
 > If you're standing inside vault A while `CUADERNO_VAULT_PATH` points at vault B, the directory you
 > are in wins — writes land in A. The env var is only a fallback for when discovery finds nothing.
 
+`cdno init` is the one command that does not look for a vault: it creates the vault in its `[PATH]`,
+or in `--vault <PATH>` when no `[PATH]` is given (`cdno --vault ~/notebook init`), or else in the
+current directory. It never walks up and never reads `CUADERNO_VAULT_PATH`.
+
 ## Upgrading an older vault
 
 `cdno init` refuses to run on a vault that already exists: re-initialising is destructive, so it is

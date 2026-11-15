@@ -191,6 +191,59 @@ fn run_creates_target_directory_when_missing() {
     assert!(target.join("inbox").is_dir());
 }
 
+// ---------------------------------------------------------------------
+// `resolve_target` — where `cdno init` writes (#1004).
+// ---------------------------------------------------------------------
+
+#[test]
+fn resolve_target_takes_the_path_then_the_flag_then_the_cwd() {
+    use std::path::{Path, PathBuf};
+    let cwd = || -> anyhow::Result<PathBuf> { Ok(PathBuf::from("/work")) };
+    let no_cwd = || -> anyhow::Result<PathBuf> { panic!("the cwd is not needed") };
+    let y = Path::new("y");
+    let x = Path::new("/x");
+    assert_eq!(init::resolve_target(Some(y), None, no_cwd).unwrap(), y);
+    assert_eq!(init::resolve_target(None, Some(x), no_cwd).unwrap(), x);
+    assert_eq!(
+        init::resolve_target(None, None, cwd).unwrap(),
+        Path::new("/work")
+    );
+}
+
+#[test]
+fn resolve_target_compares_the_path_and_the_flag_as_directories() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    fs::create_dir(root.join("surrogate-model")).unwrap();
+    let cwd = || Ok(root.clone());
+
+    // Relative against absolute, `.` and `..`, a directory that does not
+    // exist yet: the same directory, so the positional is taken as given.
+    let same = [
+        ("surrogate-model", root.join("surrogate-model")),
+        (
+            "./surrogate-model/../surrogate-model",
+            root.join("surrogate-model"),
+        ),
+        ("new/vault", root.join("new/./vault")),
+    ];
+    for (path, vault) in same {
+        let path = std::path::Path::new(path);
+        assert_eq!(
+            init::resolve_target(Some(path), Some(&vault), cwd).unwrap(),
+            path
+        );
+    }
+
+    let err = init::resolve_target(
+        Some(std::path::Path::new("surrogate-model")),
+        Some(&root.join("other")),
+        cwd,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("different directories"), "{err}");
+}
+
 /// A file from `examples/note-types/concept/`, the copy of the concept type
 /// an existing vault adopts by hand (RFC 0002 §6.1, T14). A new vault gets
 /// the same two files from `cdno init`.
