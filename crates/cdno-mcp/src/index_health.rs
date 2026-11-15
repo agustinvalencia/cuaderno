@@ -173,6 +173,11 @@ pub struct IndexStatus {
     /// make it false: they are nearly always notes that do not parse, which
     /// no rebuild can fix.
     pub healthy: bool,
+    /// The index database file this server uses, after the per-machine
+    /// override was resolved (#998). Every file a rebuild writes (the
+    /// fresh `.rebuild-*` index while it runs, the `.previous` copy of a
+    /// damaged file) sits beside it.
+    pub index_path: String,
     /// True when the latest rebuild failed in a way only a restart can fix.
     pub restart_required: bool,
     /// The check run for this call.
@@ -351,7 +356,9 @@ impl IndexHealth {
             Ok(record) if record.rebuilt => tracing::warn!(
                 notes = record.notes,
                 errors = record.errors,
-                "the index was rebuilt; a copy of the damaged file is kept as index.db.previous"
+                index_path = %self.sqlite.path().display(),
+                "the index was rebuilt; a damaged file it replaced is kept beside it, with \
+                 `.previous` appended to its name"
             ),
             Ok(record) if record.restart_required => tracing::error!(
                 failure = record.failure.as_deref().unwrap_or(""),
@@ -446,6 +453,7 @@ impl IndexHealth {
         let state = self.lock();
         IndexStatus {
             healthy: check.ok && state.outstanding_damage.is_none(),
+            index_path: self.sqlite.path().display().to_string(),
             restart_required: state
                 .last_rebuild
                 .as_ref()

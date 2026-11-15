@@ -17,6 +17,10 @@ Vault resolution differs per binary, and the ordering is deliberate. The **CLI**
 then upward discovery from the cwd to the nearest `.cuaderno/`, and `CUADERNO_VAULT_PATH` only as the
 last resort — discovery outranks the env var so a stray exported value cannot misroute writes
 (`crates/cdno-cli/src/bootstrap.rs`). The **MCP binaries** do env-or-bare-cwd only — no upward walk.
+The **index location** is decided for all three by `paths::resolve_index_path` (`cdno-core`):
+`<vault>/.cuaderno/index.db`, or `CUADERNO_INDEX_PATH` (also `--index-path` on `cdno-mcp-server`), an
+absolute path bound to one vault; never a config key, and the workspace `.cargo/config.toml` forces
+it empty under cargo so tests never see a contributor's value.
 **The repo root is
 itself a dev vault** (`.cuaderno/config.toml` is tracked; `index.db` and `.lock` are gitignored), so
 `cdno` run from here works against the repo — and, per the ordering above, does so even when
@@ -85,7 +89,9 @@ The layering is load-bearing; each crate has a rule that the code enforces:
 `Vault` (`crates/cdno-domain/src/vault/mod.rs`) is the single domain entry point, holding
 `Arc<dyn VaultStore>` + `Arc<dyn VaultIndex>` + `VaultConfig`. **Operations are split one-per-file
 under `src/vault/` and each attaches its own `impl Vault { ... }` block** — add a new operation as a
-new file there rather than growing `mod.rs`.
+new file there rather than growing `mod.rs`. `Journal` (`vault/journal.rs`) is the index-free focus
+reader (a store and the `[focus]` windows) that `Vault`'s focus readers delegate to; `cdno now` opens
+only a `Journal`, never the index.
 
 **Project resolvers.** Every verb that reads or writes a project map's body picks one of two
 resolvers in `vault/projects/mod.rs`: `resolve_open_project` (an active or a parked map, folder and

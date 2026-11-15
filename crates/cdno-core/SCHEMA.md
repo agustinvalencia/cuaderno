@@ -271,9 +271,42 @@ CREATE VIRTUAL TABLE notes_fts USING fts5(
   `extractors::first_h1`. The H1 also lives in the body, so the title is
   findable either way; the dedicated column exists only for the bm25 boost.
 
+### `index_meta`
+
+Key/value facts about the index itself (migration 005, #998).
+
+```sql
+CREATE TABLE index_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+```
+
+Its one key is `vault_root`: an index opened at an overridden location
+(`CUADERNO_INDEX_PATH`, `--index-path`) records the canonical root of the vault
+it belongs to, and `SqliteIndex::open_location` refuses, read-only, an open for
+any other vault. An overridden index that records none is bound on first use;
+`cdno reindex --rebind` deletes and rebuilds the file, which rebinds it (a
+plain `reindex` in another vault is refused). The bind is one immediate
+transaction, `INSERT OR IGNORE` then a read back, so two processes binding one
+file for different vaults cannot both succeed, and an index already bound to
+the vault is opened with no write for it. An index at the
+default `.cuaderno/index.db` records nothing and is never checked, since a
+vault can legitimately be reached under two paths.
+
+The in-place rebuild (`reconcile::rebuild`, #526) copies a fresh database over
+the live one page by page, so the row travels with the copy: the fresh index
+beside an overridden one is bound to the same root before it is populated,
+never copied from the live file, and `replace_contents_from` refuses a live
+file that records another vault's root by then. A fresh index at the default
+location records nothing, like the file it replaces.
+
 ### `schema_migrations`
 
-Tracks which migration versions have been applied to the current DB.
+Tracks which migration versions have been applied to the current DB. Its
+version 1 row, with migration 1's description word for word, is also how an
+overridden index path is recognised as cuaderno's own before anything opens it
+read-write (#998): every cuaderno index has it, at every schema version.
 On every connection open, the engine compares `MAX(version)` against
 the migrations directory and applies any that are missing.
 

@@ -11,7 +11,9 @@ Two binaries serve the same tool catalogue:
 
 - **`cdno-mcp`** speaks JSON-RPC over **stdio** — the client launches it as a subprocess. It opens
   the vault named by `CUADERNO_VAULT_PATH`, or, if that's unset, discovers one from its working
-  directory (the same rule as the CLI).
+  directory (the same rule as the CLI). Its index is `.cuaderno/index.db` unless
+  `CUADERNO_INDEX_PATH` names another file; see
+  [Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine).
 - **`cdno-mcp-server`** speaks MCP **Streamable HTTP** for remote clients — see
   [The HTTP server](http-server.md) for its flags and security model.
 
@@ -34,10 +36,16 @@ The index is a cache of the notes, rebuilt from them at will, so the servers rep
 asking. Both check its database file when they start, and `cdno-mcp-server` checks it again after
 every [reconciliation sweep](http-server.md#flags). A damaged index is rebuilt from the notes and
 copied into the live file in place, without a restart, so every process using the vault sees the
-repair at once; a copy of the damaged file is kept as `.cuaderno/index.db.previous`. A tool call
-that meets a damaged index starts the repair straight away, on either server, and its error says
-that the notes on disk are intact and whether that call's write was saved. [`index_status`](reads.md)
-reports the index's health and [`rebuild_index`](writes.md#the-index) forces a rebuild, so a client
+repair at once. A copy of the damaged file is kept beside it, under its file name with `.previous`
+appended: `.cuaderno/index.db.previous` at the default location, or next to the file
+`CUADERNO_INDEX_PATH` (or `--index-path`) names, where an overridden index is repaired in place and
+stays bound to its vault (see
+[Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine)).
+A file the override refuses (not cuaderno's index, or another vault's) stops the server at start
+and is never repaired or moved. A tool call that meets a damaged index starts a thorough check
+straight away, on either server, and a repair if the check confirms the damage; its error says that
+the notes on disk are intact and whether that call's write was saved.
+[`index_status`](reads.md) reports the index's health and the file it checked, and [`rebuild_index`](writes.md#the-index) forces a rebuild, so a client
 with no shell on the server's machine can still recover. No note is ever changed by any of this.
 
 ## Focus

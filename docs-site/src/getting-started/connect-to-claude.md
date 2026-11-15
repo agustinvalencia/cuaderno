@@ -27,6 +27,10 @@ Add `cdno-mcp` to your client's MCP configuration. For Claude Desktop, edit
   `/opt/homebrew/bin/cdno-mcp`, or `target/release/cdno-mcp` for a source build).
 - `CUADERNO_VAULT_PATH` tells the server which vault to open. You can omit it; the server then opens
   whichever vault its working directory belongs to (the same discovery rule as the CLI).
+- `CUADERNO_INDEX_PATH` is optional and usually left out. Add it to the same `env` block only when
+  this vault folder is also reached from another machine (a container, a network share): it names
+  this machine's own index file, as an absolute path. See
+  [Keeping the index on each machine](../concepts/vault-structure.md#keeping-the-index-on-each-machine).
 
 Restart the client. Cuaderno's tools then appear in the client's tool list.
 

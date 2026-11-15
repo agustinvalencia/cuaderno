@@ -21,6 +21,9 @@ fn cdno() -> Command {
     // that exercise the env var re-add it explicitly with `.env(...)`,
     // which overrides this removal.
     cmd.env_remove("CUADERNO_VAULT_PATH");
+    // Likewise the index location (#998): tests below assert on
+    // `.cuaderno/index.db` and must find it there.
+    cmd.env_remove("CUADERNO_INDEX_PATH");
     cmd
 }
 

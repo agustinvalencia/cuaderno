@@ -368,7 +368,7 @@ uniqueness rule, so a pasted derivation with its own `## Proof` must be demoted 
 
 | Tool | Inputs | Returns |
 |------|--------|---------|
-| `rebuild_index` | — | Rebuilds the index from every note into a fresh file, checks it, and copies it into the live index in place, without a restart, so every process using the vault sees it; a copy of the old file is kept as `.cuaderno/index.db.previous`. Search and context keep answering from the old index while it builds. Returns `rebuilt`, the `notes` indexed, `errors` (notes it could not index), `snapshots_carried` and `snapshots_lost` (the archival snapshots), `trigger`, and `failure` (set when nothing was replaced; the old index is then still live). |
+| `rebuild_index` | — | Rebuilds the index from every note into a fresh file, checks it, and copies it into the live index in place, without a restart, so every process using the vault sees it; when the old file is damaged, a copy of it is kept beside it with `.previous` appended to its name (`.cuaderno/index.db.previous` at the default location; `index_status` gives the path in use). Search and context keep answering from the old index while it builds. Returns `rebuilt`, the `notes` indexed, `errors` (notes it could not index), `snapshots_carried` and `snapshots_lost` (the archival snapshots), `trigger`, and `failure` (set when nothing was replaced; the old index is then still live). |
 
 The server already rebuilds a damaged index on its own, so this is for when
 [`index_status`](reads.md) stays unhealthy. It does not help with `notes_not_indexed`: those are

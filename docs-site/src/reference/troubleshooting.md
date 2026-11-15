@@ -17,7 +17,7 @@ See [Initialise a vault](../getting-started/initialise-a-vault.md).
 
 ## Search or links look out of date
 
-The index is a cache; it's reconciled automatically each run, but a large external edit or a sync
+The index is a cache; it's reconciled automatically each run of any command but `cdno now`, but a large external edit or a sync
 conflict can occasionally confuse it. Rebuild it:
 
 ```bash
@@ -28,11 +28,35 @@ The Markdown files are always authoritative, so a rebuild is safe. See
 [Business rules](../concepts/business-rules.md).
 
 On a server (`cdno-mcp`, `cdno-mcp-server`) the index is checked and repaired without you: see
-[The index looks after itself](mcp/overview.md#the-index-looks-after-itself). An error that says "the notes on disk are intact; the index … is damaged" is that repair being
-started, and it also says whether that call's write was saved. Ask the
-assistant for `index_status` to see how it went, or `rebuild_index` to force it. Run `cdno reindex`
+[The index looks after itself](mcp/overview.md#the-index-looks-after-itself). An error that says "the notes on disk are intact; the index … may be damaged" means the server
+is checking the index and rebuilds it if the check confirms the damage, and it also says whether
+that call's write was saved. Ask the assistant for `index_status` to see how it went (it also names
+the index file in use, which `CUADERNO_INDEX_PATH` may have moved), or `rebuild_index` to force it.
+Run `cdno reindex`
 against a vault a server has open only with the server stopped: two processes writing one index
 file is one way it gets damaged.
+
+## The index path is refused
+
+`CUADERNO_INDEX_PATH` (or `--index-path` on `cdno-mcp-server`) names the index database file. A
+value that cannot be that file is refused before anything is opened:
+
+- **"must be an absolute path"**: write the full path, starting at `/`. A relative value is never
+  resolved, and `cdno` does not expand a quoted `~`.
+- **"names a directory"**: the value is a directory or ends in `/`. Add the file name, such as
+  `index.db`.
+- **"names a note file"**: the value ends in `.md` or `.typ`. It is almost certainly a mistyped
+  path; an index never has a note's extension.
+- **"refusing to use … it is not a cuaderno index"**: a file already exists at the path and is not
+  one cuaderno created as its index; it may be another application's database. Nothing was opened
+  for writing or deleted. Point the variable at a new file, or move that file away.
+- **"belongs to the vault at …"**: the file is another vault's index. Each vault needs its own
+  file; set the variable only for the process that serves this vault. To give the file to this vault
+  on purpose, first stop whatever serves the vault it belongs to, then run `cdno reindex --rebind`
+  here, which rebuilds it and discards the other vault's index. Where only the server is installed,
+  delete the file instead; the next start rebuilds it.
+
+See [Keeping the index on each machine](../concepts/vault-structure.md#keeping-the-index-on-each-machine).
 
 ## `lint` is failing
 

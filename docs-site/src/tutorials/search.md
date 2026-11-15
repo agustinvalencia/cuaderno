@@ -59,7 +59,8 @@ See [JSON output](../reference/json-output.md) for the exact shape.
 
 ## When search feels stale
 
-Search reads the SQLite index, which is reconciled automatically on every run. If results ever look
+Search reads the SQLite index, which is reconciled automatically on every run of any command but
+`cdno now`. If results ever look
 out of date (e.g. after a bulk external edit), rebuild it explicitly:
 
 ```bash

@@ -664,3 +664,373 @@ fn an_old_origin_renders_its_date_not_a_weekday() {
         "seven days back is a date:\n{seven}"
     );
 }
+
+/// Every file under `root/.cuaderno/`, as sorted vault-relative paths.
+fn cuaderno_files(root: &Path) -> Vec<String> {
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, root, out);
+            } else {
+                out.push(path.strip_prefix(root).unwrap().display().to_string());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&root.join(".cuaderno"), root, &mut out);
+    out.sort();
+    out
+}
+
+/// A vault with no index at all: scaffolded, its `index.db` and WAL files
+/// removed, and today's log holding one open start, written by hand.
+fn vault_without_index() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+    for name in ["index.db", "index.db-wal", "index.db-shm"] {
+        let _ = fs::remove_file(dir.path().join(".cuaderno").join(name));
+    }
+    write_daily(
+        dir.path(),
+        chrono::Local::now().date_naive(),
+        &["- **00:00**: started [[surrogate-model]] \u{2014} Fit the baseline (deep)"],
+    );
+    dir
+}
+
+fn assert_no_index(root: &Path, before: &[String], form: &str) {
+    let after = cuaderno_files(root);
+    assert_eq!(
+        after, before,
+        "`{form}` created or removed a file under .cuaderno/"
+    );
+    assert!(
+        !after.iter().any(|p| p.contains("index.db")),
+        "`{form}` created an index file: {after:?}"
+    );
+}
+
+#[test]
+fn line_reads_the_focus_without_creating_an_index() {
+    let dir = vault_without_index();
+    let before = cuaderno_files(dir.path());
+    assert!(!before.iter().any(|p| p.contains("index.db")), "{before:?}");
+    let out = assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault", dir.path().to_str().unwrap(), "now", "--line"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_focus_line(&out);
+    assert_no_index(dir.path(), &before, "now --line");
+}
+
+/// The `--line` output for [`vault_without_index`]'s start, whichever day
+/// the run lands on: a run that crosses midnight after the note was
+/// written reads it as carried (`since Sunday 00:00`), not `since 00:00`.
+fn assert_focus_line(stdout: &[u8]) {
+    let out = String::from_utf8(stdout.to_vec()).unwrap();
+    assert!(
+        out.starts_with("Focus: surrogate-model \u{2014} Fit the baseline (since ")
+            && out.ends_with("00:00)\n"),
+        "{out:?}"
+    );
+}
+
+/// The bytes and mtime of a file, or `None` when it does not exist.
+fn file_state(path: &Path) -> Option<(Vec<u8>, std::time::SystemTime)> {
+    let meta = fs::metadata(path).ok()?;
+    Some((fs::read(path).unwrap(), meta.modified().unwrap()))
+}
+
+#[test]
+fn line_leaves_an_existing_index_and_the_lock_untouched() {
+    // The hazard #1003 is about: an index another process holds, and a
+    // vault that changed since it last reconciled.
+    let dir = vault_with_action();
+    assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault", dir.path().to_str().unwrap(), "status"])
+        .assert()
+        .success();
+    write_daily(
+        dir.path(),
+        chrono::Local::now().date_naive(),
+        &["- **00:00**: started [[surrogate-model]] \u{2014} Fit the baseline (deep)"],
+    );
+    let cuaderno = dir.path().join(".cuaderno");
+    let index = file_state(&cuaderno.join("index.db"));
+    assert!(index.is_some(), "the normal verb left an index");
+    let lock = file_state(&cuaderno.join(".lock"));
+    let before = cuaderno_files(dir.path());
+
+    let out = assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault", dir.path().to_str().unwrap(), "now", "--line"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_focus_line(&out);
+
+    assert!(
+        file_state(&cuaderno.join("index.db")) == index,
+        "index.db bytes or mtime changed"
+    );
+    assert!(
+        file_state(&cuaderno.join(".lock")) == lock,
+        ".lock was created or touched"
+    );
+    // No -wal or -shm created or removed, nor anything else.
+    assert_eq!(cuaderno_files(dir.path()), before);
+}
+
+/// A file's bytes and mtime, as [`file_state`] reads them.
+type FileState = Option<(Vec<u8>, std::time::SystemTime)>;
+
+/// Every file in `dir` with its bytes and mtime, sorted by name.
+fn dir_state(dir: &Path) -> Vec<(String, FileState)> {
+    let mut out: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .map(|e| {
+            let path = e.unwrap().path();
+            (
+                path.file_name().unwrap().to_string_lossy().into_owned(),
+                file_state(&path),
+            )
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// The overridden counterpart of the test above (#998): with
+/// `CUADERNO_INDEX_PATH` naming an index bound to this vault, `now --line`
+/// leaves that file and its directory exactly as they were (no binding
+/// write, no sidecar), and `.cuaderno/` too.
+#[test]
+fn line_leaves_an_overridden_index_and_its_directory_untouched() {
+    let dir = vault_with_action();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let index = elsewhere.path().join("index.db");
+    assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .env("CUADERNO_INDEX_PATH", &index)
+        .args(["--vault", dir.path().to_str().unwrap(), "status"])
+        .assert()
+        .success();
+    assert!(
+        index.is_file(),
+        "the normal verb built the overridden index"
+    );
+    write_daily(
+        dir.path(),
+        chrono::Local::now().date_naive(),
+        &["- **00:00**: started [[surrogate-model]] \u{2014} Fit the baseline (deep)"],
+    );
+    let before = dir_state(elsewhere.path());
+    let meta_before = cuaderno_files(dir.path());
+
+    let out = assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .env("CUADERNO_INDEX_PATH", &index)
+        .args(["--vault", dir.path().to_str().unwrap(), "now", "--line"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    assert_focus_line(&out);
+
+    assert!(
+        dir_state(elsewhere.path()) == before,
+        "the overridden index or its directory changed"
+    );
+    assert_eq!(cuaderno_files(dir.path()), meta_before);
+}
+
+/// `cdno now` never resolves the index location, so a value every other
+/// verb refuses (relative, a directory, a note path) does not stop it: it
+/// still prints the focus, and creates nothing.
+#[test]
+fn now_prints_the_focus_whatever_the_index_path_variable_holds() {
+    let dir = vault_without_index();
+    let before = cuaderno_files(dir.path());
+    let cwd = tempfile::tempdir().unwrap();
+    let note = dir.path().join("projects").join("surrogate-model.md");
+    for value in [
+        std::ffi::OsString::from("cache/index.db"),
+        cwd.path().as_os_str().to_owned(),
+        note.as_os_str().to_owned(),
+    ] {
+        for args in [&["now", "--line"][..], &["now"]] {
+            let out = assert_cmd::Command::cargo_bin("cdno")
+                .unwrap()
+                .current_dir(cwd.path())
+                .env_remove("CUADERNO_VAULT_PATH")
+                .env("CUADERNO_INDEX_PATH", &value)
+                .arg("--vault")
+                .arg(dir.path())
+                .args(args)
+                .timeout(std::time::Duration::from_secs(15))
+                .assert()
+                .success()
+                .get_output()
+                .stdout
+                .clone();
+            let out = String::from_utf8(out).unwrap();
+            assert!(out.contains("surrogate-model"), "{value:?} {args:?}: {out}");
+        }
+    }
+    assert!(!cwd.path().join("cache").exists());
+    assert_no_index(dir.path(), &before, "now with an invalid override");
+}
+
+#[test]
+fn plain_and_json_read_the_focus_without_creating_an_index() {
+    let dir = vault_without_index();
+    let before = cuaderno_files(dir.path());
+    let out = assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault", dir.path().to_str().unwrap(), "now"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out = String::from_utf8(out).unwrap();
+    assert!(
+        out.contains("surrogate-model") && out.contains("Fit the baseline"),
+        "{out}"
+    );
+    assert_no_index(dir.path(), &before, "now");
+
+    let out = assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault", dir.path().to_str().unwrap(), "--json", "now"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(value["project"], "surrogate-model");
+    assert_eq!(value["started"], "00:00");
+    assert_no_index(dir.path(), &before, "now --json");
+}
+
+/// [`dir_state`] for the plain files in `dir` only, so it can be taken of
+/// `.cuaderno/`, which holds the `templates/` directory.
+fn files_state(dir: &Path) -> Vec<(String, FileState)> {
+    let mut out: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|path| path.is_file())
+        .map(|path| {
+            (
+                path.file_name().unwrap().to_string_lossy().into_owned(),
+                file_state(&path),
+            )
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// Overwrite the last page of the closed database at `path` with garbage:
+/// damage only an integrity check sees, the kind a server repairs (#526).
+fn damage_last_page(path: &Path) {
+    let page_size: u64 = rusqlite::Connection::open(path)
+        .unwrap()
+        .query_row("PRAGMA page_size", [], |r| r.get(0))
+        .unwrap();
+    let mut bytes = fs::read(path).unwrap();
+    let start = bytes.len() - page_size as usize;
+    for b in &mut bytes[start..] {
+        *b = 0xA5;
+    }
+    fs::write(path, bytes).unwrap();
+}
+
+/// Beside a server's repair (#526), at the default location and at an
+/// override (#998): a damaged index, the `.previous` copy a repair keeps
+/// and the `.rebuild-*` file of one in progress are all left exactly as
+/// they were by every form of `cdno now`, which still prints the focus.
+#[test]
+fn now_leaves_a_damaged_index_and_a_repairs_files_untouched() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let overridden = elsewhere.path().join("surrogate-model.db");
+    for index_override in [None, Some(&overridden)] {
+        let dir = vault_with_action();
+        let mut status = assert_cmd::Command::cargo_bin("cdno").unwrap();
+        status
+            .env_remove("CUADERNO_VAULT_PATH")
+            .env_remove("CUADERNO_INDEX_PATH");
+        if let Some(path) = index_override {
+            status.env("CUADERNO_INDEX_PATH", path);
+        }
+        status
+            .args(["--vault", dir.path().to_str().unwrap(), "status"])
+            .assert()
+            .success();
+        let index = index_override
+            .cloned()
+            .unwrap_or_else(|| dir.path().join(".cuaderno/index.db"));
+        damage_last_page(&index);
+        let mut previous = index.clone().into_os_string();
+        previous.push(".previous");
+        fs::write(&previous, "a copy of a damaged index").unwrap();
+        let mut rebuilding = index.clone().into_os_string();
+        rebuilding.push(".rebuild-4242-0");
+        fs::write(&rebuilding, "a rebuild in progress").unwrap();
+        write_daily(
+            dir.path(),
+            chrono::Local::now().date_naive(),
+            &["- **00:00**: started [[surrogate-model]] \u{2014} Fit the baseline (deep)"],
+        );
+        // Every file beside the index (not `.cuaderno/templates/`, a
+        // directory, which `cuaderno_files` covers).
+        let index_dir = index.parent().unwrap().to_path_buf();
+        let before = files_state(&index_dir);
+        let meta_before = cuaderno_files(dir.path());
+
+        for args in [&["now", "--line"][..], &["now"], &["--json", "now"]] {
+            let mut now = assert_cmd::Command::cargo_bin("cdno").unwrap();
+            now.env_remove("CUADERNO_VAULT_PATH")
+                .env_remove("CUADERNO_INDEX_PATH");
+            if let Some(path) = index_override {
+                now.env("CUADERNO_INDEX_PATH", path);
+            }
+            let out = now
+                .arg("--vault")
+                .arg(dir.path())
+                .args(args)
+                .assert()
+                .success()
+                .get_output()
+                .stdout
+                .clone();
+            let out = String::from_utf8(out).unwrap();
+            assert!(out.contains("surrogate-model"), "{args:?}: {out}");
+            assert!(
+                files_state(&index_dir) == before,
+                "{args:?} with {index_override:?} changed the index's directory"
+            );
+            assert_eq!(cuaderno_files(dir.path()), meta_before, "{args:?}");
+        }
+        for name in [&previous, &rebuilding] {
+            let _ = fs::remove_file(name);
+        }
+    }
+}

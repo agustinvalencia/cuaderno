@@ -144,6 +144,17 @@ struct ServeArgs {
     #[arg(long, env = "CUADERNO_VAULT_PATH")]
     vault: Option<PathBuf>,
 
+    /// Index database file, for a vault folder another machine also
+    /// reaches (a bind mount into a container, a network share): each
+    /// machine keeps its own index outside the shared folder. Must be an
+    /// absolute path; its `-wal`/`-shm` files sit beside it. Defaults to
+    /// `<vault>/.cuaderno/index.db` (#998). An empty value means unset,
+    /// as on the other binaries: an `OsString` because clap's `PathBuf`
+    /// parser rejects an empty value, which would stop the server on
+    /// `CUADERNO_INDEX_PATH=`.
+    #[arg(long, env = "CUADERNO_INDEX_PATH")]
+    index_path: Option<std::ffi::OsString>,
+
     /// Address to listen on. Non-loopback addresses are refused until
     /// origin-auth middleware exists (GH #302).
     #[arg(long, env = "CDNO_MCP_BIND", default_value = "127.0.0.1:8787")]
@@ -349,12 +360,14 @@ async fn serve() -> Result<()> {
         let root = vault_root(args.vault.clone())?;
         tracing::info!(vault_root = %root.display(), "starting cdno-mcp-server");
 
-        // Checked: a damaged index found here is set aside and rebuilt
-        // before the first reconcile, since a restart is what an operator
-        // reaches for when the index is suspect (#526).
-        let opened = open_vault_checked(&root).inspect_err(|e| {
+        // Checked: a damaged index found here is rebuilt in place, at
+        // whatever location the override names, before the first
+        // reconcile, since a restart is what an operator reaches for when
+        // the index is suspect (#526).
+        let opened = open_vault_checked(&root, args.index_path.as_deref()).inspect_err(|e| {
             tracing::error!(error = %e, vault_root = %root.display(), "failed to open vault");
         })?;
+        tracing::info!(index_path = %opened.index_path.display(), "index opened");
 
         // A vault on a newer minor method version is said so once, at start
         // (RFC 0006 §8.4).
@@ -393,6 +406,7 @@ async fn serve() -> Result<()> {
             // mode — that message is the operator-facing half of #541.
             cdno_mcp::checkpoint::spawn(
                 root.clone(),
+                &opened.index_path,
                 Duration::from_secs(args.git_checkpoint_interval_secs),
                 mode,
             );

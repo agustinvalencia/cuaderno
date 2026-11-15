@@ -6,6 +6,44 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **A per-machine index location** (closes #998). `CUADERNO_INDEX_PATH`, the absolute path of
+  the index database file, moves the index out of `.cuaderno/index.db` for the `cdno` CLI, the
+  stdio `cdno-mcp` server and `cdno-mcp-server`, which also takes it as `--index-path` (the flag
+  wins over the variable). One resolver in `cdno-core` (`paths::resolve_index_path`) decides the
+  location for all three. Set it when a vault folder is reachable from two machines at once, a
+  bind mount into a container or a network share, so each keeps its own index; two machines must
+  never share one index file. A relative value is refused rather than resolved, an empty one
+  counts as unset, and unset keeps the index exactly where it was. SQLite's `-wal` and `-shm`
+  files follow the database file, `cdno reindex` and the open-time self-heal act on the resolved
+  file, and the HTTP server's git checkpoints exclude an index the override places inside the
+  vault. It is deliberately not a `config.toml` key, since the config travels with the vault.
+  An overridden index records the vault it belongs to (index schema 5, a new `index_meta` table)
+  and refuses to open for another vault, naming both, as does a plain `cdno reindex` there;
+  `cdno reindex --rebind` rebuilds it for the current vault, which is the one way to rebind it.
+  `reindex` prints the overridden file it rebuilt. At an overridden path, a file cuaderno did not
+  create as its index (another application's SQLite database included) is never opened for
+  writing or deleted, unless SQLite cannot read it at all (it reports it damaged or not a
+  database), which is how a corrupt index still heals; a value ending in `/` or naming a `.md` or
+  `.typ` file is refused. The override stops the damage, not the staleness: each side sees the
+  other's writes when it next reconciles. `cdno now` never opens the index (#1003), so it ignores
+  the variable altogether.
+- **`index_status` and `rebuild_index` MCP tools** (#526). `index_status` (read-only, also on
+  `--read-only` servers) runs a fresh `quick_check` and reports the latest sweep, the latest
+  rebuild and any damage found at start, and names the index file it checked (`index_path`).
+  `healthy` judges the index itself: a failed thorough check keeps it false until a check as
+  thorough passes. `notes_not_indexed` counts notes that
+  did not index (usually notes that do not parse). `rebuild_index` forces a rebuild without a
+  restart and is refused with `rebuild_refused` while one is running or within a minute of the
+  last. The server advertises 68 tools.
+- `SqliteIndex::quick_check`, `integrity_check` (both return the problem lines),
+  `open_fresh_beside`, `replace_contents_from`, `keep_previous_copy` and `set_aside`, with
+  `FreshIndex`; `cdno_core::reconcile::rebuild`; `IndexError::is_corruption`,
+  `TransactionError::is_index_corruption` and `DomainError::is_index_corruption`;
+  `cdno_domain::bootstrap::open_vault_checked`, which takes the index override like
+  `open_vault_with_index`; `SqliteIndex::binding`.
+
 ### Fixed
 
 - **A long-running server repairs a damaged index itself** (#526, part of #520). Page-level damage
@@ -18,35 +56,39 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   - a damaged index is rebuilt from the notes into a fresh file, then copied into the live file in
     place with SQLite's backup API, so every process using the vault sees the repair; the last
     pass and the copy run under the vault write lock, so a write committed during the rebuild is
-    never lost from the index; a copy of the damaged file is kept as `.cuaderno/index.db.previous`,
+    never lost from the index; a copy of the damaged file is kept beside it as `<index>.previous`,
     and the archival snapshots it can still read are carried across;
+  - the check and the repair act on the index wherever `CUADERNO_INDEX_PATH` (or `--index-path`)
+    puts it (#998): the fresh file and the `.previous` copy sit beside the database file, a
+    rebuilt overridden index stays bound to its vault, and a file the override refuses (not
+    cuaderno's index, or another vault's) is refused at start as before, never repaired or set
+    aside;
   - a header too damaged to be written over in place is reported as `restart_required`, since
     only a restart's open can replace it;
-  - a tool call that meets a corruption error starts the repair at once, on both servers, and its
-    message says the notes on disk are intact and whether that call's write was saved;
+  - a tool call that meets a corruption error starts a thorough check at once, and a repair if it
+    confirms the damage, on both servers, and its message says the notes on disk are intact and
+    whether that call's write was saved;
   - rebuilds within one server are serialised and spaced at least a minute apart, concurrent
     rebuilds in different processes use separate files, and a failed one leaves the live index as
     it was;
   - a database with no schema now fails the check, rather than reading as an empty vault;
-  - the git checkpoint now excludes `.cuaderno/index.db*`, so a rebuild's files never reach a
-    vault's history, and the guide's ignore line says `index.db*`.
+  - the git checkpoint now always excludes `/.cuaderno/index.db*`, so a rebuild's files never
+    reach a vault's history, on top of the rule it writes for an index an override places
+    elsewhere inside the vault; the guide's ignore line says `index.db*`.
 - **`index stale after successful commit` names its first cause**, not just a count, and the
   sweep logs the first five notes it could not index, with each one's reason, as a warning.
-
-### Added
-
-- **`index_status` and `rebuild_index` MCP tools** (#526). `index_status` (read-only, also on
-  `--read-only` servers) runs a fresh `quick_check` and reports the latest sweep, the latest
-  rebuild and any damage found at start. `healthy` judges the index itself: a failed thorough
-  check keeps it false until a check as thorough passes. `notes_not_indexed` counts notes that
-  did not index (usually notes that do not parse). `rebuild_index` forces a rebuild without a
-  restart and is refused with `rebuild_refused` while one is running or within a minute of the
-  last. The server advertises 68 tools.
-- `SqliteIndex::quick_check`, `integrity_check` (both return the problem lines),
-  `open_fresh_beside`, `replace_contents_from`, `keep_previous_copy` and `set_aside`, with
-  `FreshIndex`; `cdno_core::reconcile::rebuild`; `IndexError::is_corruption`,
-  `TransactionError::is_index_corruption` and `DomainError::is_index_corruption`;
-  `cdno_domain::bootstrap::open_vault_checked`.
+- **`cdno now` never opens the index** (closes #1003). Every form (plain, `--line`, `--json`) reads
+  the config and the daily notes inside the `[focus]` windows through the store and nothing else:
+  it no longer opens, migrates or reconciles `.cuaderno/index.db`, walks the vault, or waits on the
+  write lock, and creates no file under `.cuaderno/`. So the Claude Code prompt hook, which runs
+  `cdno now --line` on every turn, can no longer write the index or delete a long-lived server's
+  WAL beside it. The output is unchanged. The focus readers move onto a new domain type,
+  `Journal` (a store and the `[focus]` windows), which `Vault::current_focus` and
+  `Vault::open_pauses` now delegate to, so both paths share one fold. Because the index is not
+  reconciled, `cdno now` no longer prints the reconciliation warning for a note elsewhere in the
+  vault that fails to parse; any other verb still does. Nor does `cdno now` refresh the index as a
+  side effect any more, so a long-running stdio server no longer picks up hand edits through the
+  hook's runs; periodic reconciliation in the stdio server is #1002.
 
 ## [0.45.0] - 2026-11-09
 

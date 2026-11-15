@@ -29,6 +29,16 @@ until it finds a `.cuaderno/` folder. If that finds nothing, it falls back to th
 `CUADERNO_VAULT_PATH` environment variable. Standing inside a vault always wins over the env var.
 See [Initialise a vault](../../getting-started/initialise-a-vault.md).
 
+## Where the index lives
+
+The index is `.cuaderno/index.db` unless `CUADERNO_INDEX_PATH` names another database file, as an
+absolute path. Set it when the vault folder is also reached from another machine, such as a
+container or a network share, and only in the environment of the process that serves that vault:
+the value names one file, and an index bound to one vault refuses to open for another. The CLI
+deliberately has no `--index-path` flag; the setting belongs to a machine, not to a command. See
+[Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine),
+including what it does not do.
+
 ## Interactive vs. scripted
 
 Write commands follow one convention (the "flags-and-prompts" pattern):

@@ -21,9 +21,9 @@ fn open_creates_fresh_db_with_current_schema() {
             r.get(0)
         })
         .unwrap();
-    // 001 initial schema + 002 FTS5 search + 003 links.via_alias + 004 snapshot masked hash — see
-    // SCHEMA.md.
-    assert_eq!(version, 4);
+    // 001 initial schema + 002 FTS5 search + 003 links.via_alias + 004 snapshot masked hash +
+    // 005 index_meta — see SCHEMA.md.
+    assert_eq!(version, 5);
 
     // All tables exist (`notes_fts` is the FTS5 virtual table from 002).
     for table in [
@@ -35,6 +35,7 @@ fn open_creates_fresh_db_with_current_schema() {
         "archived_action_snapshots",
         "schema_migrations",
         "notes_fts",
+        "index_meta",
     ] {
         let count: u32 = conn
             .query_row(
@@ -60,7 +61,7 @@ fn reopen_existing_db_is_idempotent() {
     let row_count: u32 = conn
         .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(row_count, 4);
+    assert_eq!(row_count, 5);
 }
 
 #[test]
@@ -140,7 +141,7 @@ fn open_self_heals_a_corrupt_index_file() {
             r.get(0)
         })
         .unwrap();
-    assert_eq!(version, 4, "fresh schema applied after recovery");
+    assert_eq!(version, 5, "fresh schema applied after recovery");
 }
 
 #[test]
@@ -232,7 +233,7 @@ fn migration_003_adds_via_alias() {
             Ok((version, has_column, via_alias))
         })
         .unwrap();
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     assert!(has_column, "links.via_alias added by 003");
     assert_eq!(
         via_alias, 0,
@@ -294,7 +295,7 @@ fn migration_004_adds_nullable_columns() {
             Ok((version, columns, masked, mask_version, masked_size))
         })
         .unwrap();
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     assert_eq!(columns, 3, "all three columns added by 004");
     assert_eq!(masked_size, None);
     assert_eq!(masked, None);
