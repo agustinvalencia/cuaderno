@@ -281,3 +281,144 @@ fn a_section_write_from_a_stale_read_is_refused_not_retried() {
     assert!(other.fired() >= 1);
     assert_eq!(daily(&inner), format!("{before}{foreign}"));
 }
+
+/// A store in which another writer creates `target` the first time an
+/// operation finds it absent, right after `exists` answered: the path the
+/// operation chose as free is no longer free when it writes.
+struct CreatesWhenFoundFree {
+    inner: Arc<MemoryVaultStore>,
+    target: VaultPath,
+    done: AtomicBool,
+}
+
+impl VaultStore for CreatesWhenFoundFree {
+    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
+        let exists = self.inner.exists(path)?;
+        if !exists && *path == self.target && !self.done.swap(true, Ordering::SeqCst) {
+            self.inner.write_file(path, "made elsewhere\n")?;
+        }
+        Ok(exists)
+    }
+    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        self.inner.read_file(path)
+    }
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.inner.read_bytes(path)
+    }
+    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.write_file(path, content)
+    }
+    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.append_to_file(path, content)
+    }
+    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.move_file(src, dest)
+    }
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        self.inner.delete_file(path)
+    }
+    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.list_dir(path)
+    }
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.walk_dir(path)
+    }
+    fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
+        self.inner.metadata(path)
+    }
+    fn import_external(&self, src: &Path, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.import_external(src, dest)
+    }
+    fn read_journals(&self) -> Option<&ReadJournals> {
+        self.inner.read_journals()
+    }
+    fn write_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        self.inner.write_file_expecting(path, content, expected)
+    }
+    fn append_to_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        self.inner.append_to_file_expecting(path, content, expected)
+    }
+}
+
+fn vault_where_found_free_is_taken(target: &str) -> (Vault, Arc<MemoryVaultStore>) {
+    let inner = Arc::new(MemoryVaultStore::new());
+    let store = Arc::new(CreatesWhenFoundFree {
+        inner: inner.clone(),
+        target: VaultPath::new(target).unwrap(),
+        done: AtomicBool::new(false),
+    });
+    (vault_over(store as Arc<dyn VaultStore>), inner)
+}
+
+#[test]
+fn a_capture_never_replaces_one_made_at_the_same_path_meanwhile() {
+    let taken = "inbox/2026-06-13-buy-milk.md";
+    let (vault, inner) = vault_where_found_free_is_taken(taken);
+    let path = vault.capture_to_inbox(at(), "Buy milk").unwrap();
+
+    // The commit refused the taken path; the retried capture chose the
+    // next free name.
+    assert_eq!(path, VaultPath::new("inbox/2026-06-13-buy-milk-2.md").unwrap());
+    assert_eq!(
+        inner.read_file(&VaultPath::new(taken).unwrap()).unwrap(),
+        "made elsewhere\n"
+    );
+    assert!(inner.read_file(&path).unwrap().contains("Buy milk"));
+}
+
+#[test]
+fn a_stewardship_never_replaces_one_made_at_the_same_path_meanwhile() {
+    use cdno_domain::frontmatter::Context;
+    let taken = "stewardships/household.md";
+    let (vault, inner) = vault_where_found_free_is_taken(taken);
+    let err = vault
+        .create_stewardship_flat(at(), "Household", Context::Household)
+        .unwrap_err();
+    assert!(err.is_concurrent_change(), "{err:?}");
+    assert_eq!(
+        inner.read_file(&VaultPath::new(taken).unwrap()).unwrap(),
+        "made elsewhere\n"
+    );
+}
+
+#[test]
+fn a_discard_logs_the_text_it_deletes_even_if_the_item_was_just_edited() {
+    let inner = Arc::new(MemoryVaultStore::new());
+    let plain = vault_over(inner.clone() as Arc<dyn VaultStore>);
+    let item = plain.capture_to_inbox(at(), "Call the lab").unwrap();
+    drop(plain);
+    let slug = item
+        .as_path()
+        .file_stem()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+
+    let store = Arc::new(OtherWriter::new(inner.clone(), &item.to_string()));
+    let vault = vault_over(store.clone() as Arc<dyn VaultStore>);
+    store.arm(Interference::FirstAttempt);
+    vault.discard_inbox_item(at(), &slug).unwrap();
+
+    assert!(store.fired() >= 1);
+    assert!(!inner.exists(&item).unwrap(), "the item is deleted");
+    let note = daily(&inner);
+    let line = note
+        .lines()
+        .find(|l| l.contains("discarded"))
+        .expect("the discard is logged");
+    assert!(line.contains("Call the lab"), "{line}");
+    assert!(
+        line.contains("other writer 0"),
+        "the logged text is the text deleted, edit included: {line}"
+    );
+}

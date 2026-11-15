@@ -613,6 +613,217 @@ fn a_journal_records_only_while_open_and_keeps_the_first_observation() {
 }
 
 // ---------------------------------------------------------------------
+// Creates, and where the store compares
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_conditional_create_never_replaces_an_existing_file() {
+    // The no-clobber rename itself, not the commit's earlier comparison:
+    // swapping it for a plain rename fails this test.
+    let folder = Folder::new();
+    folder.put("a.md", "made elsewhere\n");
+    let store = FsVaultStore::new(folder.root());
+    let err = store
+        .write_file_expecting(&vp("a.md"), "mine\n", Observed::Absent)
+        .unwrap_err();
+    assert!(matches!(&err, StoreError::Changed(p) if *p == vp("a.md")), "{err:?}");
+    assert_eq!(folder.get("a.md"), "made elsewhere\n");
+    let err = store
+        .append_to_file_expecting(&vp("a.md"), "mine\n", Observed::Absent)
+        .unwrap_err();
+    assert!(matches!(err, StoreError::Changed(_)), "{err:?}");
+    assert_eq!(folder.get("a.md"), "made elsewhere\n");
+    assert!(folder.temp_files().is_empty(), "{:?}", folder.temp_files());
+}
+
+#[test]
+fn a_file_created_while_the_create_is_staged_is_kept() {
+    // The other writer creates the file after the temp file is synced and
+    // before the rename: only the no-clobber rename can refuse it.
+    let folder = Folder::new();
+    let root = folder.root().to_path_buf();
+    let store = FsVaultStore::new(folder.root()).with_before_compare_hook(move || {
+        std::fs::write(root.join("a.md"), "made elsewhere\n").unwrap();
+    });
+    let err = store
+        .write_file_expecting(&vp("a.md"), "mine\n", Observed::Absent)
+        .unwrap_err();
+    assert!(matches!(err, StoreError::Changed(_)), "{err:?}");
+    assert_eq!(folder.get("a.md"), "made elsewhere\n");
+    assert!(folder.temp_files().is_empty());
+}
+
+#[test]
+fn the_replace_comparison_runs_after_the_temp_file_is_synced() {
+    // A change landing after the slow part of the write (temp file written
+    // and synced) is still seen: the comparison is the last step before the
+    // rename. A comparison moved ahead of the temp write fails this test.
+    let folder = Folder::new();
+    folder.put("a.md", "base\n");
+    let root = folder.root().to_path_buf();
+    let store = FsVaultStore::new(folder.root()).with_before_compare_hook(move || {
+        std::fs::write(root.join("a.md"), "base\nforeign\n").unwrap();
+    });
+    let err = store
+        .write_file_expecting(&vp("a.md"), "mine\n", Observed::of_bytes(b"base\n"))
+        .unwrap_err();
+    assert!(matches!(err, StoreError::Changed(_)), "{err:?}");
+    assert_eq!(folder.get("a.md"), "base\nforeign\n");
+    assert!(folder.temp_files().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_filesystem_without_no_clobber_renames_falls_back_to_check_then_rename() {
+    let folder = Folder::new();
+    folder.put("taken.md", "made elsewhere\n");
+    let store = FsVaultStore::new(folder.root()).with_noclobber_error(libc::ENOTSUP);
+    store
+        .write_file_expecting(&vp("new.md"), "mine\n", Observed::Absent)
+        .expect("absent: the fallback creates it");
+    assert_eq!(folder.get("new.md"), "mine\n");
+    let err = store
+        .write_file_expecting(&vp("taken.md"), "mine\n", Observed::Absent)
+        .unwrap_err();
+    assert!(matches!(err, StoreError::Changed(_)), "{err:?}");
+    assert_eq!(folder.get("taken.md"), "made elsewhere\n");
+    assert!(folder.temp_files().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn any_other_no_clobber_failure_is_reported_not_retried_without_it() {
+    let folder = Folder::new();
+    let store = FsVaultStore::new(folder.root()).with_noclobber_error(libc::EIO);
+    let err = store
+        .write_file_expecting(&vp("new.md"), "mine\n", Observed::Absent)
+        .unwrap_err();
+    assert!(matches!(err, StoreError::Io { .. }), "{err:?}");
+    assert!(!folder.present("new.md"));
+    assert!(folder.temp_files().is_empty());
+}
+
+#[test]
+fn create_file_refuses_a_path_the_operation_saw_taken() {
+    // A create states it expects the path absent, whatever was read: a
+    // path chosen as free that is not free fails instead of being replaced.
+    let folder = Folder::new();
+    folder.put("inbox/item.md", "made elsewhere\n");
+    let a = folder.writer("a.lock");
+    let mut t = tx(&a);
+    let _ = a.read_file(&vp("inbox/item.md")).unwrap();
+    t.create_file(vp("inbox/item.md"), "mine\n");
+    assert_eq!(conflict_paths(t.commit().unwrap_err()), vec!["inbox/item.md"]);
+    assert_eq!(folder.get("inbox/item.md"), "made elsewhere\n");
+}
+
+#[test]
+fn create_file_refuses_a_file_that_appears_after_staging() {
+    let folder = Folder::new();
+    let a = folder.writer("a.lock");
+    let mut t = tx(&a);
+    t.create_file(vp("inbox/item.md"), "mine\n");
+    folder.put("inbox/item.md", "made elsewhere\n");
+    assert_eq!(conflict_paths(t.commit().unwrap_err()), vec!["inbox/item.md"]);
+    assert_eq!(folder.get("inbox/item.md"), "made elsewhere\n");
+}
+
+#[test]
+fn a_move_of_a_note_the_operation_read_is_compared() {
+    let folder = Folder::new();
+    folder.put("projects/alpha.md", "map\n");
+    let a = folder.writer("a.lock");
+    let mut t = tx(&a);
+    let _ = a.read_file(&vp("projects/alpha.md")).unwrap();
+    folder.put("projects/alpha.md", "map, edited elsewhere\n");
+    t.move_file(vp("projects/alpha.md"), vp("projects/_parked/alpha.md"));
+    assert_eq!(
+        conflict_paths(t.commit().unwrap_err()),
+        vec!["projects/alpha.md"]
+    );
+    assert_eq!(folder.get("projects/alpha.md"), "map, edited elsewhere\n");
+    assert!(!folder.present("projects/_parked/alpha.md"));
+}
+
+// ---------------------------------------------------------------------
+// Whose reads count, and reads that disagree
+// ---------------------------------------------------------------------
+
+#[test]
+fn reads_on_another_thread_do_not_supply_the_baseline() {
+    // Another thread of the process (a read-only call beside the write)
+    // reads the note after another writer changed it. Its read must not
+    // become the baseline: the operation composed from the older bytes.
+    let folder = Folder::new();
+    folder.put(NOTE, "old\n");
+    let a = folder.writer("a.lock");
+    let mut t = tx(&a);
+    let journals = a.read_journals().unwrap();
+    // Recorded on this thread only: a journal opened here sees nothing of
+    // another thread's read.
+    let probe = journals.open();
+    folder.put(NOTE, "new\n");
+    let other = Arc::clone(&a);
+    std::thread::spawn(move || {
+        let _ = other.read_file(&vp(NOTE)).unwrap();
+    })
+    .join()
+    .unwrap();
+    assert_eq!(probe.get(&vp(NOTE)), None, "another thread's read was recorded");
+    drop(probe);
+
+    // The operation's own (later) read is the baseline, so nothing changed
+    // between it and the commit: the write lands.
+    let read = a.read_file(&vp(NOTE)).unwrap();
+    t.write_file(vp(NOTE), format!("{read}mine\n"));
+    t.commit().unwrap();
+    assert_eq!(folder.get(NOTE), "new\nmine\n");
+}
+
+#[test]
+fn a_note_changed_and_changed_back_between_two_reads_is_refused() {
+    // The operation read the note twice and the two reads disagree: it may
+    // have composed from either, so a file that holds the first again by
+    // commit time is no proof of anything. The commit refuses.
+    let folder = Folder::new();
+    folder.put(NOTE, "one\n");
+    let a = folder.writer("a.lock");
+    let mut t = tx(&a);
+    let _first = a.read_file(&vp(NOTE)).unwrap();
+    folder.put(NOTE, "two\n");
+    let second = a.read_file(&vp(NOTE)).unwrap();
+    folder.put(NOTE, "one\n");
+    t.write_file(vp(NOTE), format!("{second}mine\n"));
+    assert_eq!(conflict_paths(t.commit().unwrap_err()), vec![NOTE]);
+    assert_eq!(folder.get(NOTE), "one\n");
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "without having been read inside the transaction")]
+fn a_transaction_that_requires_reads_refuses_a_blind_replace_in_debug_builds() {
+    let folder = Folder::new();
+    folder.put(NOTE, "base\n");
+    let a = folder.writer("a.lock");
+    let mut t = tx(&a).require_reads();
+    t.write_file(vp(NOTE), "blind\n");
+}
+
+#[test]
+fn a_transaction_that_requires_reads_accepts_a_read_replace_and_a_new_file() {
+    let folder = Folder::new();
+    folder.put(NOTE, "base\n");
+    let a = folder.writer("a.lock");
+    let mut t = tx(&a).require_reads();
+    let read = a.read_file(&vp(NOTE)).unwrap();
+    t.write_file(vp(NOTE), format!("{read}more\n"));
+    t.write_file(vp("inbox/new.md"), "fresh\n");
+    t.create_file(vp("inbox/other.md"), "fresh\n");
+    t.commit().unwrap();
+    assert_eq!(folder.get(NOTE), "base\nmore\n");
+}
+
+// ---------------------------------------------------------------------
 // Many writers, retrying
 // ---------------------------------------------------------------------
 
