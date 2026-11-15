@@ -514,8 +514,10 @@ fn main() -> Result<()> {
     // The method-version skew notice, once per run, after the command has
     // opened its vault and finished (so it never lands inside a prompt or
     // in the middle of a listing). From here and never from
-    // `bootstrap::open_vault`, which shell completion also calls on every
-    // Tab (RFC 0006 plan T9). Printed whether or not the command succeeded.
+    // `bootstrap::open_vault`, which may run before a command's own output
+    // (RFC 0006 plan T9); shell completion opens no vault at all and exits
+    // in the intercept above (#1007). Printed whether or not the command
+    // succeeded.
     if notice
         && let Some(status) = bootstrap::take_method_status()
         && let Some(line) = bootstrap::method_notice(&status)

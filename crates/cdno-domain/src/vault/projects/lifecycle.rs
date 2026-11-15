@@ -13,6 +13,7 @@ use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
+use cdno_core::store::VaultStore;
 use cdno_core::template::VariableContext;
 use cdno_core::transaction::VaultTransaction;
 
@@ -30,6 +31,34 @@ use super::{
     rewrite_field_in_frontmatter,
 };
 
+/// The maps among `paths` (the project notes, in path order) whose `status`
+/// is `status`: the fold behind [`Vault::active_projects`] and
+/// [`Vault::parked_projects`], and behind the same answers read from the
+/// files by [`crate::Catalog`], so the two cannot disagree.
+///
+/// Maps under `projects/_done/` are skipped unread. Any other map that does
+/// not parse fails the call, for the reason `active_projects` gives.
+pub(in crate::vault) fn projects_with_status(
+    store: &dyn VaultStore,
+    paths: Vec<VaultPath>,
+    status: ProjectStatus,
+) -> Result<Vec<(VaultPath, ProjectFrontmatter)>, DomainError> {
+    let mut out = Vec::new();
+    for path in paths {
+        if is_under_projects_done(&path) {
+            continue;
+        }
+        let raw = store.read_file(&path)?;
+        // Markdown on purpose: project maps are machine-written Markdown.
+        let (fm, _body) = Frontmatter::parse(&raw)?;
+        let project = ProjectFrontmatter::try_from(fm)?;
+        if project.status == status {
+            out.push((path, project));
+        }
+    }
+    Ok(out)
+}
+
 impl Vault {
     /// Return every active project: pairs of `(path, frontmatter)`
     /// for files of type `project` whose `status` is `active`.
@@ -41,20 +70,11 @@ impl Vault {
     /// skipped unread: they hold no slot, and a broken retrospective
     /// must not block `create` or `activate`.
     pub fn active_projects(&self) -> Result<Vec<(VaultPath, ProjectFrontmatter)>, DomainError> {
-        let mut out = Vec::new();
-        for entry in self.index.list_by_type(NoteType::Project.as_str())? {
-            if is_under_projects_done(&entry.path) {
-                continue;
-            }
-            let raw = self.store.read_file(&entry.path)?;
-            // Markdown on purpose: project maps are machine-written Markdown.
-            let (fm, _body) = Frontmatter::parse(&raw)?;
-            let project = ProjectFrontmatter::try_from(fm)?;
-            if project.status == ProjectStatus::Active {
-                out.push((entry.path, project));
-            }
-        }
-        Ok(out)
+        projects_with_status(
+            &*self.store,
+            self.indexed_paths(NoteType::Project)?,
+            ProjectStatus::Active,
+        )
     }
 
     /// Return every parked project: pairs of `(path, frontmatter)`.
@@ -62,20 +82,11 @@ impl Vault {
     /// CLI's `cdno project activate` fuzzy picker, which only has
     /// parked projects as candidates.
     pub fn parked_projects(&self) -> Result<Vec<(VaultPath, ProjectFrontmatter)>, DomainError> {
-        let mut out = Vec::new();
-        for entry in self.index.list_by_type(NoteType::Project.as_str())? {
-            if is_under_projects_done(&entry.path) {
-                continue;
-            }
-            let raw = self.store.read_file(&entry.path)?;
-            // Markdown on purpose: project maps are machine-written Markdown.
-            let (fm, _body) = Frontmatter::parse(&raw)?;
-            let project = ProjectFrontmatter::try_from(fm)?;
-            if project.status == ProjectStatus::Parked {
-                out.push((entry.path, project));
-            }
-        }
-        Ok(out)
+        projects_with_status(
+            &*self.store,
+            self.indexed_paths(NoteType::Project)?,
+            ProjectStatus::Parked,
+        )
     }
 
     /// Scaffold a new project from the built-in template.

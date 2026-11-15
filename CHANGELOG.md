@@ -32,6 +32,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+- **Shell completion never opens the index** (closes #1007). The dynamic completers (`--project`,
+  `--slug`, `--portfolio`, `--stewardship`, the note types, `cdno open`'s reference) no longer
+  open, migrate or reconcile `.cuaderno/index.db` on every Tab, and no longer take the write lock:
+  a completion creates, writes and removes nothing under `.cuaderno/`, so it cannot checkpoint or
+  delete a long-lived server's `-wal`/`-shm` beside it, and it completes in a vault that has no
+  index yet; nor does it resolve an index `CUADERNO_INDEX_PATH` moves elsewhere (#998). The
+  suggestions are unchanged. They are read from the files through a new domain
+  type, `Catalog` (a store and the config), which asks the classifier which files are notes and a
+  new `cdno_core::reconcile::admit` (the check reconciliation itself now indexes through) which of
+  them an index would hold and with which type, then runs the same listing folds `Vault` runs
+  over its index rows. So a map added by hand is offered at once, as before, when the old path
+  reconciled it in first. Each Tab now reads every note's frontmatter instead of stat-ing it, a
+  few tens of milliseconds more on a vault of thousands of notes; and a note that fails to parse
+  no longer prints the reconciliation warning at Tab time.
 - **`cdno now` never opens the index** (closes #1003). Every form (plain, `--line`, `--json`) reads
   the config and the daily notes inside the `[focus]` windows through the store and nothing else:
   it no longer opens, migrates or reconciles `.cuaderno/index.db`, walks the vault, or waits on the

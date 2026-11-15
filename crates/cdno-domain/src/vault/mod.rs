@@ -24,6 +24,7 @@ use std::sync::Arc;
 use cdno_core::classify::NoteScope;
 use cdno_core::config::VaultConfig;
 use cdno_core::index::VaultIndex;
+use cdno_core::path::VaultPath;
 use cdno_core::reconcile::{ReconciliationReport, reconcile};
 use cdno_core::store::VaultStore;
 use cdno_core::transaction::VaultTransaction;
@@ -34,6 +35,7 @@ use crate::method_version::{Gate, METHOD_VERSION, UNSTAMPED_READS_AS, method_gat
 
 mod actions;
 mod capture;
+mod catalog;
 mod closure;
 mod commitments;
 pub mod config;
@@ -118,6 +120,7 @@ pub use context::{
 };
 // Timezone-injected staleness helpers, hidden from the public API but
 // reachable by the deterministic staleness test (#380).
+pub use catalog::Catalog;
 #[doc(hidden)]
 pub use context::{days_since_mtime_in, mtime_threshold_ns_in};
 pub use daily::{DailyNoteView, DailySection};
@@ -258,6 +261,21 @@ impl Vault {
 
     pub fn config(&self) -> &VaultConfig {
         &self.config
+    }
+
+    /// The indexed notes of `note_type`, in path order: what the listing
+    /// folds shared with [`Catalog`] are handed when they answer from the
+    /// index.
+    pub(in crate::vault) fn indexed_paths(
+        &self,
+        note_type: crate::note_type::NoteType,
+    ) -> Result<Vec<VaultPath>, DomainError> {
+        Ok(self
+            .index
+            .list_by_type(note_type.as_str())?
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect())
     }
 
     /// A registry view over this vault's built-in and config-defined note

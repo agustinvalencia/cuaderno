@@ -21,9 +21,9 @@ else. Every form of `cdno now` (plain, `--line` and `--json`) leaves the search 
 does not open, create or update `.cuaderno/index.db`, and does not wait for another process's write
 to finish. For the same reason it ignores `CUADERNO_INDEX_PATH`: it never resolves or touches an
 overridden index either. So it is safe to run on every prompt, even beside a server that keeps the
-same vault's index open. Only `now` is index-free: every other verb, and shell completion (which opens the vault
-on every Tab), still opens and reconciles the index, so running those beside such a server is not
-yet safe (see [#1005](https://github.com/agustinvalencia/cuaderno/issues/1005)).
+same vault's index open. Only `now` and [shell completion](completions.md#what-a-tab-press-reads)
+are index-free: every other verb still opens and reconciles the index, so running those beside such
+a server is not yet safe (see [#1005](https://github.com/agustinvalencia/cuaderno/issues/1005)).
 
 [`cdno action promote`](action.md#cdno-action-promote) *rewrites* the bullet it matched, and the
 focus follows it: the `action promoted on` line it logs renames the open start to the new note, with
