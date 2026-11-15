@@ -91,7 +91,13 @@ The layering is load-bearing; each crate has a rule that the code enforces:
 under `src/vault/` and each attaches its own `impl Vault { ... }` block** — add a new operation as a
 new file there rather than growing `mod.rs`. `Journal` (`vault/journal.rs`) is the index-free focus
 reader (a store and the `[focus]` windows) that `Vault`'s focus readers delegate to; `cdno now` opens
-only a `Journal`, never the index.
+only a `Journal`, never the index. `Catalog` (`vault/catalog.rs`) is the index-free reader of the
+listings shell completion offers: it takes the notes `classify` finds and that
+`cdno_core::reconcile::admit` (the one place that decides whether a note is indexed, and with which
+type) accepts, and hands their typed paths to the same folds `Vault` hands its index rows to; shell
+completion opens only a `Catalog`. A listing is one fold shared by `Vault` and the index-free
+reader, never a second implementation. An index-free reader is for implicit, high-frequency paths
+that run beside a server unasked (a prompt hook, a Tab press); explicit read verbs keep the index.
 
 **Project resolvers.** Every verb that reads or writes a project map's body picks one of two
 resolvers in `vault/projects/mod.rs`: `resolve_open_project` (an active or a parked map, folder and

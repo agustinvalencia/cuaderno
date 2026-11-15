@@ -45,6 +45,7 @@ struct Cli {
     /// When omitted, cdno discovers the vault by walking up from the
     /// current directory, then falls back to `CUADERNO_VAULT_PATH` —
     /// letting `cdno log`, `cdno capture`, etc. run from anywhere.
+    /// For `cdno init` it names the directory to create the vault in.
     #[arg(long, global = true, value_name = "PATH", value_hint = clap::ValueHint::DirPath)]
     vault: Option<PathBuf>,
 
@@ -94,7 +95,10 @@ struct Cli {
 enum Commands {
     /// Create a new vault: folder tree, .cuaderno/ config, default templates.
     Init {
-        /// Target directory. Defaults to the current working directory.
+        /// Target directory. Defaults to `--vault`, then to the current
+        /// working directory; never to a discovered vault or
+        /// `CUADERNO_VAULT_PATH`. Given with `--vault`, both must name the
+        /// same directory.
         path: Option<PathBuf>,
     },
 
@@ -514,8 +518,10 @@ fn main() -> Result<()> {
     // The method-version skew notice, once per run, after the command has
     // opened its vault and finished (so it never lands inside a prompt or
     // in the middle of a listing). From here and never from
-    // `bootstrap::open_vault`, which shell completion also calls on every
-    // Tab (RFC 0006 plan T9). Printed whether or not the command succeeded.
+    // `bootstrap::open_vault`, which may run before a command's own output
+    // (RFC 0006 plan T9); shell completion opens no vault at all and exits
+    // in the intercept above (#1007). Printed whether or not the command
+    // succeeded.
     if notice
         && let Some(status) = bootstrap::take_method_status()
         && let Some(line) = bootstrap::method_notice(&status)
@@ -543,11 +549,14 @@ fn shows_method_notice(command: &Commands) -> bool {
 fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Init { path } => {
-            let target = match path {
-                Some(p) => p,
-                None => std::env::current_dir()
-                    .context("could not determine the current working directory")?,
-            };
+            // `init` names the directory it creates: the positional, else
+            // `--vault`, else the working directory. Never discovery or
+            // `CUADERNO_VAULT_PATH`, so not `resolve_vault_root_or_error`.
+            let target =
+                commands::init::resolve_target(path.as_deref(), cli.vault.as_deref(), || {
+                    std::env::current_dir()
+                        .context("could not determine the current working directory")
+                })?;
             commands::init::run(&target)
         }
         Commands::Log {

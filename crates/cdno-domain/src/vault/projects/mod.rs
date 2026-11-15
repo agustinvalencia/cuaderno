@@ -77,9 +77,10 @@ pub use actions::{
     SwitchOutcome,
 };
 pub use closed::ClosedProjectEntry;
+pub(in crate::vault) use closed::closed_maps_in;
 pub use closing::ProjectClosureOutcome;
 pub use holder::{HolderChange, LOG_HOLDER_PREFIX, NO_HOLDER};
-pub(in crate::vault) use lifecycle::stage_project_index_rows;
+pub(in crate::vault) use lifecycle::{projects_with_status, stage_project_index_rows};
 pub use open_items::{
     LinkedCommitment, OpenAction, OpenItems, OpenItemsHash, OpenItemsReport, OpenMilestone,
 };

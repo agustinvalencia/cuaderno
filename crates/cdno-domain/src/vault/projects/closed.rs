@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
+use cdno_core::store::VaultStore;
 
 use crate::error::DomainError;
 use crate::frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
@@ -79,30 +80,40 @@ impl Vault {
 
     /// The parseable closed maps with their titles, in path order.
     fn closed_maps(&self) -> Result<Vec<(VaultPath, ProjectFrontmatter, String)>, DomainError> {
-        let mut out = Vec::new();
-        for entry in self.index.list_by_type(NoteType::Project.as_str())? {
-            if !is_closed_project_path(&entry.path) {
-                continue;
-            }
-            let raw = self.store.read_file(&entry.path)?;
-            // Markdown on purpose: project maps are machine-written Markdown.
-            let Ok((fm, _body)) = Frontmatter::parse(&raw) else {
-                continue;
-            };
-            let Ok(frontmatter) = ProjectFrontmatter::try_from(fm) else {
-                continue;
-            };
-            if !matches!(
-                frontmatter.status,
-                ProjectStatus::Completed | ProjectStatus::Dropped
-            ) {
-                continue;
-            }
-            let slug = project_slug_from_path(&entry.path);
-            let title = body_title_or_slug(&raw, &slug).to_owned();
-            out.push((entry.path, frontmatter, title));
-        }
-        out.sort_by(|a, b| a.0.as_path().cmp(b.0.as_path()));
-        Ok(out)
+        closed_maps_in(&*self.store, self.indexed_paths(NoteType::Project)?)
     }
+}
+
+/// The parseable closed maps among `paths` (the project notes), with their
+/// titles, in path order: the fold behind [`Vault::closed_projects`], and
+/// behind the same answer read from the files by [`crate::Catalog`].
+pub(in crate::vault) fn closed_maps_in(
+    store: &dyn VaultStore,
+    paths: Vec<VaultPath>,
+) -> Result<Vec<(VaultPath, ProjectFrontmatter, String)>, DomainError> {
+    let mut out = Vec::new();
+    for path in paths {
+        if !is_closed_project_path(&path) {
+            continue;
+        }
+        let raw = store.read_file(&path)?;
+        // Markdown on purpose: project maps are machine-written Markdown.
+        let Ok((fm, _body)) = Frontmatter::parse(&raw) else {
+            continue;
+        };
+        let Ok(frontmatter) = ProjectFrontmatter::try_from(fm) else {
+            continue;
+        };
+        if !matches!(
+            frontmatter.status,
+            ProjectStatus::Completed | ProjectStatus::Dropped
+        ) {
+            continue;
+        }
+        let slug = project_slug_from_path(&path);
+        let title = body_title_or_slug(&raw, &slug).to_owned();
+        out.push((path, frontmatter, title));
+    }
+    out.sort_by(|a, b| a.0.as_path().cmp(b.0.as_path()));
+    Ok(out)
 }

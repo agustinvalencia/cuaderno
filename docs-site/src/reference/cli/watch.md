@@ -6,8 +6,9 @@ Watch the vault and reconcile the index whenever a note changes outside `cdno`.
 cdno watch [OPTIONS]
 ```
 
-Every other command reconciles once, at startup, and exits ([`now`](now.md) never opens the index,
-so it does not reconcile at all). That is enough when the process is short-lived, but it means a
+Every other command reconciles once, at startup, and exits ([`now`](now.md) and
+[shell completion](completions.md#what-a-tab-press-reads) never open the index, so they do not
+reconcile at all). That is enough when the process is short-lived, but it means a
 note you edit in another editor is invisible to `search`, `lint` and backlinks until the next `cdno`
 command other than `now` happens to run. `watch` closes that gap: it stays in the
 foreground and reconciles on each debounced change.

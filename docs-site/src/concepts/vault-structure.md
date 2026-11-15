@@ -156,7 +156,7 @@ CUADERNO_INDEX_PATH=/var/lib/cuaderno/surrogate-model.db \
   setting has to differ from one machine to the next.
 
 **What it does not do.** The override stops the damage, not the staleness. Each machine's index
-learns of the other machine's writes only when it reconciles: the CLI at every command except [`cdno now`](../reference/cli/now.md), which never opens the index, the HTTP
+learns of the other machine's writes only when it reconciles: the CLI at every command except [`cdno now`](../reference/cli/now.md) and [shell completion](../reference/cli/completions.md#what-a-tab-press-reads), which never open the index, the HTTP
 server at start and then every `--reconcile-interval-secs` (300 seconds by default), and the stdio
 server only at start ([#1002](https://github.com/agustinvalencia/cuaderno/issues/1002)). In that
 window search and backlinks can miss the other side's latest notes, and the active-project cap and
