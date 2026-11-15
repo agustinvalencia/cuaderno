@@ -14,6 +14,7 @@ pub mod bundled;
 pub mod commands;
 pub mod completions;
 pub mod editor;
+pub mod exit;
 pub mod freshness;
 pub mod output;
 pub mod prompt;

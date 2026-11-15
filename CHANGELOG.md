@@ -8,6 +8,22 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+- **A write no longer silently replaces a change it did not see** (closes #1001). The vault write
+  lock is an `flock`, which one kernel enforces and another does not see, so a folder written from
+  a host and a container at once could lose lines from a daily note. A commit now compares every
+  file it is about to replace, append to or delete with what the operation read of it (the store
+  records each read while the transaction is open; a path staged without being read is observed
+  when it is staged), again right before the rename, and creates a new file with a rename that
+  refuses to overwrite. On a mismatch it writes nothing, rolls back anything already written
+  without overwriting a later change, and fails with `TransactionError::Conflict`: "… changed on
+  disk while this write was being prepared, most likely by another writer; nothing was written,
+  run the operation again". `cdno log` and `append_to_log` retry it themselves a few times; other
+  verbs return it. Over MCP it is a tool result with code `concurrent_change` and the paths; the
+  CLI exits with status 75 (`EX_TEMPFAIL`). A bare move is not compared (it carries the file
+  along), the raw writes are unchanged, and a gap of one `stat` before each rename remains:
+  `docs/concurrent-writers.md` lists every window left open. On one machine nothing changes except
+  the cost, a read and two `stat`s more per replaced file.
+
 - **`cdno now` never opens the index** (closes #1003). Every form (plain, `--line`, `--json`) reads
   the config and the daily notes inside the `[focus]` windows through the store and nothing else:
   it no longer opens, migrates or reconciles `.cuaderno/index.db`, walks the vault, or waits on the

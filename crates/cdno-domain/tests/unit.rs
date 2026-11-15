@@ -42,6 +42,7 @@ mod unit {
     mod tracking_tests;
     mod type_registry_tests;
     mod typst_note_tests;
+    mod unshared_lock_tests;
     mod vault_tests;
     mod weekly_context_tests;
     mod weekly_tests;

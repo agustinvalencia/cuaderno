@@ -34,18 +34,26 @@ impl Vault {
     /// where the author put them.
     ///
     /// Returns the vault-relative path of the daily note touched.
+    ///
+    /// When the daily note changed underneath the write (another writer
+    /// the vault lock did not exclude, #1001), the whole append runs again
+    /// against what is there now, a few times, before the conflict is
+    /// returned: every input is the arguments and the vault, so re-running
+    /// it is exactly the append the caller asked for.
     pub fn log_to_daily_note(
         &self,
         at: NaiveDateTime,
         entry: &str,
     ) -> Result<VaultPath, DomainError> {
-        let mut tx = self.transaction()?;
-        // A line written while a focus is open carries the tag (RFC 0005
-        // §5.6); with none open the entry is written untouched.
-        let tagged = format!("{entry}{}", self.during_tag(at.date()));
-        let path = self.stage_daily_log(at, &tagged, &mut tx)?;
-        tx.commit()?;
-        Ok(path)
+        self.retry_on_conflict(|| {
+            let mut tx = self.transaction()?;
+            // A line written while a focus is open carries the tag (RFC
+            // 0005 §5.6); with none open the entry is written untouched.
+            let tagged = format!("{entry}{}", self.during_tag(at.date()));
+            let path = self.stage_daily_log(at, &tagged, &mut tx)?;
+            tx.commit()?;
+            Ok(path)
+        })
     }
 
     /// The `\n  during: [[<slug>]]` continuation for the focus open on

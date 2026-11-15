@@ -44,7 +44,10 @@
 //!   condition in two different shapes depending on which layer noticed.
 //!
 //! The rest of `StoreError` (`PermissionDenied`, `Io`, `LockTimeout`,
-//! `OutsideVault`) is machinery, as are `Index`, `Transaction`, `Config`,
+//! `OutsideVault`, `Changed`) is machinery, as are `Index`, `Transaction`
+//! (except its `Conflict`, `concurrent_change`: a file changed underneath
+//! the write, nothing was written, and the caller's remedy is to call
+//! again, #1001), `Config`,
 //! `Template`, `Parse`, and the method-version gate's `MethodVersionAhead`
 //! and `VaultNeedsMigration`. `Path` stays mechanical too: MCP tools take
 //! slugs, never paths, so a `PathError` means the *server* built a bad
@@ -59,7 +62,7 @@
 //! swallow every future variant into whichever behaviour was convenient
 //! the day it was written.
 
-use cdno_core::error::{ManipulationError, StoreError, ValidationError};
+use cdno_core::error::{ManipulationError, StoreError, TransactionError, ValidationError};
 use cdno_domain::FOCUS_OPEN_MESSAGE;
 use cdno_domain::error::DomainError;
 use rmcp::ErrorData;
@@ -113,6 +116,7 @@ pub(crate) enum RejectionCode {
     BulletMissingEnergy,
     CommitmentAlreadyDue,
     CommitmentNotActive,
+    ConcurrentChange,
     EmptyField,
     FieldNotSettable,
     FocusOpen,
@@ -198,6 +202,9 @@ fn rejection_message(code: RejectionCode, e: &DomainError) -> String {
         RejectionCode::InvalidSlug => {
             format!("{e}; fix the shape as the message says, or ask the person for another name")
         }
+        RejectionCode::ConcurrentChange => format!(
+            "{e}. Make the same call again; if what you are writing was composed from an earlier read of that note, read it again first and recompose"
+        ),
         RejectionCode::SlugTaken => format!(
             "{e}; if that is the note you meant, use it; otherwise ask the person for another name, do not suffix it yourself"
         ),
@@ -596,15 +603,33 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         // These stay JSON-RPC protocol errors — nothing the caller could
         // pass differently changes the outcome.
         // -------------------------------------------------------------
+        // A commit refused because a file it would replace changed
+        // underneath it (#1001). Nothing was written, and calling again is
+        // what fixes it: the call itself is fine, the moment was not. That
+        // is the caller's to act on, so it is a rejection with a code an
+        // agent can branch on, unlike a contended lock, which the store
+        // has already waited out by the time it reports one.
+        DomainError::Transaction(TransactionError::Conflict { paths }) => (
+            RejectionCode::ConcurrentChange,
+            json!({ "paths": paths.iter().map(ToString::to_string).collect::<Vec<_>>() }),
+        ),
+
+        // A conditional store write that found the file changed reaches the
+        // caller as the transaction's `Conflict` above or, when the rollback
+        // after it failed too, as a `FileWrite`: the vault may then be
+        // part-written, which is the machine's to report.
         DomainError::Store(
             StoreError::PermissionDenied(_)
             | StoreError::Io { .. }
             | StoreError::LockTimeout(_)
-            | StoreError::OutsideVault(_),
+            | StoreError::OutsideVault(_)
+            | StoreError::Changed(_),
         )
         | DomainError::Index(_)
         | DomainError::Parse(_)
-        | DomainError::Transaction(_)
+        | DomainError::Transaction(
+            TransactionError::FileWrite { .. } | TransactionError::IndexStale(_),
+        )
         | DomainError::Path(_)
         | DomainError::Template(_)
         | DomainError::Config(_) => return None,
@@ -975,6 +1000,62 @@ mod tests {
                 .contains("3 open item(s)"),
             "payload: {payload}"
         );
+    }
+
+    #[test]
+    fn a_concurrent_change_classifies_with_its_paths_and_the_remedy() {
+        // #1001: a file the write would replace changed underneath it.
+        // Nothing was written; the caller's move is to call again.
+        let paths =
+            vec![cdno_core::path::VaultPath::new("journal/2026/daily/2026-06-13.md").unwrap()];
+        let payload = classify(&DomainError::Transaction(TransactionError::Conflict {
+            paths,
+        }))
+        .expect("a concurrent change is the caller's to retry");
+
+        assert_eq!(payload["code"], "concurrent_change");
+        assert_eq!(
+            payload["details"],
+            json!({ "paths": ["journal/2026/daily/2026-06-13.md"] })
+        );
+        let message = payload["message"].as_str().expect("message");
+        assert!(message.contains("nothing was written"), "{message}");
+        assert!(message.contains("Make the same call again"), "{message}");
+        assert!(message.contains("read it again first"), "{message}");
+
+        // Through the handler path: a tool result the agent reads, not a
+        // protocol error.
+        let err =
+            crate::util::into_mcp_error(DomainError::Transaction(TransactionError::Conflict {
+                paths: vec![
+                    cdno_core::path::VaultPath::new("projects/surrogate-model.md").unwrap(),
+                ],
+            }));
+        let result = decode(err).expect("a conflict reaches the agent as a result");
+        assert_eq!(result.is_error, Some(true));
+        let text = result.content[0].as_text().expect("text").text.clone();
+        let parsed: Value = serde_json::from_str(&text).expect("JSON content");
+        assert_eq!(parsed["code"], "concurrent_change");
+        assert_eq!(parsed["details"]["paths"][0], "projects/surrogate-model.md");
+    }
+
+    #[test]
+    fn a_failed_commit_other_than_a_conflict_stays_mechanical() {
+        assert!(
+            classify(&DomainError::Transaction(TransactionError::FileWrite {
+                source: StoreError::Changed("a.md".into()),
+                rollback_failures: vec![StoreError::Changed("b.md".into())],
+            }))
+            .is_none(),
+            "a rollback that failed may leave the vault part-written"
+        );
+        assert!(
+            classify(&DomainError::Transaction(TransactionError::IndexStale(
+                vec![]
+            )))
+            .is_none()
+        );
+        assert!(classify(&DomainError::Store(StoreError::Changed("a.md".into()))).is_none());
     }
 
     #[test]

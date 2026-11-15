@@ -8,6 +8,7 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::error::StoreError;
 use crate::file_meta::FileMeta;
 use crate::path::VaultPath;
+use crate::read_journal::{Observed, ReadJournals};
 
 /// How long [`VaultStore::acquire_write_lock`] waits for the vault write
 /// lock before giving up. Bounded so a wedged holder surfaces as a
@@ -184,6 +185,67 @@ pub trait VaultStore: Send + Sync {
     fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
         Ok(VaultWriteLock::noop())
     }
+
+    /// The read journals this store records its reads into (#1001), so a
+    /// transaction can compare what an operation read with what is on
+    /// disk before replacing it. A store that records reads returns its
+    /// [`ReadJournals`] and calls [`ReadJournals::record`] from
+    /// [`read_file`](Self::read_file) and [`read_bytes`](Self::read_bytes),
+    /// and [`ReadJournals::record_absent`] when [`exists`](Self::exists)
+    /// answers false.
+    ///
+    /// The default records nothing, which is safe: a transaction over such
+    /// a store takes its observation of each path when the write is staged,
+    /// later than the domain's read, so the check covers less of the
+    /// read-modify-write but is never skipped. A wrapping store should
+    /// delegate to the store it wraps.
+    fn read_journals(&self) -> Option<&ReadJournals> {
+        None
+    }
+
+    /// What is at `path` right now: [`Observed::Absent`], or the
+    /// fingerprint of its bytes. Reads through
+    /// [`read_bytes`](Self::read_bytes).
+    fn observe(&self, path: &VaultPath) -> Result<Observed, StoreError> {
+        match self.read_bytes(path) {
+            Ok(bytes) => Ok(Observed::of_bytes(&bytes)),
+            Err(StoreError::NotFound(_)) => Ok(Observed::Absent),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// [`write_file`](Self::write_file), but only if `path` still holds
+    /// `expected`; otherwise [`StoreError::Changed`] and nothing written.
+    ///
+    /// The default checks and then writes, so a change landing between
+    /// the two is not seen. [`FsVaultStore`] checks again after the new
+    /// content is staged in its temp file, right before the rename, and
+    /// [`MemoryVaultStore`] checks and writes under one mutex.
+    fn write_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: Observed,
+    ) -> Result<(), StoreError> {
+        if self.observe(path)? != expected {
+            return Err(StoreError::Changed(path.to_string()));
+        }
+        self.write_file(path, content)
+    }
+
+    /// [`append_to_file`](Self::append_to_file), but only if `path` still
+    /// holds `expected` (see [`write_file_expecting`](Self::write_file_expecting)).
+    fn append_to_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: Observed,
+    ) -> Result<(), StoreError> {
+        if self.observe(path)? != expected {
+            return Err(StoreError::Changed(path.to_string()));
+        }
+        self.append_to_file(path, content)
+    }
 }
 
 /// In-memory [`VaultStore`] used for fast, deterministic domain tests.
@@ -200,6 +262,8 @@ pub struct MemoryVaultStore {
     // absolute paths and `..` at construction, we never have to
     // defend against those here.
     files: Mutex<HashMap<VaultPath, MemoryFile>>,
+    /// Reads recorded for open transactions (#1001).
+    journals: ReadJournals,
 }
 
 /// One stored file's payload plus a modification timestamp.
@@ -220,20 +284,26 @@ impl MemoryVaultStore {
 impl VaultStore for MemoryVaultStore {
     fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
         let files = self.files.lock().expect("poisoned mutex");
-        files
+        let result = files
             .get(path)
             .map(|f| f.content.clone())
-            .ok_or_else(|| StoreError::NotFound(path.to_string()))
+            .ok_or_else(|| StoreError::NotFound(path.to_string()));
+        drop(files);
+        self.journals.record(path, &result);
+        result
     }
 
     fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
         // The in-memory store keeps text content; hand back its bytes so
         // the plumbing is exercisable without real binary fixtures.
         let files = self.files.lock().expect("poisoned mutex");
-        files
+        let result = files
             .get(path)
             .map(|f| f.content.clone().into_bytes())
-            .ok_or_else(|| StoreError::NotFound(path.to_string()))
+            .ok_or_else(|| StoreError::NotFound(path.to_string()));
+        drop(files);
+        self.journals.record(path, &result);
+        result
     }
 
     fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
@@ -313,6 +383,10 @@ impl VaultStore for MemoryVaultStore {
         let is_dir = files
             .keys()
             .any(|k| k.as_path().starts_with(target) && k.as_path() != target);
+        drop(files);
+        if !is_dir {
+            self.journals.record_absent(path);
+        }
         Ok(is_dir)
     }
 
@@ -413,6 +487,55 @@ impl VaultStore for MemoryVaultStore {
             .ok_or_else(|| StoreError::NotFound(path.to_string()))
     }
 
+    fn read_journals(&self) -> Option<&ReadJournals> {
+        Some(&self.journals)
+    }
+
+    // Check and write under the one mutex: no window at all here.
+    fn write_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: Observed,
+    ) -> Result<(), StoreError> {
+        let mut files = self.files.lock().expect("poisoned mutex");
+        if memory_observed(&files, path) != expected {
+            return Err(StoreError::Changed(path.to_string()));
+        }
+        files.insert(
+            path.clone(),
+            MemoryFile {
+                content: content.to_owned(),
+                mtime: SystemTime::now(),
+            },
+        );
+        Ok(())
+    }
+
+    fn append_to_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: Observed,
+    ) -> Result<(), StoreError> {
+        let mut files = self.files.lock().expect("poisoned mutex");
+        if memory_observed(&files, path) != expected {
+            return Err(StoreError::Changed(path.to_string()));
+        }
+        let now = SystemTime::now();
+        files
+            .entry(path.clone())
+            .and_modify(|f| {
+                f.content.push_str(content);
+                f.mtime = now;
+            })
+            .or_insert_with(|| MemoryFile {
+                content: content.to_owned(),
+                mtime: now,
+            });
+        Ok(())
+    }
+
     fn import_external(&self, src: &Path, dest: &VaultPath) -> Result<(), StoreError> {
         if !src.exists() {
             return Err(StoreError::NotFound(format!(
@@ -442,6 +565,13 @@ impl VaultStore for MemoryVaultStore {
         );
         Ok(())
     }
+}
+
+/// What the in-memory store holds at `path`, for its conditional writes.
+fn memory_observed(files: &HashMap<VaultPath, MemoryFile>, path: &VaultPath) -> Observed {
+    files.get(path).map_or(Observed::Absent, |f| {
+        Observed::of_bytes(f.content.as_bytes())
+    })
 }
 
 /// Filesystem-backed [`VaultStore`].
@@ -492,13 +622,21 @@ pub struct FsVaultStore {
     /// confinement layer permanently fail-open for a store built
     /// before its root exists (PR #306 verification finding).
     root_canon: std::sync::OnceLock<PathBuf>,
+    /// Where the write lock lives when not `.cuaderno/.lock`; see
+    /// [`with_lock_file`](Self::with_lock_file).
+    lock_file: Option<PathBuf>,
+    /// Reads recorded for open transactions (#1001). Per instance: a
+    /// clone starts with none open.
+    journals: ReadJournals,
 }
 
 impl Clone for FsVaultStore {
     fn clone(&self) -> Self {
         // Don't copy the memoised canonical root: a clone is cheap and
         // re-memoises lazily, keeping the OnceLock semantics simple.
-        Self::new(self.root.clone())
+        let mut clone = Self::new(self.root.clone());
+        clone.lock_file.clone_from(&self.lock_file);
+        clone
     }
 }
 
@@ -507,7 +645,23 @@ impl FsVaultStore {
         Self {
             root: root.into(),
             root_canon: std::sync::OnceLock::new(),
+            lock_file: None,
+            journals: ReadJournals::new(),
         }
+    }
+
+    /// Take the write lock on `lock_file` (an absolute path) instead of
+    /// the vault's `.cuaderno/.lock`.
+    ///
+    /// A test seam and nothing else: two stores over one folder with
+    /// different lock files hold their locks independently, which is how
+    /// a test reproduces a folder written from two kernels, where `flock`
+    /// is not shared (#1001). No production path calls it; a real vault
+    /// always locks `.cuaderno/.lock`.
+    #[doc(hidden)]
+    pub fn with_lock_file(mut self, lock_file: impl Into<PathBuf>) -> Self {
+        self.lock_file = Some(lock_file.into());
+        self
     }
 
     /// Resolve a vault-relative path to an absolute filesystem path,
@@ -588,6 +742,22 @@ impl FsVaultStore {
     /// fsync would be nearly wasted — durable data blocks orphaned by
     /// a non-durable rename.
     fn atomic_write(&self, full: &Path, content: &str, path: &VaultPath) -> Result<(), StoreError> {
+        self.atomic_write_expecting(full, content, path, None)
+    }
+
+    /// [`atomic_write`](Self::atomic_write), refusing with
+    /// [`StoreError::Changed`] when `expected` is given and `full` no
+    /// longer holds it. The check runs after the temp file is written and
+    /// fsync'd, immediately before the rename, so the window it leaves is
+    /// one read and compare wide rather than the whole write (#1001). On
+    /// refusal the temp file is removed and the target is untouched.
+    fn atomic_write_expecting(
+        &self,
+        full: &Path,
+        content: &str,
+        path: &VaultPath,
+        expected: Option<Observed>,
+    ) -> Result<(), StoreError> {
         use std::io::Write;
         let parent = full
             .parent()
@@ -602,8 +772,48 @@ impl FsVaultStore {
         tmp.as_file()
             .sync_all()
             .map_err(|e| io_to_store_error(e, path))?;
-        tmp.persist(full)
-            .map_err(|e| io_to_store_error(e.error, path))?;
+        match expected {
+            None => {
+                tmp.persist(full)
+                    .map_err(|e| io_to_store_error(e.error, path))?;
+            }
+            // A create: the kernel refuses the rename if anything is there,
+            // so a file another writer created first is never replaced, at
+            // any moment. No window at all.
+            //
+            // A filesystem that cannot do a no-clobber rename (some network
+            // and VM shares lack both `renameat2` flags and hard links)
+            // falls back to checking for absence and renaming, the window
+            // a replace has, rather than failing every note creation there.
+            Some(Observed::Absent) => match tmp.persist_noclobber(full) {
+                Ok(_) => {}
+                Err(e) if e.error.kind() == io::ErrorKind::AlreadyExists => {
+                    return Err(StoreError::Changed(path.to_string()));
+                }
+                Err(e) => {
+                    if file_identity(full).is_some() {
+                        return Err(StoreError::Changed(path.to_string()));
+                    }
+                    e.file
+                        .persist(full)
+                        .map_err(|e| io_to_store_error(e.error, path))?;
+                }
+            },
+            // A replace: compare the content, then make sure the file is
+            // still the one compared by its identity (inode, size, times),
+            // which one `stat` answers. What is left is the gap between that
+            // `stat` and the rename; no rename can be conditional on what
+            // it replaces, so the gap cannot be closed here.
+            Some(expected) => {
+                let identity = file_identity(full);
+                if observe_full(full, path)? != expected || file_identity(full) != identity {
+                    // Dropping `tmp` deletes the temp file.
+                    return Err(StoreError::Changed(path.to_string()));
+                }
+                tmp.persist(full)
+                    .map_err(|e| io_to_store_error(e.error, path))?;
+            }
+        }
         // Make the rename durable. Best-effort: a filesystem that
         // rejects a directory fsync (rare) shouldn't fail an otherwise
         // successful write, and atomicity already held regardless.
@@ -611,6 +821,46 @@ impl FsVaultStore {
             let _ = dir.sync_all();
         }
         Ok(())
+    }
+}
+
+/// What is at `full` right now, read straight from disk (not recorded in
+/// any read journal).
+fn observe_full(full: &Path, path: &VaultPath) -> Result<Observed, StoreError> {
+    match fs::read(full) {
+        Ok(bytes) => Ok(Observed::of_bytes(&bytes)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Observed::Absent),
+        Err(e) => Err(io_to_store_error(e, path)),
+    }
+}
+
+/// Which file is at `full`, as one `stat` tells it: a writer that replaces
+/// the file by rename gives it a new inode, and one that edits it in place
+/// changes its size or times. `None` when nothing (readable) is there.
+fn file_identity(full: &Path) -> Option<(u64, u64, u64, i64, i64, i64, i64)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let m = fs::symlink_metadata(full).ok()?;
+        Some((
+            m.dev(),
+            m.ino(),
+            m.size(),
+            m.mtime(),
+            m.mtime_nsec(),
+            m.ctime(),
+            m.ctime_nsec(),
+        ))
+    }
+    #[cfg(not(unix))]
+    {
+        let m = fs::symlink_metadata(full).ok()?;
+        let nanos = |t: io::Result<SystemTime>| {
+            t.ok()
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos() as i64)
+        };
+        Some((0, 0, m.len(), nanos(m.modified()), 0, nanos(m.created()), 0))
     }
 }
 
@@ -631,11 +881,16 @@ fn io_to_store_error(err: io::Error, path: &VaultPath) -> StoreError {
 
 impl VaultStore for FsVaultStore {
     fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
-        fs::read_to_string(self.resolve(path)?).map_err(|e| io_to_store_error(e, path))
+        let result =
+            fs::read_to_string(self.resolve(path)?).map_err(|e| io_to_store_error(e, path));
+        self.journals.record(path, &result);
+        result
     }
 
     fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
-        fs::read(self.resolve(path)?).map_err(|e| io_to_store_error(e, path))
+        let result = fs::read(self.resolve(path)?).map_err(|e| io_to_store_error(e, path));
+        self.journals.record(path, &result);
+        result
     }
 
     fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
@@ -657,6 +912,41 @@ impl VaultStore for FsVaultStore {
         };
         let combined = format!("{existing}{content}");
         self.atomic_write(&full, &combined, path)
+    }
+
+    fn write_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: Observed,
+    ) -> Result<(), StoreError> {
+        // Checked once, right before the rename. The transaction, the one
+        // caller, has just compared the file while taking its undo snapshot,
+        // so an up-front check here would only repeat that read.
+        let full = self.resolve(path)?;
+        self.atomic_write_expecting(&full, content, path, Some(expected))
+    }
+
+    fn append_to_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: Observed,
+    ) -> Result<(), StoreError> {
+        let full = self.resolve(path)?;
+        let existing = match fs::read_to_string(&full) {
+            Ok(content) => Some(content),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => return Err(io_to_store_error(e, path)),
+        };
+        let seen = existing
+            .as_deref()
+            .map_or(Observed::Absent, |c| Observed::of_bytes(c.as_bytes()));
+        if seen != expected {
+            return Err(StoreError::Changed(path.to_string()));
+        }
+        let combined = format!("{}{content}", existing.unwrap_or_default());
+        self.atomic_write_expecting(&full, &combined, path, Some(expected))
     }
 
     fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
@@ -722,7 +1012,11 @@ impl VaultStore for FsVaultStore {
     }
 
     fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
-        Ok(self.resolve(path)?.exists())
+        let exists = self.resolve(path)?.exists();
+        if !exists {
+            self.journals.record_absent(path);
+        }
+        Ok(exists)
     }
 
     fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
@@ -873,15 +1167,24 @@ impl VaultStore for FsVaultStore {
         Ok(())
     }
 
+    fn read_journals(&self) -> Option<&ReadJournals> {
+        Some(&self.journals)
+    }
+
     fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
         // The lock file lives in `.cuaderno/` — present in any real vault,
         // but create it defensively so a freshly-`init`ed vault locks too.
-        let dir = self.root.join(crate::paths::CUADERNO_DIR);
-        fs::create_dir_all(&dir).map_err(|e| StoreError::Io {
-            path: crate::paths::CUADERNO_DIR.to_string(),
-            source: e,
-        })?;
-        let lock_path = dir.join(".lock");
+        let lock_path = match &self.lock_file {
+            Some(lock_file) => lock_file.clone(),
+            None => {
+                let dir = self.root.join(crate::paths::CUADERNO_DIR);
+                fs::create_dir_all(&dir).map_err(|e| StoreError::Io {
+                    path: crate::paths::CUADERNO_DIR.to_string(),
+                    source: e,
+                })?;
+                dir.join(".lock")
+            }
+        };
         let lock_name = ".cuaderno/.lock";
         let file = OpenOptions::new()
             .create(true)

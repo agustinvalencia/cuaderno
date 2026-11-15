@@ -118,7 +118,19 @@ third lookup.
 - **Startup reconciliation runs inside `Vault::new`**, so any domain method may assume the index
   matches the filesystem on entry.
 - **Cross-process writes serialise** on an OS advisory lock (`.cuaderno/.lock`) held for the life of
-  a transaction, with a 5s timeout rather than an unbounded hang.
+  a transaction, with a 5s timeout rather than an unbounded hang. That `flock` holds within one
+  kernel only, so **a commit also compares before it renames** (#1001,
+  `docs/concurrent-writers.md`): while a transaction is open the store records the first thing it
+  read of each path into the transaction's `ReadJournal` (`cdno-core/src/read_journal.rs`); a path
+  staged unread is observed at staging. The commit compares every file it will replace, append to
+  or delete with that, before any file op and again right before each rename, and on a mismatch
+  writes nothing and returns `TransactionError::Conflict` (MCP `concurrent_change`, CLI exit 75).
+  So: open the transaction before reading (#196), read through the store, and never add a read
+  path that bypasses `VaultStore::read_file`/`read_bytes`/`exists` for a file a write derives
+  from. A wrapping test store delegates `read_journals`. Bare moves are not compared; a gap of one
+  `stat` before each rename remains, so this narrows the cross-kernel race and does not close it.
+  `Vault::retry_on_conflict` re-runs only verbs whose every input is their arguments and the vault
+  (today `log_to_daily_note`).
 - **Index schema changes are append-only**: add an entry to `MIGRATIONS` in `cdno-core/src/index.rs`
   plus a file under `crates/cdno-core/migrations/`. Never edit a migration that has shipped.
 - **Method migrations follow the same rule** (`FILE_MIGRATIONS` in `cdno-domain/src/vault/migrate.rs`,

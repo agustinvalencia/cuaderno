@@ -15,6 +15,15 @@
 //! single process*. It is not crash-safe: a power cut mid-commit can
 //! leave the vault in a transient inconsistent state, which the
 //! startup reconciliation pass detects and fixes.
+//!
+//! **Compare before rename (#1001).** The write lock is an `flock`, which
+//! one kernel enforces and another does not see. So that a writer the lock
+//! did not exclude cannot have its change silently replaced, the
+//! transaction keeps a [`ReadJournal`] of what the store returned for each
+//! path while it was open (see [`crate::read_journal`]), and the commit
+//! refuses with [`TransactionError::Conflict`], writing nothing, when a
+//! file it is about to replace, append to or delete no longer holds what
+//! was read. `docs/concurrent-writers.md` states the windows that remain.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -27,6 +36,7 @@ use crate::index::{
 };
 use crate::path::VaultPath;
 use crate::paths::note_format;
+use crate::read_journal::{Observed, ReadJournal};
 use crate::store::{VaultStore, VaultWriteLock};
 
 /// A buffered set of file and index operations that are applied
@@ -45,6 +55,11 @@ pub struct VaultTransaction {
     /// of the owning operation serialises against other processes (#196).
     /// Held, never read — its `Drop` does the work.
     _lock: VaultWriteLock,
+    /// The first observation of each path, recorded by the store for
+    /// every read made while this transaction is open, and by the staging
+    /// methods for a path staged without being read (#1001). Taken, and so
+    /// closed, at the start of `commit`.
+    journal: Option<Arc<ReadJournal>>,
 }
 
 /// File operations the transaction can apply. Each variant owns the
@@ -94,13 +109,32 @@ enum IndexOp {
 /// op. Captured at apply-time (not buffer-time) so the snapshot
 /// reflects the actual pre-op state, including changes introduced by
 /// prior ops in the same transaction.
+///
+/// Each undo also carries what the op left at the path, and is applied
+/// only while the path still holds it (#1001): a rollback must not
+/// replace a change another writer made after this op landed. An undo
+/// that finds something else there fails with [`StoreError::Changed`] and
+/// is reported among the rollback failures.
 enum Undo {
     /// Restore `path` to `content` (it existed before the op).
-    Restore { path: VaultPath, content: String },
+    Restore {
+        path: VaultPath,
+        content: String,
+        left: Observed,
+    },
     /// Remove `path` — it was created by the op and must not linger.
-    DeleteCreated { path: VaultPath },
+    /// `left` is unknown for an import, whose bytes are never read.
+    DeleteCreated {
+        path: VaultPath,
+        left: Option<Observed>,
+    },
     /// Reverse a move: current location is `dest`, put it back at `src`.
-    MoveBack { src: VaultPath, dest: VaultPath },
+    /// `left` is what was moved, when the commit knew it.
+    MoveBack {
+        src: VaultPath,
+        dest: VaultPath,
+        left: Option<Observed>,
+    },
 }
 
 impl VaultTransaction {
@@ -112,20 +146,46 @@ impl VaultTransaction {
     /// rewrite it), so the lock must cover the operation's read-modify-write
     /// — which means creating the transaction *before* reading. Acquiring
     /// can fail or time out, hence the `Result`.
+    ///
+    /// The read journal opens here too, after the lock, so every read the
+    /// operation makes from now on is recorded for the commit's check.
     pub fn new(store: Arc<dyn VaultStore>, index: Arc<dyn VaultIndex>) -> Result<Self, StoreError> {
         let lock = store.acquire_write_lock()?;
+        let journal = match store.read_journals() {
+            Some(journals) => journals.open(),
+            // A store that records nothing still gets a journal: the
+            // staging methods record into it.
+            None => Arc::new(ReadJournal::default()),
+        };
         Ok(Self {
             store,
             index,
             file_ops: Vec::new(),
             index_ops: Vec::new(),
             _lock: lock,
+            journal: Some(journal),
         })
+    }
+
+    /// Record what is at `path` now if nothing has been recorded for it:
+    /// a path staged without being read (a blind overwrite, a delete
+    /// decided from a listing) is still checked, from this moment on. A
+    /// path that cannot be observed is left for the commit to observe.
+    fn observe_unseen(&self, path: &VaultPath) {
+        let Some(journal) = &self.journal else {
+            return;
+        };
+        if journal.get(path).is_none()
+            && let Ok(observed) = self.store.observe(path)
+        {
+            journal.record(path, observed);
+        }
     }
 
     // ---- file operation buffer --------------------------------------
 
     pub fn write_file(&mut self, path: VaultPath, content: impl Into<String>) {
+        self.observe_unseen(&path);
         self.file_ops.push(FileOp::Write {
             path,
             content: content.into(),
@@ -133,17 +193,23 @@ impl VaultTransaction {
     }
 
     pub fn append_to_file(&mut self, path: VaultPath, content: impl Into<String>) {
+        self.observe_unseen(&path);
         self.file_ops.push(FileOp::Append {
             path,
             content: content.into(),
         });
     }
 
+    /// A move is not compared with what was read (#1001): it carries the
+    /// file along whatever it holds, so it cannot discard another writer's
+    /// change, and comparing would mean reading an attachment's bytes,
+    /// which a move never does.
     pub fn move_file(&mut self, src: VaultPath, dest: VaultPath) {
         self.file_ops.push(FileOp::Move { src, dest });
     }
 
     pub fn delete_file(&mut self, path: VaultPath) {
+        self.observe_unseen(&path);
         self.file_ops.push(FileOp::Delete { path });
     }
 
@@ -303,20 +369,61 @@ impl VaultTransaction {
     /// exactly what changed — the desktop layer journals these for echo
     /// suppression (#315). Callers that don't need them discard the
     /// returned `Vec`.
+    ///
+    /// # Compare before rename (#1001)
+    ///
+    /// Before any file op, every path the ops replace, append to or
+    /// delete — each one's first touch in this transaction — is
+    /// compared with what was first observed of it while the transaction
+    /// was open (the operation's own read, or the observation its staging
+    /// took). Any mismatch fails the commit with
+    /// [`TransactionError::Conflict`] naming every such path, and nothing
+    /// is written. Each op then compares again as it applies (while taking
+    /// its undo snapshot, and in the store right before the rename); a
+    /// mismatch there rolls back what was applied and is a `Conflict` too,
+    /// unless the rollback itself failed, which is a
+    /// [`FileWrite`](TransactionError::FileWrite) carrying
+    /// [`StoreError::Changed`]. The index is never touched by a failed
+    /// commit. A move is not compared (it carries the file along whatever
+    /// it holds, see [`move_file`](Self::move_file)), nor is the destination
+    /// a move or an import creates: the store refuses to overwrite one that
+    /// exists.
     pub fn commit(mut self) -> Result<Vec<VaultPath>, TransactionError> {
+        // Close the journal first: the commit's own reads are not the
+        // operation's, and must not be recorded as what it saw.
+        let seen = self.journal.take().map(|j| j.take()).unwrap_or_default();
+
         // Capture the touched set before consuming the op buffers below,
         // so a successful commit can hand it back to the caller.
         let touched = self.touched_paths();
+
+        // Phase 0: compare every first-touched path with what was seen.
+        let mut expect = match precheck(&*self.store, &self.file_ops, &seen) {
+            Ok(expect) => expect,
+            Err(Precheck::Conflict(paths)) => return Err(TransactionError::Conflict { paths }),
+            Err(Precheck::Store(source)) => {
+                return Err(TransactionError::FileWrite {
+                    source,
+                    rollback_failures: Vec::new(),
+                });
+            }
+        };
 
         let delta = self.note_delta();
 
         // Phase 1: file ops with undo capture.
         let mut applied: Vec<Undo> = Vec::with_capacity(self.file_ops.len());
         for op in &self.file_ops {
-            match apply_file_op(&*self.store, op) {
+            match apply_file_op(&*self.store, op, &mut expect) {
                 Ok(undo) => applied.push(undo),
                 Err(source) => {
                     let rollback_failures = rollback(&*self.store, applied);
+                    if let StoreError::Changed(path) = &source
+                        && rollback_failures.is_empty()
+                        && let Ok(path) = VaultPath::new(path.as_str())
+                    {
+                        return Err(TransactionError::Conflict { paths: vec![path] });
+                    }
                     return Err(TransactionError::FileWrite {
                         source,
                         rollback_failures,
@@ -785,21 +892,123 @@ fn link_aliases_for<'a>(
     Ok(cache.as_ref().expect("populated above"))
 }
 
+/// Why [`precheck`] refused the commit.
+enum Precheck {
+    /// These paths no longer hold what was first observed of them.
+    Conflict(Vec<VaultPath>),
+    /// A path could not be read to compare it.
+    Store(StoreError),
+}
+
+/// What the commit expects at each path just before the op that touches it
+/// next. `Some` is checked before the op and in the store right before its
+/// rename; `None` is unknown (an imported file, whose bytes the commit
+/// never reads) and is not checked.
+type Expectations = HashMap<VaultPath, Option<Observed>>;
+
+/// Phase 0 of `commit`: compare every path whose first touch in `ops`
+/// reads it — a write, an append or a delete — with what was first
+/// observed of it while the transaction was open (`seen`). A path with no
+/// observation (one that could not be read when it was staged) is observed
+/// here, so it is still compared from now on.
+///
+/// Returns every mismatching path at once, so the error names them all,
+/// or the expectations the ops start from. A move's two paths and an
+/// import's destination are marked as touched but not compared.
+fn precheck(
+    store: &dyn VaultStore,
+    ops: &[FileOp],
+    seen: &HashMap<VaultPath, Observed>,
+) -> Result<Expectations, Precheck> {
+    let mut expect: Expectations = HashMap::new();
+    let mut conflicts: Vec<VaultPath> = Vec::new();
+    let mut first_touch = |path: &VaultPath, expect: &mut Expectations| -> Result<(), Precheck> {
+        if expect.contains_key(path) {
+            return Ok(());
+        }
+        let now = store.observe(path).map_err(Precheck::Store)?;
+        let baseline = seen.get(path).copied().unwrap_or(now);
+        if now != baseline {
+            conflicts.push(path.clone());
+        }
+        expect.insert(path.clone(), Some(baseline));
+        Ok(())
+    };
+    for op in ops {
+        match op {
+            FileOp::Write { path, .. } | FileOp::Append { path, .. } | FileOp::Delete { path } => {
+                first_touch(path, &mut expect)?;
+            }
+            FileOp::Move { src, dest } => {
+                expect.entry(src.clone()).or_insert(None);
+                expect.entry(dest.clone()).or_insert(None);
+            }
+            FileOp::Import { dest, .. } => {
+                expect.entry(dest.clone()).or_insert(None);
+            }
+        }
+    }
+    if conflicts.is_empty() {
+        Ok(expect)
+    } else {
+        Err(Precheck::Conflict(conflicts))
+    }
+}
+
+/// What a snapshot taken with [`read_if_exists`] observed.
+fn observed_of(snapshot: Option<&str>) -> Observed {
+    snapshot.map_or(Observed::Absent, |s| Observed::of_bytes(s.as_bytes()))
+}
+
+/// Refuse with [`StoreError::Changed`] unless `actual` is what `expected`
+/// (when known) says.
+fn ensure(
+    path: &VaultPath,
+    expected: Option<Observed>,
+    actual: Observed,
+) -> Result<(), StoreError> {
+    match expected {
+        Some(e) if e != actual => Err(StoreError::Changed(path.to_string())),
+        _ => Ok(()),
+    }
+}
+
 /// Apply a single file op, returning the undo information needed to
 /// reverse it if a later op fails.
-fn apply_file_op(store: &dyn VaultStore, op: &FileOp) -> Result<Undo, StoreError> {
+///
+/// The op first compares its path with `expect` (#1001), from the same
+/// read that takes the undo snapshot, so the check costs no extra read for
+/// a write; a write or an append is then compared once more by the store
+/// right before its rename. `expect` is advanced to what the op leaves,
+/// so a later op on the same path is compared with this one's result.
+fn apply_file_op(
+    store: &dyn VaultStore,
+    op: &FileOp,
+    expect: &mut Expectations,
+) -> Result<Undo, StoreError> {
     match op {
         FileOp::Write { path, content } => {
             // Capture the pre-write content (or note that the file
             // didn't exist) so rollback can restore exactly that state.
             let snapshot = read_if_exists(store, path)?;
-            store.write_file(path, content)?;
+            let expected = expect.get(path).copied().flatten();
+            ensure(path, expected, observed_of(snapshot.as_deref()))?;
+            match expected {
+                Some(e) => store.write_file_expecting(path, content, e)?,
+                None => store.write_file(path, content)?,
+            }
+            let left = Observed::of_bytes(content.as_bytes());
+            expect.insert(path.clone(), Some(left));
             Ok(match snapshot {
                 Some(original) => Undo::Restore {
                     path: path.clone(),
                     content: original,
+                    left,
                 },
-                None => Undo::DeleteCreated { path: path.clone() },
+                None => Undo::DeleteCreated {
+                    path: path.clone(),
+                    left: Some(left),
+                },
             })
         }
         FileOp::Append { path, content } => {
@@ -808,30 +1017,54 @@ fn apply_file_op(store: &dyn VaultStore, op: &FileOp) -> Result<Undo, StoreError
             // onto an existing file roll back by restoring the
             // pre-append content.
             let snapshot = read_if_exists(store, path)?;
-            store.append_to_file(path, content)?;
+            let expected = expect.get(path).copied().flatten();
+            ensure(path, expected, observed_of(snapshot.as_deref()))?;
+            match expected {
+                Some(e) => store.append_to_file_expecting(path, content, e)?,
+                None => store.append_to_file(path, content)?,
+            }
+            let combined = format!("{}{content}", snapshot.as_deref().unwrap_or(""));
+            let left = Observed::of_bytes(combined.as_bytes());
+            expect.insert(path.clone(), Some(left));
             Ok(match snapshot {
                 Some(original) => Undo::Restore {
                     path: path.clone(),
                     content: original,
+                    left,
                 },
-                None => Undo::DeleteCreated { path: path.clone() },
+                None => Undo::DeleteCreated {
+                    path: path.clone(),
+                    left: Some(left),
+                },
             })
         }
         FileOp::Move { src, dest } => {
+            // Not compared: a move carries the file along whatever it
+            // holds, and never reads an attachment's bytes. What an earlier
+            // op of this commit left at `src` travels to `dest`, so a later
+            // op there is compared with it.
+            let expected = expect.get(src).copied().flatten();
             store.move_file(src, dest)?;
+            expect.insert(src.clone(), Some(Observed::Absent));
+            expect.insert(dest.clone(), expected);
             Ok(Undo::MoveBack {
                 src: src.clone(),
                 dest: dest.clone(),
+                left: expected,
             })
         }
         FileOp::Delete { path } => {
             // Snapshot before deletion so rollback can restore the
             // file with its exact content.
             let content = store.read_file(path)?;
+            let expected = expect.get(path).copied().flatten();
+            ensure(path, expected, Observed::of_bytes(content.as_bytes()))?;
             store.delete_file(path)?;
+            expect.insert(path.clone(), Some(Observed::Absent));
             Ok(Undo::Restore {
                 path: path.clone(),
                 content,
+                left: Observed::Absent,
             })
         }
         FileOp::Import { src, dest } => {
@@ -840,7 +1073,11 @@ fn apply_file_op(store: &dyn VaultStore, op: &FileOp) -> Result<Undo, StoreError
             // it. (Binary content isn't snapshotted for restore; an import
             // never overwrites.)
             store.import_external(src, dest)?;
-            Ok(Undo::DeleteCreated { path: dest.clone() })
+            expect.insert(dest.clone(), None);
+            Ok(Undo::DeleteCreated {
+                path: dest.clone(),
+                left: None,
+            })
         }
     }
 }
@@ -869,11 +1106,25 @@ fn rollback(store: &dyn VaultStore, applied: Vec<Undo>) -> Vec<StoreError> {
     failures
 }
 
+/// Reverse one op, only while its path still holds what the op left there
+/// (see [`Undo`]).
 fn apply_undo(store: &dyn VaultStore, undo: Undo) -> Result<(), StoreError> {
     match undo {
-        Undo::Restore { path, content } => store.write_file(&path, &content),
-        Undo::DeleteCreated { path } => store.delete_file(&path),
-        Undo::MoveBack { src, dest } => store.move_file(&dest, &src),
+        Undo::Restore {
+            path,
+            content,
+            left,
+        } => store.write_file_expecting(&path, &content, left),
+        Undo::DeleteCreated { path, left } => {
+            ensure(&path, left, store.observe(&path)?)?;
+            store.delete_file(&path)
+        }
+        Undo::MoveBack { src, dest, left } => {
+            if left.is_some() {
+                ensure(&dest, left, store.observe(&dest)?)?;
+            }
+            store.move_file(&dest, &src)
+        }
     }
 }
 

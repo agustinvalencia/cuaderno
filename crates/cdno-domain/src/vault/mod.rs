@@ -37,6 +37,7 @@ mod capture;
 mod closure;
 mod commitments;
 pub mod config;
+mod conflict_retry;
 mod context;
 mod custom_notes;
 mod daily;

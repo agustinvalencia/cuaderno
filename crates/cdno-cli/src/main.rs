@@ -516,6 +516,15 @@ fn main() -> Result<()> {
     {
         eprintln!("{line}");
     }
+    // A write refused because its note changed underneath it exits with
+    // its own status, so a script can retry it (#1001). The message is
+    // printed as the default `main` error report prints it.
+    if let Err(e) = &result
+        && let Some(status) = cdno_cli::exit::special_status(e)
+    {
+        eprintln!("Error: {e:?}");
+        std::process::exit(status);
+    }
     result
 }
 

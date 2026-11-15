@@ -199,6 +199,32 @@ A **minor** difference never refuses a write; it prints a one-line notice on std
 edit `method_version` by hand to silence either error: the stamp goes with the migration's log
 entry and any file steps.
 
+## A write fails with "changed on disk while this write was being prepared"
+
+```text
+Error: appending log entry to daily note
+
+Caused by:
+    journal/2026/daily/2026-06-13.md changed on disk while this write was being prepared, most likely by another writer; nothing was written, run the operation again
+```
+
+Something else wrote that note between the moment cdno read it and the moment it would have
+replaced it, and cdno refused to overwrite the change. **Nothing was written**, so running the same
+command again is safe: it reads the note as it now is and applies your change to that. Over MCP the
+same refusal is a tool result with code `concurrent_change` and the note's path; the CLI exits with
+status 75, so a script can retry it. `cdno log` and `append_to_log` already retry a few times on
+their own, so you see this from them only when the note keeps changing.
+
+Inside one operating system cdno's write lock keeps its own writers apart, so the usual cause is a
+vault folder written from two at once, whose locks do not see each other: the host and a container
+that mounts the same folder, or a network share. Another program saving the note at that moment (an
+editor, a sync tool) does it too. If it happens often, give each side its own copy of the vault and
+sync them, or make one side the only writer.
+
+The check narrows the risk; it does not remove it. A write that lands in the instant between cdno's
+last check and its own write can still be overwritten. Do not run two writers on one shared folder
+and rely on this.
+
 ## A link to an old name still works in cdno but not in my editor
 
 After [`cdno note rename`](cli/note.md#cdno-note-rename-note) every link in the vault is rewritten to

@@ -20,6 +20,7 @@ pub mod markdown;
 pub mod note;
 pub mod path;
 pub mod paths;
+pub mod read_journal;
 pub mod reconcile;
 pub mod slug;
 pub mod store;
