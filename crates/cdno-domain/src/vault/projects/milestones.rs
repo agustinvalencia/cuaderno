@@ -91,7 +91,24 @@ impl Vault {
     /// quietly downgraded — a hard deadline with no date is not a
     /// thing, and erroring is clearer than guessing which half of the
     /// call the user meant.
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn add_milestone(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        title: &str,
+        target_date: Option<NaiveDate>,
+        is_hard: bool,
+    ) -> Result<VaultPath, DomainError> {
+        self.retry_on_conflict(|| self.add_milestone_once(at, slug, title, target_date, is_hard))
+    }
+
+    /// One attempt of [`add_milestone`](Self::add_milestone).
+    fn add_milestone_once(
         &self,
         at: NaiveDateTime,
         slug: &str,
@@ -158,7 +175,22 @@ impl Vault {
     /// substring on the title portion only (the `— <keyword>: <date>`
     /// suffix is stripped before comparison). Closed `- [x]` bullets
     /// are skipped — they were already manually completed.
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn complete_milestone(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        query: &str,
+    ) -> Result<VaultPath, DomainError> {
+        self.retry_on_conflict(|| self.complete_milestone_once(at, slug, query))
+    }
+
+    /// One attempt of [`complete_milestone`](Self::complete_milestone).
+    fn complete_milestone_once(
         &self,
         at: NaiveDateTime,
         slug: &str,
@@ -230,7 +262,23 @@ impl Vault {
     /// `ProjectNotActive`, missing project → `Store(NotFound)`, missing
     /// section → `Manipulation`, no match → `MilestoneNotFound`, several
     /// matches → `AmbiguousMilestone`.
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn drop_milestone(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        query: &str,
+        reason: Option<&str>,
+    ) -> Result<VaultPath, DomainError> {
+        self.retry_on_conflict(|| self.drop_milestone_once(at, slug, query, reason))
+    }
+
+    /// One attempt of [`drop_milestone`](Self::drop_milestone).
+    fn drop_milestone_once(
         &self,
         at: NaiveDateTime,
         slug: &str,

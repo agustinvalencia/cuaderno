@@ -285,7 +285,24 @@ impl Vault {
     /// already the focus → [`DomainError::FocusOpen`] with `same_action: true`.
     /// Resolution errors win over `FocusOpen`, and every error leaves the vault
     /// untouched.
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn switch_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        query: &str,
+        next: Option<&str>,
+        reason: Option<&str>,
+    ) -> Result<SwitchOutcome, DomainError> {
+        self.retry_on_conflict(|| self.switch_action_once(at, slug, query, next, reason))
+    }
+
+    /// One attempt of [`switch_action`](Self::switch_action).
+    fn switch_action_once(
         &self,
         at: NaiveDateTime,
         slug: &str,
@@ -327,7 +344,25 @@ impl Vault {
     /// There is no not-found or ambiguity error: the action is being created.
     /// Map errors win over `FocusOpen`, and every error leaves the vault
     /// untouched.
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn switch_unplanned_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        title: &str,
+        energy: EnergyLevel,
+        next: Option<&str>,
+        reason: Option<&str>,
+    ) -> Result<SwitchOutcome, DomainError> {
+        self.retry_on_conflict(|| self.switch_unplanned_action_once(at, slug, title, energy, next, reason))
+    }
+
+    /// One attempt of [`switch_unplanned_action`](Self::switch_unplanned_action).
+    fn switch_unplanned_action_once(
         &self,
         at: NaiveDateTime,
         slug: &str,
@@ -393,7 +428,22 @@ impl Vault {
     ///
     /// Errors: nothing open within the focus window ([`Vault::current_focus`])
     /// → [`DomainError::NoFocus`].
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn pause_action(
+        &self,
+        at: NaiveDateTime,
+        next: Option<&str>,
+        reason: Option<&str>,
+    ) -> Result<PauseOutcome, DomainError> {
+        self.retry_on_conflict(|| self.pause_action_once(at, next, reason))
+    }
+
+    /// One attempt of [`pause_action`](Self::pause_action).
+    fn pause_action_once(
         &self,
         at: NaiveDateTime,
         next: Option<&str>,
@@ -455,7 +505,21 @@ impl Vault {
     /// resolved as active: a carried focus or a pause on a map since parked
     /// or closed → [`DomainError::ProjectNotActive`], on one since removed →
     /// `Store(NotFound)`.
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn resume_action(
+        &self,
+        at: NaiveDateTime,
+        project: Option<&str>,
+    ) -> Result<ResumeOutcome, DomainError> {
+        self.retry_on_conflict(|| self.resume_action_once(at, project))
+    }
+
+    /// One attempt of [`resume_action`](Self::resume_action).
+    fn resume_action_once(
         &self,
         at: NaiveDateTime,
         project: Option<&str>,
@@ -576,7 +640,22 @@ impl Vault {
     /// [`DomainError::AmbiguousAction`] carrying the candidates, and
     /// [`DomainError::FocusOpen`] when an action is already in focus (checked
     /// last, so the errors above win).
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn start_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        action: &str,
+    ) -> Result<VaultPath, DomainError> {
+        self.retry_on_conflict(|| self.start_action_once(at, slug, action))
+    }
+
+    /// One attempt of [`start_action`](Self::start_action).
+    fn start_action_once(
         &self,
         at: NaiveDateTime,
         slug: &str,
@@ -664,7 +743,23 @@ impl Vault {
     /// the action is later closed — and split each log entry into a
     /// second physical line no reader parses. `add_action` has the same
     /// hole and is left alone here rather than widening this change.
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn start_unplanned_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        action: &str,
+        energy: EnergyLevel,
+    ) -> Result<WriteOutcome, DomainError> {
+        self.retry_on_conflict(|| self.start_unplanned_action_once(at, slug, action, energy))
+    }
+
+    /// One attempt of [`start_unplanned_action`](Self::start_unplanned_action).
+    fn start_unplanned_action_once(
         &self,
         at: NaiveDateTime,
         slug: &str,
@@ -706,7 +801,23 @@ impl Vault {
     /// Errors mirror `update_project_state`: closed or misfiled →
     /// `ProjectNotActive`, missing → `Store(NotFound)`, missing section →
     /// `Manipulation`.
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn add_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        action: &str,
+        energy: EnergyLevel,
+    ) -> Result<VaultPath, DomainError> {
+        self.retry_on_conflict(|| self.add_action_once(at, slug, action, energy))
+    }
+
+    /// One attempt of [`add_action`](Self::add_action).
+    fn add_action_once(
         &self,
         at: NaiveDateTime,
         slug: &str,
@@ -764,7 +875,22 @@ impl Vault {
     /// the archival move's source and destination. The desktop layer
     /// journals that full set so the watcher can't echo the archive
     /// writes back as external edits (#315).
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn complete_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        query: &str,
+    ) -> Result<WriteOutcome, DomainError> {
+        self.retry_on_conflict(|| self.complete_action_once(at, slug, query))
+    }
+
+    /// One attempt of [`complete_action`](Self::complete_action).
+    fn complete_action_once(
         &self,
         at: NaiveDateTime,
         slug: &str,
@@ -831,7 +957,23 @@ impl Vault {
     /// Returns a [`WriteOutcome`] with the same shape as
     /// `complete_action`: `primary` is the project map, `paths` every
     /// file the commit wrote.
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn drop_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        query: &str,
+        reason: Option<&str>,
+    ) -> Result<WriteOutcome, DomainError> {
+        self.retry_on_conflict(|| self.drop_action_once(at, slug, query, reason))
+    }
+
+    /// One attempt of [`drop_action`](Self::drop_action).
+    fn drop_action_once(
         &self,
         at: NaiveDateTime,
         slug: &str,

@@ -1,14 +1,32 @@
-//! A bounded retry for the operations that may safely run again when a
-//! commit was refused because a file changed underneath it (#1001).
+//! A bounded retry for a commit refused because a file changed underneath
+//! it (#1001).
 //!
-//! A refused commit wrote nothing, so running the whole operation again
-//! re-reads the file and re-applies the change to what is there now. The
-//! transaction cannot do this by itself: re-applying means re-running the
-//! domain operation that composed the write. Only operations whose every
-//! input is their arguments and the vault use it; an operation whose
-//! content the caller composed from an earlier read of its own (a section
-//! replacement, a revision) does not, because the caller must re-read and
-//! re-derive, and the error tells it so.
+//! A refused commit wrote nothing (`TransactionError::Conflict` is
+//! returned only before any file op, or after a clean rollback), every
+//! verb writes in one transaction, and the comparison is against the
+//! transaction's own reads. So running a verb again re-reads the vault and
+//! applies the change to what is there now, exactly as its no-conflict
+//! path would have. The transaction cannot do this by itself: re-applying
+//! means re-running the domain operation that composed the write.
+//!
+//! The verbs that retry are those whose every input is their arguments and
+//! the vault and whose write adds to a note: the log and notes entries,
+//! captures and discards, section appends, the action, milestone,
+//! waiting-on and tracking verbs. Nearly every mutating verb appends a
+//! history line to today's daily note, so that note is where conflicts
+//! arise, whichever verb is called.
+//!
+//! The verbs that replace content a caller may have composed from what it
+//! read earlier (`upsert_*_section` without append, `update_project_state`,
+//! `set_frontmatter`, `revise_note`) do not retry, and neither does
+//! `rename_note`, which writes from a plan the caller may have approved by
+//! its hash. Retrying them would be as safe as their no-conflict path,
+//! but a conflict says the note is being written right now, which is the
+//! moment to let the caller look again. Whether the caller's own earlier
+//! read is stale is a different question that this does not answer (#563).
+//! The create and lifecycle verbs (projects, questions, portfolios,
+//! commitments, stewardships, closures) do not retry yet either; they are
+//! as safe to retry, and are left out only to keep this change small.
 
 use std::time::Duration;
 
@@ -16,9 +34,9 @@ use crate::error::DomainError;
 
 use super::Vault;
 
-/// How many times an operation is attempted in all before the conflict is
-/// returned to the caller.
-pub(in crate::vault) const CONFLICT_ATTEMPTS: u32 = 4;
+/// How many times a retried operation is attempted in all before the
+/// conflict is returned to the caller.
+pub const CONFLICT_ATTEMPTS: u32 = 4;
 
 impl Vault {
     /// Run `op`, and again while it fails with a concurrent change, up to

@@ -30,7 +30,22 @@ impl Vault {
     /// Waiting-on lines have no checkbox: they're informational
     /// blockers (`- Compute allocation — requested 500 GPU-hours`),
     /// not actionable items.
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn add_waiting_on(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        description: &str,
+    ) -> Result<VaultPath, DomainError> {
+        self.retry_on_conflict(|| self.add_waiting_on_once(at, slug, description))
+    }
+
+    /// One attempt of [`add_waiting_on`](Self::add_waiting_on).
+    fn add_waiting_on_once(
         &self,
         at: NaiveDateTime,
         slug: &str,
@@ -73,7 +88,22 @@ impl Vault {
     /// substring on the bullet text. If removing the last item leaves
     /// the section empty, the `(nothing yet)` placeholder is restored
     /// so the section reads consistently.
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn resolve_waiting_on(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        query: &str,
+    ) -> Result<VaultPath, DomainError> {
+        self.retry_on_conflict(|| self.resolve_waiting_on_once(at, slug, query))
+    }
+
+    /// One attempt of [`resolve_waiting_on`](Self::resolve_waiting_on).
+    fn resolve_waiting_on_once(
         &self,
         at: NaiveDateTime,
         slug: &str,

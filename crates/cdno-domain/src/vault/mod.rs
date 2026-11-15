@@ -166,6 +166,9 @@ pub use tracking::TrackingEntryDraft;
 pub use weekly::{WeeklyNoteView, WeeklySection};
 pub use weekly_context::{ReviewProject, WeeklyContext};
 pub use write_outcome::WriteOutcome;
+// Exported so the unit suite can pin how many attempts a retried verb makes.
+#[doc(hidden)]
+pub use conflict_retry::CONFLICT_ATTEMPTS;
 
 // Re-exported for the targeted test in `tests/unit/projects_tests.rs`
 // to reach the helper's defensive error branches without any

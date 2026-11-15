@@ -121,6 +121,8 @@ struct OtherWriter {
     target: VaultPath,
     mode: std::sync::Mutex<Interference>,
     fired: AtomicUsize,
+    /// How many times a commit compared the note: one per attempt.
+    compared: AtomicUsize,
 }
 
 impl OtherWriter {
@@ -130,6 +132,7 @@ impl OtherWriter {
             target: VaultPath::new(target).unwrap(),
             mode: std::sync::Mutex::new(Interference::Off),
             fired: AtomicUsize::new(0),
+            compared: AtomicUsize::new(0),
         }
     }
 
@@ -155,6 +158,9 @@ impl VaultStore for OtherWriter {
     fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
         if *path == self.target {
             let mut mode = self.mode.lock().unwrap();
+            if *mode != Interference::Off {
+                self.compared.fetch_add(1, Ordering::SeqCst);
+            }
             if *mode == Interference::FirstAttempt {
                 *mode = Interference::Off;
             }
@@ -249,7 +255,11 @@ fn a_log_that_never_converges_returns_the_conflict_and_writes_nothing() {
     assert!(err.is_concurrent_change(), "{err:?}");
     assert!(err.to_string().contains(DAILY), "{err}");
     assert!(err.to_string().contains("nothing was written"), "{err}");
-    assert!(other.fired() > 1, "the append was retried before giving up");
+    assert_eq!(
+        other.compared.load(Ordering::SeqCst),
+        cdno_domain::vault::CONFLICT_ATTEMPTS as usize,
+        "one commit per attempt, and no more attempts than the bound"
+    );
     let note = daily(&inner);
     assert_eq!(count(&note, "mine"), 0, "{note}");
     for n in 0..other.fired() {
@@ -421,4 +431,27 @@ fn a_discard_logs_the_text_it_deletes_even_if_the_item_was_just_edited() {
         line.contains("other writer 0"),
         "the logged text is the text deleted, edit included: {line}"
     );
+}
+
+#[test]
+fn a_notes_entry_and_a_section_append_are_retried_onto_the_fresh_note() {
+    // Two of the other append-shaped verbs: their entry is applied again to
+    // the note as it now is.
+    let (vault, other, inner) = vault_with_other_writer();
+    other.arm(Interference::FirstAttempt);
+    vault
+        .note_to_daily(at(), "Surrogate model sweep", "Ran the sweep.")
+        .unwrap();
+    other.arm(Interference::FirstAttempt);
+    vault
+        .upsert_daily_section(at().date(), DailySection::Meeting, "Agreed the plan.", true)
+        .unwrap();
+
+    let note = daily(&inner);
+    assert!(note.contains("### Surrogate model sweep"), "{note}");
+    assert!(note.contains("Agreed the plan."), "{note}");
+    assert!(other.fired() >= 2);
+    for n in 0..other.fired() {
+        assert!(note.contains(&format!("other writer {n}\n")), "{note}");
+    }
 }
