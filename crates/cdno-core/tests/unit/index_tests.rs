@@ -301,3 +301,382 @@ fn migration_004_adds_nullable_columns() {
     assert_eq!(masked, None);
     assert_eq!(mask_version, None);
 }
+
+// ---------------------------------------------------------------------
+// Integrity checks and the in-place rebuild (#526)
+// ---------------------------------------------------------------------
+
+fn insert_note(index: &SqliteIndex, path: &str, frontmatter: &str) {
+    index
+        .with_connection(|c| {
+            c.execute(
+                "INSERT INTO notes (path, note_type, content_hash, mtime_ns, size, frontmatter, indexed_at_ns) VALUES (?1, 'daily', 'h', 0, 0, ?2, 0)",
+                rusqlite::params![path, frontmatter],
+            )
+        })
+        .unwrap();
+}
+
+fn note_paths(index: &SqliteIndex) -> Vec<String> {
+    index
+        .with_connection(|c| {
+            let mut stmt = c.prepare("SELECT path FROM notes ORDER BY path")?;
+            stmt.query_map([], |r| r.get(0))?.collect()
+        })
+        .unwrap()
+}
+
+fn with_suffix(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
+    let mut p = path.as_os_str().to_owned();
+    p.push(suffix);
+    std::path::PathBuf::from(p)
+}
+
+/// Fill an index with enough rows to span many pages, close it, and
+/// overwrite its last page with garbage. The header and schema pages are
+/// untouched, so the file still opens and migrates: the damage only
+/// shows to an integrity check, the shape that went unnoticed in #526.
+fn damaged_index_file(path: &std::path::Path) {
+    {
+        let index = SqliteIndex::open(path).unwrap();
+        let padding = "x".repeat(400);
+        for i in 0..400 {
+            insert_note(
+                &index,
+                &format!("n{i:04}.md"),
+                &format!("{{\"p\":\"{padding}\"}}"),
+            );
+        }
+    }
+    let page_size: u64 = Connection::open(path)
+        .unwrap()
+        .query_row("PRAGMA page_size", [], |r| r.get(0))
+        .unwrap();
+    let mut bytes = std::fs::read(path).unwrap();
+    let len = bytes.len() as u64;
+    assert!(len / page_size > 20, "the fixture spans many pages");
+    let start = (len - page_size) as usize;
+    for b in &mut bytes[start..] {
+        *b = 0xA5;
+    }
+    std::fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn quick_check_is_empty_on_a_sound_index() {
+    let (_dir, path) = new_db_path();
+    let index = SqliteIndex::open(&path).unwrap();
+    insert_note(&index, "a.md", "{}");
+    assert!(index.quick_check().unwrap().is_empty());
+    assert!(index.integrity_check().unwrap().is_empty());
+}
+
+#[test]
+fn quick_check_reports_page_damage_that_open_does_not_notice() {
+    let (_dir, path) = new_db_path();
+    damaged_index_file(&path);
+
+    let index = SqliteIndex::open(&path).expect("page damage does not fail open");
+    let problems = index.quick_check().unwrap();
+    assert!(!problems.is_empty(), "the damage is reported");
+    assert!(problems.len() <= cdno_core::index::CHECK_PROBLEM_LIMIT);
+    assert!(!index.check_integrity().unwrap());
+}
+
+fn fresh_with_note(live: &SqliteIndex, path: &str) -> cdno_core::index::FreshIndex {
+    let fresh = live.open_fresh_beside().unwrap();
+    let conn = Connection::open(fresh.path()).unwrap();
+    conn.execute(
+        "INSERT INTO notes (path, note_type, content_hash, mtime_ns, size, frontmatter, indexed_at_ns) VALUES (?1, 'daily', 'h', 0, 0, '{}', 0)",
+        [path],
+    )
+    .unwrap();
+    fresh
+}
+
+#[test]
+fn fresh_indexes_get_their_own_names_and_vanish_on_drop() {
+    let (_dir, path) = new_db_path();
+    let live = SqliteIndex::open(&path).unwrap();
+    let a = live.open_fresh_beside().unwrap();
+    let b = live.open_fresh_beside().unwrap();
+    assert_ne!(a.path(), b.path(), "two rebuilds never share a file");
+    assert!(a.path().exists());
+    let (pa, pb) = (a.path().to_path_buf(), b.path().to_path_buf());
+    drop(a);
+    drop(b);
+    assert!(!pa.exists() && !pb.exists(), "dropping removes the files");
+    assert!(!with_suffix(&pa, "-wal").exists());
+}
+
+#[test]
+fn replace_contents_reaches_every_connection_to_the_file() {
+    // Two handles on one file stand in for two processes: a rename-based
+    // swap would leave the second on the old file (PR review, #526).
+    let (_dir, path) = new_db_path();
+    let live = SqliteIndex::open(&path).unwrap();
+    let other = SqliteIndex::open(&path).unwrap();
+    insert_note(&live, "old.md", "{}");
+    assert_eq!(note_paths(&other), vec!["old.md"]);
+
+    let fresh = fresh_with_note(&live, "new.md");
+    live.replace_contents_from(&fresh).unwrap();
+
+    assert_eq!(note_paths(&live), vec!["new.md"]);
+    assert_eq!(
+        note_paths(&other),
+        vec!["new.md"],
+        "the other connection sees it too"
+    );
+    insert_note(&other, "later.md", "{}");
+    assert_eq!(
+        note_paths(&live),
+        vec!["later.md", "new.md"],
+        "and they still share one file"
+    );
+}
+
+#[test]
+fn replace_contents_keeps_a_copy_of_the_old_file() {
+    let (_dir, path) = new_db_path();
+    let live = SqliteIndex::open(&path).unwrap();
+    insert_note(&live, "old.md", "{}");
+
+    let fresh = fresh_with_note(&live, "new.md");
+    live.keep_previous_copy();
+    live.replace_contents_from(&fresh).unwrap();
+
+    let previous = with_suffix(&path, cdno_core::index::PREVIOUS_SUFFIX);
+    let conn = Connection::open(&previous).unwrap();
+    let old: Vec<String> = conn
+        .prepare("SELECT path FROM notes")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(old, vec!["old.md"], "the copy holds what the file held");
+}
+
+#[test]
+fn replace_contents_repairs_a_damaged_file_behind_open_handles() {
+    let (_dir, path) = new_db_path();
+    damaged_index_file(&path);
+    let live = SqliteIndex::open(&path).unwrap();
+    let other = SqliteIndex::open(&path).unwrap();
+    assert!(!live.quick_check().unwrap().is_empty());
+
+    let fresh = fresh_with_note(&live, "after.md");
+    live.replace_contents_from(&fresh).unwrap();
+
+    assert!(live.quick_check().unwrap().is_empty(), "sound now");
+    assert!(
+        other.quick_check().unwrap().is_empty(),
+        "for the other handle too"
+    );
+    assert_eq!(note_paths(&other), vec!["after.md"]);
+}
+
+#[test]
+fn replace_contents_refuses_an_unsound_fresh_index() {
+    let (_dir, path) = new_db_path();
+    let live = SqliteIndex::open(&path).unwrap();
+    insert_note(&live, "kept.md", "{}");
+    let fresh = live.open_fresh_beside().unwrap();
+    Connection::open(fresh.path())
+        .unwrap()
+        .execute_batch("DROP TABLE schema_migrations")
+        .unwrap();
+
+    let err = live.replace_contents_from(&fresh).unwrap_err();
+    assert!(err.to_string().contains("failed its own check"), "{err}");
+    assert_eq!(note_paths(&live), vec!["kept.md"], "nothing was touched");
+}
+
+#[test]
+fn a_file_with_no_schema_fails_the_check() {
+    // An empty database checks "ok" and reads as an empty vault (#520).
+    let (_dir, path) = new_db_path();
+    let index = SqliteIndex::open(&path).unwrap();
+    index
+        .with_connection(|c| c.execute_batch("DROP TABLE schema_migrations"))
+        .unwrap();
+    assert_eq!(
+        index.quick_check().unwrap(),
+        vec!["the index has no schema"]
+    );
+}
+
+#[test]
+fn set_aside_moves_the_index_files_to_previous() {
+    let (_dir, path) = new_db_path();
+    drop(SqliteIndex::open(&path).unwrap());
+    std::fs::write(with_suffix(&path, "-wal"), b"wal").unwrap();
+
+    SqliteIndex::set_aside(&location(&path, false)).unwrap();
+
+    assert!(!path.exists());
+    assert!(!with_suffix(&path, "-wal").exists());
+    assert!(with_suffix(&path, cdno_core::index::PREVIOUS_SUFFIX).exists());
+    assert!(with_suffix(&path, &format!("{}-wal", cdno_core::index::PREVIOUS_SUFFIX)).exists());
+}
+
+fn location(path: &std::path::Path, overridden: bool) -> cdno_core::paths::IndexLocation {
+    cdno_core::paths::IndexLocation {
+        path: path.to_path_buf(),
+        overridden,
+    }
+}
+
+#[test]
+fn set_aside_at_an_override_never_replaces_a_foreign_previous_file() {
+    // The override's directory is not cuaderno's: a file that merely has
+    // the `.previous` name there is someone else's, and stays (#998).
+    let (_dir, path) = new_db_path();
+    drop(SqliteIndex::open(&path).unwrap());
+    let previous = with_suffix(&path, cdno_core::index::PREVIOUS_SUFFIX);
+    std::fs::write(&previous, b"someone else's notes").unwrap();
+
+    let err = SqliteIndex::set_aside(&location(&path, true)).unwrap_err();
+
+    assert!(
+        matches!(err, cdno_core::error::IndexError::NotAnIndex { .. }),
+        "{err:?}"
+    );
+    assert_eq!(std::fs::read(&previous).unwrap(), b"someone else's notes");
+    assert!(path.exists(), "nothing moved");
+}
+
+#[test]
+fn rebuild_files_get_random_names_the_cleanup_recognises() {
+    // Two servers that are both process 1 in their containers must not
+    // share a rebuild file name (PR #997 review).
+    let (_dir, path) = new_db_path();
+    let index = SqliteIndex::open(&path).unwrap();
+    let a = index.open_fresh_beside().unwrap();
+    let b = index.open_fresh_beside().unwrap();
+    assert_ne!(a.path(), b.path());
+    let name = path.file_name().unwrap().to_string_lossy().into_owned();
+    for fresh in [&a, &b] {
+        let file = fresh
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            cdno_core::index::is_rebuild_file_name(&name, &file),
+            "{file}"
+        );
+        assert!(
+            cdno_core::index::is_rebuild_file_name(&name, &format!("{file}-wal")),
+            "{file}-wal"
+        );
+    }
+    for other in [
+        "index.db",
+        "index.db-wal",
+        "index.db.previous",
+        "index.db.rebuild-",
+        "index.db.rebuild-notes",
+        "index.db.rebuild-0123456789abcdefX",
+        "other.db.rebuild-0123456789abcdef",
+    ] {
+        assert!(
+            !cdno_core::index::is_rebuild_file_name("index.db", other),
+            "{other}"
+        );
+    }
+    for ours in [
+        "index.db.rebuild-0123456789abcdef",
+        "index.db.rebuild-0123456789abcdef-shm",
+        "index.db.rebuild-1-0",
+    ] {
+        assert!(
+            cdno_core::index::is_rebuild_file_name("index.db", ours),
+            "{ours}"
+        );
+    }
+}
+
+#[test]
+fn a_damaged_index_keeps_no_copy_over_a_foreign_previous_at_an_override() {
+    let dir = TempDir::new().unwrap();
+    let vault = dir.path().join("surrogate-model");
+    std::fs::create_dir_all(&vault).unwrap();
+    let path = dir.path().join("index.db");
+    let index = SqliteIndex::open_location(&location(&path, true), &vault).unwrap();
+    let previous = with_suffix(&path, cdno_core::index::PREVIOUS_SUFFIX);
+    std::fs::write(&previous, b"someone else's notes").unwrap();
+
+    index.keep_previous_copy();
+
+    assert_eq!(std::fs::read(&previous).unwrap(), b"someone else's notes");
+}
+
+fn sqlite_failure(code: std::ffi::c_int) -> cdno_core::error::IndexError {
+    cdno_core::error::IndexError::Sqlite(rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(code),
+        None,
+    ))
+}
+
+#[test]
+fn index_stale_names_its_first_cause() {
+    use cdno_core::error::{IndexError, TransactionError};
+    let err = TransactionError::IndexStale(vec![
+        sqlite_failure(rusqlite::ffi::SQLITE_CORRUPT),
+        IndexError::Query("second".into()),
+    ]);
+    let message = err.to_string();
+    assert!(
+        message.starts_with("index stale after successful commit (2 error(s)): SQLite error: "),
+        "{message}"
+    );
+    assert!(!message.contains("second"), "only the first cause is named");
+    assert_eq!(
+        TransactionError::IndexStale(Vec::new()).to_string(),
+        "index stale after successful commit (0 error(s))"
+    );
+}
+
+#[test]
+fn only_a_damaged_file_counts_as_index_corruption() {
+    use cdno_core::error::{IndexError, TransactionError};
+    assert!(sqlite_failure(rusqlite::ffi::SQLITE_CORRUPT).is_corruption());
+    assert!(sqlite_failure(rusqlite::ffi::SQLITE_NOTADB).is_corruption());
+    assert!(!sqlite_failure(rusqlite::ffi::SQLITE_CONSTRAINT).is_corruption());
+    assert!(!IndexError::Query("x".into()).is_corruption());
+
+    assert!(
+        TransactionError::IndexStale(vec![
+            IndexError::Query("x".into()),
+            sqlite_failure(rusqlite::ffi::SQLITE_CORRUPT),
+        ])
+        .is_index_corruption(),
+        "any one damaged-file error is enough"
+    );
+    assert!(
+        !TransactionError::IndexStale(vec![IndexError::Query("x".into())]).is_index_corruption()
+    );
+}
+
+#[test]
+fn a_live_index_with_another_page_size_can_still_be_replaced() {
+    // The backup copy refuses a WAL destination of another page size, so
+    // the fresh index takes the live one's.
+    let (_dir, path) = new_db_path();
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.pragma_update(None, "page_size", 8192).unwrap();
+        conn.execute_batch("CREATE TABLE seed(a); DROP TABLE seed;")
+            .unwrap();
+    }
+    let live = SqliteIndex::open(&path).unwrap();
+    insert_note(&live, "old.md", "{}");
+
+    let fresh = fresh_with_note(&live, "new.md");
+    live.replace_contents_from(&fresh).unwrap();
+
+    assert_eq!(note_paths(&live), vec!["new.md"]);
+}

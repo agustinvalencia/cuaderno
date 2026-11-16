@@ -294,6 +294,13 @@ the vault is opened with no write for it. An index at the
 default `.cuaderno/index.db` records nothing and is never checked, since a
 vault can legitimately be reached under two paths.
 
+The in-place rebuild (`reconcile::rebuild`, #526) copies a fresh database over
+the live one page by page, so the row travels with the copy: the fresh index
+beside an overridden one is bound to the same root before it is populated,
+never copied from the live file, and `replace_contents_from` refuses a live
+file that records another vault's root by then. A fresh index at the default
+location records nothing, like the file it replaces.
+
 ### `schema_migrations`
 
 Tracks which migration versions have been applied to the current DB. Its

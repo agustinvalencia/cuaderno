@@ -145,6 +145,7 @@ pub(crate) enum RejectionCode {
     ProjectInFocus,
     ProjectNotActive,
     ProjectNotParked,
+    RebuildRefused,
     ReferenceDrift,
     ReferenceUnaddressable,
     RenameIncomplete,
@@ -750,6 +751,9 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
 /// [`into_mcp_error`](crate::util::into_mcp_error) for the freshness refusals
 /// of `rename_note`: the rejection also carries the assessment's `warnings`
 /// in `details` when it had any, since an MCP client has no stderr (T25).
+/// The message is [`crate::util::message`]'s, so a damaged index met by a
+/// rename says the notes are intact and wakes the health loop, and an
+/// `IndexStale` is logged, as on every other write.
 pub(crate) fn error_with_warnings(e: &DomainError, warnings: &[String]) -> ErrorData {
     let mut data = envelope(e);
     if !warnings.is_empty()
@@ -757,12 +761,39 @@ pub(crate) fn error_with_warnings(e: &DomainError, warnings: &[String]) -> Error
     {
         rejection["details"]["warnings"] = json!(warnings);
     }
-    ErrorData::internal_error(e.to_string(), data)
+    ErrorData::internal_error(crate::util::message(e), data)
 }
 
 /// Wrap a classified rejection for transport in `ErrorData::data`.
+///
+/// An `IndexStale` (the files landed, an index update failed) is not a
+/// rejection, but it also carries [`INDEX_STALE_KEY`]: `{"write_saved":
+/// true, "index_damaged": <bool>}`, so a client can tell a saved write
+/// from a failed one without parsing prose, and the server can nudge the
+/// sync agent for it ([`write_saved`]).
 pub(crate) fn envelope(e: &DomainError) -> Option<Value> {
-    classify(e).map(|r| json!({ MARKER: r }))
+    let mut data = classify(e).map(|r| json!({ MARKER: r }));
+    if let DomainError::Transaction(cdno_core::error::TransactionError::IndexStale(errors)) = e {
+        let damaged = errors
+            .iter()
+            .any(cdno_core::error::IndexError::is_corruption);
+        data.get_or_insert_with(|| json!({}))[INDEX_STALE_KEY] =
+            json!({ "write_saved": true, "index_damaged": damaged });
+    }
+    data
+}
+
+/// The `ErrorData::data` key an `IndexStale` error carries.
+pub(crate) const INDEX_STALE_KEY: &str = "index_stale";
+
+/// Whether `e` reports a write whose files landed (an `IndexStale`).
+pub(crate) fn write_saved(e: &ErrorData) -> bool {
+    e.data
+        .as_ref()
+        .and_then(|d| d.get(INDEX_STALE_KEY))
+        .and_then(|s| s.get("write_saved"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 /// A rejection raised by a handler itself rather than by the domain.
@@ -1637,6 +1668,36 @@ mod tests {
             plain.data.as_ref().unwrap()[MARKER]["details"]
                 .get("warnings")
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn a_rename_that_meets_a_damaged_index_says_the_notes_are_intact() {
+        // `rename_note` reports its failures here, not through
+        // `into_mcp_error`; a damaged index must read the same on both.
+        let corrupt = IndexError::Sqlite(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+            None,
+        ));
+        let stale = DomainError::Transaction(cdno_core::error::TransactionError::IndexStale(vec![
+            corrupt,
+        ]));
+        let err = error_with_warnings(&stale, &[]);
+        assert!(write_saved(&err), "a saved write is marked as one");
+        assert_eq!(
+            err.data.as_ref().unwrap()[INDEX_STALE_KEY]["index_damaged"],
+            true
+        );
+        assert!(decode(err.clone()).is_err(), "and stays a protocol error");
+        assert!(
+            err.message.contains("the notes on disk are intact"),
+            "{}",
+            err.message
+        );
+        assert!(
+            err.message.contains("This write was saved"),
+            "{}",
+            err.message
         );
     }
 }

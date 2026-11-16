@@ -99,6 +99,127 @@ pub struct ReconciliationIssue {
     pub reason: String,
 }
 
+/// What [`rebuild`] did.
+#[derive(Debug, Default)]
+pub struct RebuildReport {
+    /// Notes the rebuilt index holds.
+    pub notes: usize,
+    /// Notes the rebuild could not index, from its last pass. Usually a
+    /// note that does not parse, which no rebuild fixes (`lint` names it).
+    pub errors: Vec<ReconciliationIssue>,
+    /// Archival snapshot rows copied from the old index. A row that reads
+    /// without error but holds wrong bytes is carried as it is, and would
+    /// show later as a false "frozen note edited" in `lint`.
+    pub snapshots_carried: usize,
+    /// Rows that could not be carried, or a reason none could: the old
+    /// index's damage reached them, or their note is not in the rebuilt
+    /// index (it is gone, or it does not parse). Each lost row only loses
+    /// `lint`'s frozen-prefix check on that archived note; nothing else
+    /// depends on it.
+    pub snapshots_lost: Vec<String>,
+}
+
+/// Rebuild `index` from the markdown and copy the result into it in place
+/// ([`SqliteIndex::replace_contents_from`](crate::index::SqliteIndex::replace_contents_from)):
+/// the repair for a damaged index, seen at once by every process on this
+/// machine that has it open.
+///
+/// It contains a fault on one machine (a torn write, a crash, a bad page).
+/// It is no protection for an index shared between two machines or
+/// kernels, where neither the vault lock nor SQLite's locks reach the
+/// other side and the damage returns after each repair; there each machine
+/// needs its own index ([`crate::paths::INDEX_PATH_ENV`]).
+///
+/// 1. A full pass into a fresh index beside the live one, which keeps
+///    serving meanwhile, then a second one for whatever changed during the
+///    first. Unchanged notes are skipped by mtime, so it is quick, and it
+///    keeps the pass under the lock short.
+/// 2. The fresh index is checked, and when `keep_copy` is set and the live
+///    file is damaged, a copy of it is kept as `.previous` (a rebuild of a
+///    sound index keeps no copy, so it cannot overwrite the copy of a
+///    damaged one; a caller repairing the same damage again passes `false`
+///    to keep the first copy of the streak).
+/// 3. Under the vault write lock, so no commit by a process on this
+///    machine can land in between: a last pass into the fresh index, which
+///    makes it exactly the notes on disk at this moment; the archival
+///    snapshots carried across (the one table the notes cannot
+///    regenerate), for the notes the fresh index holds; then the copy,
+///    without checking the fresh index a second time.
+///
+/// A snapshot whose note the fresh index lacks is lost, not carried with a
+/// note row taken from the damaged file: that note is gone or does not
+/// parse, and a row from the old file would put back a note that is not
+/// on disk.
+///
+/// The caller must not hold the vault write lock itself: it is one per open
+/// file, so taking it twice in one thread would wait out the timeout.
+pub fn rebuild(
+    store: &Arc<dyn VaultStore>,
+    index: &crate::index::SqliteIndex,
+    scope: &NoteScope,
+    keep_copy: bool,
+) -> Result<RebuildReport, IndexError> {
+    rebuild_with(store, index, scope, keep_copy, || {})
+}
+
+/// [`rebuild`], running `before_lock` after the unlocked passes and the
+/// check, just before the vault write lock is taken: the window in which
+/// another writer's commit reaches the notes but not yet the fresh index.
+/// A seam for tests that must land a write in exactly that window; every
+/// other caller wants [`rebuild`].
+pub fn rebuild_with(
+    store: &Arc<dyn VaultStore>,
+    index: &crate::index::SqliteIndex,
+    scope: &NoteScope,
+    keep_copy: bool,
+    before_lock: impl FnOnce(),
+) -> Result<RebuildReport, IndexError> {
+    let fresh = index.open_fresh_beside()?;
+    let fresh_index = fresh.index();
+    reconcile(store, &fresh_index, scope)?;
+    reconcile(store, &fresh_index, scope)?;
+    let problems = fresh.quick_check()?;
+    if !problems.is_empty() {
+        return Err(IndexError::Update(format!(
+            "the rebuilt index failed its own check, so it was not copied in: {}",
+            problems.join("; ")
+        )));
+    }
+    if keep_copy && !index.quick_check().map(|p| p.is_empty()).unwrap_or(false) {
+        index.keep_previous_copy();
+    }
+
+    before_lock();
+    let _lock = store.acquire_write_lock().map_err(|e| {
+        IndexError::Update(format!(
+            "acquiring the vault write lock to replace the index: {e}"
+        ))
+    })?;
+    // Lock held: this pass's transactions must not try to take it again.
+    let held: Arc<dyn VaultStore> = Arc::new(crate::store::LockHeldStore(store.clone()));
+    let last = reconcile(&held, &fresh_index, scope)?;
+    let mut report = RebuildReport {
+        errors: last.errors,
+        ..RebuildReport::default()
+    };
+    match index.list_archival_snapshots() {
+        Ok(rows) => {
+            for (path, snapshot) in rows {
+                match fresh_index.record_archival_snapshot(&path, &snapshot) {
+                    Ok(()) => report.snapshots_carried += 1,
+                    Err(e) => report.snapshots_lost.push(format!("{path}: {e}")),
+                }
+            }
+        }
+        Err(e) => report
+            .snapshots_lost
+            .push(format!("the old index's snapshots could not be read: {e}")),
+    }
+    report.notes = fresh_index.list_all_paths()?.len();
+    index.replace_contents_from(&fresh)?;
+    Ok(report)
+}
+
 /// Reconcile the index against the filesystem. See module docs for the
 /// algorithm. Returns `Err` only for catastrophic failures (e.g. the
 /// vault walk itself fails); per-file errors accumulate into the

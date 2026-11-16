@@ -27,6 +27,35 @@ cdno reindex
 The Markdown files are always authoritative, so a rebuild is safe. See
 [Business rules](../concepts/business-rules.md).
 
+On a server (`cdno-mcp`, `cdno-mcp-server`) the index is checked and repaired without you: see
+[The index looks after itself](mcp/overview.md#the-index-looks-after-itself). An error that says "the notes on disk are intact; the index … may be damaged" means the server
+is checking the index and rebuilds it if the check confirms the damage, and it also says whether
+that call's write was saved. Ask the assistant for `index_status` to see how it went (it also names
+the index file in use, which `CUADERNO_INDEX_PATH` may have moved), or `rebuild_index` to force it.
+Run `cdno reindex`
+against a vault a server has open only with the server stopped: two processes writing one index
+file is one way it gets damaged.
+
+## The index keeps being damaged
+
+The symptom: the server log shows the index rebuilt again and again, then one error saying
+automatic index repair stopped, and `index_status` reports `repair: damage_recurring` (and a
+growing `damage_rebuilds_recent` before that); clients' errors say the index "keeps being damaged
+after each repair". The cause is almost always an index file that two machines or kernels write at
+once: a vault folder bind-mounted into a container while the host also runs `cdno`, or a vault on a
+network share. Their SQLite locks do not reach each other, so each repair is damaged again. The fix
+is to give each machine its own index with `CUADERNO_INDEX_PATH` (or `--index-path` on
+`cdno-mcp-server`); see
+[Keeping the index on each machine](../concepts/vault-structure.md#keeping-the-index-on-each-machine).
+Then restart the server. The stop also ends by itself once a check finds the file sound again, and
+`rebuild_index` repairs it once more, allowing one further automatic repair, but neither helps
+while the other machine still writes the file.
+The copy of the first damaged file is kept beside the index, with `.previous` appended to its name.
+
+If `index_status` reports `restart_required`, the file is too damaged for the running server to
+write over, and it stops repairing by itself: restart the server, whose start replaces it. The
+notes are intact either way.
+
 ## The index path is refused
 
 `CUADERNO_INDEX_PATH` (or `--index-path` on `cdno-mcp-server`) names the index database file. A

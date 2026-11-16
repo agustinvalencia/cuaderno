@@ -107,7 +107,13 @@ impl McpSubprocess {
     /// hard timeout to keep a hung subprocess from hanging CI.
     /// Notifications (no `id`) are skipped.
     fn read_response(&self, expected_id: u64) -> Value {
-        let deadline = Duration::from_secs(5);
+        self.read_response_within(expected_id, Duration::from_secs(5))
+    }
+
+    /// [`read_response`](Self::read_response) with its own timeout, for a
+    /// reply that follows slow work at start (a checked open that rebuilds
+    /// the index).
+    fn read_response_within(&self, expected_id: u64, deadline: Duration) -> Value {
         loop {
             match self.rx.recv_timeout(deadline) {
                 Ok(line) => {
@@ -239,7 +245,7 @@ fn tools_list_returns_all_advertised_tools() {
     let tools = response["result"]["tools"].as_array().expect("tools array");
     assert_eq!(
         tools.len(),
-        66,
+        68,
         "expected the full catalogue advertised over stdio; tests/server.rs pins the names, got {}",
         tools.len()
     );
@@ -983,6 +989,85 @@ fn the_index_path_variable_moves_the_stdio_servers_index() {
     drop(mcp);
 
     assert!(index.is_file(), "the index lives at the override");
+    assert_eq!(index_files_in_meta_dir(dir.path()), Vec::<String>::new());
+}
+
+/// The self-repair of #526 at an overridden index, end to end: the real
+/// binary finds the damage at start, repairs the file in place beside the
+/// override, reports it through `index_status`, and leaves the file bound
+/// to this vault with nothing of the index under `.cuaderno/`.
+#[test]
+fn the_stdio_server_repairs_a_damaged_overridden_index_in_place() {
+    let dir = TempDir::new().unwrap();
+    let elsewhere = TempDir::new().unwrap();
+    let index = elsewhere.path().join("surrogate-model.db");
+    make_vault(dir.path());
+    // Enough notes that the index spans many pages, so its last page is
+    // data and damaging it spares the header, the schema and the binding.
+    let padding = "Surrogate model notes. ".repeat(30);
+    for day in 1..=28 {
+        for month in 1..=3 {
+            let folder = dir.path().join("journal/2025/daily");
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(
+                folder.join(format!("2025-{month:02}-{day:02}.md")),
+                format!("---\ntype: daily\n---\n# 2025-{month:02}-{day:02}\n\n## Logs\n\n- **09:00**: {padding}\n"),
+            )
+            .unwrap();
+        }
+    }
+    drop(
+        cdno_mcp::bootstrap::open_vault_with_index(dir.path(), Some(index.as_os_str()))
+            .expect("first open builds the overridden index"),
+    );
+    let page_size: usize = rusqlite::Connection::open(&index)
+        .unwrap()
+        .query_row("PRAGMA page_size", [], |r| r.get(0))
+        .unwrap();
+    let mut bytes = std::fs::read(&index).unwrap();
+    let start = bytes.len() - page_size;
+    bytes[start..].fill(0xA5);
+    std::fs::write(&index, bytes).unwrap();
+
+    let mut mcp = McpSubprocess::spawn_with_index(dir.path(), Some(&index));
+    // The server rebuilds the index before it answers `initialize`, which
+    // can take far longer than a normal reply on a loaded runner.
+    mcp.send(&json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": { "name": "cdno-mcp e2e", "version": "0.0" }
+        }
+    }));
+    mcp.read_response_within(1, Duration::from_secs(120));
+    mcp.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
+    mcp.send(&json!({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": { "name": "index_status", "arguments": {} }
+    }));
+    let status = call_payload(&mcp.read_response(2));
+    drop(mcp);
+
+    assert_eq!(status["healthy"], json!(true), "{status}");
+    assert_eq!(status["index_path"], json!(index.display().to_string()));
+    assert!(
+        status["damage_at_open"]
+            .as_array()
+            .is_some_and(|d| !d.is_empty()),
+        "the damage found at start is reported: {status}"
+    );
+    let mut previous = index.clone().into_os_string();
+    previous.push(cdno_core::index::PREVIOUS_SUFFIX);
+    assert!(
+        Path::new(&previous).is_file(),
+        "the damaged copy sits beside the override"
+    );
+    assert_eq!(
+        cdno_core::index::SqliteIndex::bound_vault_root(&index).unwrap(),
+        Some(cdno_core::index::canonical_vault_root(dir.path())),
+        "the repaired index is still bound to this vault"
+    );
     assert_eq!(index_files_in_meta_dir(dir.path()), Vec::<String>::new());
 }
 

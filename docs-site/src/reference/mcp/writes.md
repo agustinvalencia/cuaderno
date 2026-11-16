@@ -364,6 +364,25 @@ or starts with `^`. Headings inside the body must be level 3 or deeper and are h
 uniqueness rule, so a pasted derivation with its own `## Proof` must be demoted first. A blank
 `heading` or `body` is refused as an invalid argument (`-32602`).
 
+## The index
+
+| Tool | Inputs | Returns |
+|------|--------|---------|
+| `rebuild_index` | — | Rebuilds the index from every note into a fresh file, checks it, and copies it into the live index in place, without a restart, so every process on this machine using the vault sees it; when the old file is damaged, a copy of it is kept beside it with `.previous` appended to its name (`.cuaderno/index.db.previous` at the default location; `index_status` gives the path in use), and a repeat of the same damage keeps the first copy. Search and context keep answering from the old index while it builds. Returns `rebuilt`, the `notes` indexed, `errors` (notes it could not index), `snapshots_carried` and `snapshots_lost` (the archival snapshots), `trigger`, `failure` (set when nothing was replaced; the old index is then still live), and `restart_required` (true when the file is too damaged for the running server to write over: the server needs a restart, whose start replaces such a file; the notes are intact). |
+
+The server already rebuilds a damaged index on its own, so this is for when
+[`index_status`](reads.md) stays unhealthy. It still runs when the server has stopped repairing by
+itself because the damage keeps coming back (`repair: damage_recurring`), and a success allows one
+more automatic repair before the next stop, but that state means another machine or container is writing the same index file,
+which no rebuild fixes: give this machine its own index, as
+[Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine)
+explains. The repair contains a fault on one machine (a torn write, a crash, a bad page); it is not
+protection for an index shared between machines. It does not help with `notes_not_indexed`: those are
+notes that do not parse, and `lint` names them. It changes no note. Unlike
+[`cdno reindex`](../cli/reindex.md), it needs no restart and keeps the archival snapshots. A second call while one is
+running in the same server, or within a minute of the last, is refused with code `rebuild_refused`, and
+`details.reason` says which.
+
 ## Notes
 
 - `append?` defaults to replacing the section; set it `true` to append instead.

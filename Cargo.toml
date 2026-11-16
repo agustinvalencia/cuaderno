@@ -41,7 +41,7 @@ globset = "0.4"
 # SQLite index. The "bundled" feature ships its own libsqlite3 so
 # builds don't depend on the system library; upgrade path to the
 # r2d2-sqlite pool lives alongside, commented for future use.
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 
 # Non-cryptographic hashing for content-change detection. xxh3 is the
 # only variant we use; feature-gating keeps compile time down.

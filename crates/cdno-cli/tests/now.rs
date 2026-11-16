@@ -929,3 +929,108 @@ fn plain_and_json_read_the_focus_without_creating_an_index() {
     assert_eq!(value["started"], "00:00");
     assert_no_index(dir.path(), &before, "now --json");
 }
+
+/// [`dir_state`] for the plain files in `dir` only, so it can be taken of
+/// `.cuaderno/`, which holds the `templates/` directory.
+fn files_state(dir: &Path) -> Vec<(String, FileState)> {
+    let mut out: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|path| path.is_file())
+        .map(|path| {
+            (
+                path.file_name().unwrap().to_string_lossy().into_owned(),
+                file_state(&path),
+            )
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// Overwrite the last page of the closed database at `path` with garbage:
+/// damage only an integrity check sees, the kind a server repairs (#526).
+fn damage_last_page(path: &Path) {
+    let page_size: u64 = rusqlite::Connection::open(path)
+        .unwrap()
+        .query_row("PRAGMA page_size", [], |r| r.get(0))
+        .unwrap();
+    let mut bytes = fs::read(path).unwrap();
+    let start = bytes.len() - page_size as usize;
+    for b in &mut bytes[start..] {
+        *b = 0xA5;
+    }
+    fs::write(path, bytes).unwrap();
+}
+
+/// Beside a server's repair (#526), at the default location and at an
+/// override (#998): a damaged index, the `.previous` copy a repair keeps
+/// and the `.rebuild-*` file of one in progress are all left exactly as
+/// they were by every form of `cdno now`, which still prints the focus.
+#[test]
+fn now_leaves_a_damaged_index_and_a_repairs_files_untouched() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let overridden = elsewhere.path().join("surrogate-model.db");
+    for index_override in [None, Some(&overridden)] {
+        let dir = vault_with_action();
+        let mut status = assert_cmd::Command::cargo_bin("cdno").unwrap();
+        status
+            .env_remove("CUADERNO_VAULT_PATH")
+            .env_remove("CUADERNO_INDEX_PATH");
+        if let Some(path) = index_override {
+            status.env("CUADERNO_INDEX_PATH", path);
+        }
+        status
+            .args(["--vault", dir.path().to_str().unwrap(), "status"])
+            .assert()
+            .success();
+        let index = index_override
+            .cloned()
+            .unwrap_or_else(|| dir.path().join(".cuaderno/index.db"));
+        damage_last_page(&index);
+        let mut previous = index.clone().into_os_string();
+        previous.push(".previous");
+        fs::write(&previous, "a copy of a damaged index").unwrap();
+        let mut rebuilding = index.clone().into_os_string();
+        rebuilding.push(".rebuild-4242-0");
+        fs::write(&rebuilding, "a rebuild in progress").unwrap();
+        write_daily(
+            dir.path(),
+            chrono::Local::now().date_naive(),
+            &["- **00:00**: started [[surrogate-model]] \u{2014} Fit the baseline (deep)"],
+        );
+        // Every file beside the index (not `.cuaderno/templates/`, a
+        // directory, which `cuaderno_files` covers).
+        let index_dir = index.parent().unwrap().to_path_buf();
+        let before = files_state(&index_dir);
+        let meta_before = cuaderno_files(dir.path());
+
+        for args in [&["now", "--line"][..], &["now"], &["--json", "now"]] {
+            let mut now = assert_cmd::Command::cargo_bin("cdno").unwrap();
+            now.env_remove("CUADERNO_VAULT_PATH")
+                .env_remove("CUADERNO_INDEX_PATH");
+            if let Some(path) = index_override {
+                now.env("CUADERNO_INDEX_PATH", path);
+            }
+            let out = now
+                .arg("--vault")
+                .arg(dir.path())
+                .args(args)
+                .assert()
+                .success()
+                .get_output()
+                .stdout
+                .clone();
+            let out = String::from_utf8(out).unwrap();
+            assert!(out.contains("surrogate-model"), "{args:?}: {out}");
+            assert!(
+                files_state(&index_dir) == before,
+                "{args:?} with {index_override:?} changed the index's directory"
+            );
+            assert_eq!(cuaderno_files(dir.path()), meta_before, "{args:?}");
+        }
+        for name in [&previous, &rebuilding] {
+            let _ = fs::remove_file(name);
+        }
+    }
+}

@@ -33,8 +33,77 @@ pub(crate) fn json_result<S: serde::Serialize>(value: S) -> Result<CallToolResul
 /// the classification lives one hop away from this function.
 pub(crate) fn into_mcp_error(e: DomainError) -> ErrorData {
     let data = crate::rejection::envelope(&e);
-    ErrorData::internal_error(e.to_string(), data)
+    ErrorData::internal_error(message(&e), data)
 }
+
+/// The client-facing message for `e`. A damaged index also wakes the
+/// health loop and says what the client most needs to know: the notes
+/// are safe, and what the server does about the cache now (#526, #520).
+///
+/// Every `IndexStale` is also logged at WARN with the errors behind it
+/// (#520: they must reach a log, not only the client), whatever caused it.
+pub(crate) fn message(e: &DomainError) -> String {
+    if let DomainError::Transaction(cdno_core::error::TransactionError::IndexStale(errors)) = e {
+        log_index_stale(errors);
+    }
+    if !e.is_index_corruption() {
+        return e.to_string();
+    }
+    crate::index_health::corruption_seen();
+    // Only an `IndexStale` commit has written its files: any other index
+    // error on a write path comes from a lookup made before anything was
+    // written, so saying "saved" there would stop a retry and lose the
+    // write (PR #997 review).
+    let saved = matches!(
+        e,
+        DomainError::Transaction(cdno_core::error::TransactionError::IndexStale(_))
+    );
+    format!(
+        "{e} \u{2014} {} {}",
+        crate::index_health::damage_hint(),
+        if saved {
+            INDEX_DAMAGED_SAVED
+        } else {
+            INDEX_DAMAGED_NOT_SAVED
+        }
+    )
+}
+
+/// How many of the errors behind one `IndexStale` the log names.
+const INDEX_STALE_LOGGED: usize = 5;
+
+/// Log the errors behind an `IndexStale`: the files were written, an index
+/// update failed. Bounded, since one commit can fail on many rows.
+pub(crate) fn log_index_stale(errors: &[cdno_core::error::IndexError]) {
+    let shown: Vec<String> = errors
+        .iter()
+        .take(INDEX_STALE_LOGGED)
+        .map(ToString::to_string)
+        .collect();
+    tracing::warn!(
+        errors = errors.len(),
+        causes = ?shown,
+        corruption = errors.iter().any(cdno_core::error::IndexError::is_corruption),
+        "a write landed but its index update failed (index stale after successful commit)"
+    );
+}
+
+/// The sentence for a write that landed while its index update met a
+/// damaged index: the same as [`message`] gives an `IndexStale` error, for
+/// a verb that reports the staleness as a success (`rename_note`).
+pub(crate) fn index_damaged_saved_note() -> String {
+    format!(
+        "{} {INDEX_DAMAGED_SAVED}",
+        crate::index_health::damage_hint()
+    )
+}
+
+/// Then, for a commit whose files were written before the index failed.
+const INDEX_DAMAGED_SAVED: &str = "This write was saved; do not repeat it.";
+
+/// Then, for any other call: nothing was written.
+const INDEX_DAMAGED_NOT_SAVED: &str =
+    "Nothing was written by this call; repeat it once `index_status` is healthy.";
 
 /// [`into_mcp_error`] for a start or switch: a `focus_open` rejection also
 /// carries `details.attempted`, what the caller asked for, in the shape
@@ -49,7 +118,7 @@ pub(crate) fn into_mcp_error_attempting(e: DomainError, attempted: serde_json::V
     {
         rejection["details"]["attempted"] = attempted;
     }
-    ErrorData::internal_error(e.to_string(), data)
+    ErrorData::internal_error(message(&e), data)
 }
 
 /// [`into_mcp_error`] for a pause or a resume: a `no_focus` rejection carries
@@ -65,7 +134,7 @@ pub(crate) fn into_mcp_error_no_focus(e: DomainError, message: &str) -> ErrorDat
     {
         rejection["message"] = message.into();
     }
-    ErrorData::internal_error(e.to_string(), data)
+    ErrorData::internal_error(self::message(&e), data)
 }
 
 /// Build an InvalidParams error pointing at a specific input field.
@@ -130,4 +199,80 @@ pub(crate) fn parse_question_slug_from_wikilink(link: &str) -> Option<String> {
         return None;
     }
     Some(slug.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use cdno_core::error::{IndexError, TransactionError};
+
+    use super::*;
+
+    fn corrupt() -> IndexError {
+        IndexError::Sqlite(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+            None,
+        ))
+    }
+
+    #[test]
+    fn a_damaged_index_after_a_commit_says_the_write_was_saved() {
+        let e = DomainError::Transaction(TransactionError::IndexStale(vec![corrupt()]));
+        let m = message(&e);
+        assert!(m.contains("the notes on disk are intact"), "{m}");
+        assert!(m.contains("This write was saved"), "{m}");
+    }
+
+    #[test]
+    fn a_damaged_index_before_any_write_says_nothing_was_written() {
+        // A lookup a write makes before it writes: telling the caller the
+        // write was saved would stop the retry and lose it.
+        let m = message(&DomainError::Index(corrupt()));
+        assert!(m.contains("Nothing was written"), "{m}");
+        assert!(!m.contains("was saved"), "{m}");
+    }
+
+    /// A `tracing` writer that keeps what it is given.
+    #[derive(Clone, Default)]
+    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn an_index_stale_is_logged_with_its_causes() {
+        // #520: the errors behind `IndexStale(n)` must reach a log, not
+        // only the client, and for any cause, not only corruption.
+        let captured = Captured::default();
+        let writer = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        let e = DomainError::Transaction(TransactionError::IndexStale(vec![IndexError::Update(
+            "the row for projects/surrogate-model.md".into(),
+        )]));
+        tracing::subscriber::with_default(subscriber, || {
+            message(&e);
+        });
+        let logged = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+        assert!(logged.contains("WARN"), "{logged}");
+        assert!(
+            logged.contains("projects/surrogate-model.md"),
+            "the cause is in the log: {logged}"
+        );
+        assert!(logged.contains("errors=1"), "{logged}");
+    }
+
+    #[test]
+    fn any_other_error_reads_as_before() {
+        let e = DomainError::Index(IndexError::Query("boom".into()));
+        assert_eq!(message(&e), e.to_string());
+    }
 }

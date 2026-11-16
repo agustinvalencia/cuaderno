@@ -61,6 +61,20 @@ pub const NO_FOCUS_TO_RESUME_MESSAGE: &str =
     "Nothing to resume: no focus carried over and no pause.";
 
 impl DomainError {
+    /// True when this error says the index's database file is damaged
+    /// (directly, or underneath an `IndexStale` commit), as opposed to a
+    /// rejected row or anything about the notes. The notes on disk are
+    /// intact in either case; the index needs rebuilding.
+    pub fn is_index_corruption(&self) -> bool {
+        match self {
+            DomainError::Index(e) => e.is_corruption(),
+            DomainError::Transaction(e) => e.is_index_corruption(),
+            _ => false,
+        }
+    }
+}
+
+impl DomainError {
     /// For a `FocusOpen`, its [`FocusRemedy`]; `None` for any other error.
     pub fn focus_remedy(&self) -> Option<FocusRemedy> {
         match self {

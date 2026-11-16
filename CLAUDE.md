@@ -118,7 +118,10 @@ third lookup.
 - **Domain writes go through `VaultTransaction`** (`cdno-core/src/transaction.rs`): buffer file ops and
   index ops, then `commit()`. File writes are atomic-ish with reverse-order rollback; index updates
   run after all file writes succeed, and an index failure surfaces as `IndexStale` (files are
-  correct, next startup reconciles). Not crash-safe by design. **Known exceptions that bypass the
+  correct; the next reconciliation catches the index up: the next CLI command, a server's sweep, or,
+  when the index file is damaged, a server's in-place repair). Not crash-safe by design. The repair,
+  `reconcile::rebuild`, writes the live index file in place through SQLite's backup API, under the
+  vault write lock but outside `VaultTransaction`; it touches only the index, never a note. **Known exceptions that bypass the
   transaction AND the write lock**: `write_note_raw` (no live caller since the desktop was removed, kept per #601), template
   eject/save (and `templates sync`, which writes through `save_template`), and `save_config_raw` — these call `store.write_file` directly, so the cross-process
   serialisation guarantee does not cover them. Do not add new raw-write paths on their precedent.

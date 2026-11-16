@@ -569,7 +569,7 @@ impl CuadernoServer {
     /// [`Vault::relink_note`]: cdno_domain::Vault::relink_note
     /// [`Vault::rename_note`]: cdno_domain::Vault::rename_note
     #[tool(
-        description = "Rename a note's slug and follow every reference to it, in one transaction: every wikilink and reference field, the old slug kept as an alias on the note, and a `renamed` line logged to today's daily note. A reference is an address, not content: `rename_note` rewrites addresses in every note, the journal included, and changes no other byte; this is the one exception to the append-only rule. The preview is the contract: first call with `dry_run: true`, which writes nothing and returns the plan (`moves`, `edits`, `log_line`, `warnings`, `plan_hash`); show it to the person; only when they agree call again with the same `note`, `to` (or `relink`) and `reason` and `expected_plan` set to that `plan_hash` (the reason is part of the plan, so a changed or dropped one makes it stale). Code `stale_plan` means the vault changed since the preview (any log append does it): preview again and show the new plan, never retry blindly. `note` takes the references `read_note` takes, including a former name; when one was typed, `found_by_former_name` says so and `from` is the current slug: use it from now on. `to` is refused, not suffixed, when taken or malformed (`slug_taken`, `invalid_slug`); `stem_shared`, `note_not_renamable`, `reference_drift` and `reference_unaddressable` are the person's to fix, not yours to work around. A portfolio whose slug a question shares is renamed through the question. `relink: true` in place of `to` keeps the slug and rewrites each link reaching the note only by a former name (lint's stragglers) to it; nothing moves; it takes no `reason`. `behind_upstream` means the vault is behind its upstream as last fetched: retry in a few seconds, and if still behind, tell the person rather than set `skip_sync_check`; `git_operation_in_progress` (a merge or rebase left paused) is never overridable. The result is the plan plus `written` and `index_stale` (true: written; the index catches up on next open). `rename_incomplete` lists the paths a failed rollback left for the person to check by hand."
+        description = "Rename a note's slug and follow every reference to it, in one transaction: every wikilink and reference field, the old slug kept as an alias on the note, and a `renamed` line logged to today's daily note. A reference is an address, not content: `rename_note` rewrites addresses in every note, the journal included, and changes no other byte; this is the one exception to the append-only rule. The preview is the contract: first call with `dry_run: true`, which writes nothing and returns the plan (`moves`, `edits`, `log_line`, `warnings`, `plan_hash`); show it to the person; only when they agree call again with the same `note`, `to` (or `relink`) and `reason` and `expected_plan` set to that `plan_hash` (the reason is part of the plan, so a changed or dropped one makes it stale). Code `stale_plan` means the vault changed since the preview (any log append does it): preview again and show the new plan, never retry blindly. `note` takes the references `read_note` takes, including a former name; when one was typed, `found_by_former_name` says so and `from` is the current slug: use it from now on. `to` is refused, not suffixed, when taken or malformed (`slug_taken`, `invalid_slug`); `stem_shared`, `note_not_renamable`, `reference_drift` and `reference_unaddressable` are the person's to fix, not yours to work around. A portfolio whose slug a question shares is renamed through the question. `relink: true` in place of `to` keeps the slug and rewrites each link reaching the note only by a former name (lint's stragglers) to it; nothing moves; it takes no `reason`. `behind_upstream` means the vault is behind its upstream as last fetched: retry in a few seconds, and if still behind, tell the person rather than set `skip_sync_check`; `git_operation_in_progress` (a paused merge or rebase) is never overridable. The result is the plan plus `written`, `index_stale` (true: written) and `index_note` (damaged index: saved, do not repeat). `rename_incomplete` lists the paths a failed rollback left for the person to check by hand."
     )]
     pub async fn rename_note(
         &self,
@@ -653,6 +653,8 @@ impl CuadernoServer {
                         sync_warnings: shown,
                         written: Vec::new(),
                         index_stale: false,
+                        index_stale_causes: Vec::new(),
+                        index_damaged: false,
                     });
                 }
                 // The whole check again under the lock; what it newly warns
@@ -680,6 +682,8 @@ impl CuadernoServer {
                         sync_warnings,
                         written: outcome.written,
                         index_stale: outcome.index_stale,
+                        index_stale_causes: outcome.index_stale_causes,
+                        index_damaged: outcome.index_damaged,
                     }),
                     Err(e) => Err(RenameFail::Domain(Box::new((e, sync_warnings)))),
                 }
@@ -693,13 +697,20 @@ impl CuadernoServer {
                 return Err(crate::rejection::error_with_warnings(&e, &warnings));
             }
         };
-        let response = RenamePlanDto::new(
-            &run.plan,
-            &run.sync_warnings,
-            dry_run,
-            !run.written.is_empty(),
-            run.index_stale,
-        );
+        let response = RenamePlanDto {
+            index_note: rename_index_note(
+                run.index_stale,
+                &run.index_stale_causes,
+                run.index_damaged,
+            ),
+            ..RenamePlanDto::new(
+                &run.plan,
+                &run.sync_warnings,
+                dry_run,
+                !run.written.is_empty(),
+                run.index_stale,
+            )
+        };
         // A preview and an empty plan wrote nothing: no verification, no
         // nudge. The note's new path is the first of `written`.
         let Some(landed) = run.written.first().cloned() else {
@@ -1341,6 +1352,44 @@ impl CuadernoServer {
         self.verified_write(path, message, WriteShape::Rewritten)
             .await
     }
+
+    #[tool(
+        description = "Rebuild the vault's index from the notes now: build a fresh index from every note on disk, check it, and copy it into the live index file in place, so every process on this machine using the vault sees it at once. When the old file is damaged, a copy of it is kept beside it, under its own file name with `.previous` appended (`index_status` gives the index's path; it is `.cuaderno/index.db` unless the server was given another); a repair of the same damage again keeps the first copy. No note is read differently or changed: the index is a cache. Unlike `cdno reindex`, it needs no restart and keeps the archival snapshots `lint` checks archived actions against. The server already rebuilds a damaged index by itself, so call this only when `index_status` stays unhealthy, or when the person asks. It also runs when `index_status` says `repair: damage_recurring` (the server has stopped repairing by itself because the damage keeps coming back), and a success there allows one more automatic repair; but that state means another machine or container is writing the same index file, which no rebuild fixes: tell the person to give this machine its own index (`CUADERNO_INDEX_PATH` / `--index-path`). It does not fix `notes_not_indexed`: those are notes that do not parse (see `lint`). Search and context keep answering from the old index while it builds. Refused with `rebuild_refused` while another rebuild is running in this server or within a minute of the last (`details.reason` says which). Returns the rebuild's record: `rebuilt`, the number of `notes` indexed, `errors` for notes it could not index, `snapshots_carried` / `snapshots_lost` for the archival snapshots, `failure` when it did not replace anything (the old index is then still live), and `restart_required`: true when the file is too damaged for the running server to write over; then tell the person the server needs a restart (its start replaces such a file), and do not call this again. The notes are intact either way."
+    )]
+    pub async fn rebuild_index(
+        &self,
+        Parameters(_input): Parameters<EmptyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let health = crate::context::index_health_or_error(self)?;
+        let outcome =
+            tokio::task::spawn_blocking(move || health.rebuild("rebuild_index was called"))
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "rebuild_index panicked on the blocking pool");
+                    ErrorData::internal_error(
+                        "internal error while rebuilding the index".to_string(),
+                        None,
+                    )
+                })?;
+        match outcome {
+            Ok(record) => {
+                tracing::warn!(
+                    rebuilt = record.rebuilt,
+                    notes = record.notes,
+                    errors = record.errors,
+                    "index rebuilt on request"
+                );
+                json_result(record)
+            }
+            // A refusal the caller can act on (wait, or let the running
+            // rebuild finish), so a rejection, not a protocol error.
+            Err(refused) => Err(crate::rejection::reject(
+                crate::rejection::RejectionCode::RebuildRefused,
+                refused.to_string(),
+                serde_json::json!({ "reason": refused.to_string() }),
+            )),
+        }
+    }
 }
 
 impl CuadernoServer {
@@ -1391,6 +1440,31 @@ struct RenameRun {
     sync_warnings: Vec<String>,
     written: Vec<cdno_core::path::VaultPath>,
     index_stale: bool,
+    /// The errors behind `index_stale`, rendered.
+    index_stale_causes: Vec<String>,
+    /// Whether any of them means the index file is damaged.
+    index_damaged: bool,
+}
+
+/// What the rename handler does with a rename that landed while its index
+/// update failed: log the causes (#520), and when the index is damaged,
+/// wake the health loop and return the sentence every write's damaged-index
+/// error carries, so a rename reads like any other write there.
+fn rename_index_note(index_stale: bool, causes: &[String], damaged: bool) -> Option<String> {
+    if !index_stale {
+        return None;
+    }
+    tracing::warn!(
+        errors = causes.len(),
+        causes = ?causes.iter().take(5).collect::<Vec<_>>(),
+        corruption = damaged,
+        "a rename landed but its index update failed (index stale after successful commit)"
+    );
+    if !damaged {
+        return None;
+    }
+    crate::index_health::corruption_seen();
+    Some(crate::util::index_damaged_saved_note())
 }
 
 /// How it fails: a resolver rejection (already an `ErrorData`), or a domain
@@ -1399,4 +1473,19 @@ struct RenameRun {
 enum RenameFail {
     Reject(ErrorData),
     Domain(Box<(DomainError, Vec<String>)>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rename_index_note;
+
+    #[test]
+    fn a_rename_that_landed_over_a_damaged_index_carries_the_saved_sentence() {
+        let causes = vec!["SQLite error: database disk image is malformed".to_owned()];
+        let note = rename_index_note(true, &causes, true).expect("a note for a damaged index");
+        assert!(note.contains("the notes on disk are intact"), "{note}");
+        assert!(note.contains("This write was saved"), "{note}");
+        assert_eq!(rename_index_note(true, &causes, false), None);
+        assert_eq!(rename_index_note(false, &[], false), None);
+    }
 }

@@ -205,9 +205,17 @@ pub struct RenameOutcome {
     /// Empty for a no-op plan.
     pub written: Vec<VaultPath>,
     /// The files are written but an index update failed: the index is
-    /// stale for some of them until the next open reconciles it. The
-    /// rename itself succeeded.
+    /// stale for some of them until the next reconciliation (the next CLI
+    /// command, a server's sweep or repair) catches it up. The rename
+    /// itself succeeded.
     pub index_stale: bool,
+    /// When `index_stale`: the errors behind it, rendered, for the
+    /// interface to log (#520). Empty otherwise.
+    pub index_stale_causes: Vec<String>,
+    /// When `index_stale`: whether any of those errors means the index file
+    /// is damaged, which a long-running server answers with a check and a
+    /// repair.
+    pub index_damaged: bool,
 }
 
 /// Something the person should know before writing the plan, that does not
@@ -1290,6 +1298,8 @@ impl Vault {
                 plan,
                 written: Vec::new(),
                 index_stale: false,
+                index_stale_causes: Vec::new(),
+                index_damaged: false,
             });
         }
 
@@ -1298,9 +1308,9 @@ impl Vault {
         // once every file has left it, the new one when the commit failed
         // and the rollback took the files back out of it.
         let folders = moved_folders(&plan);
-        let index_stale = match tx.commit() {
-            Ok(_) => false,
-            Err(TransactionError::IndexStale(_)) => true,
+        let stale_errors = match tx.commit() {
+            Ok(_) => None,
+            Err(TransactionError::IndexStale(errors)) => Some(errors),
             Err(TransactionError::FileWrite {
                 source,
                 rollback_failures,
@@ -1331,10 +1341,16 @@ impl Vault {
         if let Some((old_folder, _)) = &folders {
             prune_folder_tree(&*self.store, old_folder);
         }
+        let index_stale = stale_errors.is_some();
+        let errors = stale_errors.unwrap_or_default();
         Ok(RenameOutcome {
             plan,
             written,
             index_stale,
+            index_stale_causes: errors.iter().map(ToString::to_string).collect(),
+            index_damaged: errors
+                .iter()
+                .any(cdno_core::error::IndexError::is_corruption),
         })
     }
 
