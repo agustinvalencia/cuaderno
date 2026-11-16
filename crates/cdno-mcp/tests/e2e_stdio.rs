@@ -1442,38 +1442,68 @@ fn the_stdio_server_exits_within_the_grace_when_stdin_closes_during_a_sweep() {
     );
 }
 
+/// Serve the named pipe at `fifo` to whoever opens it for reading: report
+/// the first reader through `reader_seen`, hold every reader until
+/// `release`, then hand it `content` and close, once per open, until the
+/// path is no longer a pipe (the write replaced it) or `stop`.
+#[cfg(unix)]
+fn serve_fifo(
+    fifo: std::path::PathBuf,
+    content: String,
+    reader_seen: Arc<std::sync::atomic::AtomicBool>,
+    release: Arc<std::sync::atomic::AtomicBool>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+) -> thread::JoinHandle<()> {
+    use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
+    use std::sync::atomic::Ordering;
+
+    thread::spawn(move || {
+        while !stop.load(Ordering::SeqCst) {
+            let still_a_pipe = std::fs::symlink_metadata(&fifo)
+                .map(|m| m.file_type().is_fifo())
+                .unwrap_or(false);
+            if !still_a_pipe {
+                return;
+            }
+            // Non-blocking, so this fails at once (ENXIO) while no reader
+            // has the pipe open, rather than waiting for one.
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&fifo)
+            {
+                Ok(mut writer) => {
+                    reader_seen.store(true, Ordering::SeqCst);
+                    while !release.load(Ordering::SeqCst) && !stop.load(Ordering::SeqCst) {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    let _ = writer.write_all(content.as_bytes());
+                    drop(writer);
+                    // Let the reader see the end of input before another
+                    // open could hand it the content twice.
+                    thread::sleep(Duration::from_millis(300));
+                }
+                Err(_) => thread::sleep(Duration::from_millis(20)),
+            }
+        }
+    })
+}
+
 /// A write still running when the client disconnects completes, every file
 /// of it and its index rows, before the process exits (#1002). The write is
-/// a rename that rewrites references in three notes, made slow
-/// deterministically: `git` on the server's PATH is a wrapper that sleeps
-/// 1.5s per call (under the 2s probe timeout), and the rename probes git
-/// four times before taking the lock and four again under it, so the call
-/// runs some 12s after stdin closes: past rmcp's 5s drain and the 5s sweep
-/// grace together, which is what used to cut it.
+/// a rename that rewrites references in three notes. It is held
+/// deterministically, with no timing in the server's code involved: after
+/// the server has indexed the notes, one linking note is swapped for a
+/// named pipe holding the same text, so the rename's read of it blocks
+/// until the test writes into the pipe. The test waits until the read is
+/// blocked (the write is in flight), closes stdin, waits past rmcp's 5s
+/// drain and the 5s sweep grace (when the server used to exit, cutting the
+/// write), checks the server is still running, and only then releases the
+/// read.
 #[cfg(unix)]
 #[test]
 fn a_write_in_flight_at_disconnect_completes_before_the_stdio_server_exits() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let real_git = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-        .map(|dir| dir.join("git"))
-        .find(|path| path.is_file())
-        .expect("git on PATH");
-    let fake_bin = TempDir::new().unwrap();
-    let wrapper = fake_bin.path().join("git");
-    std::fs::write(
-        &wrapper,
-        format!(
-            "#!/bin/sh\nsleep 1.5\nexec '{}' \"$@\"\n",
-            real_git.display()
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let path = std::env::join_paths(std::iter::once(fake_bin.path().to_path_buf()).chain(
-        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
-    ))
-    .unwrap();
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     let dir = TempDir::new().unwrap();
     make_vault(dir.path());
@@ -1486,31 +1516,55 @@ fn a_write_in_flight_at_disconnect_completes_before_the_stdio_server_exits() {
     for stem in linking {
         write_inbox_note(dir.path(), stem, "See [[surrogate-model]].");
     }
-    let init = Command::new(&real_git)
-        .arg("-C")
-        .arg(dir.path())
-        .args(["init", "-q"])
-        .output()
-        .expect("git init");
-    assert!(init.status.success());
-
-    let path = path.to_string_lossy().into_owned();
-    let mut mcp = McpSubprocess::spawn_with_env(dir.path(), None, &[("PATH", &path)]);
+    let mut mcp = McpSubprocess::spawn(dir.path());
+    // Opening the vault indexed every note, the one about to become a pipe
+    // included.
     initialise(&mut mcp);
+
+    let held = dir.path().join(format!("inbox/{}.md", linking[0]));
+    let content = std::fs::read_to_string(&held).unwrap();
+    std::fs::remove_file(&held).unwrap();
+    let c_path = std::ffi::CString::new(held.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: a valid NUL-terminated path and a plain mode.
+    assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o644) }, 0, "mkfifo");
+    let (reader_seen, release, stop) = (
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let server = serve_fifo(
+        held.clone(),
+        content,
+        Arc::clone(&reader_seen),
+        Arc::clone(&release),
+        Arc::clone(&stop),
+    );
+
     mcp.send(&json!({
         "jsonrpc": "2.0", "id": 2, "method": "tools/call",
         "params": { "name": "rename_note", "arguments": {
             "note": "surrogate-model", "to": "emulator-study"
         } }
     }));
-    // Let rmcp read the request before the input ends.
-    thread::sleep(Duration::from_millis(300));
-    let (took, status) = mcp.close_and_wait(Duration::from_secs(90));
+    let in_flight = eventually(Duration::from_secs(30), || {
+        reader_seen.load(Ordering::SeqCst)
+    });
+    if !in_flight {
+        stop.store(true, Ordering::SeqCst);
+        panic!("the rename never read the held note");
+    }
+
+    // The client goes away with the write in flight, and the server stays
+    // past the point where it used to exit.
+    drop(mcp.stdin.take());
+    thread::sleep(Duration::from_secs(11));
+    let still_running = mcp.child.try_wait().expect("try_wait").is_none();
+    release.store(true, Ordering::SeqCst);
+    assert!(still_running, "the server exited with the write in flight");
+    let (_, status) = mcp.close_and_wait(Duration::from_secs(60));
+    stop.store(true, Ordering::SeqCst);
+    server.join().unwrap();
     assert!(status.success(), "{status:?}");
-    assert!(
-        took > Duration::from_secs(10),
-        "exit took {took:?}: the rename was meant to outlast rmcp's drain and the grace"
-    );
 
     // Every file of the rename landed.
     assert!(dir.path().join("projects/emulator-study.md").is_file());

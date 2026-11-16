@@ -975,6 +975,35 @@ fn the_first_sweep_comes_between_half_an_interval_and_one() {
     );
 }
 
+/// An interval of `u64::MAX` seconds, which a configuration may give to
+/// mean "never", neither panics in the jitter nor ends the loop task (and
+/// the corruption listener with it): the deadlines are capped, not added
+/// past what an `Instant` can hold.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_huge_sweep_interval_keeps_the_loop_alive() {
+    use cdno_mcp::index_health::{MAX_SWEEP_INTERVAL, first_sweep_delay};
+    use std::time::Duration;
+
+    let huge = Duration::from_secs(u64::MAX);
+    for random in [0, 7, u64::MAX] {
+        assert!(first_sweep_delay(huge, random) >= huge / 2);
+        let capped = first_sweep_delay(MAX_SWEEP_INTERVAL, random);
+        assert!(capped >= MAX_SWEEP_INTERVAL / 2 && capped < MAX_SWEEP_INTERVAL);
+    }
+
+    let dir = TempDir::new().expect("tempdir");
+    cdno_cli::commands::init::run(dir.path()).expect("cdno init");
+    let opened = open_vault_checked(dir.path(), None).expect("open");
+    let health = Arc::new(IndexHealth::from_opened(&opened));
+    let started = health.start(u64::MAX);
+    let spawned = health.spawn_loop(Some(huge));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!started.is_finished(), "the started loop ended");
+    assert!(!spawned.is_finished(), "the spawned loop ended");
+    started.abort();
+    spawned.abort();
+}
+
 /// The tool-call count the stdio server drains at shutdown (#1002): a call
 /// is counted while its closure runs, still counted when its caller stops
 /// awaiting it, and `idle` returns once every closure has returned. The

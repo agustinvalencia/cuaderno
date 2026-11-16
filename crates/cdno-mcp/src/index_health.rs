@@ -891,8 +891,17 @@ impl IndexHealth {
             // sweep waits; how long is drawn between half an interval and a
             // whole one, so servers started together (sessions a client
             // restores at once) do not sweep in phase for ever.
+            // An interval past the cap means "never" in practice; capping
+            // it keeps every deadline the loop computes (now + delay, then
+            // + interval per tick) representable, since adding to an
+            // `Instant` panics on overflow and the panic would end this
+            // task, the corruption listener with it.
             let mut interval = every.map(|every| {
-                let first = tokio::time::Instant::now() + first_sweep_delay(every, random_u64());
+                let every = every.min(MAX_SWEEP_INTERVAL);
+                let now = tokio::time::Instant::now();
+                let first = now
+                    .checked_add(first_sweep_delay(every, random_u64()))
+                    .unwrap_or(now + MAX_SWEEP_INTERVAL);
                 let mut interval = tokio::time::interval_at(first, every);
                 interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 interval
@@ -930,12 +939,17 @@ impl IndexHealth {
 /// `every` itself when it is too short to split).
 pub fn first_sweep_delay(every: Duration, random: u64) -> Duration {
     let half = every / 2;
-    let spread = (every - half).as_millis() as u64;
+    let spread = u64::try_from((every - half).as_millis()).unwrap_or(u64::MAX);
     if spread == 0 {
         return every;
     }
-    half + Duration::from_millis(random % spread)
+    half.saturating_add(Duration::from_millis(random % spread))
 }
+
+/// The longest sweep interval the loop uses: ten years, which is "never"
+/// for a server process. A longer one (up to `u64::MAX` seconds, which a
+/// configuration may give to mean never) is taken as this.
+pub const MAX_SWEEP_INTERVAL: Duration = Duration::from_secs(10 * 365 * 24 * 3600);
 
 /// A random number from the standard library's per-process hash seed: no
 /// dependency, and different in every process, which is all the jitter
