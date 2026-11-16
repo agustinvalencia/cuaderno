@@ -23,10 +23,6 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   exits, waiting at most 5 seconds for a sweep or tool call still running rather than for as long
   as it takes.
 
-## [0.45.0] - 2026-11-09
-
-### Fixed
-
 ## [0.46.0] - 2026-11-16
 
 ### Added
