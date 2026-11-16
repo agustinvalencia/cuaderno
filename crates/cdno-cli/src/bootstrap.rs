@@ -98,7 +98,19 @@ pub fn open_vault(root: &Path) -> Result<(Vault, ReconciliationReport)> {
         SqliteIndex::open_location(&location, root)
             .with_context(|| format!("opening {}", location.path.display()))?,
     );
+    open_vault_on(store, index, config)
+}
 
+/// The rest of [`open_vault`], on a store and index the caller has already
+/// opened: construct the vault (startup reconciliation), warn about notes
+/// that could not be indexed, and record the method status. For `cdno
+/// reindex`, which opens and rebuilds the index itself before the vault
+/// exists (#999).
+pub fn open_vault_on(
+    store: Arc<dyn VaultStore>,
+    index: Arc<dyn VaultIndex>,
+    config: VaultConfig,
+) -> Result<(Vault, ReconciliationReport)> {
     let (vault, report) =
         Vault::new(store, index, config).context("constructing vault and reconciling index")?;
 
@@ -166,7 +178,7 @@ pub fn open_catalog(root: &Path) -> Result<Catalog> {
 ///
 /// Errors if `root/.cuaderno/` is missing — that signals the user
 /// pointed at a non-vault directory and should run `cdno init`.
-fn load_config(root: &Path) -> Result<VaultConfig> {
+pub fn load_config(root: &Path) -> Result<VaultConfig> {
     let cuaderno_dir = root.join(paths::CUADERNO_DIR);
     if !cuaderno_dir.is_dir() {
         bail!(

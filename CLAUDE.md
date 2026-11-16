@@ -121,7 +121,12 @@ third lookup.
   correct; the next reconciliation catches the index up: the next CLI command, a server's sweep, or,
   when the index file is damaged, a server's in-place repair). Not crash-safe by design. The repair,
   `reconcile::rebuild`, writes the live index file in place through SQLite's backup API, under the
-  vault write lock but outside `VaultTransaction`; it touches only the index, never a note. **Known exceptions that bypass the
+  vault write lock but outside `VaultTransaction`; it touches only the index, never a note.
+  `cdno reindex` rebuilds through it too (#999), carrying the archival snapshots unless
+  `--drop-snapshots`; never unlink or rename an index another process may hold. The only
+  remaining paths that do are a file too damaged to open or copy over (`reindex` moves it to
+  `.previous` under the lock and says to restart holders; `SqliteIndex::open`'s self-heal deletes
+  it unlocked) and `reindex --rebind`, whose file belongs to another vault. **Known exceptions that bypass the
   transaction AND the write lock**: `write_note_raw` (no live caller since the desktop was removed, kept per #601), template
   eject/save (and `templates sync`, which writes through `save_template`), and `save_config_raw` — these call `store.write_file` directly, so the cross-process
   serialisation guarantee does not cover them. Do not add new raw-write paths on their precedent.

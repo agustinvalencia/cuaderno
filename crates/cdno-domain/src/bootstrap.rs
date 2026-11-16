@@ -128,7 +128,7 @@ pub fn open_vault_with_index(
 /// written over (a corruption error from the copy), the index is emptied in
 /// place instead, under the vault write lock and only if it still fails its
 /// check there, and the startup reconciliation fills it (the snapshots are
-/// then lost, as with `cdno reindex`). Any other failure (the vault lock
+/// then lost, as when `cdno reindex` must set such a file aside). Any other failure (the vault lock
 /// held past its timeout by another process repairing the same file, a busy
 /// database, an I/O error) leaves the index as it is: the server starts on
 /// it, reports the damage, and its sweep or the next tool call to meet the

@@ -378,6 +378,45 @@ fn a_rename_synced_from_another_clone_leaves_lint_clean() {
         .stdout(predicate::str::contains("[error]").not());
 }
 
+/// `cdno reindex` rebuilds in place and carries the archival snapshots
+/// across (#999): the row is the same after, and lint still checks it.
+#[test]
+fn reindex_carries_the_archival_snapshot_across() {
+    use cdno_core::index::{SqliteIndex, VaultIndex};
+    use predicates::prelude::*;
+
+    let (b, rel) = vault_with_an_archived_action();
+    let path = cdno_core::path::VaultPath::new(&rel).unwrap();
+    let snapshot = |root: &std::path::Path| {
+        let index = SqliteIndex::open(root.join(".cuaderno/index.db")).unwrap();
+        index.find_archival_snapshot(&path).unwrap()
+    };
+    let before = snapshot(b.path()).expect("archival recorded a snapshot");
+
+    cdno_at(b.path())
+        .arg("reindex")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Reindexed"))
+        .stdout(predicate::str::contains("snapshot").not())
+        .stderr(predicate::str::contains("snapshot").not());
+    assert_eq!(
+        snapshot(b.path()),
+        Some(before),
+        "the row is carried as it was"
+    );
+
+    // Still checked: an edit inside the frozen prefix is an error.
+    let done = b.path().join(&rel);
+    let raw = fs::read_to_string(&done).unwrap();
+    fs::write(&done, raw.replacen("Characterise", "Characterize", 1)).unwrap();
+    cdno_at(b.path())
+        .arg("lint")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(format!("[error] {rel}: ")));
+}
+
 /// The ordering limit (#901): clone B's row predates the masked hash, and
 /// the renamed markdown reaches B before B first opens on a build that
 /// could backfill it. The plain hash can never vouch for the prefix again,
@@ -397,11 +436,27 @@ fn a_rename_synced_before_the_first_open_on_this_build_is_reported_with_the_way_
         .failure()
         .stdout(predicate::str::contains(format!("[error] {rel}: ")))
         .stdout(predicate::str::contains("predates the masked hash"))
-        .stdout(predicate::str::contains("`cdno reindex`"));
+        .stdout(predicate::str::contains("`cdno reindex --drop-snapshots`"));
+
+    // A plain reindex carries the snapshot across (#999), so the error stays.
+    cdno_at(b.path())
+        .arg("reindex")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Dropped").not());
+    cdno_at(b.path())
+        .arg("lint")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("predates the masked hash"));
 
     // The way out the message names: the rebuild drops the snapshot row,
     // and with it the check, so lint is clean.
-    cdno_at(b.path()).arg("reindex").assert().success();
+    cdno_at(b.path())
+        .args(["reindex", "--drop-snapshots"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Dropped 1 archival snapshot(s)"));
     cdno_at(b.path())
         .arg("lint")
         .assert()
