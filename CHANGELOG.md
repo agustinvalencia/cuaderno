@@ -6,6 +6,27 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **The stdio server sweeps the index like the HTTP server** (closes #1002, part of #1005). The
+  stdio `cdno-mcp` used to reconcile once, at start, so a session that lived for hours never saw a
+  note that arrived by file sync or `git pull` (absent from `search_notes` and backlinks), kept the
+  rows of a note deleted elsewhere (`lint` and `triage_inbox` reported `could not read note: file
+  not found`), and could not search a hand edit. It now runs `cdno-mcp-server`'s sweep, through
+  the same code (`IndexHealth::start`): every `CDNO_MCP_RECONCILE_INTERVAL_SECS` seconds (the HTTP
+  server's variable, default 300, `0` turns it off) it reconciles the index with the notes, then
+  runs the integrity check and the in-place repair of #526, recurrence stop included. (`cdno now` stopped refreshing the index as a side effect in 0.46.0; this is what picks up hand edits for a long-running stdio server instead.) A value that
+  is not a whole number of seconds stops the server at start, naming the variable. The sweep
+  writes nothing to stdout. The stdio runtime now has a fixed thread budget (2 workers, at most 8
+  blocking threads) rather than a worker per core and 512 blocking threads, since a desktop client
+  may spawn several servers; and when the client disconnects the sweep loop stops and the process
+  exits, waiting at most 5 seconds for a sweep or tool call still running rather than for as long
+  as it takes.
+
+## [0.45.0] - 2026-11-09
+
+### Fixed
+
 ## [0.46.0] - 2026-11-16
 
 ### Added
@@ -143,22 +164,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `Vault::open_pauses` now delegate to, so both paths share one fold. Because the index is not
   reconciled, `cdno now` no longer prints the reconciliation warning for a note elsewhere in the
   vault that fails to parse; any other verb still does. Nor does `cdno now` refresh the index as a
-  side effect any more; a long-running stdio server now picks up hand edits through its own
-  periodic sweep instead (#1002, below).
-- **The stdio server sweeps the index like the HTTP server** (closes #1002, part of #1005). The
-  stdio `cdno-mcp` used to reconcile once, at start, so a session that lived for hours never saw a
-  note that arrived by file sync or `git pull` (absent from `search_notes` and backlinks), kept the
-  rows of a note deleted elsewhere (`lint` and `triage_inbox` reported `could not read note: file
-  not found`), and could not search a hand edit. It now runs `cdno-mcp-server`'s sweep, through
-  the same code (`IndexHealth::start`): every `CDNO_MCP_RECONCILE_INTERVAL_SECS` seconds (the HTTP
-  server's variable, default 300, `0` turns it off) it reconciles the index with the notes, then
-  runs the integrity check and the in-place repair of #526, recurrence stop included. A value that
-  is not a whole number of seconds stops the server at start, naming the variable. The sweep
-  writes nothing to stdout. The stdio runtime now has a fixed thread budget (2 workers, at most 8
-  blocking threads) rather than a worker per core and 512 blocking threads, since a desktop client
-  may spawn several servers; and when the client disconnects the sweep loop stops and the process
-  exits, waiting at most 5 seconds for a sweep or tool call still running rather than for as long
-  as it takes.
+  side effect any more, so a long-running stdio server no longer picks up hand edits through the
+  hook's runs; periodic reconciliation in the stdio server is #1002.
 
 ## [0.45.0] - 2026-11-09
 
