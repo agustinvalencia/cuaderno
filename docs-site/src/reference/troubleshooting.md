@@ -354,7 +354,8 @@ the lock is.
 - **A long write elsewhere** (a rename rewriting many notes, a migration) holds it for a few
   seconds; the next attempt goes through.
 - **A writer that crashed or was killed while writing** leaves `.cuaderno/locks/write.lock` behind.
-  A write on the same machine takes it over at once. One on another machine fails like this until
+  A write on the same machine takes it over at once (a restarted server's included). One on
+  another machine fails like this until
   the lock is 30 seconds old, then takes it over by itself and logs a warning naming the old owner.
   You do not need to delete it, and should not while any side may still be writing.
 - **A writer that was suspended** (a laptop asleep, a paused container) while holding it has its

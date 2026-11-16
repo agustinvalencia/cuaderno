@@ -49,10 +49,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   inside, after the `flock` and within the same 5 s wait, for the life of the transaction.
   Reconciliation and the other holders that write only the index take the `flock` alone, so a
   read command never waits on, or holds up, another machine.
-  - **Upgrade step for a vault kept in git:** add `.cuaderno/locks/` to its `.gitignore` (and
-    `git rm -r --cached .cuaderno/locks` if it was ever committed). The HTTP server's git checkpoint
-    excludes it by itself. Keep it out of any sync tool too (Syncthing's `.stignore`, Dropbox's
-    ignore attribute); a copy that travels by sync costs the other machine a wait of up to 30 s.
+  - The folder keeps itself out of git: the first write creates `.cuaderno/locks/.gitignore`
+    holding `*` (and never rewrites it). **Upgrade step only for a vault whose history already
+    holds a copy of the folder:** `git rm -r --cached .cuaderno/locks`. Keep it out of any sync tool
+    (Syncthing's `.stignore`, Dropbox's ignore attribute), and let the tool leave `.cuaderno/.lock`
+    alone; a copy that travels by sync costs the other machine a wait of up to 30 s.
   - **Upgrade every side together.** 0.46.0 has neither this lock nor the compare before rename,
     so with one side on it lines are still lost, silently.
   - A lock held for the whole wait fails the write with "timed out after 5s waiting for the vault
@@ -61,10 +62,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
     MCP returns the new rejection `vault_busy` (with the lock's `owner`, `age_secs` and
     `stale_after_secs`) instead of a protocol error. The `flock`'s own timeout is `vault_busy` and
     exit 75 too.
-  - A crashed writer's lock is broken by the next write: at once on the same kernel (the record
-    carries the kernel's boot identifier, and the contender holds that kernel's `flock`), after 30 s
-    on another, by the folder's clock (the lock's mtime against a probe made beside it). Exactly one
-    contender breaks it, and a warning names the owner and the reason.
+  - A crashed writer's lock is broken by the next write: at once through the same `flock` (the
+    record, `protocol: 1`, carries the kernel's boot identifier, the device and inode of the
+    holder's `flock` file and a per-process instance value, and the contender holds that very
+    `flock`, so a restarted server with its predecessor's process id is covered), after 30 s
+    otherwise, by the folder's clock (the lock's mtime against a probe made beside it). Exactly one
+    contender breaks it, and a warning names the owner and the reason. A record of a later protocol
+    is broken by age only.
+  - Reads of a note retry, for about 170 ms, a "not found" for a name its folder lists, and a file
+    opened through a name it no longer has: a guest on a VM share could otherwise read through a
+    stale cached entry for a note the host had just replaced. `docs/concurrent-writers.md` states
+    what this does not cover (a share caching attributes as long as names).
   - A holder refreshes its lock as it writes, so a long rename or migration is not taken for a
     crashed one. A holder whose lock was broken while it was paused (a laptop asleep, a paused
     container) finds out before its next file operation, or right before the rename in flight:
@@ -88,9 +96,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
     `VaultWriteLock::still_held`, `has_lock_file`, `broke_lock` and `broke_stale_lock`,
     `StoreError::LockBusy`, `TransactionError::LockLost` and `IndexError::Lock`. In `cdno-domain`,
     `DomainError::is_vault_busy`, and `is_concurrent_change` is true for a cleanly lost lock.
-    `FsVaultStore` gains the `test-support` seams `without_shared_lock`, `with_lock_timeout`,
-    `with_refresh_after`, `with_boot_id`, `with_before_break_hook` and
-    `with_after_wrong_move_hook`.
+    `VaultTransaction::keep_alive` and `VaultWriteLock::keep_alive` refresh the lock during a long
+    read phase. `StoreError::LockLost` is the store's signal inside a commit, never returned to a
+    caller. `cdno reindex` busy and a busy opening reconciliation exit 75 too. `FsVaultStore`
+    gains the `test-support` seams `without_shared_lock`, `with_lock_timeout`,
+    `with_refresh_after`, `with_boot_id`, `with_before_break_hook`,
+    `with_after_wrong_move_hook` and `with_on_name_missing_hook`.
 
 - **A commit refuses to replace a note that changed while the write was being prepared** (part of
   #1001, #1005). The vault write lock is an `flock`, which one kernel enforces and another does not

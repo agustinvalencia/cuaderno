@@ -68,6 +68,14 @@ impl VaultWriteLock {
         }
     }
 
+    /// Refresh the lock file if it is due, checking ownership only then
+    /// (see [`VaultTransaction::keep_alive`](crate::transaction::VaultTransaction::keep_alive)).
+    pub fn keep_alive(&self) {
+        if let Some(shared) = &self.shared {
+            shared.keep_alive();
+        }
+    }
+
     /// Whether this guard holds the lock file every kernel sees, as opposed
     /// to the `flock` alone (or nothing).
     pub fn has_lock_file(&self) -> bool {
@@ -157,7 +165,12 @@ impl VaultStore for LockHeldStore {
         self.0.import_external(src, dest)
     }
     fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
-        Ok(VaultWriteLock::noop())
+        // Its holder took the index lock (the `flock` alone): a transaction
+        // that may write notes must not open under it without the lock file.
+        panic!(
+            "a note-writing transaction was opened under an index-only lock (#1012): use \
+             VaultTransaction::index_only"
+        );
     }
     fn acquire_index_lock(&self) -> Result<VaultWriteLock, StoreError> {
         Ok(VaultWriteLock::noop())
@@ -891,6 +904,15 @@ impl FsVaultStore {
         self
     }
 
+    /// Run `hook` when this store's ownership check finds its lock's name
+    /// missing, before it pauses and looks once more (test seam,
+    /// `test-support` only).
+    #[cfg(feature = "test-support")]
+    pub fn with_on_name_missing_hook(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
+        self.shared_lock_options.hooks.on_name_missing = Some(Arc::new(hook));
+        self
+    }
+
     /// Run `hook` when this store has moved aside a lock that is not the
     /// one it judged breakable, right before it puts it back (test seam,
     /// `test-support` only).
@@ -1070,12 +1092,9 @@ impl FsVaultStore {
         }
         // A commit's write: is its vault write lock file still its own
         // (#1012)? Checked here, after the slow part, so what is left
-        // uncovered is the comparison and the rename alone. A lost lock is
-        // reported as `Changed` (nothing was written to the path); the
-        // transaction then asks the lock itself, and reports the loss.
-        if expected.is_some() && !crate::shared_lock::commit_still_holds()? {
-            return Err(StoreError::Changed(path.clone()));
-        }
+        // uncovered is the comparison and the rename alone. Outside a
+        // commit with a lock file this passes.
+        crate::shared_lock::commit_still_holds()?;
         match expected {
             None => {
                 tmp.persist(full)
@@ -1141,7 +1160,7 @@ impl FsVaultStore {
 /// What is at `full` right now, read straight from disk (not recorded in
 /// any read journal).
 fn observe_full(full: &Path, path: &VaultPath) -> Result<Observed, StoreError> {
-    match fs::read(full) {
+    match read_fresh(full) {
         Ok(bytes) => Ok(Observed::of_bytes(&bytes)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Observed::Absent),
         Err(e) => Err(io_to_store_error(e, path)),
@@ -1195,14 +1214,13 @@ fn io_to_store_error(err: io::Error, path: &VaultPath) -> StoreError {
 
 impl VaultStore for FsVaultStore {
     fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
-        let result =
-            fs::read_to_string(self.resolve(path)?).map_err(|e| io_to_store_error(e, path));
+        let result = read_text_fresh(&self.resolve(path)?).map_err(|e| io_to_store_error(e, path));
         self.journals.record(path, &result);
         result
     }
 
     fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
-        let result = fs::read(self.resolve(path)?).map_err(|e| io_to_store_error(e, path));
+        let result = read_fresh(&self.resolve(path)?).map_err(|e| io_to_store_error(e, path));
         self.journals.record(path, &result);
         result
     }
@@ -1219,7 +1237,7 @@ impl VaultStore for FsVaultStore {
         // negligible at note scale. The read-modify window is covered
         // by the vault write lock for all transactional callers.
         let full = self.resolve(path)?;
-        let existing = match fs::read_to_string(&full) {
+        let existing = match read_text_fresh(&full) {
             Ok(content) => content,
             Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(io_to_store_error(e, path)),
@@ -1248,7 +1266,7 @@ impl VaultStore for FsVaultStore {
         expected: Observed,
     ) -> Result<(), StoreError> {
         let full = self.resolve(path)?;
-        let existing = match fs::read_to_string(&full) {
+        let existing = match read_text_fresh(&full) {
             Ok(content) => Some(content),
             Err(e) if e.kind() == io::ErrorKind::NotFound => None,
             Err(e) => return Err(io_to_store_error(e, path)),
@@ -1281,11 +1299,15 @@ impl VaultStore for FsVaultStore {
         if let Some(parent) = dest_full.parent() {
             fs::create_dir_all(parent).map_err(|e| io_to_store_error(e, dest))?;
         }
+        // A commit's move: still the lock's holder (#1012)?
+        crate::shared_lock::commit_still_holds()?;
         fs::rename(&src_full, &dest_full).map_err(|e| io_to_store_error(e, src))
     }
 
     fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
         let full = self.resolve(path)?;
+        // A commit's delete: still the lock's holder (#1012)?
+        crate::shared_lock::commit_still_holds()?;
         // `fs::remove_file` errors with NotFound if the path doesn't
         // exist; let io_to_store_error translate that into the trait's
         // contract variant.
@@ -1471,6 +1493,9 @@ impl VaultStore for FsVaultStore {
         tmp.as_file()
             .sync_all()
             .map_err(|e| io_to_store_error(e, dest))?;
+        // A commit's import, after its copy (the slow part): still the
+        // lock's holder (#1012)?
+        crate::shared_lock::commit_still_holds()?;
         tmp.persist_noclobber(&full)
             .map_err(|e| io_to_store_error(e.error, dest))?;
         // Same durability posture as `atomic_write`: make the rename
@@ -1496,11 +1521,13 @@ impl VaultStore for FsVaultStore {
                 path: shared_lock::LOCKS_DIR.to_string(),
                 source: e,
             })?;
+            ensure_locks_ignored(&dir);
             Some(shared_lock::acquire(
                 &dir,
                 deadline,
                 started,
                 &self.shared_lock_options,
+                flock_identity(&file).as_deref(),
             )?)
         } else {
             None
@@ -1518,6 +1545,109 @@ impl VaultStore for FsVaultStore {
             shared: None,
         })
     }
+}
+
+/// The device and inode of the `flock` file, as `dev:ino` from its own
+/// descriptor: what a lock's record names so that a contender can tell
+/// "the same `flock`" from "the same kernel" (#1012).
+#[cfg(unix)]
+fn flock_identity(file: &File) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    file.metadata()
+        .ok()
+        .map(|m| format!("{}:{}", m.dev(), m.ino()))
+}
+
+#[cfg(not(unix))]
+fn flock_identity(_file: &File) -> Option<String> {
+    None
+}
+
+/// Make the locks folder ignore itself in git (#1012): a `.gitignore`
+/// holding `*`, created once and never rewritten, so a vault kept in git
+/// needs no rule of its own. Best effort: a failure costs only that.
+fn ensure_locks_ignored(dir: &Path) {
+    let path = dir.join(".gitignore");
+    if path.exists() {
+        return;
+    }
+    match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(mut file) => {
+            use std::io::Write;
+            let _ = file
+                .write_all(b"# cuaderno's vault write lock files (#1012): never commit them.\n*\n");
+        }
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(e) => tracing::debug!(error = %e, "could not write .cuaderno/locks/.gitignore"),
+    }
+}
+
+/// How long a read waits, in turn, before trying a file again whose name a
+/// share's cache answered stale (see [`read_fresh`]).
+const STALE_READ_PAUSES: [Duration; 3] = [
+    Duration::from_millis(20),
+    Duration::from_millis(50),
+    Duration::from_millis(100),
+];
+
+/// Read `full`, trying again (three times, about 170 ms in all) when the
+/// answer looks like a stale name cache rather than the file (#1012): a
+/// "not found" for a name its folder's listing has, or a file opened through
+/// the name that no longer has any name (a link count of 0, where link
+/// counts are known to mean something). A guest on a VM file share can
+/// hold a cached entry for a note that the host has since replaced by
+/// rename. Then the report is the last answer: the "not found", or an error
+/// saying the share served a replaced file. A file that is really absent
+/// costs one listing of its folder, and nothing more.
+fn read_fresh(full: &Path) -> io::Result<Vec<u8>> {
+    let mut pauses = STALE_READ_PAUSES.iter();
+    loop {
+        let stale = match read_once(full) {
+            Ok(Some(bytes)) => return Ok(bytes),
+            Ok(None) => io::Error::other(
+                "the vault folder's file share kept answering with a file that had been \
+                 replaced; nothing was read, try again",
+            ),
+            Err(e) if e.kind() == io::ErrorKind::NotFound && listed_in_folder(full) => e,
+            Err(e) => return Err(e),
+        };
+        match pauses.next() {
+            Some(pause) => std::thread::sleep(*pause),
+            None => return Err(stale),
+        }
+    }
+}
+
+/// [`read_fresh`], as UTF-8 text (as `fs::read_to_string` reports it).
+fn read_text_fresh(full: &Path) -> io::Result<String> {
+    String::from_utf8(read_fresh(full)?).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+/// One read: the bytes, or `None` when the file opened has no name left.
+fn read_once(full: &Path) -> io::Result<Option<Vec<u8>>> {
+    use std::io::Read;
+    let mut file = File::open(full)?;
+    #[cfg(unix)]
+    if crate::shared_lock::link_counts_trusted() {
+        use std::os::unix::fs::MetadataExt;
+        if file.metadata()?.nlink() == 0 {
+            return Ok(None);
+        }
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(Some(bytes))
+}
+
+/// Whether the listing of `full`'s folder names it: the server's answer,
+/// which a cached "not found" for the name itself may contradict.
+fn listed_in_folder(full: &Path) -> bool {
+    let (Some(parent), Some(name)) = (full.parent(), full.file_name()) else {
+        return false;
+    };
+    fs::read_dir(parent)
+        .map(|entries| entries.flatten().any(|e| e.file_name() == name))
+        .unwrap_or(false)
 }
 
 impl FsVaultStore {

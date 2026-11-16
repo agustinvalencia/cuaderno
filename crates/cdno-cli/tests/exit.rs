@@ -121,3 +121,20 @@ fn a_busy_vault_and_a_cleanly_lost_lock_exit_with_tempfail_too() {
         "{partial}"
     );
 }
+
+#[test]
+fn a_busy_lock_inside_an_index_error_exits_with_tempfail_too() {
+    // `cdno reindex`, and a command's opening reconciliation, report the
+    // lock's error inside an index error, wrapped in context.
+    let index = cdno_core::error::IndexError::Lock {
+        what: "acquiring the vault write lock to replace the index".into(),
+        source: StoreError::LockTimeout(std::time::Duration::from_secs(5)),
+    };
+    let wrapped = Err::<(), _>(index)
+        .context("rebuilding the index; it was left as it was")
+        .unwrap_err();
+    assert_eq!(special_status(&wrapped), Some(75));
+    let object = rejection(&wrapped).unwrap();
+    assert_eq!(object["code"], "vault_busy");
+    assert_eq!(object["details"]["waited_secs"], 5);
+}

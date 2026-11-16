@@ -400,7 +400,9 @@ impl ServerHandler for CuadernoServer {
                 `concurrent_change` rejection is the opposite: the note changed \
                 underneath the write and nothing was written, so make the same call \
                 again, re-reading the note first if you composed the content from an \
-                earlier read of it.",
+                earlier read of it. A `vault_busy` rejection means another writer held \
+                the vault write lock for the whole wait and nothing was done: make the \
+                same call again in a few seconds.",
             )
             // ServerInfo::default already enables an empty capability
             // set; flip the `tools` flag on so clients know we serve

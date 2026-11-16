@@ -101,7 +101,8 @@ vault/
   exists only while a write holds it, and processes on another machine or in a container that share
   the folder see it too (see [Sharing a vault between machines](#sharing-a-vault-between-machines)).
   Other files in `locks/` live for an instant while a write takes or breaks the lock. None of them
-  is a note; keep `.cuaderno/locks/` out of git and out of a sync tool (below).
+  is a note; the folder keeps itself out of git (its own `.gitignore`), and should be kept out of
+  a sync tool (below).
 
 ## Sharing a vault between machines
 
@@ -117,8 +118,9 @@ the other, so neither replaces a note the other has just changed. What still mat
   the note changed under it refuses, writing nothing (see
   [Troubleshooting](../reference/troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared)).
 - **A writer that crashes holding the lock** leaves `write.lock` behind. The next write on the same
-  machine (or container of the same kernel) takes it over at once. One on the other machine waits
-  until the lock is 30 seconds old, failing as busy until then, and then takes it over by itself
+  machine (or a container of the same kernel reaching the folder through the same mount, a
+  restarted one included) takes it over at once. One on the other machine waits until the lock is
+  30 seconds old, failing as busy until then, and then takes it over by itself
   (see [Troubleshooting](../reference/troubleshooting.md#a-write-fails-with-timed-out--waiting-for-the-vault-write-lock)).
 - **A writer paused while holding it** (a laptop asleep, a paused container) has it taken over once
   it is 30 seconds old; when it wakes, its write stops and undoes itself. One that stops in the very
@@ -137,10 +139,13 @@ the other, so neither replaces a note the other has just changed. What still mat
 Syncthing, Dropbox, iCloud Drive) is not two machines writing one folder: each machine writes its own
 copy, its own lock keeps its own writers apart, and the tool resolves conflicts between the copies.
 The lock file does nothing across copies; a copy of it that the tool carries over can only make the
-other machine wait (up to 30 seconds), never lose a line. So keep the folder out of the sync:
+other machine wait (up to 30 seconds), or have a write there refused (and retried, for the commands
+that add to a note) when the tool carries a break back onto a newer lock, never lose a line. So
+keep the folder out of the sync, and let the tool leave `.cuaderno/.lock` alone too (replacing it
+under a writer splits the lock):
 
-- git: a line `.cuaderno/locks/` in `.gitignore` (see [Initialise a vault](../getting-started/initialise-a-vault.md));
-  if it was ever committed, `git rm -r --cached .cuaderno/locks`.
+- git: nothing to do; the folder carries its own `.gitignore`. If a copy of it was ever committed,
+  `git rm -r --cached .cuaderno/locks`.
 - Syncthing: a line `.cuaderno/locks` in `.stignore`.
 - Dropbox: mark `.cuaderno/locks` as ignored.
 - A tool with no ignore rules (iCloud Drive): expect an occasional wait of up to 30 seconds on the

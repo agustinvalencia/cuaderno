@@ -246,6 +246,15 @@ impl VaultTransaction {
     /// fails its tests instead of being compared from the moment it
     /// staged. A release build keeps that staging-time comparison and logs
     /// a warning naming the path.
+    /// Refresh this transaction's vault write lock file if it is due (#1012),
+    /// for a long read phase before the commit (a rename's scan of the
+    /// vault), which stages no file op and so makes no ownership check of
+    /// its own. Cheap when not due: the lock's age is kept on the monotonic
+    /// clock. A lock found lost here is left for the commit to report.
+    pub fn keep_alive(&self) {
+        self.lock.keep_alive();
+    }
+
     /// Ignored over a store that records no reads.
     pub fn require_reads(mut self) -> Self {
         self.reads_required = true;
@@ -566,9 +575,8 @@ impl VaultTransaction {
             match applied_op {
                 Ok(undo) => applied.push(undo),
                 Err(source) => {
-                    // The store's late check reports a lost lock as a
-                    // changed file; ask the lock which it was.
-                    if self.lock.has_lock_file() && matches!(self.lock.still_held(), Ok(false)) {
+                    // The store's late check found the lock lost.
+                    if matches!(source, StoreError::LockLost { .. }) {
                         return Err(self.lock_lost(applied));
                     }
                     let rollback_failures = rollback(&*self.store, applied);

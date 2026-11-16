@@ -416,11 +416,18 @@ fn checkpoint_once(root: &Path, mode: &CheckpointMode, paused_op_warned: &Atomic
     // commit may be half-applied, which must not enter the history.
     let still_held = || match lock.still_held() {
         Ok(true) => Ok(()),
-        Ok(false) => Err(CheckpointError::GitExit(
-            "the vault write lock was broken by another writer while this sweep held it; \
+        Ok(false) => {
+            tracing::warn!(
+                lock = cdno_core::shared_lock::LOCK_PATH,
+                "git checkpoint: the vault write lock was broken by another writer while git ran \
+                 (a sweep longer than the lock's stale interval?); skipping this tick"
+            );
+            Err(CheckpointError::GitExit(
+                "the vault write lock was broken by another writer while this sweep held it; \
              skipping, the next tick commits"
-                .to_owned(),
-        )),
+                    .to_owned(),
+            ))
+        }
         Err(e) => Err(CheckpointError::GitExit(format!("vault write lock: {e}"))),
     };
 

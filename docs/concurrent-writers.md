@@ -286,10 +286,14 @@ it.
 
 **Layout.** Every file of the protocol lives in `.cuaderno/locks/`: the lock, the temp file a
 contender writes its record to (`<random>.new`), the age probe (`<token>.probe`) and the name a
-broken lock is moved to (`<token>.stale`). One rule (`/.cuaderno/locks/`) excludes them all in every
-tool. The path is a wire protocol between releases: two versions that disagree on it do not exclude
-each other, so it must not move without a period in which both are taken. The `flock` file stays at
-`.cuaderno/.lock`. (A layout decision by the lead, flagged for the owner before merge.)
+broken lock is moved to (`<token>.stale`). The folder also keeps a `.gitignore` holding `*`, written
+on the first acquisition if absent and never rewritten, so a vault kept in git ignores it with no
+rule of its own. One rule (`/.cuaderno/locks/`) excludes the folder in every other tool. The path is
+a wire protocol between releases: two versions that disagree on it do not exclude each other, so it
+must not move without a period in which both are taken. The leftover sweep removes only `*.new`,
+`*.probe` and `*.stale`, so that every release, old ones included, leaves anything else a later
+release puts there alone. The `flock` file stays at `.cuaderno/.lock`. (A layout decision by the
+lead, flagged for the owner before merge.)
 
 ### Who takes it
 
@@ -302,35 +306,40 @@ migration, the domain's creation and rename) and the HTTP server's git checkpoin
 only this machine's index take the `flock` alone, through `VaultStore::acquire_index_lock`:
 reconciliation's per-note transactions (`VaultTransaction::index_only`, on which staging a file op
 panics in every build, so a file can never be written without the lock file), link re-resolution,
-the snapshot backfill, an index rebuild's locked pass, the bootstrap's empty-in-place, the server's
-set-aside and reopen of index files and its snapshot carry, and `reindex`'s set-aside and rebind.
-The lock file guards notes across kernels; each kernel's index is its own (#998), and the `flock`
-orders one kernel's index writers. So a read command that reconciles a changed note never takes
-the lock file, never waits on another kernel, and never keeps it waiting. (The earlier version of
-this note said the lock kept a reconciliation pass from reading a note in the middle of another
-writer's commit. It did not: `reconcile_one` reads the note before it opens its transaction.)
+the snapshot backfill, an index rebuild's locked pass (whose store, `LockHeldStore`, refuses to open
+a note-writing transaction under it), the bootstrap's empty-in-place, the server's set-aside and
+reopen of index files and its snapshot carry, and `reindex`'s set-aside and rebind. The lock file
+guards notes across kernels; each kernel's index is its own (#998), and the `flock` orders one
+kernel's index writers. So a read command that reconciles a changed note never takes the lock file,
+never waits on another kernel, and never keeps it waiting. (The earlier version of this note said
+the lock kept a reconciliation pass from reading a note in the middle of another writer's commit.
+It did not: `reconcile_one` reads the note before it opens its transaction.)
 
 ### The protocol
 
-1. **Create.** The owner record (a random token, the program and its version, the process id, the
-   kernel's boot identifier where the platform gives one, the time by the writer's clock; no host
-   name) is written to a temp file in the locks folder, which is then hard-linked to `write.lock`.
-   `link` refuses an existing name, so exactly one contender's link succeeds, and the lock never
-   exists without its record. A lost reply to a link that was made (a network filesystem) shows as
-   a link count of 2 on the temp file, or as the contender's own token at the lock's name, read
-   through an `open`, which is fresher than the count's `stat`. A filesystem without hard links gets
-   the no-clobber rename the store already uses, and one without that either an exclusive create
-   and then the record (the design review found macOS exFAT and FAT refuse both `link` and the
-   exclusive rename with `ENOTSUP`, so they land on this third tier). On that
-   tier the lock is empty for a moment; a contender does not break a lock with an empty record
-   until it is twice the stale interval old (a creator that died before writing). `EPERM` from linking a file the process itself just created is read as "this
-   filesystem has no hard links"; from the rename it is reported. One debug line per process says
-   which tier was used. The lock file is not synced.
+1. **Create.** The owner record is written to a temp file in the locks folder, which is then
+   hard-linked to `write.lock`. It holds `protocol: 1`, a random token, the program and its
+   version, the process id (for the message only), a random value drawn once per process (its
+   instance), the kernel's boot identifier where the platform gives one, the device and inode of
+   the `flock` file as the holder's descriptor reports them, and the time by the writer's clock; no
+   host name. `link` refuses an existing name, so exactly one contender's link succeeds, and the
+   lock never exists without its record. A lost reply to a link that was made (a network
+   filesystem) shows as a link count of 2 on the temp file, or as the contender's own token at the
+   lock's name, read through an `open`, which is fresher than the count's `stat`. A filesystem
+   without hard links gets the no-clobber rename the store already uses, and one without that
+   either an exclusive create and then the record (the design review found macOS exFAT and FAT
+   refuse both `link` and the exclusive rename with `ENOTSUP`, so they land on this third tier). On
+   that tier the lock is empty for a moment; a contender does not break a lock with an empty record
+   until it is twice the stale interval old (a creator that died before writing). `EPERM` from
+   linking a file the process itself just created is read as "this filesystem has no hard links";
+   from the rename it is reported. One debug line per process says which tier was used. The lock
+   file is not synced.
 2. **Wait.** The contender keeps its one temp file for the whole wait and polls by trying the link
    again: one call that tests and takes. Pauses start at 1 ms, double to 10 ms, and are jittered
    down to half. It reads the lock (for its age and owner) at most every 100 ms; where the link
-   said "exists" and the read found nothing, it pauses 2 ms rather than spin. At the deadline it
-   fails with `StoreError::LockBusy`, naming the lock, its owner and its age.
+   said "exists" and the read found nothing, it pauses 2 ms rather than spin, and forgets the age
+   it had for the lock seen before. At the deadline it fails with `StoreError::LockBusy`, naming
+   the lock, its owner and its age.
 3. **Age.** The lock's mtime is compared with the mtime of a probe file created at that moment in
    the locks folder and removed at once. This is one clock **only if the filesystem, not the
    writing kernel, stamps both files**. A share whose client keeps mtimes for written files (a FUSE
@@ -341,36 +350,50 @@ writer's commit. It did not: `reconcile_one` reads the note before it opens its 
    ahead, a crash heals that much later. The probe is made only when the lock is found held, and
    once per lock seen.
 4. **Break.** A lock is broken when it is at least 30 s old (`STALE_AFTER`), or at once when its
-   record names this kernel's boot and another process: the contender holds this kernel's `flock`,
-   which a live holder on this kernel would still hold, so that holder is dead (Ctrl-C on a CLI, a
-   killed server, an out-of-memory kill). The boot identifier is Linux's `boot_id`, macOS's
-   `kern.bootsessionuuid`; it names nobody, and a container on a Linux host shares the host's, as it
-   shares its `flock`. Before breaking, the contender reads the lock once more and goes on only if
-   it is still the one judged. It then renames it to `<token>.stale`, a name of its own: of two
-   contenders, only one rename finds it. It opens what it moved and checks it is the lock it judged
-   (by token, the inode as a tie-break for an empty record). If so, it removes it, logs a warning
-   with the owner, the age and the reason, and (on a break by age) removes every other file in the
-   locks folder no newer than the broken lock, which only a crash leaves. If not (a younger lock
-   replaced the judged one between the second look and the rename), it puts the moved lock back
-   with a link, never over a lock that took the name meanwhile; where there are no hard links, with
-   a no-clobber rename, and where there is neither, it removes the moved lock, whose holder then
-   stops at its next check.
-5. **Ownership.** Before each file op of a commit, and again in the store after the op's temp file
-   is written and synced, right before the comparison and the rename, the holder checks that the
-   file at `write.lock` carries its token. It also counts its own descriptor's links: zero means the
-   lock has no name left. A name found missing is read once more after 50 ms, since a contender
-   that moved it aside by mistake is putting it back. If the lock is not its own, the commit stops,
-   rolls back what it applied (conditionally, as every rollback), and fails with
+   holder is provably dead: its record names this kernel's boot **and the very `flock` file the
+   contender holds** (the same device and inode), and either another process instance, or this
+   process for a lock it no longer holds (a release that failed). The contender holds that `flock`,
+   which a live holder would still hold, so the holder is dead: Ctrl-C on a CLI, a killed server, an
+   out-of-memory kill, a container restarted (a server in a container is often process 1 again, so
+   the process id cannot tell it from its predecessor; the instance can). A lock of this process
+   instance that this process still holds is never taken for dead, which matters where `flock` is
+   emulated per process (Linux NFS) and two threads hold it at once. A record of a later protocol is
+   broken by age only, and the busy message says so. The boot identifier is Linux's `boot_id`,
+   macOS's `kern.bootsessionuuid`; it names nobody, and a container on a Linux host shares the
+   host's, as it shares its `flock` when it reaches the folder through a bind mount of the same
+   path (the same device and inode). Before breaking, the contender reads the lock once more and
+   goes on only if it is still the one judged and still as old (a refresh since means a living
+   holder). It then renames it to `<token>.stale`, a name of its own: of two contenders, only one
+   rename finds it. It opens what it moved and checks it is the lock it judged (by token, the inode
+   as a tie-break for an empty record, and the mtime). If so, it removes it and logs a warning with
+   the owner, the age and the reason ("stale" or "its holder on this kernel is dead"); on a break by
+   age it also removes the `*.new`, `*.probe` and `*.stale` files no newer than the broken lock,
+   which only a crash leaves. If not (a younger lock replaced the judged one between the second look
+   and the rename), it puts the moved lock back with a link, never over a lock that took the name
+   meanwhile; where there are no hard links, with a no-clobber rename, and where there is neither,
+   it removes the moved lock, whose holder then stops at its next check.
+5. **Ownership.** Before each file op of a commit, and again in the store as late as each op
+   allows (after a write's or an import's temp file is written and synced, right before its
+   comparison and rename; right before a move's rename and a delete's unlink), the holder checks
+   that the file at `write.lock` carries its token. It also counts its own descriptor's links: zero
+   means the lock has no name left. A name found missing is read once more after 50 ms, since a
+   contender that moved it aside by mistake is putting it back. If the lock is not its own, the
+   commit stops, rolls back what it applied (conditionally, as every rollback), and fails with
    `TransactionError::LockLost`, whose message says either that nothing it wrote was kept or which
-   files could not be undone. A clean `LockLost` is a "try again" condition like a changed file: the
-   append-shaped verbs retry it, the CLI exits 75, MCP returns `concurrent_change` with
-   `lock_lost: true`. One whose undo failed is reported as the machine's failure. A lock lost after
-   the last file op landed skips the commit's index rows and reports `IndexStale`.
-6. **Refresh.** The same check refreshes the lock's mtime once it is 5 s old by the holder's
-   monotonic clock, with `futimens(UTIME_NOW)` through the holder's descriptor, which stamps the
-   filesystem's time (an NFS client sends it as "the server's time"). So a long commit (a rename or
-   a migration over thousands of notes) is never taken for a crashed one while it progresses. No
-   thread: a holder that stops also stops refreshing, and is broken as before.
+   files could not be undone. The store reports the late check's finding as its own error
+   (`StoreError::LockLost`, which the commit converts), never as a changed file. A clean
+   `LockLost` is a "try again" condition like a changed file: the append-shaped verbs retry it, the
+   CLI exits 75, MCP returns `concurrent_change` with `lock_lost: true`. One whose undo failed is
+   reported as the machine's failure. A lock lost after the last file op landed skips the commit's
+   index rows and reports `IndexStale`. A warning is logged whenever a holder finds its lock lost.
+6. **Refresh.** The same check refreshes the lock's times once it is 5 s old by the holder's
+   monotonic clock, with `futimens(UTIME_NOW, UTIME_NOW)` through the holder's descriptor, which
+   stamps the filesystem's time (an NFS client sends it as "the server's time"). Both times are set,
+   because setting both to now needs only write access, while any other combination needs
+   ownership, which a share may not present. So a long commit (a rename or a migration over
+   thousands of notes) is never taken for a crashed one while it progresses. The rename's scan of
+   the vault before its commit calls the refresh every 200 notes. No thread: a holder that stops
+   also stops refreshing, and is broken as before.
 7. **Release.** On drop (after a commit, a refused commit, or a transaction never committed) the
    guard checks the lock is still its own the same way, and only then removes it. A lock broken
    while held is left for its new holder, with a warning. A stale file handle (`ESTALE`) on any read
@@ -394,19 +417,70 @@ The other residues:
 - **Release's check-then-unlink** can remove a successor's lock if its own was broken in the
   microseconds between the two; that needs a holder that stopped refreshing for 30 s, and the
   successor then refuses at its next check.
-- **The same-kernel break trusts the `flock`.** On a filesystem where `flock` succeeds without
-  locking (some FUSE filesystems), two live writers on one kernel could each take the other's lock
-  for a dead one's; each then refuses at its next check, so writes fail rather than collide. Where
-  `flock` is emulated per process (Linux NFS), a record naming the contender's own process is never
-  taken for dead. Two clones of one suspended VM, resumed side by side, share a boot identifier
-  and would break each other's locks at once in the same way.
+- **The instant break trusts that one `flock` file is one `flock`.** It is taken only when the dead
+  holder's record names the very `flock` file the contender holds, so two mounts of one folder
+  whose locks do not meet (a FUSE or loopback mount beside its backing path) and a `.cuaderno/.lock`
+  replaced under a holder (by a sync tool, say) fall back to the age rule. On a filesystem whose
+  `flock` succeeds without locking, two live writers through the same file would each take the
+  other's lock for a dead one's at once, on every overlapping write; that turns the lock into the
+  window above, raced at the rate of overlapping writes, so such a filesystem must not hold a vault
+  written by two processes at once. Two clones of one suspended VM, resumed side by side, share a
+  boot identifier and a `flock` file's identity and would break each other's locks at once the
+  same way. No other false instant break is known.
 - **The guest's view of the name.** The ownership check opens the lock to get a fresh view. On a
   FUSE share (virtiofs) whether an open revalidates a cached name depends on the mount's entry and
   attribute timeouts; under `cache=always` a broken holder's check can keep finding its own
   unlinked file. The link count catches it when attributes are fresher than names. The two-kernel
   measurement must include a host breaking a guest holder, with the share's cache mode recorded.
+- **A stale read under the lock.** See the next section.
 - **An object store mounted as files** (where "exclusive" means exclusive within one mount) gives no
   exclusion at all; nothing can be done about that but to say so.
+
+### Stale reads through a share's name cache
+
+The acceptance runs on a VM share showed the guest, while holding the lock, three times in about
+1,600 appends failing to find the daily note it was about to append to (`not_found`, and the
+server's post-write read-back "could not be verified (file not found)"), and once refusing with
+`concurrent_change`. The reading: the guest's cached directory entry for the note lags the host's
+rename of a new version into place.
+
+**What reads what.** Every read of a note goes through its name: the operation's read
+(`read_file`, an `open` and `read`), the commit's comparison before any op (`observe`, the same),
+and the store's comparison right before the rename (a `stat` of the name for its identity, an
+`open` and `read` of the name, a `stat` again). The rename itself is executed by the file server on
+the directory as it is. So a stale entry is not caught by the comparison when every read through it
+is answered the same way:
+
+- If the share's server resolves a cached entry to the **old file itself** (a server that keeps a
+  handle to every inode a guest has looked up, as virtiofsd does), the guest reads the old content,
+  the comparison reads the same old content and the same identity, both pass, and the rename
+  replaces the host's newer note with one composed from the old: a **lost line the comparison
+  cannot see, even under the lock**. The lock orders the two writers; it does not make the
+  guest's view of the note fresh.
+- If the server has dropped the old file, or resolves entries by path, the stale entry surfaces as
+  "not found" (what was observed), or the read is fresh. If the entry is revalidated between the
+  operation's read and the comparison, the comparison refuses (the one `concurrent_change`).
+
+**What the store does about it now.** `FsVaultStore`'s reads (`read_file`, `read_bytes`, the
+comparison's reads and an append's read) go through `read_fresh`:
+
+- a "not found" for a name that the folder's listing has (the server's answer, which a cached
+  negative entry contradicts) is tried again, after 20, 50 and 100 ms, before it is reported; a note
+  that is really absent costs one listing of its folder and no pause, so the server's post-write
+  read-back, which goes through the same read, is covered too;
+- a file opened through its name that has no name left (a link count of 0 on the opened
+  descriptor, where this process has seen its link counts mean something) was replaced after the
+  entry was cached: it is read again the same way, and if the share keeps answering with it, the
+  read fails ("the vault folder's file share kept answering with a file that had been replaced")
+  rather than hand back content that is no longer the note.
+
+This closes the second case and the first one whenever the share's attributes for the opened file
+are fresher than its names. **It does not close the first case when attributes are cached as long
+as names** (the link count then reads 1 too): nothing a client can do through the name tells a
+stale view from a fresh one there, short of the share's own cache settings. Mount the share with
+short entry and attribute timeouts (virtiofs `cache=auto` or `none`, NFS `lookupcache=none` or
+`actimeo` low), or give each side its own copy of the vault. The two-kernel measurement records
+the cache mode for this reason.
 
 ### Mixed versions
 
@@ -415,6 +489,8 @@ still lost, silently, at the rate of the first row of the table above, for the l
 side writes: its comparison protects the old side's lines, and nothing protects its own from the old
 side. The lead measured one lost line with a lock-less server beside a locking CLI. **Upgrade every
 side together.** No minimum-version marker is written: nothing could make an old binary read it.
+Within this protocol, `protocol: 1` lets a later release recognise a peer that follows different
+rules; this one, meeting a higher number, breaks such a lock by age only.
 
 ### Synced folders
 
@@ -424,11 +500,13 @@ there each machine's `flock` does all the work. A lock that travels by sync excl
 each machine's link succeeds on its own disk; it can only cost: the other machine waits on it until
 the delete arrives or it is 30 s old (a copy keeps its mtime, so 30 s from the original write; a tool
 that stamps arrival time makes it 30 s from arrival), and a break there can sync back as a delete
-onto a newer live lock, whose holder then refuses its write. No sequence blocks for ever and none
-loses a line. So exclude the folder: `/.cuaderno/locks/` in `.gitignore`, `.cuaderno/locks` in
-Syncthing's `.stignore`, the ignore attribute for Dropbox. A tool with no ignore rules (iCloud Drive)
-costs occasional waits of up to 30 s on the other machine. Conflict copies a sync tool leaves in the
-folder are removed by the next break by age if they are older than the broken lock.
+onto a newer live lock, whose holder then refuses its write (and retries it, for the append-shaped
+verbs). No sequence blocks for ever and none loses a line. So exclude the folder: git needs nothing
+(the folder's own `.gitignore`), `.cuaderno/locks` in Syncthing's `.stignore`, the ignore attribute
+for Dropbox. A tool with no ignore rules (iCloud Drive) costs occasional waits of up to 30 s on the
+other machine. A sync tool must also leave `.cuaderno/.lock` alone: replacing it under a holder
+splits the `flock`. Conflict copies a sync tool leaves in the folder are not removed (the sweep
+touches only the protocol's own names); they are harmless.
 
 ### Settled points from the review of #1001
 
@@ -450,13 +528,14 @@ folder are removed by the next break by age if they are older than the broken lo
 | Holder | Lock | Holds across | Worst case, as far as known |
 |---|---|---|---|
 | Every domain verb (`VaultTransaction::new`) | both | its reads, its commit | milliseconds; about 10 ms per written file on a macOS disk, where each write is a full device flush |
-| `rename_note`, the method migration | both | the whole-vault scan, one commit rewriting every touched note | about 10 ms per rewritten note: seconds for hundreds, tens of seconds for thousands, refreshed at every file op |
-| The git checkpoint | both, only when `git status` (run first, unlocked) finds the tree dirty | `git add -A`, `git commit` | a second or two; it checks ownership before each step and skips the tick if the lock was lost |
+| `rename_note`, the method migration | both | the whole-vault scan, one commit rewriting every touched note | about 10 ms per rewritten note: seconds for hundreds, tens of seconds for thousands; refreshed at every file op, and the rename's scan every 200 notes |
+| The git checkpoint | both, only when `git status` (run first, unlocked) finds the tree dirty | `git add -A`, `git commit` | a second or two; it checks ownership (and so refreshes) before each step, and skips the tick with a warning of its own if the lock was lost |
 | Reconciliation, link re-resolution, snapshot backfill, rebuild's locked pass, set-asides, reopen, `reindex`'s set-aside and rebind | `flock` only | index work | not seen by another kernel |
 
-A long scan before a commit (a rename's read of the whole vault) is not refreshed, since no file op
-runs during it: keep scans short. The checkpoint's `git` calls are not refreshed either; its checks
-before staging and committing catch a lock lost meanwhile.
+What is not refreshed: the commit's comparison before its first op (one read per path, over
+thousands of paths for a large rename), the migration's reads before its commit, and a single `git`
+call. A first checkpoint of a large vault over a slow share is the case most likely to run past the
+interval; it costs a skipped tick, logged as such.
 
 ### What it costs
 
@@ -466,12 +545,14 @@ on and off (`without_shared_lock`), alternating:
 | | With | Without | Added |
 |---|---|---|---|
 | Lock and release alone, median of 300, three runs | 0.37 ms | 0.015 ms | 0.36 ms |
-| A transaction appending a line to a note, median of 300, three runs | 12.5 ms | 9.5 to 9.6 ms | 2.9 to 3.0 ms |
+| A transaction appending a line to a note, median of 300, three runs | 12.5 to 12.6 ms | 9.4 to 9.6 ms | 3.0 to 3.1 ms |
 | Opening a vault of 500 new notes into an empty index, median of 5 | 39.1 ms | 38.7 ms | none (reconciliation takes the `flock` alone) |
 
 A transaction pays the lock and release, and two ownership checks per file op (one open and read
 each). The larger part of the added time is the note's own full device flush, which now also
-flushes the lock's metadata. Over a share each step is a round trip. Run them with
+flushes the lock's metadata. Over a share each step is a round trip. The issue asked that one
+machine's commit latency not regress measurably; it does, by these figures, which is the price of
+the lock. Run them with
 `cargo test -p cdno-core --test unit -- --ignored measure_what_the_lock_file --nocapture` and
 `cargo test -p cdno-domain --test unit -- --ignored measure_what_the_lock_file --nocapture`.
 
@@ -495,65 +576,70 @@ earlier refusals are gone.
 ### Ignore rules
 
 Reconciliation (through `classify`) and `cdno watch` skip `.cuaderno/` entirely, and `cdno lint`
-reads the index and walks only `portfolios/`, so none of them sees the locks folder. The HTTP
-server's git checkpoint adds `/.cuaderno/locks/` to `.git/info/exclude`, since it commits while
-holding the lock. The repository's own `.gitignore` has the same rule, and the user guide's
-`.gitignore` lines for a vault in git include it. `cdno init` writes no `.gitignore`, so an existing
-vault in git needs the line added by hand (the changelog's upgrade step).
+reads the index and walks only `portfolios/`, so none of them sees the locks folder. The folder's
+own `.gitignore` keeps it out of git; the HTTP server's git checkpoint also adds `/.cuaderno/locks/`
+to `.git/info/exclude`, and the repository's own `.gitignore` has the same rule. A copy of the folder
+already committed to a vault's history stays tracked until removed (`git rm -r --cached
+.cuaderno/locks`; the changelog's upgrade note).
 
 ### Across two kernels
 
-The lead's first run: a server in a container and the CLI on the host, one vault over the VM share,
-400 appends a side paced by process start-up (about 25 writes a second a side): 0 acknowledged and
-missing in about 4,000; with the server's index private, 800 of 800 and no refusals; the server's
-write median 41 ms against 43 ms without the lock file; no lock files left.
+The lead's runs so far, a server in a container and the CLI on the host, one vault over the VM
+share: paced (about 25 writes a second a side) 0 lost of about 4,000 and of 799; unpaced (four
+writers a side, 800 appends in 11 s) 0 lost of 797 with 3 refused, median 70 ms a side; no lock
+files left; the server's write median 41 ms against 43 ms without the lock file; `kill -9` of a host
+writer holding the lock, the next host write in 0.04 s.
 
-To fill in before #1012 is closed (the rows the design review lists):
+To fill in before #1012 is closed, with the pass conditions the design review set (the first four
+block it):
 
-| Run | Lost / refused by kind, per side | Latency per write (median, p95, max), lock on / off | Notes |
-|---|---|---|---|
-| Paced appends (above) | 0 lost of ~4,000 | 41 ms / 43 ms (server median) | |
-| Unpaced appends, one side in a tight loop | | | |
-| Uncontended writes over the share | — | | |
-| Create tier used on each side (debug line) | — | — | |
-| Inode of the lock through the holder's descriptor and through the name, each side | — | — | |
-| Clock source: a lock's mtime and a probe's, read from each side, against each side's clock (and after the host slept) | — | — | |
-| `kill -9` of one side mid-commit, repeated: time to the other side's first write, failures and messages, breaks, leftovers | | | |
-| Same-kernel crash: `kill -9` a host CLI mid-commit, the next host write | | | |
-| Suspend the holder past 30 s mid-transaction while the other writes, then resume | | | |
-| A host breaking a guest holder (share cache mode recorded) | | | |
-| A long hold: a rename over enough notes to run for seconds, with the other side writing and the checkpoint ticking | | | |
-| Cold index on one side while the other writes | | | |
-| Leftovers after a clean stop and after each kill; nothing staged in git | | | |
-| Mixed versions: one side on 0.46.0 | 1 line lost (the lead's first measurement) | | |
+| Run | Passes when | Result |
+|---|---|---|
+| Suspend the guest holder past 30 s mid-commit while the host writes, then resume; twenty or more trials, the suspension at different points (with "a host breaking a guest holder") | the host breaks exactly once per trial; the resumed writer's **first** ownership check reports the loss; no acknowledged line missing; the successor's lock still there. Fails, and blocks, if a resumed guest's check ever passes after the break. Share cache mode recorded | |
+| Clock source: a lock's mtime and a probe's, read from each side against each side's clock, and again after the host slept | a fresh lock taken by either side reads under 5 s old from the other; otherwise the skew goes into this note | |
+| A long hold of **more than 30 s** (a guest rename over 5,000 linking notes), the other side writing and the checkpoint ticking | the other side is refused as busy for the whole hold and never breaks it; the lock's age read from the other side never exceeds about 10 s; no "could not refresh" warning | |
+| Paced and unpaced races, and the kills | no acknowledged line missing in any run; unpaced refusals `vault_busy` only, under 1 in 100; `kill -9` of a guest holder: the host writes again within the stale interval plus one wait, one break logged, every acknowledged line present, no note part-written; `kill -9` of a host CLI: the next host write at once, logged as a dead holder on this kernel | paced 0 of 799, unpaced 0 of 797 (3 refused, kind to record); host CLI kill: 0.04 s |
+| Kill the server and restart its container, then its own first write | the write goes through at once, logged as a dead holder on this kernel (its predecessor, often the same process id) | |
+| Leftovers | the folder holds only its `.gitignore` after every clean stop; after a kill, `write.lock` alone until the next break; nothing staged in git | no lock files left (so far) |
+| Create tier and uncontended latency over the share, lock on and off | recorded (any tier is acceptable) | |
+| Inode of the lock through the holder's descriptor and through the name, each side | recorded | |
+| Stale reads under the lock (`not_found`, `concurrent_change` while holding it) | recorded with the share's cache mode; with this build, transient "not found" no longer reaches the caller | 3 `not_found` and 1 `concurrent_change` in about 1,600 appends (before `read_fresh`) |
+| Cold index on one side while the other writes | recorded | |
+| Mixed versions: one side on 0.46.0 | recorded | 1 line lost (the lead's first measurement) |
 
 ### Tests
 
 - `cdno-core/tests/unit/shared_lock_tests.rs`, over two stores with independent `flock`s and boot
   identifiers:
-  - two writers exclude each other; the lock holds its record from the moment it exists; a store
-    built `without_shared_lock` takes only the `flock`; an index lock takes only the `flock`; an
-    index-only transaction refuses a file op;
+  - two writers exclude each other; the lock holds its record from the moment it exists, with its
+    protocol, instance and `flock` identity; a store built `without_shared_lock` takes only the
+    `flock`; an index lock takes only the `flock`; an index-only transaction refuses a file op;
   - a stale lock is broken by exactly one of two contenders (both judge it stale and look again
     before either renames it; the rendezvous times out instead of hanging);
   - a young lock is never broken (fresh, and five seconds short of stale), and the busy error names
     the lock, its age and its owner;
-  - a crashed holder's old leftovers go with its lock, and a live contender's fresh temp and probe
-    files stay;
-  - a dead holder on this kernel is broken at once; a young lock from another boot waits for its
-    age; a lock naming this very process is never taken for a dead one;
-  - the break race: a live lock moved aside by mistake is put back and its holder, checking in the
-    gap, commits; a put-back never replaces a third writer's lock, and the moved lock's holder
-    refuses;
+  - a crashed holder's old leftovers go with its lock, while a live contender's fresh temp and probe
+    files and a file that is not the protocol's stay; the folder keeps a `.gitignore` it never
+    rewrites;
+  - a dead holder through the same `flock` is broken at once; so is a restarted server's
+    predecessor with the same process id, and a lock this process left behind; a lock this process
+    still holds is not; a live holder through another `flock` file, a young lock from another boot
+    and a lock of a newer protocol wait for their age;
+  - the break race: a live lock moved aside by mistake is put back only after its holder's check
+    has found the name missing, and the holder, looking again, commits; a put-back never replaces a
+    third writer's lock, and the moved lock's holder refuses;
   - a broken holder refuses to commit and leaves the successor's lock; a lock broken after the temp
     file is synced stops the rename; one broken between two file ops rolls the first back;
   - the ownership check refreshes a long-held lock, so another kernel finds it young;
+  - a note that is really absent is reported at once, with no retry pause;
   - release happens on commit, on a refused commit and on drop.
 - `cdno-domain/tests/unit/unshared_lock_tests.rs`: two stores with independent `flock`s logging to
   one daily note through `log_to_daily_note`, interleaving, lose no line.
 - `cdno-mcp`: the lock folder is never staged by the checkpoint; `vault_busy` and a clean
-  `LockLost` are rejections, a part-written `LockLost` is not. `cdno-cli/tests/exit.rs`: both exit
-  75, with their `--json` objects. `cdno-cli/tests/lint.rs`: lint does not report the lock files.
-  `now.rs` and `completions.rs`: `cdno now --line` and completion leave `.cuaderno/` untouched.
+  `LockLost` are rejections, a part-written `LockLost` is not; the server instructions name
+  `vault_busy`. `cdno-cli/tests/exit.rs`: both exit 75, with their `--json` objects, and so does a
+  busy lock inside an index error (`reindex`, an opening reconciliation). `cdno-cli/tests/lint.rs`:
+  lint does not report the lock files. `now.rs` and `completions.rs`: `cdno now --line` and
+  completion leave `.cuaderno/` untouched.
 - The `#1001` tests in `cdno-core/tests/unit/unshared_lock_tests.rs` build their writers
   `without_shared_lock`, as an older cdno writes, since the comparison is what they test.

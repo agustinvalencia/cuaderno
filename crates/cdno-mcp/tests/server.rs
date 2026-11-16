@@ -68,6 +68,7 @@ fn instructions_say_a_concurrent_change_can_be_repeated() {
         "nothing was written",
         "make the same call again",
         "re-reading the note first",
+        "`vault_busy`",
     ] {
         assert!(instructions.contains(phrase), "missing {phrase:?}");
     }

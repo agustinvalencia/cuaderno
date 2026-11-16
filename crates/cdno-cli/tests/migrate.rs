@@ -47,15 +47,19 @@ fn method_lines(dir: &Path) -> Vec<String> {
 }
 
 /// Every file under `root` with its bytes, leaving out the index cache and
-/// the lock file, which opening a vault may touch and which hold nothing
-/// the markdown does not.
+/// the lock files (`.cuaderno/.lock` and the folder of the lock file every
+/// kernel sees, #1012), which opening a vault may touch and which hold
+/// nothing the markdown does not.
 fn tree(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     fn walk(root: &Path, dir: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
         for entry in fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
             let relative = path.strip_prefix(root).unwrap().to_path_buf();
             let name = relative.to_string_lossy();
-            if name.starts_with(".cuaderno/index.db") || name == ".cuaderno/.lock" {
+            if name.starts_with(".cuaderno/index.db")
+                || name == ".cuaderno/.lock"
+                || name.starts_with(cdno_core::shared_lock::LOCKS_DIR)
+            {
                 continue;
             }
             if path.is_dir() {

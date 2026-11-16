@@ -378,7 +378,10 @@ pub fn reconcile(
             // The next reconciliation pass will retry.
             let mut tx =
                 VaultTransaction::index_only(store.clone(), index.clone()).map_err(|e| {
-                    IndexError::Update(format!("acquiring write lock during reconcile: {e}"))
+                    IndexError::Lock {
+                        what: "acquiring the vault write lock during reconcile".to_owned(),
+                        source: e,
+                    }
                 })?;
             tx.remove_note(path.clone());
             match tx.commit() {
@@ -431,7 +434,10 @@ pub fn reconcile(
     if report.added > 0 || report.removed > 0 || aliases_after != aliases_before {
         let healed = store
             .acquire_index_lock()
-            .map_err(|e| IndexError::Update(format!("acquiring write lock: {e}")))
+            .map_err(|source| IndexError::Lock {
+                what: "acquiring the vault write lock".to_owned(),
+                source,
+            })
             .and_then(|_lock| {
                 // Index-only writes with no transaction to carry them, so
                 // the vault write lock is held explicitly, as every other
@@ -492,7 +498,10 @@ pub fn reconcile(
         // (already-absent) notes row and the FTS row, so it's the right
         // primitive even though only the FTS side has anything to drop.
         let mut tx = VaultTransaction::index_only(store.clone(), index.clone()).map_err(|e| {
-            IndexError::Update(format!("acquiring write lock during reconcile: {e}"))
+            IndexError::Lock {
+                what: "acquiring the vault write lock during reconcile".to_owned(),
+                source: e,
+            }
         })?;
         tx.remove_note(path.clone());
         match tx.commit() {

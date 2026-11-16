@@ -147,8 +147,11 @@ third lookup.
   lives in `.cuaderno/locks/`, a path that is a wire protocol between releases). It is created
   exclusively with its owner record inside (temp file, then `link`), identified by the record's
   token (never the inode alone), broken by rename-aside once 30s old by the folder's clock, or at
-  once when its record names this kernel's boot and another process (the contender holds this
-  kernel's `flock`, so that holder is dead). Holders that write notes take both
+  once when its record names this kernel's boot, the same `dev:ino` of the `flock` file the
+  contender holds, and another process instance (a random value per process, never the pid), or
+  this one for a token it no longer holds: that holder is dead. The record carries `protocol: 1`;
+  a later protocol is broken by age only. The leftover sweep removes only `*.new`, `*.probe` and
+  `*.stale`, and the folder keeps its own `.gitignore`. Holders that write notes take both
   (`VaultStore::acquire_write_lock`: `VaultTransaction::new`, the git checkpoint); holders that
   write only this machine's index take the `flock` alone (`VaultStore::acquire_index_lock`:
   `VaultTransaction::index_only`, on which staging a file op panics; reconciliation, link

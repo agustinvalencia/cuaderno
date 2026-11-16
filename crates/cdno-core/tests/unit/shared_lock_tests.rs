@@ -68,11 +68,13 @@ impl Folder {
         std::fs::read_to_string(self.lock()).ok()
     }
 
-    /// Every file in the locks folder, the lock included.
+    /// Every file in the locks folder, the lock included, but not the
+    /// `.gitignore` the folder keeps for itself.
     fn lock_files(&self) -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(self.locks())
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n != ".gitignore")
             .collect();
         names.sort();
         names
@@ -98,24 +100,75 @@ impl Folder {
         std::fs::read_to_string(self.root().join(path)).unwrap()
     }
 
-    /// A lock file left by a writer that died `age` ago: process 1 on the
-    /// kernel booted as `boot`.
-    fn dead_lock(&self, boot: &str, age: Duration) {
+    /// `dev:ino` of the private `flock` file `name`, created if absent, as
+    /// a store over it writes it into its record.
+    fn flock_id(&self, name: &str) -> String {
+        use std::os::unix::fs::MetadataExt;
+        let path = self.flocks.path().join(name);
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .unwrap();
+        let meta = std::fs::metadata(&path).unwrap();
+        format!("{}:{}", meta.dev(), meta.ino())
+    }
+
+    /// A lock file left by a writer that died.
+    fn dead_lock(&self, lock: &DeadLock<'_>) {
         std::fs::write(
             self.lock(),
             format!(
-                "cuaderno vault write lock\ntoken: 00ff\nprogram: cdno 0.0.0\nprocess: 1\n\
-                 boot: {boot}\ntaken: 2026-06-13T09:00:00+00:00\n"
+                "cuaderno vault write lock\nprotocol: {}\ntoken: 00ff\nprogram: cdno 0.0.0\n\
+                 process: {}\ninstance: {}\nboot: {}\nflock: {}\n\
+                 taken: 2026-06-13T09:00:00+00:00\n",
+                lock.protocol, lock.process, lock.instance, lock.boot, lock.flock
             ),
         )
         .unwrap();
-        self.age(&self.lock(), age);
+        self.age(&self.lock(), lock.age);
     }
 
-    /// A lock file left by a writer on a kernel no test store runs on.
+    /// A lock file left `age` ago by a writer on a kernel no test store
+    /// runs on.
     fn crashed_lock(&self, age: Duration) {
-        self.dead_lock("some-other-kernel", age);
+        self.dead_lock(&DeadLock {
+            age,
+            ..DeadLock::default()
+        });
     }
+}
+
+/// The record of a dead writer's lock, for [`Folder::dead_lock`].
+struct DeadLock<'a> {
+    protocol: u32,
+    boot: &'a str,
+    flock: &'a str,
+    instance: &'a str,
+    process: &'a str,
+    age: Duration,
+}
+
+impl Default for DeadLock<'_> {
+    fn default() -> Self {
+        Self {
+            protocol: 1,
+            boot: "some-other-kernel",
+            flock: "0:0",
+            instance: "another-process",
+            process: "1",
+            age: Duration::ZERO,
+        }
+    }
+}
+
+/// The value of `key` in a lock's record.
+fn record_value(record: &str, key: &str) -> String {
+    record
+        .lines()
+        .find_map(|l| l.strip_prefix(&format!("{key}: ")))
+        .unwrap_or_default()
+        .to_owned()
 }
 
 fn tx(store: &Arc<FsVaultStore>) -> Result<VaultTransaction, StoreError> {
@@ -188,10 +241,13 @@ fn the_lock_holds_its_owner_record_from_the_moment_it_exists() {
         "{record}"
     );
     for key in [
+        "protocol: 1\n",
         "token: ",
         "program: ",
         "process: ",
+        "instance: ",
         "boot: kernel-a\n",
+        &format!("flock: {}\n", folder.flock_id("a.lock")),
         "taken: ",
     ] {
         assert!(record.contains(key), "{key:?} missing from {record}");
@@ -357,29 +413,59 @@ fn a_crashed_holders_old_leftovers_go_with_its_lock_and_fresh_ones_stay() {
         std::fs::write(&path, "").unwrap();
         folder.age(&path, OLD + Duration::from_secs(1));
     }
-    // A live contender's temp and probe files are seconds old at most.
+    // A live contender's temp and probe files are seconds old at most, and
+    // a file that is not one of the protocol's is never touched, however
+    // old: the folder's contract with later releases.
     let fresh = ["live.new", "live.probe"];
     for name in fresh {
         std::fs::write(folder.locks().join(name), "").unwrap();
     }
+    let foreign = folder.locks().join("write.lock.sync-conflict");
+    std::fs::write(&foreign, "").unwrap();
+    folder.age(&foreign, OLD + Duration::from_secs(1));
     let lock = folder
         .kernel("a.lock")
         .acquire_write_lock()
         .expect("a stale lock does not hold a writer up");
     assert_eq!(lock.broke_lock(), Some(BreakReason::Age));
-    let mut expected = vec![LOCK_NAME.to_owned()];
+    let mut expected = vec![LOCK_NAME.to_owned(), "write.lock.sync-conflict".to_owned()];
     expected.extend(fresh.iter().map(|s| (*s).to_owned()));
     expected.sort();
     assert_eq!(folder.lock_files(), expected);
+    assert!(
+        folder.locks().join(".gitignore").exists(),
+        "the folder ignores itself in git"
+    );
 }
 
 #[test]
-fn a_dead_holder_on_this_kernel_is_broken_at_once() {
-    // This kernel's `flock` is held by the contender, so a holder on this
-    // kernel would hold it too: one that does not is dead, however young
-    // its lock.
+fn the_locks_folder_ignores_itself_in_git_and_its_gitignore_is_never_rewritten() {
     let folder = Folder::new();
-    folder.dead_lock("kernel-a", Duration::ZERO);
+    let ignore = folder.locks().join(".gitignore");
+    drop(folder.kernel("a.lock").acquire_write_lock().unwrap());
+    let written = std::fs::read_to_string(&ignore).unwrap();
+    assert!(written.lines().any(|l| l == "*"), "{written}");
+    std::fs::write(&ignore, "# kept by hand\n*\n").unwrap();
+    drop(folder.kernel("a.lock").acquire_write_lock().unwrap());
+    assert_eq!(
+        std::fs::read_to_string(&ignore).unwrap(),
+        "# kept by hand\n*\n"
+    );
+}
+
+#[test]
+fn a_dead_holder_through_the_same_flock_is_broken_at_once() {
+    // The contender holds the very `flock` file the dead holder locked,
+    // which a live holder would still hold: its lock is broken however
+    // young.
+    let folder = Folder::new();
+    let flock = folder.flock_id("a.lock");
+    folder.dead_lock(&DeadLock {
+        boot: "kernel-a",
+        flock: &flock,
+        instance: "another-process",
+        ..DeadLock::default()
+    });
     let started = Instant::now();
     let lock = folder
         .kernel("a.lock")
@@ -395,9 +481,117 @@ fn a_dead_holder_on_this_kernel_is_broken_at_once() {
 }
 
 #[test]
+fn a_restarted_server_with_the_same_pid_breaks_its_predecessors_lock_at_once() {
+    // A server in a container is often process 1 again after a restart:
+    // the instance value, not the pid, says it is another process.
+    let folder = Folder::new();
+    let flock = folder.flock_id("a.lock");
+    let pid = std::process::id().to_string();
+    folder.dead_lock(&DeadLock {
+        boot: "kernel-a",
+        flock: &flock,
+        instance: "the-previous-run",
+        process: &pid,
+        ..DeadLock::default()
+    });
+    let lock = folder
+        .kernel("a.lock")
+        .with_boot_id(Some("kernel-a"))
+        .with_lock_timeout(Duration::from_millis(500))
+        .acquire_write_lock()
+        .expect("broken at once");
+    assert_eq!(lock.broke_lock(), Some(BreakReason::DeadOnThisKernel));
+}
+
+#[test]
+fn a_lock_this_process_left_behind_is_broken_at_once() {
+    // A release that failed leaves this process's own lock: its token is
+    // not among the locks it holds, so it is dead.
+    let folder = Folder::new();
+    let store = folder.kernel("a.lock").with_boot_id(Some("kernel-a"));
+    let instance = {
+        let lock = store.acquire_write_lock().unwrap();
+        let record = folder.lock_record().unwrap();
+        drop(lock);
+        record_value(&record, "instance")
+    };
+    let flock = folder.flock_id("a.lock");
+    folder.dead_lock(&DeadLock {
+        boot: "kernel-a",
+        flock: &flock,
+        instance: &instance,
+        ..DeadLock::default()
+    });
+    let lock = store
+        .with_lock_timeout(Duration::from_millis(500))
+        .acquire_write_lock()
+        .expect("broken at once");
+    assert_eq!(lock.broke_lock(), Some(BreakReason::DeadOnThisKernel));
+}
+
+#[test]
+fn a_lock_this_process_still_holds_is_not_taken_for_a_dead_one() {
+    // Where `flock` is emulated per process (Linux NFS), two threads of one
+    // process can both hold it: a record of this process instance whose
+    // lock this process still holds is live. Here the record is made to
+    // name the contender's `flock` file, as it would on such a filesystem.
+    let folder = Folder::new();
+    let holder = folder.kernel("a.lock").with_boot_id(Some("kernel-a"));
+    let held = holder.acquire_write_lock().unwrap();
+    let record = folder.lock_record().unwrap();
+    let b_flock = folder.flock_id("b.lock");
+    let rewritten: String = record
+        .lines()
+        .map(|l| {
+            if l.starts_with("flock: ") {
+                format!("flock: {b_flock}\n")
+            } else {
+                format!("{l}\n")
+            }
+        })
+        .collect();
+    std::fs::write(folder.lock(), rewritten).unwrap();
+    let err = folder
+        .kernel("b.lock")
+        .with_boot_id(Some("kernel-a"))
+        .with_lock_timeout(Duration::from_millis(300))
+        .acquire_write_lock()
+        .unwrap_err();
+    assert!(matches!(err, StoreError::LockBusy { .. }), "{err:?}");
+    assert!(held.still_held().unwrap());
+}
+
+#[test]
+fn a_live_holder_through_another_flock_file_is_not_broken_at_once() {
+    // One kernel, two `flock`s on "the" file: two mounts whose locks do not
+    // meet, or a `.lock` replaced under a holder. The same boot is not the
+    // same `flock`, so the lock waits for its age.
+    let folder = Folder::new();
+    let held = folder
+        .kernel("a.lock")
+        .with_boot_id(Some("kernel-a"))
+        .acquire_write_lock()
+        .unwrap();
+    let err = folder
+        .kernel("b.lock")
+        .with_boot_id(Some("kernel-a"))
+        .with_lock_timeout(Duration::from_millis(300))
+        .acquire_write_lock()
+        .unwrap_err();
+    assert!(matches!(err, StoreError::LockBusy { .. }), "{err:?}");
+    assert!(held.still_held().unwrap(), "the live holder keeps its lock");
+}
+
+#[test]
 fn a_young_lock_from_another_boot_waits_for_its_age() {
     let folder = Folder::new();
-    folder.dead_lock("kernel-b", Duration::ZERO);
+    let flock = folder.flock_id("a.lock");
+    folder.dead_lock(&DeadLock {
+        boot: "kernel-b",
+        flock: &flock,
+        instance: "another-process",
+        ..DeadLock::default()
+    });
     let err = folder
         .kernel("a.lock")
         .with_boot_id(Some("kernel-a"))
@@ -409,27 +603,28 @@ fn a_young_lock_from_another_boot_waits_for_its_age() {
 }
 
 #[test]
-fn a_lock_of_this_very_process_is_not_taken_for_a_dead_one() {
-    // Where `flock` is emulated per process (Linux NFS), two threads of one
-    // process can both hold it: a lock naming this process is not proof of
-    // a dead holder.
+fn a_lock_of_a_newer_protocol_is_never_taken_by_the_fast_path() {
     let folder = Folder::new();
-    std::fs::write(
-        folder.lock(),
-        format!(
-            "cuaderno vault write lock\ntoken: 00aa\nprogram: cdno 0.0.0\nprocess: {}\n\
-             boot: kernel-a\ntaken: 2026-06-13T09:00:00+00:00\n",
-            std::process::id()
-        ),
-    )
-    .unwrap();
+    let flock = folder.flock_id("a.lock");
+    folder.dead_lock(&DeadLock {
+        protocol: 2,
+        boot: "kernel-a",
+        flock: &flock,
+        instance: "another-process",
+        ..DeadLock::default()
+    });
     let err = folder
         .kernel("a.lock")
         .with_boot_id(Some("kernel-a"))
         .with_lock_timeout(Duration::from_millis(300))
         .acquire_write_lock()
         .unwrap_err();
+    let message = err.to_string();
     assert!(matches!(err, StoreError::LockBusy { .. }), "{err:?}");
+    assert!(
+        message.contains("version 2 of the lock's rules"),
+        "{message}"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -438,8 +633,8 @@ fn a_lock_of_this_very_process_is_not_taken_for_a_dead_one() {
 
 /// Contender C judges a crashed lock stale; before C's rename, D breaks it
 /// and takes a lock of its own. C's rename then moves D's live lock aside,
-/// and D commits in the gap before C puts it back. D's ownership check
-/// looks once more, finds its lock back, and commits.
+/// and D checks its lock in the gap. The put-back is held until D's check
+/// has seen the name missing, so D's second look is what lets it commit.
 #[test]
 fn a_live_lock_moved_aside_by_mistake_is_put_back_and_its_holder_commits() {
     let folder = Folder::new();
@@ -448,12 +643,16 @@ fn a_live_lock_moved_aside_by_mistake_is_put_back_and_its_holder_commits() {
 
     let (to_d, d_rx) = mpsc::channel::<&'static str>();
     let (to_c, c_rx) = mpsc::channel::<&'static str>();
+    let (missing_tx, missing_rx) = mpsc::channel::<()>();
     let moved_wrong = Arc::new(AtomicBool::new(false));
+    let saw_missing = Arc::new(AtomicBool::new(false));
     let c_rx = Arc::new(Mutex::new(c_rx));
+    let missing_rx = Arc::new(Mutex::new(missing_rx));
     let c = {
         let to_d_before = to_d.clone();
         let to_d_after = to_d.clone();
         let c_rx = Arc::clone(&c_rx);
+        let missing_rx = Arc::clone(&missing_rx);
         let moved_wrong = Arc::clone(&moved_wrong);
         let first = AtomicBool::new(true);
         Arc::new(
@@ -473,13 +672,27 @@ fn a_live_lock_moved_aside_by_mistake_is_put_back_and_its_holder_commits() {
                 })
                 .with_after_wrong_move_hook(move || {
                     moved_wrong.store(true, Ordering::SeqCst);
-                    // D commits now, while its lock is aside.
+                    // D commits now, while its lock is aside; it is put back
+                    // only once D has found the name missing.
                     to_d_after.send("commit").unwrap();
-                    std::thread::sleep(Duration::from_millis(20));
+                    missing_rx
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(10))
+                        .expect("D's check found its lock's name missing");
                 }),
         )
     };
-    let d = Arc::new(folder.kernel("d.lock"));
+    let d = {
+        let saw_missing = Arc::clone(&saw_missing);
+        let first = AtomicBool::new(true);
+        Arc::new(folder.kernel("d.lock").with_on_name_missing_hook(move || {
+            saw_missing.store(true, Ordering::SeqCst);
+            if first.swap(false, Ordering::SeqCst) {
+                missing_tx.send(()).unwrap();
+            }
+        }))
+    };
 
     let d_thread = {
         let d = Arc::clone(&d);
@@ -506,6 +719,10 @@ fn a_live_lock_moved_aside_by_mistake_is_put_back_and_its_holder_commits() {
     assert!(
         moved_wrong.load(Ordering::SeqCst),
         "C moved D's live lock aside"
+    );
+    assert!(
+        saw_missing.load(Ordering::SeqCst),
+        "D's check found the name missing and looked again"
     );
     committed.expect("D's commit goes through: its lock was put back");
     assert_eq!(folder.get(NOTE), "base\nline from d\n");
@@ -729,6 +946,30 @@ fn the_ownership_check_refreshes_a_long_held_lock() {
         StoreError::LockBusy { age_secs, .. } => assert!(age_secs < 3, "{age_secs}"),
         other => panic!("expected busy, got {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------
+// Reads that guard against a share's stale name cache
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_note_that_is_really_absent_is_reported_at_once() {
+    // A "not found" is tried again only when the note's folder lists the
+    // name, which a local folder never contradicts: a missing note costs
+    // one listing and no pause.
+    let folder = Folder::new();
+    folder.put("inbox/other.md", "x\n");
+    let store = folder.kernel("a.lock");
+    let started = Instant::now();
+    assert!(matches!(
+        store.read_file(&vp("inbox/absent.md")),
+        Err(StoreError::NotFound(_))
+    ));
+    assert!(
+        started.elapsed() < Duration::from_millis(15),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 // ---------------------------------------------------------------------

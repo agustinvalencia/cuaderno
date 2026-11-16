@@ -681,7 +681,11 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             StoreError::PermissionDenied(_)
             | StoreError::Io { .. }
             | StoreError::OutsideVault(_)
-            | StoreError::Changed(_),
+            | StoreError::Changed(_)
+            // The store's signal inside a commit, which the commit turns
+            // into `TransactionError::LockLost` before any caller sees it;
+            // listed here only because the match is exhaustive.
+            | StoreError::LockLost { .. },
         )
         | DomainError::Index(_)
         | DomainError::Parse(_)

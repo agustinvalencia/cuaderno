@@ -149,6 +149,14 @@ pub enum StoreError {
         waited: std::time::Duration,
     },
 
+    /// The store's own check inside a commit, right before a rename, an
+    /// unlink or a copy into place (#1012), found the commit's vault write
+    /// lock file no longer its own, and did nothing. Only a commit with a
+    /// lock file can meet it, and the commit turns it into
+    /// [`TransactionError::LockLost`]: it never reaches a caller as is.
+    #[error("the vault write lock {lock} is no longer this write's; nothing was done")]
+    LockLost { lock: String },
+
     /// The path escapes the vault root once symlinks are resolved —
     /// or its confinement could not be verified (fail closed).
     /// `VaultPath` already rejects `..`/absolute lexically; this
