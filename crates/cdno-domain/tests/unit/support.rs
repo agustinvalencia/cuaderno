@@ -209,7 +209,8 @@ impl VaultStore for CaseInsensitiveStore {
         content: &str,
         expected: cdno_core::read_journal::Observed,
     ) -> Result<(), StoreError> {
-        self.inner.write_file_expecting(&self.stored(path), content, expected)
+        self.inner
+            .write_file_expecting(&self.stored(path), content, expected)
     }
     fn append_to_file_expecting(
         &self,
@@ -217,7 +218,8 @@ impl VaultStore for CaseInsensitiveStore {
         content: &str,
         expected: cdno_core::read_journal::Observed,
     ) -> Result<(), StoreError> {
-        self.inner.append_to_file_expecting(&self.stored(path), content, expected)
+        self.inner
+            .append_to_file_expecting(&self.stored(path), content, expected)
     }
 }
 

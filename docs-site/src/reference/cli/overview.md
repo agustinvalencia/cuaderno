@@ -77,6 +77,18 @@ and `--json` all behave exactly as they did before. See
 The CLI's JSON shapes match the [MCP server](../mcp/overview.md) DTOs. See
 [JSON output](../json-output.md) for every shape.
 
+## Exit statuses
+
+| Status | Meaning |
+|---|---|
+| `0` | Success. |
+| `1` | Any failure not listed below, refusals included (with `--json`, a refusal prints its `{code, message, details}` object on stdout first). |
+| `2` | A usage error: an unknown flag or subcommand, or a malformed value. clap reports it before any vault is opened. |
+| `75` | A write was refused because a file it would replace changed on disk while it was being prepared, most likely because another program or another machine wrote it (`EX_TEMPFAIL`). **Nothing was written**, and running the same command again is safe. With `--json` it prints the `concurrent_change` object. The commands that add to a note retry a few times before returning it, so a script that retries on `75` should stop after a few attempts. See [troubleshooting](../troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared). |
+
+[`cdno open`](open.md) is the exception: once it has started the editor, it exits with the editor's
+status.
+
 ## Naming a note: `--slug`
 
 Every verb that creates a note derives its filename, the slug, from the title. For a long title the

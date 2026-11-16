@@ -143,6 +143,19 @@ denied, a contended write lock, an index that would not answer, a transaction th
 Nothing the caller passed can fix those, so there is nothing to branch on. Malformed calls — an
 unknown tool, unparseable arguments — are protocol errors too (`-32602`), per the spec.
 
+**One rolled-back write is a rejection on purpose: `concurrent_change`.** A file the write would
+replace changed on disk while it was being prepared, most likely because another program or another
+machine wrote it, and nothing was written. It fails the test above deliberately: the same argument
+succeeds on the next call, because what was wrong was the moment, not the call.
+
+| Code | `details` | When |
+|---|---|---|
+| `concurrent_change` | `paths` | The files that changed underneath the write. Nothing was written. Make the same call again, reading the file first if what you are writing was composed from an earlier read of it. If it is refused again, tell the person another program is writing that file. The tools that add to a note (`append_to_log`, `note_to_daily`, `capture`, the action, milestone, waiting-on and tracking tools, a section append) have already tried a few times before you see it. |
+
+`concurrent_change` is not a stale-read check: it compares what the server read during this call,
+not what you read in an earlier one. See
+[troubleshooting](../troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared).
+
 The practical upshot for a client: **read `isError` on the result, not just the presence of `error`**.
 A rejection is a normal, expected answer to a call that was itself well-formed.
 

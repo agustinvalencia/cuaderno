@@ -358,7 +358,9 @@ impl Vault {
         next: Option<&str>,
         reason: Option<&str>,
     ) -> Result<SwitchOutcome, DomainError> {
-        self.retry_on_conflict(|| self.switch_unplanned_action_once(at, slug, title, energy, next, reason))
+        self.retry_on_conflict(|| {
+            self.switch_unplanned_action_once(at, slug, title, energy, next, reason)
+        })
     }
 
     /// One attempt of [`switch_unplanned_action`](Self::switch_unplanned_action).

@@ -136,6 +136,24 @@ prints the usual `{code, message, details}` object and exits `1`, writing nothin
 | `behind_upstream` | `behind`, `remedy` | The vault is `behind` commits behind its upstream (after a fetch; for a dry run, as last fetched). `remedy` says what to do: sync first, or pass `--skip-sync-check`. |
 | `git_operation_in_progress` | `reason` | A git operation is paused mid-way (`reason` names it, e.g. `.git/MERGE_HEAD present`). Not overridable: finish or abort it first. |
 
+## A write refused because its note changed → `concurrent_change`, exit `75`
+
+Any write verb can be refused because a file it would replace changed on disk while it was being
+prepared (another program or another machine wrote it). Nothing was written. Under `--json` it
+prints the object the MCP server returns, on stdout, and exits `75` rather than `1` (see
+[exit statuses](cli/overview.md#exit-statuses)):
+
+```json
+{
+  "code": "concurrent_change",
+  "message": "journal/2026/daily/2026-06-13.md changed on disk while this write was being prepared, most likely by another writer; nothing was written, run the operation again",
+  "details": { "paths": ["journal/2026/daily/2026-06-13.md"] }
+}
+```
+
+Running the same command again is safe. The commands that add to a note have already retried a few
+times; see [troubleshooting](troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared).
+
 ## `search --json` → an array of hits
 
 Ranked best-first; each hit:

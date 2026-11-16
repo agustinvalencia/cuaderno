@@ -378,7 +378,10 @@ fn a_capture_never_replaces_one_made_at_the_same_path_meanwhile() {
 
     // The commit refused the taken path; the retried capture chose the
     // next free name.
-    assert_eq!(path, VaultPath::new("inbox/2026-06-13-buy-milk-2.md").unwrap());
+    assert_eq!(
+        path,
+        VaultPath::new("inbox/2026-06-13-buy-milk-2.md").unwrap()
+    );
     assert_eq!(
         inner.read_file(&VaultPath::new(taken).unwrap()).unwrap(),
         "made elsewhere\n"

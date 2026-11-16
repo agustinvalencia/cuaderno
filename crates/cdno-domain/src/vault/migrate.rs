@@ -328,7 +328,10 @@ impl Vault {
     /// and checks the version itself, re-read under this same lock; every
     /// other write goes through the gated `Vault::transaction`.
     fn transaction_ungated(&self) -> Result<VaultTransaction, DomainError> {
-        Ok(VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))?.require_reads())
+        Ok(
+            VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))?
+                .require_reads(),
+        )
     }
 
     /// Read the version and the config, decide whether the run stamps, and

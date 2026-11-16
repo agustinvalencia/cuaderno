@@ -143,7 +143,6 @@ enum Undo {
     },
 }
 
-
 impl VaultTransaction {
     /// Create an empty transaction bound to the given store and index,
     /// acquiring the vault write lock up front (#196).
@@ -263,7 +262,6 @@ impl VaultTransaction {
         self.observe_unseen(&path);
         self.file_ops.push(FileOp::Delete { path });
     }
-
 
     /// Buffer an import of the external file `src` into the vault at
     /// `dest` (an attachment, #154). Committed alongside the stub write,
@@ -1016,7 +1014,6 @@ fn precheck(
         Err(Precheck::Conflict(conflicts))
     }
 }
-
 
 /// What a snapshot taken with [`read_if_exists`] observed.
 fn observed_of(snapshot: Option<&str>) -> Observed {

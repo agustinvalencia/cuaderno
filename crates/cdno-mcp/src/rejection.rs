@@ -203,9 +203,22 @@ fn rejection_message(code: RejectionCode, e: &DomainError) -> String {
         RejectionCode::InvalidSlug => {
             format!("{e}; fix the shape as the message says, or ask the person for another name")
         }
-        RejectionCode::ConcurrentChange => format!(
-            "{e}. Make the same call again; if what you are writing was composed from an earlier read of that note, read it again first and recompose"
-        ),
+        // Its own wording rather than the domain's, which already ends on a
+        // remedy for any caller; this one says what an agent does, and
+        // when to stop.
+        RejectionCode::ConcurrentChange => {
+            let paths = match e {
+                DomainError::Transaction(TransactionError::Conflict { paths }) => paths
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                _ => "a file".to_owned(),
+            };
+            format!(
+                "{paths} changed on disk while this write was being prepared, most likely by another writer, and nothing was written. Make the same call again, reading the file first if what you are writing was composed from an earlier read of it. If it is refused again, tell the person that another program is writing that file"
+            )
+        }
         RejectionCode::SlugTaken => format!(
             "{e}; if that is the note you meant, use it; otherwise ask the person for another name, do not suffix it yourself"
         ),
@@ -600,21 +613,24 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         ),
 
         // -------------------------------------------------------------
-        // Mechanical failures: the machine under the call, not the call.
-        // These stay JSON-RPC protocol errors — nothing the caller could
-        // pass differently changes the outcome.
+        // The one rolled-back transaction that is a rejection (#1001): a
+        // file the write would replace changed underneath it. Nothing was
+        // written, and the same call is what fixes it, so this fails the
+        // "different argument" test on purpose: the call is fine, the
+        // moment was not. The caller acts on it (calls again, or tells the
+        // person), so it carries a code, unlike a contended lock, which
+        // the store has already waited out by the time it reports one.
         // -------------------------------------------------------------
-        // A commit refused because a file it would replace changed
-        // underneath it (#1001). Nothing was written, and calling again is
-        // what fixes it: the call itself is fine, the moment was not. That
-        // is the caller's to act on, so it is a rejection with a code an
-        // agent can branch on, unlike a contended lock, which the store
-        // has already waited out by the time it reports one.
         DomainError::Transaction(TransactionError::Conflict { paths }) => (
             RejectionCode::ConcurrentChange,
             json!({ "paths": paths.iter().map(ToString::to_string).collect::<Vec<_>>() }),
         ),
 
+        // -------------------------------------------------------------
+        // Mechanical failures: the machine under the call, not the call.
+        // These stay JSON-RPC protocol errors — nothing the caller could
+        // pass differently changes the outcome.
+        // -------------------------------------------------------------
         // A conditional store write that found the file changed reaches the
         // caller as the transaction's `Conflict` above or, when the rollback
         // after it failed too, as a `FileWrite`: the vault may then be
@@ -1052,7 +1068,20 @@ mod tests {
         let message = payload["message"].as_str().expect("message");
         assert!(message.contains("nothing was written"), "{message}");
         assert!(message.contains("Make the same call again"), "{message}");
-        assert!(message.contains("read it again first"), "{message}");
+        assert!(message.contains("reading the file first"), "{message}");
+        assert!(
+            message.contains("If it is refused again, tell the person"),
+            "{message}"
+        );
+        assert!(
+            message.contains("journal/2026/daily/2026-06-13.md"),
+            "the path is named: {message}"
+        );
+        assert_eq!(
+            message.matches("again").count(),
+            2,
+            "the remedy is stated once, not repeated after the domain's: {message}"
+        );
 
         // Through the handler path: a tool result the agent reads, not a
         // protocol error.
@@ -1075,7 +1104,9 @@ mod tests {
         assert!(
             classify(&DomainError::Transaction(TransactionError::FileWrite {
                 source: StoreError::Changed(cdno_core::path::VaultPath::new("a.md").unwrap()),
-                rollback_failures: vec![StoreError::Changed(cdno_core::path::VaultPath::new("b.md").unwrap())],
+                rollback_failures: vec![StoreError::Changed(
+                    cdno_core::path::VaultPath::new("b.md").unwrap()
+                )],
             }))
             .is_none(),
             "a rollback that failed may leave the vault part-written"
@@ -1086,7 +1117,12 @@ mod tests {
             )))
             .is_none()
         );
-        assert!(classify(&DomainError::Store(StoreError::Changed(cdno_core::path::VaultPath::new("a.md").unwrap()))).is_none());
+        assert!(
+            classify(&DomainError::Store(StoreError::Changed(
+                cdno_core::path::VaultPath::new("a.md").unwrap()
+            )))
+            .is_none()
+        );
     }
 
     #[test]

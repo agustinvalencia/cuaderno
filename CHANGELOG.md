@@ -55,21 +55,26 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
-- **A write no longer silently replaces a change it did not see** (closes #1001). The vault write
-  lock is an `flock`, which one kernel enforces and another does not see, so a folder written from
-  a host and a container at once could lose lines from a daily note. A commit now compares every
-  file it is about to replace, append to or delete with what the operation read of it (the store
-  records each read while the transaction is open; a path staged without being read is observed
-  when it is staged), again right before the rename, and creates a new file with a rename that
-  refuses to overwrite. On a mismatch it writes nothing, rolls back anything already written
-  without overwriting a later change, and fails with `TransactionError::Conflict`: "… changed on
-  disk while this write was being prepared, most likely by another writer; nothing was written,
-  run the operation again". `cdno log` and `append_to_log` retry it themselves a few times; other
-  verbs return it. Over MCP it is a tool result with code `concurrent_change` and the paths; the
-  CLI exits with status 75 (`EX_TEMPFAIL`). A bare move is not compared (it carries the file
-  along), the raw writes are unchanged, and a gap of one `stat` before each rename remains:
+- **A commit refuses to replace a note that changed while the write was being prepared** (part of
+  #1001, #1005). The vault write lock is an `flock`, which one kernel enforces and another does not
+  see, so a folder written from a host and a container at once lost lines from a daily note (7 and
+  8 of 160 in two runs across a VM file share). A commit now compares every file it is about to
+  replace, append to or delete with what the operation read of it, again right before the rename,
+  and creates a new file with a rename that refuses to overwrite. On a mismatch it writes nothing
+  and fails with "… changed on disk while this write was being prepared, most likely by another
+  writer; nothing was written, run the operation again". This narrows the loss and does not end it:
+  in the same setup, 1 of 1,200 appends was still lost, through the gap between the last check and
+  the rename. The lock both sides see, which closes that gap, is #1012;
   `docs/concurrent-writers.md` lists every window left open. On one machine nothing changes except
   the cost, a read and two `stat`s more per replaced file.
+  - The verbs that add to a note (`log`, notes entries, section appends, captures and discards, the
+    action, milestone, waiting-on and tracking verbs) run again a few times on their own before
+    returning the refusal; the others return it at once.
+  - Over MCP the refusal is a tool result with code `concurrent_change` and the paths. The CLI
+    exits with status 75 (`EX_TEMPFAIL`) and, under `--json`, prints the same object.
+  - `capture`, discarding an inbox item and creating a stewardship read before taking the write
+    lock, so even on one machine two of them at once could overwrite each other or log the wrong
+    text. They take it first now.
 - **A long-running server repairs a damaged index itself** (closes #526, part of #520). Page-level damage
   to `index.db` could leave every read working while each write to a damaged page failed with
   `index stale after successful commit`, and the periodic sweep logged only a count. A restart

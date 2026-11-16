@@ -626,7 +626,10 @@ fn a_conditional_create_never_replaces_an_existing_file() {
     let err = store
         .write_file_expecting(&vp("a.md"), "mine\n", Observed::Absent)
         .unwrap_err();
-    assert!(matches!(&err, StoreError::Changed(p) if *p == vp("a.md")), "{err:?}");
+    assert!(
+        matches!(&err, StoreError::Changed(p) if *p == vp("a.md")),
+        "{err:?}"
+    );
     assert_eq!(folder.get("a.md"), "made elsewhere\n");
     let err = store
         .append_to_file_expecting(&vp("a.md"), "mine\n", Observed::Absent)
@@ -713,7 +716,10 @@ fn create_file_refuses_a_path_the_operation_saw_taken() {
     let mut t = tx(&a);
     let _ = a.read_file(&vp("inbox/item.md")).unwrap();
     t.create_file(vp("inbox/item.md"), "mine\n");
-    assert_eq!(conflict_paths(t.commit().unwrap_err()), vec!["inbox/item.md"]);
+    assert_eq!(
+        conflict_paths(t.commit().unwrap_err()),
+        vec!["inbox/item.md"]
+    );
     assert_eq!(folder.get("inbox/item.md"), "made elsewhere\n");
 }
 
@@ -724,7 +730,10 @@ fn create_file_refuses_a_file_that_appears_after_staging() {
     let mut t = tx(&a);
     t.create_file(vp("inbox/item.md"), "mine\n");
     folder.put("inbox/item.md", "made elsewhere\n");
-    assert_eq!(conflict_paths(t.commit().unwrap_err()), vec!["inbox/item.md"]);
+    assert_eq!(
+        conflict_paths(t.commit().unwrap_err()),
+        vec!["inbox/item.md"]
+    );
     assert_eq!(folder.get("inbox/item.md"), "made elsewhere\n");
 }
 
@@ -769,7 +778,11 @@ fn reads_on_another_thread_do_not_supply_the_baseline() {
     })
     .join()
     .unwrap();
-    assert_eq!(probe.get(&vp(NOTE)), None, "another thread's read was recorded");
+    assert_eq!(
+        probe.get(&vp(NOTE)),
+        None,
+        "another thread's read was recorded"
+    );
     drop(probe);
 
     // The operation's own (later) read is the baseline, so nothing changed
@@ -919,13 +932,20 @@ fn two_writers_appending_without_a_shared_lock_lose_nothing_when_they_retry() {
 /// cargo test -p cdno-core --test unit -- --ignored on_a_real_folder --nocapture
 /// ```
 ///
-/// Every commit here contends, the worst case there is. The check runs a
-/// `stat` before the rename, and no rename can be conditional on what it
-/// replaces, so a writer that renames inside that gap is still overwritten.
-/// Measured on a laptop SSD (macOS, APFS, debug build) over a dozen runs: 0
-/// to 2 of 300 lines lost with nearly every commit retried, against about
-/// 150 of 300 with the check disabled. The assertion is a loose bound far
-/// from both.
+/// Every commit here contends. The check runs a `stat` before the rename,
+/// and no rename can be conditional on what it replaces, so a writer that
+/// renames inside that gap is still overwritten. Measured on a laptop SSD
+/// (macOS, APFS, debug build) over a dozen runs: 0 to 2 of 300 lines lost,
+/// against about 150 of 300 with the check disabled.
+///
+/// That figure is not representative and is no guarantee. On macOS
+/// `sync_all` is a full device flush (`F_FULLFSYNC`), which serialises the
+/// two writers into alternation, an accidental shared lock: with a plain
+/// `fsync` the same protocol lost 38 to 52 of 300 in a standalone
+/// reproduction, and with a short delay before the rename nearly every
+/// contended line. So this test passes or fails on the sync cost of the
+/// machine it runs on; the assertion is only a loose bound. The figure that
+/// counts, two kernels over a VM file share, is in the design note.
 #[test]
 #[ignore = "measures a scheduling-dependent window; run by hand, see the doc comment"]
 fn on_a_real_folder_only_the_gap_before_the_rename_remains() {

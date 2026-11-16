@@ -161,9 +161,11 @@ server at start and then every `--reconcile-interval-secs` (300 seconds by defau
 server only at start ([#1002](https://github.com/agustinvalencia/cuaderno/issues/1002)). In that
 window search and backlinks can miss the other side's latest notes, and the active-project cap and
 the check that a new note's name is unique are made against that stale view, so the cap can be
-exceeded or a name taken twice until someone reconciles. The override separates the index only:
-two machines writing the same vault folder at once still need the note-level protection tracked in
-[#1001](https://github.com/agustinvalencia/cuaderno/issues/1001).
+exceeded or a name taken twice until someone reconciles. The override separates the index only.
+For the notes themselves, a write now refuses to replace a note that changed while it was being
+prepared ([a write fails with "changed on disk …"](../reference/troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared)),
+which makes a lost line rare but not impossible: the two machines' write locks still do not see each
+other, and a lock they both see is [#1012](https://github.com/agustinvalencia/cuaderno/issues/1012).
 
 **Moving an index.** No migration is needed: the new file starts empty and the next open rebuilds
 it from the Markdown. Like any rebuild, it starts without the archival snapshots, so

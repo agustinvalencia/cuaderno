@@ -242,7 +242,9 @@ impl Vault {
             });
         }
         if append {
-            self.retry_on_conflict(|| self.upsert_daily_section_once(date, section, content, append))
+            self.retry_on_conflict(|| {
+                self.upsert_daily_section_once(date, section, content, append)
+            })
         } else {
             self.upsert_daily_section_once(date, section, content, append)
         }

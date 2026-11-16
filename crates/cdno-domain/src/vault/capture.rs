@@ -163,7 +163,6 @@ impl Vault {
         })
     }
 
-
     /// Resolve an unused inbox filename for `(date, text)`. Walks
     /// `-2`, `-3`, ... suffixes if needed, capped at a safety limit
     /// to avoid an infinite loop on a misbehaving store.
