@@ -425,7 +425,27 @@ pub(crate) fn acquire(
     options: &Options,
     flock_id: Option<&str>,
 ) -> Result<SharedLock, StoreError> {
+    // The token counts as held from before its record can appear at the
+    // lock's name, so another thread of this process (where `flock` is per
+    // process) never takes the just-placed lock for one this process left.
     let token = new_token();
+    held_tokens().push(token.clone());
+    let acquired = acquire_as(&token, dir, deadline, waited_from, options, flock_id);
+    if acquired.is_err() {
+        held_tokens().retain(|t| *t != token);
+    }
+    acquired
+}
+
+fn acquire_as(
+    token: &str,
+    dir: &Path,
+    deadline: Instant,
+    waited_from: Instant,
+    options: &Options,
+    flock_id: Option<&str>,
+) -> Result<SharedLock, StoreError> {
+    let token = token.to_owned();
     let record = owner_record(&token, options.boot.as_deref(), flock_id);
     let lock = dir.join(LOCK_NAME);
     let mut attempt = Attempt::new(dir, &record).map_err(io_error)?;
@@ -531,10 +551,12 @@ fn holding(
     options: &Options,
 ) -> SharedLock {
     let nlink_known = descriptor_link_count(&file).is_some_and(|n| n >= 1);
-    if nlink_known {
-        NLINK_TRUSTED.store(true, Ordering::Relaxed);
+    if nlink_known && let Some(dev) = descriptor_device(&file) {
+        let mut trusted = TRUSTED_DEVICES.lock().unwrap_or_else(|e| e.into_inner());
+        if !trusted.contains(&dev) {
+            trusted.push(dev);
+        }
     }
-    held_tokens().push(token.to_owned());
     SharedLock {
         held: Arc::new(Held {
             dir: dir.to_path_buf(),
@@ -581,14 +603,31 @@ fn record_protocol(record: &str) -> u32 {
         .unwrap_or(1)
 }
 
-/// Set once any lock taken by this process reports a link count of at
-/// least 1 on its descriptor: this filesystem's link counts mean something,
-/// so the store may read a count of 0 on an opened note as "replaced".
-static NLINK_TRUSTED: AtomicBool = AtomicBool::new(false);
+/// The filesystems (by device) on which a lock this process took reported
+/// a link count of at least 1 on its descriptor: there link counts mean
+/// something, so the store may read a count of 0 on an opened note as
+/// "replaced". Per device, since some filesystems (some FUSE ones) report
+/// 0 for live files, and a process may read a vault on one of those too.
+static TRUSTED_DEVICES: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 
-/// Whether a link count of 0 on an open file means it has no name left here.
-pub(crate) fn link_counts_trusted() -> bool {
-    NLINK_TRUSTED.load(Ordering::Relaxed)
+/// Whether a link count of 0 on an open file of device `dev` means it has
+/// no name left there.
+pub(crate) fn link_counts_trusted(dev: u64) -> bool {
+    TRUSTED_DEVICES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&dev)
+}
+
+#[cfg(unix)]
+fn descriptor_device(file: &File) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    file.metadata().ok().map(|m| m.dev())
+}
+
+#[cfg(not(unix))]
+fn descriptor_device(_file: &File) -> Option<u64> {
+    None
 }
 
 /// How a contender places its record at the lock's name, by the best

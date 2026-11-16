@@ -109,7 +109,8 @@ vault/
 When one vault folder is reachable from two operating systems **at the same time** (a host and a
 container that mounts it, or two computers on a network share), the writes of both are kept apart by
 `.cuaderno/locks/write.lock`, a lock file both sides see: a write on one side waits for a write on
-the other, so neither replaces a note the other has just changed. What still matters:
+the other, so neither replaces a note the other has just changed, provided the share shows each
+side the other's renames when it reads (see the share's cache below). What still matters:
 
 - **Upgrade every side together.** 0.46.0 and older take neither this lock nor the check that a note
   did not change under a write, so with one side on such a version lines are still lost, silently.
@@ -132,6 +133,12 @@ the other, so neither replaces a note the other has just changed. What still mat
   or two; do that from one side at a time.
 - **Give each machine its own index**, next section: the lock keeps the notes safe, not a SQLite file
   shared between two kernels.
+- **The share's cache.** A VM share that caches file names (virtiofs in its default mode, or
+  `cache=always`) can show one side a note the other side has just replaced. cdno asks the file
+  server for a fresh answer before it writes, and retries a read for about a second and a half
+  while the cache catches up, but on a share that ignores that request (or on a guest that is not
+  Linux) mount the share with `cache=none`, or give each side its own copy of the vault. NFS and
+  SMB shares in their ordinary configurations are not affected.
 - **Not on an object-store mount.** A bucket mounted as a folder cannot create a file exclusively
   across two machines, so the lock excludes nothing there.
 

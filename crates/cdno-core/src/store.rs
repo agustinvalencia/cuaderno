@@ -808,6 +808,11 @@ struct TestHooks {
     before_compare: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Makes the no-clobber rename of a create fail with this OS error.
     noclobber_error: Option<i32>,
+    /// Runs inside a move, after its checks and right before its rename.
+    before_move: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Answers for the file server's forced attributes (`statx` with
+    /// `AT_STATX_FORCE_SYNC` on Linux), in their place.
+    forced_attrs: Option<ForcedAttrsHook>,
 }
 
 impl std::fmt::Debug for TestHooks {
@@ -815,6 +820,8 @@ impl std::fmt::Debug for TestHooks {
         f.debug_struct("TestHooks")
             .field("before_compare", &self.before_compare.is_some())
             .field("noclobber_error", &self.noclobber_error)
+            .field("before_move", &self.before_move.is_some())
+            .field("forced_attrs", &self.forced_attrs.is_some())
             .finish()
     }
 }
@@ -969,6 +976,28 @@ impl FsVaultStore {
         self
     }
 
+    /// Answer the file server's forced attributes with `hook` instead of
+    /// `statx` (test seam, `test-support` only): called with a file's path
+    /// and `true` for its open descriptor, `false` for its name. Lets a
+    /// test on any platform play a share that answers a stale cached size,
+    /// or a name whose file has no link left.
+    #[cfg(feature = "test-support")]
+    pub fn with_forced_attrs_hook(
+        mut self,
+        hook: impl Fn(&Path, bool) -> Option<ForcedAttrs> + Send + Sync + 'static,
+    ) -> Self {
+        self.hooks.forced_attrs = Some(Arc::new(hook));
+        self
+    }
+
+    /// Run `hook` inside every move, after its checks and right before its
+    /// rename (test seam, `test-support` only).
+    #[cfg(feature = "test-support")]
+    pub fn with_before_move_hook(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
+        self.hooks.before_move = Some(Arc::new(hook));
+        self
+    }
+
     /// Make the no-clobber rename of every create fail with the OS error
     /// `raw` instead of running (test seam, `test-support` only).
     #[cfg(feature = "test-support")]
@@ -1120,10 +1149,14 @@ impl FsVaultStore {
                     // (some network and VM shares support neither the
                     // rename flag nor hard links) falls back to checking
                     // for absence and renaming: the window a replace has,
-                    // rather than failing every creation there. Any other
-                    // error is reported as it is.
+                    // rather than failing every creation there. That check
+                    // is an `lstat` a share's client may answer from its
+                    // cache, so there a negative entry can let a create
+                    // replace a note another kernel just made: a documented
+                    // limit of such filesystems. Any other error is
+                    // reported as it is.
                     Err((e, tmp)) if noclobber_unsupported(&e) => {
-                        if file_identity(full).is_some() {
+                        if file_identity(full, &self.hooks).is_some() {
                             return Err(StoreError::Changed(path.clone()));
                         }
                         tmp.persist(full)
@@ -1138,8 +1171,23 @@ impl FsVaultStore {
             // `stat` and the rename; no rename can be conditional on what
             // it replaces, so the gap cannot be closed here.
             Some(expected) => {
-                let identity = file_identity(full);
-                if observe_full(full, path)? != expected || file_identity(full) != identity {
+                let identity = file_identity(full, &self.hooks);
+                // A name the file server says no longer names a file: this
+                // client's entry for it is stale, and what it read through
+                // it was a replaced note (#1012).
+                if let Some((dev, ..)) = identity
+                    && names_a_replaced_file(full, dev, &self.hooks)
+                {
+                    tracing::debug!(
+                        %path,
+                        "the compare before rename met a stale entry of the share's name cache \
+                         (the file it names has no link left); refused"
+                    );
+                    return Err(StoreError::Changed(path.clone()));
+                }
+                if observe_full(full, path, &self.hooks)? != expected
+                    || file_identity(full, &self.hooks) != identity
+                {
                     // Dropping `tmp` deletes the temp file.
                     return Err(StoreError::Changed(path.clone()));
                 }
@@ -1159,8 +1207,8 @@ impl FsVaultStore {
 
 /// What is at `full` right now, read straight from disk (not recorded in
 /// any read journal).
-fn observe_full(full: &Path, path: &VaultPath) -> Result<Observed, StoreError> {
-    match read_fresh(full) {
+fn observe_full(full: &Path, path: &VaultPath, hooks: &TestHooks) -> Result<Observed, StoreError> {
+    match read_fresh(full, hooks) {
         Ok(bytes) => Ok(Observed::of_bytes(&bytes)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Observed::Absent),
         Err(e) => Err(io_to_store_error(e, path)),
@@ -1170,7 +1218,20 @@ fn observe_full(full: &Path, path: &VaultPath) -> Result<Observed, StoreError> {
 /// Which file is at `full`, as one `stat` tells it: a writer that replaces
 /// the file by rename gives it a new inode, and one that edits it in place
 /// changes its size or times. `None` when nothing (readable) is there.
-fn file_identity(full: &Path) -> Option<(u64, u64, u64, i64, i64, i64, i64)> {
+/// Where the file server can be asked (Linux, #1012), its forced answer,
+/// never a share client's cached attributes; otherwise an `lstat`.
+fn file_identity(full: &Path, hooks: &TestHooks) -> Option<(u64, u64, u64, i64, i64, i64, i64)> {
+    if let Some(a) = forced_attrs_of_name(full, hooks) {
+        return Some((
+            a.dev,
+            a.ino,
+            a.size,
+            a.mtime.0,
+            i64::from(a.mtime.1),
+            a.ctime.0,
+            i64::from(a.ctime.1),
+        ));
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -1214,13 +1275,15 @@ fn io_to_store_error(err: io::Error, path: &VaultPath) -> StoreError {
 
 impl VaultStore for FsVaultStore {
     fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
-        let result = read_text_fresh(&self.resolve(path)?).map_err(|e| io_to_store_error(e, path));
+        let result = read_text_fresh(&self.resolve(path)?, &self.hooks)
+            .map_err(|e| io_to_store_error(e, path));
         self.journals.record(path, &result);
         result
     }
 
     fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
-        let result = read_fresh(&self.resolve(path)?).map_err(|e| io_to_store_error(e, path));
+        let result =
+            read_fresh(&self.resolve(path)?, &self.hooks).map_err(|e| io_to_store_error(e, path));
         self.journals.record(path, &result);
         result
     }
@@ -1237,7 +1300,7 @@ impl VaultStore for FsVaultStore {
         // negligible at note scale. The read-modify window is covered
         // by the vault write lock for all transactional callers.
         let full = self.resolve(path)?;
-        let existing = match read_text_fresh(&full) {
+        let existing = match read_text_fresh(&full, &self.hooks) {
             Ok(content) => content,
             Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(io_to_store_error(e, path)),
@@ -1266,7 +1329,7 @@ impl VaultStore for FsVaultStore {
         expected: Observed,
     ) -> Result<(), StoreError> {
         let full = self.resolve(path)?;
-        let existing = match read_text_fresh(&full) {
+        let existing = match read_text_fresh(&full, &self.hooks) {
             Ok(content) => Some(content),
             Err(e) if e.kind() == io::ErrorKind::NotFound => None,
             Err(e) => return Err(io_to_store_error(e, path)),
@@ -1285,11 +1348,11 @@ impl VaultStore for FsVaultStore {
         let src_full = self.resolve(src)?;
         let dest_full = self.resolve(dest)?;
 
-        // Preflight the destination manually: `fs::rename` on Unix
-        // silently overwrites the target, which violates the trait's
-        // AlreadyExists contract. A TOCTOU race with an external
-        // process is theoretically possible but irrelevant for a
-        // single-writer vault.
+        // The early, readable refusal; the rename below decides (#1012).
+        // This `exists` may be answered from a share's cache, and a plain
+        // `rename` replaces what is there, so a guest with a cached
+        // negative entry would move a file over a note the host had just
+        // made.
         if dest_full.exists() {
             return Err(StoreError::AlreadyExists(dest.to_string()));
         }
@@ -1299,8 +1362,24 @@ impl VaultStore for FsVaultStore {
         if let Some(parent) = dest_full.parent() {
             fs::create_dir_all(parent).map_err(|e| io_to_store_error(e, dest))?;
         }
+        if let Some(hook) = &self.hooks.before_move {
+            hook();
+        }
         // A commit's move: still the lock's holder (#1012)?
         crate::shared_lock::commit_still_holds()?;
+        let is_dir = fs::symlink_metadata(&src_full).is_ok_and(|m| m.is_dir());
+        if !is_dir {
+            match rename_noclobber(&src_full, &dest_full) {
+                Ok(true) => return Ok(()),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                    return Err(StoreError::AlreadyExists(dest.to_string()));
+                }
+                Err(e) => return Err(io_to_store_error(e, src)),
+                // No no-clobber primitive here: the checked rename below,
+                // with the window the check above leaves.
+                Ok(false) => {}
+            }
+        }
         fs::rename(&src_full, &dest_full).map_err(|e| io_to_store_error(e, src))
     }
 
@@ -1567,6 +1646,14 @@ fn flock_identity(_file: &File) -> Option<String> {
 /// holding `*`, created once and never rewritten, so a vault kept in git
 /// needs no rule of its own. Best effort: a failure costs only that.
 fn ensure_locks_ignored(dir: &Path) {
+    static DONE: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+    {
+        let mut done = DONE.lock().unwrap_or_else(|e| e.into_inner());
+        if done.iter().any(|d| d == dir) {
+            return;
+        }
+        done.push(dir.to_path_buf());
+    }
     let path = dir.join(".gitignore");
     if path.exists() {
         return;
@@ -1583,60 +1670,262 @@ fn ensure_locks_ignored(dir: &Path) {
 }
 
 /// How long a read waits, in turn, before trying a file again whose name a
-/// share's cache answered stale (see [`read_fresh`]).
-const STALE_READ_PAUSES: [Duration; 3] = [
+/// share's cache answered stale (see [`read_fresh`]): about 1.5 s in all,
+/// the last pause longer than the one-second entry timeout that a common
+/// VM share's default mode (virtiofs `cache=auto`) keeps names for.
+const STALE_READ_PAUSES: [Duration; 5] = [
     Duration::from_millis(20),
     Duration::from_millis(50),
     Duration::from_millis(100),
+    Duration::from_millis(250),
+    Duration::from_millis(1100),
 ];
 
-/// Read `full`, trying again (three times, about 170 ms in all) when the
-/// answer looks like a stale name cache rather than the file (#1012): a
-/// "not found" for a name its folder's listing has, or a file opened through
-/// the name that no longer has any name (a link count of 0, where link
-/// counts are known to mean something). A guest on a VM file share can
-/// hold a cached entry for a note that the host has since replaced by
-/// rename. Then the report is the last answer: the "not found", or an error
-/// saying the share served a replaced file. A file that is really absent
-/// costs one listing of its folder, and nothing more.
-fn read_fresh(full: &Path) -> io::Result<Vec<u8>> {
+/// What the file server says of a file right now, not what this client
+/// cached of it (#1012): on Linux, `statx` with `AT_STATX_FORCE_SYNC`,
+/// which makes a FUSE client (virtiofs) send a fresh `GETATTR` whatever its
+/// attribute timeout, and an NFS client revalidate; a local filesystem
+/// ignores the flag. Unavailable elsewhere. Public only for the
+/// `test-support` seam [`FsVaultStore::with_forced_attrs_hook`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ForcedAttrs {
+    pub nlink: u64,
+    pub size: u64,
+    pub dev: u64,
+    pub ino: u64,
+    pub mtime: (i64, u32),
+    pub ctime: (i64, u32),
+}
+
+/// A test's stand-in for the forced `statx`: called with the file's path,
+/// and `true` for the open descriptor's attributes, `false` for the name's.
+type ForcedAttrsHook = Arc<dyn Fn(&Path, bool) -> Option<ForcedAttrs> + Send + Sync>;
+
+fn forced_attrs_of_file(file: &File, full: &Path, hooks: &TestHooks) -> Option<ForcedAttrs> {
+    if let Some(hook) = &hooks.forced_attrs {
+        return hook(full, true);
+    }
+    platform_forced_attrs_of_file(file)
+}
+
+fn forced_attrs_of_name(full: &Path, hooks: &TestHooks) -> Option<ForcedAttrs> {
+    if let Some(hook) = &hooks.forced_attrs {
+        return hook(full, false);
+    }
+    platform_forced_attrs_of_name(full)
+}
+
+/// One read's outcome.
+enum ReadOnce {
+    Fresh(Vec<u8>),
+    /// The file opened through the name has no name left: the name's cached
+    /// entry is stale.
+    Replaced,
+    /// The bytes read disagree with the size the server reports, or the
+    /// server's attributes changed during the read: a stale cached size
+    /// (a share applies the replaced file's size to the new file), or a
+    /// file changed while it was read.
+    Torn {
+        read: u64,
+        size: u64,
+    },
+}
+
+/// Read `full`, trying again when the answer looks like a stale cache
+/// rather than the file (#1012):
+///
+/// - a "not found" for a name its folder's listing has;
+/// - a file opened through the name that no longer has any name (a link
+///   count of 0, asked of the file server where the platform can force
+///   that, on a filesystem whose link counts this process has seen mean
+///   something);
+/// - where the server can be asked (Linux), fewer or more bytes than the
+///   size it reports for the open file, or its size, inode or mtime
+///   changing during the read. A VM share was measured applying the old
+///   file's cached size to the new file that replaced it, which cut a read
+///   of the new note to the old length: an append composed from that would
+///   write the note back without its tail.
+///
+/// Each retry opens the file again (so a stale entry or a clamped size is
+/// looked up afresh), after listing the folder for a replaced file (which
+/// lets a client that reads directories with attributes replace the stale
+/// entry). The report is the last answer: the "not found", or an error
+/// saying the share kept serving a stale view. A file that is really
+/// absent costs one listing of its folder, and nothing more.
+fn read_fresh(full: &Path, hooks: &TestHooks) -> io::Result<Vec<u8>> {
     let mut pauses = STALE_READ_PAUSES.iter();
+    let mut attempt = 0;
     loop {
-        let stale = match read_once(full) {
-            Ok(Some(bytes)) => return Ok(bytes),
-            Ok(None) => io::Error::other(
-                "the vault folder's file share kept answering with a file that had been \
-                 replaced; nothing was read, try again",
-            ),
+        let stale = match read_once(full, hooks) {
+            Ok(ReadOnce::Fresh(bytes)) => return Ok(bytes),
+            Ok(ReadOnce::Replaced) => {
+                // Listed for its side effect: a fresh entry for the name.
+                let _ = listed_in_folder(full);
+                io::Error::other(
+                    "the vault folder's file share kept answering with a file that had been \
+                     replaced; nothing was read, try again",
+                )
+            }
+            Ok(ReadOnce::Torn { read, size }) => io::Error::other(format!(
+                "the vault folder's file share kept answering with a stale view of the file \
+                 (read {read} bytes where the server reports {size}); nothing was read, try again"
+            )),
             Err(e) if e.kind() == io::ErrorKind::NotFound && listed_in_folder(full) => e,
             Err(e) => return Err(e),
         };
+        attempt += 1;
         match pauses.next() {
-            Some(pause) => std::thread::sleep(*pause),
+            Some(pause) => {
+                tracing::debug!(
+                    path = %full.display(),
+                    attempt,
+                    reason = %stale,
+                    "read through a stale entry of the share's cache; trying again"
+                );
+                std::thread::sleep(*pause);
+            }
             None => return Err(stale),
         }
     }
 }
 
 /// [`read_fresh`], as UTF-8 text (as `fs::read_to_string` reports it).
-fn read_text_fresh(full: &Path) -> io::Result<String> {
-    String::from_utf8(read_fresh(full)?).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+fn read_text_fresh(full: &Path, hooks: &TestHooks) -> io::Result<String> {
+    String::from_utf8(read_fresh(full, hooks)?)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-/// One read: the bytes, or `None` when the file opened has no name left.
-fn read_once(full: &Path) -> io::Result<Option<Vec<u8>>> {
+/// One read, checked against the server's own account of the file where
+/// it can be had. The forced attributes are taken **before** the read: on
+/// Linux a FUSE client's `GETATTR` reply also refreshes the inode's cached
+/// size (outside writeback-cache mode), so the read that follows is not
+/// clamped to a stale one; and the byte count is still checked, since a
+/// client may not.
+fn read_once(full: &Path, hooks: &TestHooks) -> io::Result<ReadOnce> {
     use std::io::Read;
     let mut file = File::open(full)?;
+    let before = forced_attrs_of_file(&file, full, hooks);
     #[cfg(unix)]
-    if crate::shared_lock::link_counts_trusted() {
+    {
         use std::os::unix::fs::MetadataExt;
-        if file.metadata()?.nlink() == 0 {
-            return Ok(None);
+        let meta = file.metadata()?;
+        let nlink = before.map_or(meta.nlink(), |a| a.nlink);
+        if crate::shared_lock::link_counts_trusted(meta.dev()) && nlink == 0 {
+            return Ok(ReadOnce::Replaced);
         }
     }
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
-    Ok(Some(bytes))
+    if let Some(before) = before {
+        let read = bytes.len() as u64;
+        if read != before.size {
+            return Ok(ReadOnce::Torn {
+                read,
+                size: before.size,
+            });
+        }
+        let after = forced_attrs_of_file(&file, full, hooks);
+        let view = |a: &ForcedAttrs| (a.size, a.ino, a.mtime);
+        if after.as_ref().map(view) != Some(view(&before)) {
+            return Ok(ReadOnce::Torn {
+                read,
+                size: after.map_or(before.size, |a| a.size),
+            });
+        }
+    }
+    Ok(ReadOnce::Fresh(bytes))
+}
+
+#[cfg(target_os = "linux")]
+fn platform_forced_attrs_of_file(file: &File) -> Option<ForcedAttrs> {
+    use std::os::unix::io::AsRawFd;
+    forced_statx(file.as_raw_fd(), c"", libc::AT_EMPTY_PATH)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn platform_forced_attrs_of_file(_file: &File) -> Option<ForcedAttrs> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn platform_forced_attrs_of_name(full: &Path) -> Option<ForcedAttrs> {
+    use std::os::unix::ffi::OsStrExt;
+    let name = std::ffi::CString::new(full.as_os_str().as_bytes()).ok()?;
+    forced_statx(libc::AT_FDCWD, &name, libc::AT_SYMLINK_NOFOLLOW)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn platform_forced_attrs_of_name(_full: &Path) -> Option<ForcedAttrs> {
+    None
+}
+
+/// `statx(dirfd, path, flags | AT_STATX_FORCE_SYNC, ...)` by its system call
+/// (the C library's wrapper is missing on older musl), read from the
+/// kernel's fixed `struct statx` layout: `stx_mask` at 0, `stx_nlink` at 16,
+/// `stx_ino` at 32, `stx_size` at 40, `stx_ctime` at 96, `stx_mtime` at
+/// 112 (each a 64-bit second and a 32-bit nanosecond), `stx_dev_major` and
+/// `stx_dev_minor` at 136 and 140. `None` when the call fails or does not
+/// return every field asked for.
+#[cfg(target_os = "linux")]
+fn forced_statx(
+    dirfd: libc::c_int,
+    path: &std::ffi::CStr,
+    flags: libc::c_int,
+) -> Option<ForcedAttrs> {
+    const AT_STATX_FORCE_SYNC: libc::c_int = 0x2000;
+    // STATX_NLINK | STATX_MTIME | STATX_CTIME | STATX_INO | STATX_SIZE
+    const WANTED: u32 = 0x0004 | 0x0040 | 0x0080 | 0x0100 | 0x0200;
+    #[repr(C, align(8))]
+    struct Statx([u8; 256]);
+    let mut buf = Statx([0; 256]);
+    // SAFETY: a valid descriptor or AT_FDCWD, a NUL-terminated path, and a
+    // writable buffer of the kernel's `struct statx` size.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_statx,
+            dirfd,
+            path.as_ptr(),
+            flags | AT_STATX_FORCE_SYNC,
+            WANTED,
+            buf.0.as_mut_ptr(),
+        )
+    };
+    if rc != 0 {
+        return None;
+    }
+    let b = &buf.0;
+    let u32_at =
+        |at: usize| -> Option<u32> { Some(u32::from_ne_bytes(b[at..at + 4].try_into().ok()?)) };
+    let u64_at =
+        |at: usize| -> Option<u64> { Some(u64::from_ne_bytes(b[at..at + 8].try_into().ok()?)) };
+    let time_at = |at: usize| -> Option<(i64, u32)> { Some((u64_at(at)? as i64, u32_at(at + 8)?)) };
+    if u32_at(0)? & WANTED != WANTED {
+        return None;
+    }
+    let (major, minor) = (u64::from(u32_at(136)?), u64::from(u32_at(140)?));
+    // glibc's `makedev`, so `dev` equals an `fstat`'s `st_dev`.
+    let dev = ((major & 0xffff_f000) << 32)
+        | ((major & 0x0fff) << 8)
+        | ((minor & 0xffff_ff00) << 12)
+        | (minor & 0xff);
+    Some(ForcedAttrs {
+        nlink: u64::from(u32_at(16)?),
+        size: u64_at(40)?,
+        dev,
+        ino: u64_at(32)?,
+        mtime: time_at(112)?,
+        ctime: time_at(96)?,
+    })
+}
+
+/// Whether the name `full` resolves, by the file server's fresh answer, to
+/// a file with no name left: a stale entry of a share's name cache for a
+/// note replaced by rename (#1012). Never on a filesystem whose link counts
+/// this process has not seen mean something; never where the server cannot
+/// be asked (off Linux), where only the client's cached count is to be had.
+fn names_a_replaced_file(full: &Path, dev: u64, hooks: &TestHooks) -> bool {
+    crate::shared_lock::link_counts_trusted(dev)
+        && forced_attrs_of_name(full, hooks).is_some_and(|a| a.nlink == 0)
 }
 
 /// Whether the listing of `full`'s folder names it: the server's answer,
@@ -1648,6 +1937,24 @@ fn listed_in_folder(full: &Path) -> bool {
     fs::read_dir(parent)
         .map(|entries| entries.flatten().any(|e| e.file_name() == name))
         .unwrap_or(false)
+}
+
+/// Rename `src` to `dest` unless something is at `dest`, decided by the
+/// file server (#1012): `renameat2(RENAME_NOREPLACE)` on Linux,
+/// `renamex_np(RENAME_EXCL)` on macOS, a link and an unlink elsewhere (the
+/// same primitive the store's creates use, `persist_noclobber`). `Ok(false)`
+/// when the filesystem has none of them; the caller then falls back.
+fn rename_noclobber(src: &Path, dest: &Path) -> io::Result<bool> {
+    let moving = tempfile::TempPath::try_from_path(src)?;
+    match moving.persist_noclobber(dest) {
+        Ok(()) => Ok(true),
+        Err(e) => {
+            // Never let the returned path delete the file it names.
+            let unsupported = noclobber_unsupported(&e.error);
+            let _ = e.path.keep();
+            if unsupported { Ok(false) } else { Err(e.error) }
+        }
+    }
 }
 
 impl FsVaultStore {

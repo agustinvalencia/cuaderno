@@ -69,10 +69,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
     otherwise, by the folder's clock (the lock's mtime against a probe made beside it). Exactly one
     contender breaks it, and a warning names the owner and the reason. A record of a later protocol
     is broken by age only.
-  - Reads of a note retry, for about 170 ms, a "not found" for a name its folder lists, and a file
-    opened through a name it no longer has: a guest on a VM share could otherwise read through a
-    stale cached entry for a note the host had just replaced. `docs/concurrent-writers.md` states
-    what this does not cover (a share caching attributes as long as names).
+  - Reads of a note ask the file server, on Linux, for the opened file's link count
+    (`statx` with `AT_STATX_FORCE_SYNC`), and the compare before a rename asks it for the name's,
+    refusing a name whose file has no link left; a read whose byte count disagrees with the size
+    the server reports (a VM share was measured cutting a read of a grown note to the old
+    length), a read through a stale cached entry, or a "not found" for a name its folder lists, is
+    retried for about 1.5 s. A guest on a VM share could
+    otherwise read, and write over, a note the host had just replaced. A move now renames with a
+    rename the server refuses to make over an existing file, so a cached "free" destination can no
+    longer replace a note the other side just made. `docs/concurrent-writers.md` states what
+    remains (a second hard link, an editor writing in place, a share that ignores the request) and
+    which share cache modes are exposed.
   - A holder refreshes its lock as it writes, so a long rename or migration is not taken for a
     crashed one. A holder whose lock was broken while it was paused (a laptop asleep, a paused
     container) finds out before its next file operation, or right before the rename in flight:

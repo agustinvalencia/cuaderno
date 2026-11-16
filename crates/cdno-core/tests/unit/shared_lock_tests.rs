@@ -19,7 +19,7 @@ use cdno_core::error::{StoreError, TransactionError};
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::shared_lock::{BreakReason, LOCK_NAME, LOCK_PATH, LOCKS_DIR, STALE_AFTER};
-use cdno_core::store::{FsVaultStore, VaultStore, VaultWriteLock};
+use cdno_core::store::{ForcedAttrs, FsVaultStore, VaultStore, VaultWriteLock};
 use cdno_core::transaction::VaultTransaction;
 use tempfile::TempDir;
 
@@ -564,14 +564,19 @@ fn a_lock_this_process_still_holds_is_not_taken_for_a_dead_one() {
 #[test]
 fn a_live_holder_through_another_flock_file_is_not_broken_at_once() {
     // One kernel, two `flock`s on "the" file: two mounts whose locks do not
-    // meet, or a `.lock` replaced under a holder. The same boot is not the
-    // same `flock`, so the lock waits for its age.
+    // meet, or a `.lock` replaced under a holder. A record from another
+    // process instance on this boot, which locked `a.lock`: a contender
+    // through `b.lock` does not hold that `flock`, so it cannot know the
+    // holder is dead and waits for the lock's age; one through `a.lock`
+    // does, and breaks it at once.
     let folder = Folder::new();
-    let held = folder
-        .kernel("a.lock")
-        .with_boot_id(Some("kernel-a"))
-        .acquire_write_lock()
-        .unwrap();
+    let a_flock = folder.flock_id("a.lock");
+    folder.dead_lock(&DeadLock {
+        boot: "kernel-a",
+        flock: &a_flock,
+        instance: "another-process",
+        ..DeadLock::default()
+    });
     let err = folder
         .kernel("b.lock")
         .with_boot_id(Some("kernel-a"))
@@ -579,7 +584,15 @@ fn a_live_holder_through_another_flock_file_is_not_broken_at_once() {
         .acquire_write_lock()
         .unwrap_err();
     assert!(matches!(err, StoreError::LockBusy { .. }), "{err:?}");
-    assert!(held.still_held().unwrap(), "the live holder keeps its lock");
+    assert!(folder.lock_record().unwrap().contains("token: 00ff"));
+
+    let lock = folder
+        .kernel("a.lock")
+        .with_boot_id(Some("kernel-a"))
+        .with_lock_timeout(Duration::from_millis(300))
+        .acquire_write_lock()
+        .expect("broken at once through the same flock");
+    assert_eq!(lock.broke_lock(), Some(BreakReason::DeadOnThisKernel));
 }
 
 #[test]
@@ -951,6 +964,140 @@ fn the_ownership_check_refreshes_a_long_held_lock() {
 // ---------------------------------------------------------------------
 // Reads that guard against a share's stale name cache
 // ---------------------------------------------------------------------
+
+#[test]
+fn a_move_never_replaces_a_file_that_appeared_after_its_check() {
+    // The check before a move may be answered from a share's cache; the
+    // rename itself refuses to replace, decided by the file server.
+    let folder = Folder::new();
+    folder.put("inbox/moving.md", "moving\n");
+    let dest = folder.root().join("inbox/moved.md");
+    let store = {
+        let dest = dest.clone();
+        FsVaultStore::new(folder.root()).with_before_move_hook(move || {
+            std::fs::write(&dest, "made elsewhere\n").unwrap();
+        })
+    };
+    let err = store
+        .move_file(&vp("inbox/moving.md"), &vp("inbox/moved.md"))
+        .unwrap_err();
+    assert!(matches!(err, StoreError::AlreadyExists(_)), "{err:?}");
+    assert_eq!(folder.get("inbox/moved.md"), "made elsewhere\n");
+    assert_eq!(
+        folder.get("inbox/moving.md"),
+        "moving\n",
+        "the source stays"
+    );
+}
+
+#[test]
+fn a_move_onto_a_free_name_still_moves() {
+    let folder = Folder::new();
+    folder.put("inbox/moving.md", "moving\n");
+    let store = FsVaultStore::new(folder.root());
+    store
+        .move_file(&vp("inbox/moving.md"), &vp("inbox/sub/moved.md"))
+        .unwrap();
+    assert_eq!(folder.get("inbox/sub/moved.md"), "moving\n");
+    assert!(!folder.root().join("inbox/moving.md").exists());
+}
+
+/// The file server's answer for `path` as a local disk gives it: what a
+/// forced `statx` would return there.
+fn true_attrs(path: &Path) -> Option<ForcedAttrs> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::symlink_metadata(path).ok()?;
+    Some(ForcedAttrs {
+        nlink: m.nlink(),
+        size: m.size(),
+        dev: m.dev(),
+        ino: m.ino(),
+        mtime: (m.mtime(), m.mtime_nsec() as u32),
+        ctime: (m.ctime(), m.ctime_nsec() as u32),
+    })
+}
+
+#[test]
+fn a_read_shorter_than_the_size_the_server_reports_is_read_again() {
+    // A VM share was measured applying the replaced file's cached size to
+    // the new file, cutting a read of the new note to the old length. Here
+    // the server's forced answer says the file is longer than what was
+    // read, twice, as it would while the client's size is stale; the read
+    // is tried again until the two agree.
+    let folder = Folder::new();
+    folder.put(NOTE, "base\nlonger now\n");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let store = {
+        let calls = Arc::clone(&calls);
+        folder
+            .kernel("a.lock")
+            .with_forced_attrs_hook(move |path, descriptor| {
+                let mut attrs = true_attrs(path)?;
+                if descriptor && calls.fetch_add(1, Ordering::SeqCst) < 2 {
+                    attrs.size += 1;
+                }
+                Some(attrs)
+            })
+    };
+    assert_eq!(store.read_file(&vp(NOTE)).unwrap(), "base\nlonger now\n");
+    assert!(
+        calls.load(Ordering::SeqCst) >= 3,
+        "the read was tried again"
+    );
+}
+
+#[test]
+fn a_size_the_server_keeps_contradicting_fails_the_read_rather_than_return_it() {
+    let folder = Folder::new();
+    folder.put(NOTE, "base\n");
+    let store = folder
+        .kernel("a.lock")
+        .with_forced_attrs_hook(|path, descriptor| {
+            let mut attrs = true_attrs(path)?;
+            if descriptor {
+                attrs.size += 10;
+            }
+            Some(attrs)
+        });
+    let started = Instant::now();
+    let err = store.read_file(&vp(NOTE)).unwrap_err();
+    assert!(err.to_string().contains("stale view"), "{err}");
+    assert!(
+        started.elapsed() >= Duration::from_secs(1),
+        "the retries outlast a one-second cache: {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn a_compare_refuses_a_name_the_server_says_has_no_link_left() {
+    // A stale entry for a note the other side replaced: the server says
+    // the file the name leads to has no link. Link counts are trusted on
+    // this filesystem once a lock here reported one.
+    let folder = Folder::new();
+    folder.put(NOTE, "base\n");
+    drop(folder.kernel("a.lock").acquire_write_lock().unwrap());
+    let note = folder.root().join(NOTE);
+    let store = Arc::new(folder.kernel("a.lock").with_forced_attrs_hook(
+        move |path, descriptor| {
+            let mut attrs = true_attrs(path)?;
+            if !descriptor && path == note {
+                attrs.nlink = 0;
+            }
+            Some(attrs)
+        },
+    ));
+    let mut t = tx(&store).unwrap();
+    let read = store.read_file(&vp(NOTE)).unwrap();
+    t.write_file(vp(NOTE), format!("{read}more\n"));
+    match t.commit() {
+        Err(TransactionError::Conflict { paths }) => {
+            assert_eq!(paths, vec![vp(NOTE)]);
+        }
+        other => panic!("expected the compare to refuse, got {other:?}"),
+    }
+    assert_eq!(folder.get(NOTE), "base\n");
+}
 
 #[test]
 fn a_note_that_is_really_absent_is_reported_at_once() {

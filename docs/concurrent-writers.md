@@ -461,26 +461,84 @@ is answered the same way:
   "not found" (what was observed), or the read is fresh. If the entry is revalidated between the
   operation's read and the comparison, the comparison refuses (the one `concurrent_change`).
 
+**A stale size, measured.** On the lab's virtiofs share, the host wrote a temp file and renamed it
+over `note.md` while a guest shell read the name within about a millisecond, 1,000 times: 992
+reads were fresh, 4 found no file, and 4 were **truncated**: the guest got the new file's content
+cut to the old file's length (new content `v10\n`, 4 bytes, read as `v10`, the length of the `v9\n`
+it replaced; likewise at 11 and at 100, exactly the rounds where the size grew). After 50 ms, six of
+the eight read fresh, one was still truncated and one still not found. So what goes stale is the
+cached size, applied to the new file: its link count is 1, so no link-count rule sees it. Every
+append grows the note, so a holder that read a truncated daily note and appended would write it
+back without its tail unless the comparison happened to disagree: the ordinary case, a few
+milliseconds wide.
+
 **What the store does about it now.** `FsVaultStore`'s reads (`read_file`, `read_bytes`, the
-comparison's reads and an append's read) go through `read_fresh`:
+comparison's reads and an append's read) go through `read_fresh`, and the comparison right before
+a rename asks the file server about the name:
 
-- a "not found" for a name that the folder's listing has (the server's answer, which a cached
-  negative entry contradicts) is tried again, after 20, 50 and 100 ms, before it is reported; a note
-  that is really absent costs one listing of its folder and no pause, so the server's post-write
-  read-back, which goes through the same read, is covered too;
-- a file opened through its name that has no name left (a link count of 0 on the opened
-  descriptor, where this process has seen its link counts mean something) was replaced after the
-  entry was cached: it is read again the same way, and if the share keeps answering with it, the
-  read fails ("the vault folder's file share kept answering with a file that had been replaced")
-  rather than hand back content that is no longer the note.
+- **Check the bytes against the server's size.** On Linux `read_once` takes the open file's size,
+  inode and mtime with the forced `statx` **before** reading (a FUSE client's `GETATTR` reply also
+  refreshes the inode's cached size outside writeback-cache mode, so the read that follows is not
+  clamped to a stale one), reads to the end, requires the byte count to equal that size, and takes
+  a second forced `statx` that must agree with the first. Anything else is a stale view, not an
+  error: the file is opened again and read again within the same budget as below. A test plays a
+  share whose forced answer contradicts the read through a seam (`with_forced_attrs_hook`), since
+  no local disk does this.
 
-This closes the second case and the first one whenever the share's attributes for the opened file
-are fresher than its names. **It does not close the first case when attributes are cached as long
-as names** (the link count then reads 1 too): nothing a client can do through the name tells a
-stale view from a fresh one there, short of the share's own cache settings. Mount the share with
-short entry and attribute timeouts (virtiofs `cache=auto` or `none`, NFS `lookupcache=none` or
-`actimeo` low), or give each side its own copy of the vault. The two-kernel measurement records
-the cache mode for this reason.
+- **Ask the server, not the cache.** On Linux, where the guest runs, `read_once` takes the opened
+  file's link count with `statx(fd, "", AT_EMPTY_PATH | AT_STATX_FORCE_SYNC)`, which makes a FUSE
+  client (virtiofs) send a fresh `GETATTR` whatever its attribute timeout says, and an NFS client
+  revalidate; a local filesystem ignores the flag. The comparison before a rename likewise takes
+  the link count of the name with a forced `statx` (`AT_SYMLINK_NOFOLLOW | AT_STATX_FORCE_SYNC`)
+  and refuses with `Changed` when it is 0. Every cdno writer replaces a note by rename, so a note
+  the other side has rewritten leaves the guest's stale entry pointing at a file with no link left,
+  which the server reports as 0. Elsewhere (macOS, other Unix) the plain `fstat` count is used, as
+  the client caches it. Link counts are only trusted on a filesystem (by device) where a lock this
+  process took reported a count of at least 1. The comparison's identity of the name (device,
+  inode, size, times) is the forced `statx`'s too, never the client's cached `lstat`.
+- **A file with no name left** is read again, after the folder is listed (which lets a FUSE client
+  that reads directories with attributes replace the stale entry), and after pauses of 20, 50, 100,
+  250 and 1,100 ms: about 1.5 s in all, the last pause outlasting the one-second entry timeout of
+  virtiofs's default mode. If the share keeps answering with it, the read fails ("the vault
+  folder's file share kept answering with a file that had been replaced") rather than hand back
+  content that is no longer the note.
+- **A "not found" for a name that the folder's listing has** (the server's answer, which a cached
+  negative entry contradicts) is tried again the same way before it is reported. A note that is
+  really absent costs one listing of its folder and no pause, so the server's post-write read-back,
+  which goes through the same read, is covered too.
+- **A move** no longer trusts a cached "the destination is free": it renames with a rename the file
+  server refuses to make over an existing file (`renameat2(RENAME_NOREPLACE)` on Linux,
+  `renamex_np(RENAME_EXCL)` on macOS, a link and an unlink elsewhere: the primitive a create
+  already used). The earlier `exists` stays only for the readable refusal.
+- One debug line is logged for every read retried because of a stale entry, and one for every
+  comparison the forced check refuses, so a run on a share can count them.
+
+**What remains:**
+
+- **A note with a second hard link.** The replaced file keeps a name, so its count is not 0.
+- **An editor that writes a note in place** on the other side, seen by a guest that keeps its page
+  cache across opens. This is not a case between cdno writers; the forced `statx` also refreshes the
+  size and times a client uses to drop cached pages, which helps.
+- **A share that ignores `AT_STATX_FORCE_SYNC`**, and every platform other than Linux, where only the
+  cached count is available and the size check is not made. The two-kernel measurement on the lab's virtiofs share counts the
+  forced check's refusals for this reason.
+- **A stale entry that outlives 1.5 s** (a share with long timeouts) ends in the error above for that
+  note until the entry expires: safe, and loud.
+- **A create on a filesystem with no no-clobber rename at all** falls back to an `lstat` for absence
+  and a plain rename; a cached negative entry there can let a create replace a note the other side
+  just made. Such filesystems have no better primitive.
+
+**Which shares are exposed without the forced check.** The exposed kind is a FUSE share whose
+server keeps a handle to every inode the guest has looked up, with a non-zero entry timeout:
+virtiofs in its default mode (`cache=auto`, which caches names **and** attributes for a second) and
+in `cache=always` (a day). There every guest write to a note the host replaced within that window
+read the old content, through a stale entry the comparison could not see. Only `cache=none`
+caches neither. NFS and SMB are not exposed in their ordinary configurations: an NFS open
+revalidates against the server and a replaced file's handle is stale there, and SMB resolves an
+open by path on the server; 9p without its loose cache mode caches no names. With the forced check,
+the default virtiofs mode is covered by the server's answer, not by its timeouts; `cache=none`
+remains the setting that needs no check at all, and a copy of the vault per side remains the
+choice for a share that ignores the flag.
 
 ### Mixed versions
 
@@ -621,6 +679,8 @@ block it):
   - a crashed holder's old leftovers go with its lock, while a live contender's fresh temp and probe
     files and a file that is not the protocol's stay; the folder keeps a `.gitignore` it never
     rewrites;
+  - a record of another process on this boot that locked `a.lock` waits for its age from a
+    contender through `b.lock`, and is broken at once through `a.lock`;
   - a dead holder through the same `flock` is broken at once; so is a restarted server's
     predecessor with the same process id, and a lock this process left behind; a lock this process
     still holds is not; a live holder through another `flock` file, a young lock from another boot
@@ -631,7 +691,11 @@ block it):
   - a broken holder refuses to commit and leaves the successor's lock; a lock broken after the temp
     file is synced stops the rename; one broken between two file ops rolls the first back;
   - the ownership check refreshes a long-held lock, so another kernel finds it young;
-  - a note that is really absent is reported at once, with no retry pause;
+  - through the forced-attributes seam: a read shorter than the size the server reports is read
+    again until they agree, one the server keeps contradicting fails after more than a second
+    rather than return it, and a compare refuses a name the server says has no link left;
+  - a note that is really absent is reported at once, with no retry pause; a move never replaces
+    a file that appeared after its check, and still moves onto a free name;
   - release happens on commit, on a refused commit and on drop.
 - `cdno-domain/tests/unit/unshared_lock_tests.rs`: two stores with independent `flock`s logging to
   one daily note through `log_to_daily_note`, interleaving, lose no line.

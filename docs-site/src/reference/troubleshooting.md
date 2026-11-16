@@ -372,6 +372,26 @@ A shorter message, `timed out after 5s waiting for the vault write lock` with no
 almost always a wait for another process on this machine (the operating-system lock in
 `.cuaderno/.lock`).
 
+## A rename was killed part-way
+
+A rename is one write, undone as a whole when it fails, but a process killed in the middle of it
+(`kill -9`, a container stopped past its grace, a power cut) cannot undo anything. What it leaves
+depends on how far it got. It moves the note (and its attachments) first, then rewrites every note
+that links to it, and writes its `renamed` line in today's daily note among those. So:
+
+- **The note is still only under its old name**: nothing of the rename landed but perhaps some
+  attachments. Run the same `cdno note rename` again.
+- **The note is under its new name and the old file is gone**: some notes link to the new name and
+  some still to the old one. The old ones still work in cdno (the note carries its old name as an
+  alias). Run [`cdno note rename <new> --relink`](cli/note.md#relinking-the-stragglers---relink) to
+  rewrite them; `cdno lint` lists them first.
+- **Both files are there**: the note was written under its new name and the old one not yet
+  removed. Check that the new file holds the note (with the old name in its `aliases`), delete the
+  old file, then relink as above.
+
+The `renamed` line in the daily note may be missing in the last two cases; if the vault is in git,
+`git status` and `git diff` show exactly what landed.
+
 ## A link to an old name still works in cdno but not in my editor
 
 After [`cdno note rename`](cli/note.md#cdno-note-rename-note) every link in the vault is rewritten to
