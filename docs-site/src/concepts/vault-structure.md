@@ -61,7 +61,7 @@ vault/
 └── .cuaderno/
     ├── config.toml               # vault configuration
     ├── index.db                  # SQLite index cache (auto-created, rebuildable)
-    ├── .lock, .write-lock        # the vault write lock (.write-lock only while a write runs)
+    ├── .lock, locks/             # the vault write lock (locks/write.lock only while a write runs)
     └── templates/                # note templates (override the built-ins)
 ```
 
@@ -95,34 +95,56 @@ vault/
   instead; see [Keeping the index on each machine](#keeping-the-index-on-each-machine).
 - **`templates/`** — the note templates `cdno` fills when scaffolding a note. The built-ins are
   written here at `init` so you can edit them; pure variable substitution, no logic.
-- **`.lock`** and **`.write-lock`** — the vault write lock. Every write takes both, one after the
+- **`.lock`** and **`locks/`** — the vault write lock. Every write takes both, one after the
   other, and holds them while it reads and rewrites notes. `.lock` stays (an empty file the
-  operating system locks), and only processes on the same machine see that lock. `.write-lock`
+  operating system locks), and only processes on the same machine see that lock. `locks/write.lock`
   exists only while a write holds it, and processes on another machine or in a container that share
   the folder see it too (see [Sharing a vault between machines](#sharing-a-vault-between-machines)).
-  Files named `.write-lock.<…>` beside it live for an instant while a write takes or breaks the
-  lock. None of them is a note; keep them out of git and out of a sync tool.
+  Other files in `locks/` live for an instant while a write takes or breaks the lock. None of them
+  is a note; keep `.cuaderno/locks/` out of git and out of a sync tool (below).
 
 ## Sharing a vault between machines
 
-When one vault folder is reachable from two operating systems at once (a host and a container that
-mounts it, or two computers on a network share), the writes of both are kept apart by
-`.cuaderno/.write-lock`, a lock file both sides see: a write on one side waits for a write on the
-other, so neither replaces a note the other has just changed. What still matters:
+When one vault folder is reachable from two operating systems **at the same time** (a host and a
+container that mounts it, or two computers on a network share), the writes of both are kept apart by
+`.cuaderno/locks/write.lock`, a lock file both sides see: a write on one side waits for a write on
+the other, so neither replaces a note the other has just changed. What still matters:
 
-- **Every side must run a version that takes it** (a release after 0.46.0). An older `cdno` or
-  `cdno-mcp-server` does not know the lock file, and is no more excluded than an editor is.
+- **Upgrade every side together.** 0.46.0 and older take neither this lock nor the check that a note
+  did not change under a write, so with one side on such a version lines are still lost, silently.
+  An older `cdno` or `cdno-mcp-server` is no more excluded than an editor is.
 - **Writers that take no lock** (an editor, a sync tool) are not excluded by it. A write that finds
   the note changed under it refuses, writing nothing (see
   [Troubleshooting](../reference/troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared)).
-- **A writer that crashes holding the lock** leaves `.write-lock` behind. Writes then fail as busy
-  for up to 30 seconds, after which the next write takes the lock over by itself (see
-  [Troubleshooting](../reference/troubleshooting.md#a-write-fails-with-timed-out--waiting-for-the-vault-write-lock)).
+- **A writer that crashes holding the lock** leaves `write.lock` behind. The next write on the same
+  machine (or container of the same kernel) takes it over at once. One on the other machine waits
+  until the lock is 30 seconds old, failing as busy until then, and then takes it over by itself
+  (see [Troubleshooting](../reference/troubleshooting.md#a-write-fails-with-timed-out--waiting-for-the-vault-write-lock)).
+- **A writer paused while holding it** (a laptop asleep, a paused container) has it taken over once
+  it is 30 seconds old; when it wakes, its write stops and undoes itself. One that stops in the very
+  last instant of a write, between its last check and replacing the note, can still overwrite a
+  line the other side wrote meanwhile: the lock narrows that to one step, and nothing short of the
+  file server itself can close it.
 - **The config and the templates are not covered.** Editing `config.toml` or a template through
   cdno (`cdno config` edits, `cdno templates` eject, save and sync) takes no lock, on one machine
   or two; do that from one side at a time.
 - **Give each machine its own index**, next section: the lock keeps the notes safe, not a SQLite file
   shared between two kernels.
+- **Not on an object-store mount.** A bucket mounted as a folder cannot create a file exclusively
+  across two machines, so the lock excludes nothing there.
+
+**Synced copies are a different case.** A tool that keeps two copies of the vault in step (git,
+Syncthing, Dropbox, iCloud Drive) is not two machines writing one folder: each machine writes its own
+copy, its own lock keeps its own writers apart, and the tool resolves conflicts between the copies.
+The lock file does nothing across copies; a copy of it that the tool carries over can only make the
+other machine wait (up to 30 seconds), never lose a line. So keep the folder out of the sync:
+
+- git: a line `.cuaderno/locks/` in `.gitignore` (see [Initialise a vault](../getting-started/initialise-a-vault.md));
+  if it was ever committed, `git rm -r --cached .cuaderno/locks`.
+- Syncthing: a line `.cuaderno/locks` in `.stignore`.
+- Dropbox: mark `.cuaderno/locks` as ignored.
+- A tool with no ignore rules (iCloud Drive): expect an occasional wait of up to 30 seconds on the
+  other machine after a write here.
 
 ## Keeping the index on each machine
 

@@ -533,6 +533,10 @@ fn two_stores_with_independent_flocks_logging_to_one_daily_note_lose_no_line() {
                     vault
                         .log_to_daily_note(at(), &format!("kernel {name} line {n}"))
                         .expect("a writer the lock file excludes never needs a retry budget");
+                    // A short pause between calls, as callers make, so the
+                    // two writers' lines interleave rather than run in two
+                    // batches behind a lock taken back to back.
+                    std::thread::sleep(std::time::Duration::from_millis(3));
                 }
             })
         })
@@ -549,9 +553,16 @@ fn two_stores_with_independent_flocks_logging_to_one_daily_note_lose_no_line() {
             assert_eq!(count(&note, &line), 1, "{line:?} lost or doubled:\n{note}");
         }
     }
+    // The writers did contend: their lines alternate somewhere.
+    let order: Vec<char> = note
+        .lines()
+        .filter_map(|l| l.split("kernel ").nth(1).and_then(|r| r.chars().next()))
+        .collect();
+    let switches = order.windows(2).filter(|w| w[0] != w[1]).count();
+    assert!(switches > 1, "the two writers never interleaved:\n{note}");
     let lock = dir
         .path()
-        .join(".cuaderno")
+        .join(cdno_core::shared_lock::LOCKS_DIR)
         .join(cdno_core::shared_lock::LOCK_NAME);
     assert!(
         !lock.exists(),

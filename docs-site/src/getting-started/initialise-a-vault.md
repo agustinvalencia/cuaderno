@@ -95,7 +95,7 @@ git init && git add . && git commit -m "Initial vault"
 # and so are the write lock's files:
 echo ".cuaderno/index.db*" >> .gitignore
 echo ".cuaderno/.lock" >> .gitignore
-echo ".cuaderno/.write-lock*" >> .gitignore
+echo ".cuaderno/locks/" >> .gitignore
 ```
 
 Because the Markdown is the source of truth, your history is just your commits — nothing is locked

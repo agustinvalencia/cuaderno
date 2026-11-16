@@ -82,10 +82,6 @@ enum Rebind {
     NowBoundHere,
 }
 
-/// The text of the vault write lock's timeout ([`StoreError::LockTimeout`]),
-/// as it reaches here inside a rebuild's error message.
-const LOCK_TIMEOUT_TEXT: &str = "waiting for the vault write lock";
-
 /// Test-only, undocumented: when set, `--rebind` prints
 /// [`REBIND_LOCK_SIGNAL`] to stderr just before it takes the vault write
 /// lock (`tests/reindex.rs` waits for it).
@@ -307,9 +303,13 @@ fn rebuild_or_set_aside(
             "rebuilding the index at {}; it was left as it was",
             location.path.display()
         );
-        // The lock file's busy error (#1012) names its holder itself.
-        let text = e.to_string();
-        if text.contains(LOCK_TIMEOUT_TEXT) && !text.contains("another cdno process") {
+        if matches!(
+            e,
+            IndexError::Lock {
+                source: StoreError::LockTimeout(_),
+                ..
+            }
+        ) {
             context.push_str(LOCK_HINT);
         }
         anyhow::Error::new(e).context(context)
@@ -380,7 +380,7 @@ fn set_aside_under_lock(
     location: &IndexLocation,
     root: &Path,
 ) -> Result<bool> {
-    let _lock = store.acquire_write_lock().map_err(|e| {
+    let _lock = store.acquire_index_lock().map_err(|e| {
         lock_error(
             "taking the vault write lock to move the damaged index aside; nothing was moved",
             e,
@@ -429,7 +429,7 @@ fn discard_for_rebind(
     if std::env::var_os(REBIND_LOCK_SIGNAL_ENV).is_some() {
         eprintln!("{REBIND_LOCK_SIGNAL}");
     }
-    let _lock = store.acquire_write_lock().map_err(|e| {
+    let _lock = store.acquire_index_lock().map_err(|e| {
         lock_error(
             "taking the vault write lock to rebind the index; nothing was changed",
             e,

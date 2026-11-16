@@ -32,12 +32,10 @@ fn lint_does_not_report_the_write_lock_files() {
     // Markdown-looking one among them: `.cuaderno/` is not the vault's.
     let dir = tempdir().unwrap();
     init::run(dir.path()).expect("init");
-    for name in [
-        ".write-lock.a1b2.new",
-        ".write-lock.c3d4.stale",
-        ".write-lock.e5f6.probe.md",
-    ] {
-        fs::write(dir.path().join(".cuaderno").join(name), "token: 00\n").unwrap();
+    let locks = dir.path().join(cdno_core::shared_lock::LOCKS_DIR);
+    fs::create_dir_all(&locks).unwrap();
+    for name in ["a1b2.new", "c3d4.stale", "e5f6.probe.md"] {
+        fs::write(locks.join(name), "token: 00\n").unwrap();
     }
     lint::run(dir.path(), lint_day(), false).expect("lint finds nothing to report");
 }

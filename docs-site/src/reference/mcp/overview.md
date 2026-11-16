@@ -211,7 +211,8 @@ note is a rejection (`not_found`), and its message carries the list of slugs tha
 missing the section a tool writes into is a rejection. So is a name that is already taken.
 
 **A mechanical failure stays a JSON-RPC error** (`-32603`): a disk that would not write, permission
-denied, a contended write lock, an index that would not answer, a transaction that rolled back.
+denied, an index that would not answer, a transaction that rolled back and could not undo
+everything.
 Nothing the caller passed can fix those, so there is nothing to branch on. Malformed calls — an
 unknown tool, unparseable arguments — are protocol errors too (`-32602`), per the spec.
 
@@ -223,6 +224,8 @@ succeeds on the next call, because what was wrong was the moment, not the call.
 | Code | `details` | When |
 |---|---|---|
 | `concurrent_change` | `paths` | The files that changed underneath the write. Nothing was written. Make the same call again, reading the file first if what you are writing was composed from an earlier read of it. If it is refused again, tell the person another program is writing that file. |
+| `concurrent_change` | `paths: []`, `lock_lost: true` | The write's hold on the vault write lock was taken over by another writer while this server was paused or stalled, and the write undid everything it had written. Nothing was written; make the same call again. The tools that add to a note retry this too. |
+| `vault_busy` | `lock`, and `owner`, `age_secs`, `stale_after_secs` (the lock file), or `waited_secs` | Another cdno process, here or on another machine sharing the folder, held the vault write lock for the whole five-second wait. Nothing was done. Call again in a few seconds; a crashed writer's lock is taken over once it is `stale_after_secs` old. |
 
 The tools that add to a note have already made up to five attempts before you see it:
 `append_to_log`, `note_to_daily`, `upsert_daily_section` with `append`, `capture`,

@@ -38,9 +38,10 @@ docs-site/book/
 # `index.db.previous` it keeps (#526).
 .cuaderno/index.db*
 .cuaderno/.lock
-# The write lock file every kernel sees, and its temp, probe and aside
-# names (#1012): present only while a write holds it.
-.cuaderno/.write-lock*
+# The folder of the write lock file every kernel sees, with its temp,
+# probe and aside files (#1012): the lock is present only while a write
+# holds it.
+.cuaderno/locks/
 
 # ...and the notes it accumulates. The repo root is a vault, so any `cdno`
 # run from here writes real notes into these folders -- a `cdno log` while

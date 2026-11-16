@@ -155,6 +155,28 @@ the error's own text; the MCP message words its advice for an agent instead.
 Running the same command again is safe. The commands that add to a note have already retried
 several times; see [troubleshooting](troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared).
 
+The same code, with `"paths": []` and `"lock_lost": true`, is a write that stopped because its hold
+on the vault write lock was taken over by another writer while it was paused, and that undid
+everything it had written: again nothing was written, and again it exits `75`.
+
+## The vault write lock stayed busy → `vault_busy`, exit `75`
+
+Another `cdno` command or server, on this machine or on another one sharing the folder, held the
+vault write lock for the whole five seconds the write waited. Nothing was done, and it exits `75`.
+`details` names the lock and, for the lock file another machine sees, its `owner` (in words), its
+`age_secs` and the `stale_after_secs` at which a crashed writer's lock is taken over; for the lock
+only this machine's processes see, `waited_secs`.
+
+```json
+{
+  "code": "vault_busy",
+  "message": "timed out after 5s waiting for the vault write lock: .cuaderno/locks/write.lock is held by cdno-mcp-server 0.47.0 (…), and is 3s old; …",
+  "details": { "lock": ".cuaderno/locks/write.lock", "owner": "cdno-mcp-server 0.47.0 (…)", "age_secs": 3, "stale_after_secs": 30 }
+}
+```
+
+See [troubleshooting](troubleshooting.md#a-write-fails-with-timed-out--waiting-for-the-vault-write-lock).
+
 ## `search --json` → an array of hits
 
 Ranked best-first; each hit:

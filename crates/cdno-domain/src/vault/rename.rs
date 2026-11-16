@@ -1314,7 +1314,12 @@ impl Vault {
             // A file the plan read changed underneath it (#1001): nothing
             // was written, or what was is rolled back, and the destination
             // folder may be left empty as after a failed write.
-            Err(conflict @ TransactionError::Conflict { .. }) => {
+            // The vault write lock was broken under the rename (#1012): it
+            // stopped and undid what it could; the error names any file it
+            // could not undo.
+            Err(
+                conflict @ (TransactionError::Conflict { .. } | TransactionError::LockLost { .. }),
+            ) => {
                 if let Some((_, new_folder)) = &folders {
                     prune_folder_tree(&*self.store, new_folder);
                 }
@@ -1566,7 +1571,7 @@ fn failed_path(error: &cdno_core::error::StoreError) -> Option<VaultPath> {
         | StoreError::OutsideVault(p)
         | StoreError::Io { path: p, .. } => p,
         StoreError::Changed(p) => return Some(p.clone()),
-        StoreError::LockTimeout(_) | StoreError::LockBusy { .. } | StoreError::LockLost { .. } => {
+        StoreError::LockTimeout(_) | StoreError::LockBusy { .. } => {
             return None;
         }
     };

@@ -17,8 +17,9 @@ use crate::shared_lock::{self, SharedLock};
 /// [`StoreError::LockBusy`] naming its holder) rather than an unbounded
 /// hang; mirrors the SQLite index's `busy_timeout`. One deadline covers
 /// both locks. The OS releases the `flock` on process death; a crashed
-/// holder's lock file is broken once it is
-/// [`STALE_AFTER`](crate::shared_lock::STALE_AFTER) old, so until then a
+/// holder's lock file is broken at once by a writer on its kernel, and by
+/// one on another kernel once it is
+/// [`STALE_AFTER`](crate::shared_lock::STALE_AFTER) old, until when such a
 /// writer waits this long and fails as busy.
 const WRITE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -31,11 +32,13 @@ pub const WIP_TEMP_PREFIX: &str = ".cdno-wip-";
 
 /// Guard for the vault write lock (#196, #1012). For [`FsVaultStore`] it
 /// holds an OS advisory lock on `.cuaderno/.lock` (which orders the
-/// writers of one kernel) and then the lock file every kernel sees,
-/// `.cuaderno/.write-lock` (see [`crate::shared_lock`]); for in-memory
+/// writers of one kernel) and, unless taken for the index only
+/// ([`VaultStore::acquire_index_lock`]), the lock file every kernel sees,
+/// `.cuaderno/locks/write.lock` (see [`crate::shared_lock`]); for in-memory
 /// stores it is a no-op. Both release when this guard drops, the lock file
 /// first. On process death the OS frees the `flock`; the lock file is left,
-/// and broken by the next writer once it is stale.
+/// and broken by the next writer (at once on the same kernel, after
+/// [`STALE_AFTER`](crate::shared_lock::STALE_AFTER) on another).
 #[derive(Debug)]
 pub struct VaultWriteLock {
     file: Option<File>,
@@ -52,21 +55,40 @@ impl VaultWriteLock {
     }
 
     /// Whether this guard still holds the vault write lock file (#1012):
-    /// `Err(`[`StoreError::LockLost`]`)` when another writer broke it as
-    /// stale. A no-op guard, and one taken without the lock file, always
-    /// holds. A commit checks this before each file operation, so a holder
-    /// whose lock was broken never replaces a file after that.
-    pub fn verify(&self) -> Result<(), StoreError> {
+    /// false when another writer broke it (this process was suspended past
+    /// the stale interval). A no-op guard, and one without the lock file,
+    /// always holds. Refreshes the lock's mtime when it is due, so a holder
+    /// that keeps asking is never taken for a crashed one. A commit asks
+    /// before each file operation and again right before each rename; any
+    /// other holder asks before its decisive step.
+    pub fn still_held(&self) -> Result<bool, StoreError> {
         match &self.shared {
-            Some(shared) => shared.verify(),
-            None => Ok(()),
+            Some(shared) => shared.still_held(),
+            None => Ok(true),
         }
     }
 
-    /// Whether taking this lock broke a stale lock file left by another
-    /// writer (#1012). Diagnostic: a warning is logged when it happens.
+    /// Whether this guard holds the lock file every kernel sees, as opposed
+    /// to the `flock` alone (or nothing).
+    pub fn has_lock_file(&self) -> bool {
+        self.shared.is_some()
+    }
+
+    /// Whether taking this lock broke another writer's lock file (#1012),
+    /// and why. Diagnostic: a warning is logged when it happens.
+    pub fn broke_lock(&self) -> Option<crate::shared_lock::BreakReason> {
+        self.shared.as_ref().and_then(SharedLock::broke)
+    }
+
+    /// Whether taking this lock broke another writer's lock file.
     pub fn broke_stale_lock(&self) -> bool {
-        self.shared.as_ref().is_some_and(SharedLock::broke_stale)
+        self.broke_lock().is_some()
+    }
+
+    /// Let the store's conditional writes on this thread check this lock
+    /// right before their rename, until the returned scope drops.
+    pub(crate) fn in_commit(&self) -> Option<crate::shared_lock::CommitScope> {
+        self.shared.as_ref().map(SharedLock::in_commit)
     }
 }
 
@@ -135,6 +157,9 @@ impl VaultStore for LockHeldStore {
         self.0.import_external(src, dest)
     }
     fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
+        Ok(VaultWriteLock::noop())
+    }
+    fn acquire_index_lock(&self) -> Result<VaultWriteLock, StoreError> {
         Ok(VaultWriteLock::noop())
     }
     // The comparison (#1001) is the inner store's: only the lock differs.
@@ -292,10 +317,22 @@ pub trait VaultStore: Send + Sync {
     /// doubles, which share no on-disk file across processes.
     /// [`FsVaultStore`] overrides it with an OS advisory lock, then the lock
     /// file every kernel sees (#1012, [`crate::shared_lock`]). Every holder
-    /// of the vault write lock comes through here, so every one takes both:
-    /// transactions, an index rebuild's locked pass, the git checkpoint.
+    /// that writes notes, or reads them for a write, comes through here:
+    /// every transaction that stages a file op, and the git checkpoint.
     fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
         Ok(VaultWriteLock::noop())
+    }
+
+    /// Acquire the vault write lock for a holder that writes only this
+    /// machine's index and no note: reconciliation's per-note index
+    /// transactions, link re-resolution, an index rebuild's locked pass, the
+    /// index's set-aside and reopen. [`FsVaultStore`] takes the `flock`
+    /// alone, which orders this kernel's index writers; the lock file guards
+    /// notes across kernels, and each kernel's index is its own (#998), so
+    /// these holders neither pay for it nor keep the other kernel's writers
+    /// waiting. The default takes the full lock, which is never wrong.
+    fn acquire_index_lock(&self) -> Result<VaultWriteLock, StoreError> {
+        self.acquire_write_lock()
     }
 
     // ---- compare before rename (#1001) ---------------------------------
@@ -827,13 +864,39 @@ impl FsVaultStore {
     /// stores over one folder with different lock files hold their
     /// `flock`s independently, which is how a test reproduces a folder
     /// written from two kernels, where `flock` is not shared (#1001). They
-    /// still contend for the lock file in the vault's `.cuaderno/` (#1012),
+    /// still contend for the lock file in the vault's `.cuaderno/locks/` (#1012),
     /// as two kernels do; add [`without_shared_lock`](Self::without_shared_lock)
     /// for writers no lock excludes. A real vault always locks
     /// `.cuaderno/.lock`.
+    ///
+    /// Such a store stands for another kernel, so it is also given a boot
+    /// identifier of its own, derived from `lock_file`: otherwise the
+    /// same-kernel break (#1012) would take another "kernel"'s live lock in
+    /// the same test process for a dead one. [`with_boot_id`](Self::with_boot_id)
+    /// overrides it.
     #[cfg(feature = "test-support")]
     pub fn with_lock_file(mut self, lock_file: impl Into<PathBuf>) -> Self {
-        self.lock_file = Some(lock_file.into());
+        let lock_file = lock_file.into();
+        self.shared_lock_options.boot = Some(format!("test-kernel-{}", lock_file.display()));
+        self.lock_file = Some(lock_file);
+        self
+    }
+
+    /// Write `boot` as this store's kernel boot identifier in its lock
+    /// records, and break at once a lock whose record carries it (test
+    /// seam, `test-support` only). `None` turns the same-kernel break off.
+    #[cfg(feature = "test-support")]
+    pub fn with_boot_id(mut self, boot: Option<&str>) -> Self {
+        self.shared_lock_options.boot = boot.map(str::to_owned);
+        self
+    }
+
+    /// Run `hook` when this store has moved aside a lock that is not the
+    /// one it judged breakable, right before it puts it back (test seam,
+    /// `test-support` only).
+    #[cfg(feature = "test-support")]
+    pub fn with_after_wrong_move_hook(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
+        self.shared_lock_options.hooks.after_wrong_move = Some(Arc::new(hook));
         self
     }
 
@@ -846,6 +909,15 @@ impl FsVaultStore {
     #[cfg(feature = "test-support")]
     pub fn without_shared_lock(mut self) -> Self {
         self.shared_lock = false;
+        self
+    }
+
+    /// Refresh a held lock file at its next ownership check once it is
+    /// `after` old, instead of five seconds (test seam, `test-support`
+    /// only).
+    #[cfg(feature = "test-support")]
+    pub fn with_refresh_after(mut self, after: Duration) -> Self {
+        self.shared_lock_options.refresh_after = after;
         self
     }
 
@@ -995,6 +1067,14 @@ impl FsVaultStore {
         // done; the comparisons below are the last thing before the rename.
         if let Some(hook) = &self.hooks.before_compare {
             hook();
+        }
+        // A commit's write: is its vault write lock file still its own
+        // (#1012)? Checked here, after the slow part, so what is left
+        // uncovered is the comparison and the rename alone. A lost lock is
+        // reported as `Changed` (nothing was written to the path); the
+        // transaction then asks the lock itself, and reports the loss.
+        if expected.is_some() && !crate::shared_lock::commit_still_holds()? {
+            return Err(StoreError::Changed(path.clone()));
         }
         match expected {
             None => {
@@ -1406,7 +1486,46 @@ impl VaultStore for FsVaultStore {
     }
 
     fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
-        // Both locks live in `.cuaderno/` — present in any real vault, but
+        let (file, started, deadline) = self.take_flock()?;
+        // Then the lock file another kernel sees (#1012), within the same
+        // deadline. Under the `flock`, so only one process of this kernel
+        // polls for it. On failure the `flock` is released with `file`.
+        let shared = if self.shared_lock {
+            let dir = self.root.join(shared_lock::LOCKS_DIR);
+            fs::create_dir_all(&dir).map_err(|e| StoreError::Io {
+                path: shared_lock::LOCKS_DIR.to_string(),
+                source: e,
+            })?;
+            Some(shared_lock::acquire(
+                &dir,
+                deadline,
+                started,
+                &self.shared_lock_options,
+            )?)
+        } else {
+            None
+        };
+        Ok(VaultWriteLock {
+            file: Some(file),
+            shared,
+        })
+    }
+
+    fn acquire_index_lock(&self) -> Result<VaultWriteLock, StoreError> {
+        let (file, _, _) = self.take_flock()?;
+        Ok(VaultWriteLock {
+            file: Some(file),
+            shared: None,
+        })
+    }
+}
+
+impl FsVaultStore {
+    /// Take the `flock` on `.cuaderno/.lock`, polling to this store's lock
+    /// deadline. Returns the locked file, when the wait began, and the
+    /// deadline, which a following lock-file wait shares.
+    fn take_flock(&self) -> Result<(File, Instant, Instant), StoreError> {
+        // The lock lives in `.cuaderno/` — present in any real vault, but
         // create it defensively so a freshly-`init`ed vault locks too.
         let dir = self.root.join(crate::paths::CUADERNO_DIR);
         fs::create_dir_all(&dir).map_err(|e| StoreError::Io {
@@ -1435,7 +1554,7 @@ impl VaultStore for FsVaultStore {
         let deadline = started + self.lock_timeout;
         loop {
             match file.try_lock() {
-                Ok(()) => break,
+                Ok(()) => return Ok((file, started, deadline)),
                 Err(TryLockError::WouldBlock) => {
                     if Instant::now() >= deadline {
                         return Err(StoreError::LockTimeout(self.lock_timeout));
@@ -1450,23 +1569,5 @@ impl VaultStore for FsVaultStore {
                 }
             }
         }
-
-        // Then the lock file another kernel sees (#1012), within the same
-        // deadline. Under the `flock`, so only one process of this kernel
-        // polls for it. On failure the `flock` is released with `file`.
-        let shared = if self.shared_lock {
-            Some(shared_lock::acquire(
-                &dir,
-                deadline,
-                started,
-                &self.shared_lock_options,
-            )?)
-        } else {
-            None
-        };
-        Ok(VaultWriteLock {
-            file: Some(file),
-            shared,
-        })
     }
 }

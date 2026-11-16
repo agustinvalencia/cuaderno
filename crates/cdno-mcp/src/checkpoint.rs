@@ -389,18 +389,43 @@ async fn await_tick(
 /// fatal; the lock guarantees no half-applied transaction or temp
 /// sibling is committed.
 fn checkpoint_once(root: &Path, mode: &CheckpointMode, paused_op_warned: &AtomicU64) -> Pass {
-    // Serialise against all vault writers (this process's transactions
-    // and any cross-process cdno CLI) via the same flock they take.
+    // A clean tree needs no lock (#1012): a look without it, so a tick with
+    // nothing to do never keeps another kernel's writers waiting behind a
+    // `git status`. A writer mid-commit leaves no trace git sees (its temp
+    // file is excluded), so a tree seen clean here is caught next tick.
+    if let Ok(status) = run_git(root, &["status", "--porcelain"])
+        && status.status.success()
+        && status.stdout.is_empty()
+    {
+        paused_op_warned.store(0, Ordering::Relaxed);
+        return Pass::Ok(None);
+    }
+
+    // Serialise against all vault writers (this process's transactions,
+    // any cross-process cdno CLI, and the writers of another kernel) via
+    // the same locks they take.
     let store = FsVaultStore::new(root);
-    let _lock = match store.acquire_write_lock() {
+    let lock = match store.acquire_write_lock() {
         Ok(guard) => guard,
         // Lock contention is transient by construction: a writer holds
         // it briefly. Skip this tick; the next one will get it.
         Err(e) => return Pass::Transient(format!("vault write lock: {e}")),
     };
+    // Asked before staging and before committing: a lock broken while git
+    // ran (a slow share, a suspended container) has a successor whose
+    // commit may be half-applied, which must not enter the history.
+    let still_held = || match lock.still_held() {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(CheckpointError::GitExit(
+            "the vault write lock was broken by another writer while this sweep held it; \
+             skipping, the next tick commits"
+                .to_owned(),
+        )),
+        Err(e) => Err(CheckpointError::GitExit(format!("vault write lock: {e}"))),
+    };
 
     let outcome = match mode {
-        CheckpointMode::Commit => git_commit_if_dirty(root, paused_op_warned),
+        CheckpointMode::Commit => git_commit_if_dirty_held(root, paused_op_warned, &still_held),
         CheckpointMode::NudgeOnly(nudge) => nudge_if_dirty(root, nudge, paused_op_warned),
     };
     match outcome {
@@ -437,9 +462,20 @@ impl From<GitError> for CheckpointError {
 
 /// Commit everything if the tree is dirty. `Ok(None)` when clean.
 /// Assumes the caller holds the vault write lock.
+#[cfg(test)]
 fn git_commit_if_dirty(
     root: &Path,
     paused_op_warned: &AtomicU64,
+) -> Result<Option<String>, CheckpointError> {
+    git_commit_if_dirty_held(root, paused_op_warned, &|| Ok(()))
+}
+
+/// [`git_commit_if_dirty`], asking `still_held` whether the caller still
+/// holds the vault write lock right before `git add` and `git commit`.
+fn git_commit_if_dirty_held(
+    root: &Path,
+    paused_op_warned: &AtomicU64,
+    still_held: &dyn Fn() -> Result<(), CheckpointError>,
 ) -> Result<Option<String>, CheckpointError> {
     let status = run_git(root, &["status", "--porcelain"])?;
     if !status.status.success() {
@@ -469,6 +505,7 @@ fn git_commit_if_dirty(
 
     let dirty_paths = status.stdout.iter().filter(|&&b| b == b'\n').count();
 
+    still_held()?;
     let add = run_git(root, &["add", "-A"])?;
     if !add.status.success() {
         return Err(CheckpointError::GitExit(format!(
@@ -478,6 +515,7 @@ fn git_commit_if_dirty(
     }
 
     let message = format!("cdno-mcp checkpoint ({dirty_paths} path(s))");
+    still_held()?;
     let commit = run_git(
         root,
         &[
@@ -634,16 +672,15 @@ fn warn_paused_op(last_warned: &AtomicU64, op: &PausedGitOp) {
 /// top ([`relocated_index_exclude_pattern`]); one outside the vault needs
 /// none.
 ///
-/// The third is the vault write lock file (#1012) and its siblings (the
-/// temp file a new lock is written to, the age probe, a broken lock's
-/// aside name): the sweep runs holding the lock, so `git add -A` would
-/// otherwise stage it, and the release right after would leave the tree
-/// dirty again.
+/// The third is the folder of the vault write lock file (#1012), which
+/// holds the lock and its temp, probe and aside files: the sweep runs
+/// holding the lock, so `git add -A` would otherwise stage it, and the
+/// release right after would leave the tree dirty again.
 fn excluded_patterns() -> [String; 3] {
     [
         format!("{}*", cdno_core::store::WIP_TEMP_PREFIX),
         format!("/{}*", cdno_core::paths::INDEX_DB),
-        format!("/{}*", cdno_core::shared_lock::LOCK_PATH),
+        format!("/{}/", cdno_core::shared_lock::LOCKS_DIR),
     ]
 }
 
@@ -961,14 +998,10 @@ mod tests {
         init_repo(dir.path());
         ensure_wip_excluded(dir.path()).unwrap();
         let cuaderno = dir.path().join(".cuaderno");
-        std::fs::create_dir_all(&cuaderno).unwrap();
-        for name in [
-            ".write-lock",
-            ".write-lock.a1b2.new",
-            ".write-lock.c3d4.probe",
-            ".write-lock.e5f6.stale",
-        ] {
-            std::fs::write(cuaderno.join(name), b"x").unwrap();
+        let locks = dir.path().join(cdno_core::shared_lock::LOCKS_DIR);
+        std::fs::create_dir_all(&locks).unwrap();
+        for name in ["write.lock", "a1b2.new", "c3d4.probe", "e5f6.stale"] {
+            std::fs::write(locks.join(name), b"x").unwrap();
         }
         std::fs::write(cuaderno.join("config.toml"), b"x").unwrap();
         let out = run_git(
@@ -978,7 +1011,7 @@ mod tests {
         .unwrap();
         let status = String::from_utf8_lossy(&out.stdout);
         assert!(status.contains("config.toml"), "{status}");
-        assert!(!status.contains("write-lock"), "{status}");
+        assert!(!status.contains("locks"), "{status}");
     }
 
     #[test]

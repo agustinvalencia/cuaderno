@@ -61,7 +61,8 @@ impl Vault {
         if self.fillable_snapshots()?.is_empty() {
             return Ok(());
         }
-        let mut tx = VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))?;
+        let mut tx =
+            VaultTransaction::index_only(Arc::clone(&self.store), Arc::clone(&self.index))?;
         let fillable = self.fillable_snapshots()?;
         if fillable.is_empty() {
             return Ok(());

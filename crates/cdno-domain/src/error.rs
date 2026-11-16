@@ -150,10 +150,27 @@ impl DomainError {
     /// Whether this is a commit refused because a file it would replace
     /// changed underneath it (#1001), in which case nothing was written and
     /// running the operation again is safe.
+    ///
+    /// A write whose vault write lock was broken under it (#1012) and that
+    /// undid everything it had applied counts too: nothing was written, and
+    /// running it again, with a fresh lock, is as safe.
     pub fn is_concurrent_change(&self) -> bool {
+        match self {
+            DomainError::Transaction(TransactionError::Conflict { .. }) => true,
+            DomainError::Transaction(TransactionError::LockLost {
+                rollback_failures, ..
+            }) => rollback_failures.is_empty(),
+            _ => false,
+        }
+    }
+
+    /// Whether this is the vault write lock held by another writer for the
+    /// whole wait (#1012): nothing was done, and the same call later is the
+    /// remedy. Not retried here, since the wait has already been spent.
+    pub fn is_vault_busy(&self) -> bool {
         matches!(
             self,
-            DomainError::Transaction(TransactionError::Conflict { .. })
+            DomainError::Store(StoreError::LockBusy { .. } | StoreError::LockTimeout(_))
         )
     }
 }

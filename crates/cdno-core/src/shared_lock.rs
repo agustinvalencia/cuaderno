@@ -6,174 +6,285 @@
 //! writers that both hold "the" `flock`, and their read-modify-writes of
 //! one note can lose a line even with the compare before rename of #1001.
 //! This module adds a lock both sides see: a lock *file*,
-//! `.cuaderno/.write-lock`, whose creation is exclusive on the filesystem
-//! that holds it, however many kernels reach it.
+//! `.cuaderno/locks/write.lock`, whose creation is exclusive on the
+//! filesystem that holds it, however many kernels reach it. Every file of
+//! the protocol lives in `.cuaderno/locks/`, so one rule excludes them all.
 //!
 //! `FsVaultStore`'s
 //! [`acquire_write_lock`](crate::store::VaultStore::acquire_write_lock)
 //! takes it after the `flock`, so only one process per kernel ever polls
 //! for it, and holds it for as long as the `flock`: the life of a
-//! transaction, or of any other holder of the vault write lock.
+//! transaction, or of the git checkpoint. Holders that write only this
+//! machine's index take the `flock` alone
+//! ([`acquire_index_lock`](crate::store::VaultStore::acquire_index_lock)).
 //! `docs/concurrent-writers.md` has the design and the reasoning; in short:
 //!
-//! - **Create.** The owner record is written to a temp file beside the
-//!   lock, which is then hard-linked to the lock's name. A link refuses an
-//!   existing name, on the host, so exactly one contender's link succeeds.
-//!   On a network filesystem a lost reply to a link that was made returns
-//!   an error; a link count of 2 on the temp file says it was made. A
-//!   filesystem without hard links gets the no-clobber rename instead, and
-//!   one without that either an exclusive create (which leaves the lock
-//!   briefly empty: a reader then sees no owner, nothing worse).
-//! - **Wait.** A held lock is polled with doubling, jittered pauses inside
-//!   the vault lock's timeout, then reported as busy with its owner and
-//!   age ([`StoreError::LockBusy`]).
+//! - **Create.** The owner record is written to a temp file in the locks
+//!   folder, which is then hard-linked to the lock's name. A link refuses
+//!   an existing name, on the filesystem that holds the folder, so exactly
+//!   one contender's link succeeds. On a network filesystem a lost reply to
+//!   a link that was made returns an error; a link count of 2 on the temp
+//!   file, or the contender's own token found at the lock's name, says it
+//!   was made. A filesystem without hard links gets the no-clobber rename
+//!   instead, and one without that either an exclusive create (which leaves
+//!   the lock briefly empty: a reader then sees no owner, and does not
+//!   break it on that look).
+//! - **Wait.** The contender keeps its one temp file and polls by trying
+//!   the link again, with doubling, jittered pauses of at most
+//!   [`LONGEST_PAUSE`], inside the vault lock's timeout, then reports busy
+//!   with the owner and age ([`StoreError::LockBusy`]).
 //! - **Age.** The lock's mtime is compared with that of a probe file made
-//!   now in the same folder, so both times come from one clock (the
-//!   filesystem's). The probe is made only when the lock is found held, and
-//!   once per lock seen; later polls add the time waited since.
-//! - **Break.** A lock at least [`STALE_AFTER`] old is taken for a crashed
-//!   holder's. It is renamed to a name unique to the contender; of two
-//!   contenders that judged it stale, only one rename finds it. The winner
-//!   checks that what it moved is the lock it judged (a younger lock may
-//!   have replaced it in between: that one is put back) and then contends
-//!   afresh.
-//! - **Ownership.** Age cannot tell a crashed holder from a suspended one,
-//!   which wakes after its lock was broken. So a holder checks that the
-//!   file at the lock's name is still its own (one open, `fstat` and read:
-//!   the same inode and the same token in its record) before every file
-//!   operation of a commit, and refuses to go on if not
-//!   ([`StoreError::LockLost`]). Release removes the lock only if it is
-//!   still the holder's own.
+//!   now in the same folder. That is one clock only where the filesystem,
+//!   not the writing kernel, stamps both. The probe is made only when the
+//!   lock is found held, and once per lock seen.
+//! - **Break.** A lock at least [`STALE_AFTER`] old, or one whose record
+//!   names this kernel's boot while this process holds this kernel's
+//!   `flock` (so its holder is dead), is renamed to a name unique to the
+//!   contender, after one more look that it is still the lock judged; of
+//!   two contenders, only one rename finds it. The winner checks what it
+//!   moved is the lock it judged (a younger lock may have replaced it in
+//!   between: that one is put back) and contends afresh.
+//! - **Ownership.** A holder checks, before every file operation of a
+//!   commit and again just before each rename, that the file at the lock's
+//!   name carries its token (one open and read; a name found missing is
+//!   looked at once more after a pause, since a contender may have moved it
+//!   aside by mistake and be putting it back). It refuses to go on if not.
+//!   The same check refreshes the lock's mtime, with the filesystem's
+//!   clock, once it is a few seconds old, so a long commit is not taken for
+//!   a crashed one. Release removes the lock only if it is still the
+//!   holder's own.
 //!
-//! No heartbeat and no `fsync`: the lock is a coordination file, not data,
-//! and a crash at worst leaves it to be broken after [`STALE_AFTER`].
+//! No heartbeat thread and no `fsync`: the lock is a coordination file, not
+//! data, and a crash at worst leaves it to be broken after [`STALE_AFTER`]
+//! (at once on the same kernel).
 
+use std::cell::RefCell;
 use std::fs::{self, File, OpenOptions};
 use std::hash::{BuildHasher, Hasher};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::error::StoreError;
 
-/// The lock's file name inside `.cuaderno/`.
-pub const LOCK_NAME: &str = ".write-lock";
+/// The folder, inside the vault, that holds every file of the protocol.
+pub const LOCKS_DIR: &str = ".cuaderno/locks";
 
-/// The lock's vault-relative path, as messages and ignore rules name it.
-pub const LOCK_PATH: &str = ".cuaderno/.write-lock";
+/// The lock's file name inside [`LOCKS_DIR`].
+pub const LOCK_NAME: &str = "write.lock";
 
-/// The start of the name of every file this protocol makes in `.cuaderno/`:
-/// the lock itself, the temp file a new lock's record is written to
-/// (`.write-lock.<random>.new`), the probe that reads the folder's clock
-/// (`.write-lock.<token>.probe`), and the name a broken lock is moved to
-/// (`.write-lock.<token>.stale`). Ignore rules cover them all with
-/// `.write-lock*`. All but the lock live for microseconds; one left by a
-/// crash is removed when a later contender breaks a stale lock.
-pub const LOCK_PREFIX: &str = ".write-lock";
+/// The lock's vault-relative path, as messages name it.
+pub const LOCK_PATH: &str = ".cuaderno/locks/write.lock";
 
 /// The age at which a lock is taken for a crashed holder's and broken.
 ///
-/// Far above the longest legitimate hold (a rename or a method migration
-/// rewriting many notes, a git checkpoint, the locked pass of an index
-/// rebuild: seconds, see `docs/concurrent-writers.md`), and above any clock
-/// skew between two synced machines. The cost of the margin: a holder that
-/// crashed makes writes fail as busy until its lock is this old, and then
-/// the next writer breaks it with nobody's help. A holder that does run
-/// past it is not trusted to: its next file operation refuses once its
-/// lock has been broken.
+/// A live holder refreshes its lock at every file operation once it is
+/// [`REFRESH_AFTER`] old, so only a holder that stops (crashed, suspended,
+/// or stuck in one step for this long) reaches it. The cost of the margin:
+/// a holder that crashed on another kernel makes writes fail as busy until
+/// its lock is this old, and then the next writer breaks it with nobody's
+/// help.
 pub const STALE_AFTER: Duration = Duration::from_secs(30);
 
-/// The first pause between polls of a held lock; each pause doubles up to
-/// [`LONGEST_PAUSE`], and each is jittered down to half its length.
-const FIRST_PAUSE: Duration = Duration::from_millis(2);
-const LONGEST_PAUSE: Duration = Duration::from_millis(50);
+/// How old a holder lets its lock get, by its own monotonic clock, before
+/// its next ownership check refreshes the lock's mtime.
+pub const REFRESH_AFTER: Duration = Duration::from_secs(5);
 
-/// How much of a lock's owner record a contender reads.
+/// The first pause between attempts on a held lock; each pause doubles up
+/// to [`LONGEST_PAUSE`], and each is jittered down to half its length.
+const FIRST_PAUSE: Duration = Duration::from_millis(1);
+/// The longest pause between two attempts: short, so a side that waits is
+/// not starved by one that takes the lock back to back.
+pub const LONGEST_PAUSE: Duration = Duration::from_millis(10);
+
+/// How often a waiting contender reads the lock it is waiting on (for its
+/// age and owner); the attempts in between are one `link` each.
+const LOOK_EVERY: Duration = Duration::from_millis(100);
+
+/// The pause after the lock's name was found missing by its holder, before
+/// the one more look that decides it was lost; longer than a contender's
+/// rename aside, open and link back on a slow share.
+const RELOOK_PAUSE: Duration = Duration::from_millis(50);
+
+/// The pause when the link said the name is taken and a look then found it
+/// free: no spin while a client's cache disagrees with itself.
+const VANISHED_PAUSE: Duration = Duration::from_millis(2);
+
+/// How much of a lock's owner record is read.
 const RECORD_LIMIT: u64 = 4096;
+
+/// Why a lock was broken, for the warning and for tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BreakReason {
+    /// It was at least [`STALE_AFTER`] old.
+    Age,
+    /// Its record names this kernel's boot and another process, and this
+    /// process holds this kernel's `flock`, which a live holder would hold.
+    DeadOnThisKernel,
+}
 
 /// Points at which a test can step into the protocol (`test-support`).
 #[derive(Clone, Default)]
 pub(crate) struct Hooks {
-    /// Runs when a contender has judged a lock stale, right before it
-    /// renames it aside.
+    /// Runs when a contender has judged a lock breakable and looked once
+    /// more, right before it renames it aside.
     pub(crate) before_break: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Runs when a contender has moved aside a lock that is not the one it
+    /// judged, right before it puts it back.
+    pub(crate) after_wrong_move: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl std::fmt::Debug for Hooks {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Hooks")
             .field("before_break", &self.before_break.is_some())
+            .field("after_wrong_move", &self.after_wrong_move.is_some())
             .finish()
     }
 }
 
-/// Which lock is at the lock's name: its inode (on Unix) and the token in
-/// its record. Either alone could mislead: an inode number is reused once
-/// the file is gone (locally the holder prevents that by keeping its lock
-/// open, but an NFSv3 server knows nothing of a client's open file), and a
-/// record is empty for the moment an exclusive create leaves it so.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Identity {
-    inode: Option<(u64, u64)>,
-    token: String,
+/// How [`acquire`] behaves; the defaults are the production values.
+#[derive(Debug, Clone)]
+pub(crate) struct Options {
+    pub(crate) stale_after: Duration,
+    pub(crate) refresh_after: Duration,
+    /// This kernel's boot, as written into a record; `None` where it is
+    /// not known, which turns the same-kernel break off.
+    pub(crate) boot: Option<String>,
+    pub(crate) hooks: Hooks,
 }
 
-fn identity_of(meta: &fs::Metadata, record: &str) -> Identity {
-    #[cfg(unix)]
-    let inode = {
-        use std::os::unix::fs::MetadataExt;
-        Some((meta.dev(), meta.ino()))
-    };
-    #[cfg(not(unix))]
-    let inode = {
-        let _ = meta;
-        None
-    };
-    Identity {
-        inode,
-        token: record_field(record, "token").unwrap_or_default().to_owned(),
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            stale_after: STALE_AFTER,
+            refresh_after: REFRESH_AFTER,
+            boot: kernel_boot_id(),
+            hooks: Hooks::default(),
+        }
     }
 }
 
-/// A lock found at the lock's name.
+/// Which lock is at the lock's name: the token in its record and, as a
+/// tie-break for a record not yet written, its inode. The token decides:
+/// inode numbers are per name on some filesystems (high-level FUSE), are
+/// reused at once on others (FAT), and change on others when a file is
+/// first written.
+#[derive(Debug, Clone)]
+struct Identity {
+    token: String,
+    inode: Option<(u64, u64)>,
+}
+
+impl Identity {
+    fn same(&self, other: &Identity) -> bool {
+        if self.token.is_empty() || other.token.is_empty() {
+            self.token == other.token && self.inode.is_some() && self.inode == other.inode
+        } else {
+            self.token == other.token
+        }
+    }
+}
+
+/// A lock found at a name.
 struct Seen {
     id: Identity,
     mtime: SystemTime,
     record: String,
 }
 
+impl Seen {
+    fn field(&self, key: &str) -> Option<&str> {
+        record_field(&self.record, key)
+    }
+}
+
+/// The state of a held lock, shared with the commit's late check.
+#[derive(Debug)]
+struct Held {
+    dir: PathBuf,
+    token: String,
+    /// The lock file, kept open while held: its link count says whether it
+    /// still has a name at all, and its descriptor refreshes its mtime.
+    file: File,
+    /// Whether the descriptor's link count means anything here (it was at
+    /// least 1 when the lock was taken).
+    nlink_known: bool,
+    refresh_after: Duration,
+    refreshed: Mutex<Instant>,
+}
+
+impl Held {
+    /// Whether the lock is still this holder's, refreshing it when due.
+    fn check(&self) -> io::Result<bool> {
+        if self.nlink_known && descriptor_link_count(&self.file) == Some(0) {
+            return Ok(false);
+        }
+        let lock = self.dir.join(LOCK_NAME);
+        let mut seen = look(&lock)?;
+        if seen.is_none() {
+            // Maybe moved aside by a contender that judged another lock
+            // and is putting this one back: look once more.
+            std::thread::sleep(RELOOK_PAUSE);
+            seen = look(&lock)?;
+        }
+        let mine = seen.is_some_and(|s| s.id.token == self.token);
+        if mine {
+            self.refresh_if_due();
+        }
+        Ok(mine)
+    }
+
+    fn refresh_if_due(&self) {
+        let mut refreshed = self.refreshed.lock().unwrap_or_else(|e| e.into_inner());
+        if refreshed.elapsed() < self.refresh_after {
+            return;
+        }
+        match touch_now(&self.file) {
+            Ok(()) => *refreshed = Instant::now(),
+            Err(e) => tracing::warn!(
+                lock = LOCK_PATH,
+                error = %e,
+                "could not refresh the vault write lock; a long write may be taken for a \
+                 crashed one"
+            ),
+        }
+    }
+}
+
 /// The vault write lock file, held. Released when dropped.
 #[derive(Debug)]
 pub(crate) struct SharedLock {
-    dir: PathBuf,
-    id: Identity,
-    /// The lock file, kept open while held: the inode cannot be freed, so
-    /// its number cannot be given to a successor's lock and fool the
-    /// ownership check.
-    _file: File,
-    broke_stale: bool,
+    held: Arc<Held>,
+    broke: Option<BreakReason>,
 }
 
 impl SharedLock {
-    /// Whether the lock at the lock's name is still this one. A lock that
-    /// was broken as stale, and possibly replaced by a successor's, is
-    /// [`StoreError::LockLost`]. The open revalidates a network client's
-    /// cached view of the name, which a plain `stat` may not.
-    pub(crate) fn verify(&self) -> Result<(), StoreError> {
-        match look(&self.dir.join(LOCK_NAME)) {
-            Ok(Some(seen)) if seen.id == self.id => Ok(()),
-            Ok(_) => Err(StoreError::LockLost {
-                lock: LOCK_PATH.to_owned(),
-            }),
-            Err(e) => Err(io_error(e)),
+    /// Whether the lock is still this one: `Ok(false)` when it was broken
+    /// (and possibly replaced by a successor's). Refreshes it when due.
+    pub(crate) fn still_held(&self) -> Result<bool, StoreError> {
+        let held = self.held.check().map_err(io_error)?;
+        if !held {
+            tracing::warn!(
+                lock = LOCK_PATH,
+                "this process's vault write lock was broken by another writer while it held it"
+            );
         }
+        Ok(held)
     }
 
-    /// Whether taking this lock broke a stale one.
-    pub(crate) fn broke_stale(&self) -> bool {
-        self.broke_stale
+    /// Why taking this lock broke another, if it did.
+    pub(crate) fn broke(&self) -> Option<BreakReason> {
+        self.broke
+    }
+
+    /// Make the store's late check (just before each rename) see this lock
+    /// until the returned scope drops. One commit thread at a time.
+    pub(crate) fn in_commit(&self) -> CommitScope {
+        COMMIT_HOLD.with(|h| *h.borrow_mut() = Some(Arc::clone(&self.held)));
+        CommitScope(())
     }
 }
 
@@ -181,9 +292,9 @@ impl Drop for SharedLock {
     fn drop(&mut self) {
         // Only this holder's own lock is removed: one broken while held may
         // be a successor's by now, and is left to it.
-        match self.verify() {
-            Ok(()) => {
-                if let Err(e) = fs::remove_file(self.dir.join(LOCK_NAME)) {
+        match self.held.check() {
+            Ok(true) => {
+                if let Err(e) = fs::remove_file(self.held.dir.join(LOCK_NAME)) {
                     tracing::warn!(
                         lock = LOCK_PATH,
                         error = %e,
@@ -192,7 +303,7 @@ impl Drop for SharedLock {
                     );
                 }
             }
-            Err(StoreError::LockLost { .. }) => tracing::warn!(
+            Ok(false) => tracing::warn!(
                 lock = LOCK_PATH,
                 "the vault write lock was broken as stale while this process held it; left as it \
                  is for its new holder"
@@ -206,24 +317,36 @@ impl Drop for SharedLock {
     }
 }
 
-/// How [`acquire`] behaves; the defaults are the production values.
-#[derive(Debug, Clone)]
-pub(crate) struct Options {
-    pub(crate) stale_after: Duration,
-    pub(crate) hooks: Hooks,
+thread_local! {
+    /// The lock of the commit running on this thread, for the store's
+    /// check just before a rename.
+    static COMMIT_HOLD: RefCell<Option<Arc<Held>>> = const { RefCell::new(None) };
 }
 
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            stale_after: STALE_AFTER,
-            hooks: Hooks::default(),
-        }
+/// Clears this thread's commit lock when dropped.
+pub(crate) struct CommitScope(());
+
+impl Drop for CommitScope {
+    fn drop(&mut self) {
+        COMMIT_HOLD.with(|h| *h.borrow_mut() = None);
     }
 }
 
-/// Take the lock in `dir` (the vault's `.cuaderno/`), waiting for a holder
-/// until `deadline` and breaking a stale lock on the way.
+/// The store's check, as late as it can be made (after a temp file is
+/// written and synced, right before the comparison and the rename): false
+/// when a commit runs on this thread and its lock is no longer its own.
+/// True when no commit with a lock file runs here.
+pub(crate) fn commit_still_holds() -> Result<bool, StoreError> {
+    let held = COMMIT_HOLD.with(|h| h.borrow().clone());
+    match held {
+        Some(held) => held.check().map_err(io_error),
+        None => Ok(true),
+    }
+}
+
+/// Take the lock in `dir` (the vault's [`LOCKS_DIR`]), waiting for a holder
+/// until `deadline` and breaking a stale or dead one on the way. The caller
+/// holds this kernel's `flock`.
 pub(crate) fn acquire(
     dir: &Path,
     deadline: Instant,
@@ -231,137 +354,309 @@ pub(crate) fn acquire(
     options: &Options,
 ) -> Result<SharedLock, StoreError> {
     let token = new_token();
-    let record = owner_record(&token);
+    let record = owner_record(&token, options.boot.as_deref());
     let lock = dir.join(LOCK_NAME);
+    let mut attempt = Attempt::new(dir, &record).map_err(io_error)?;
     let mut pause = FIRST_PAUSE;
-    let mut broke_stale = false;
-    // The lock last seen, its age when first seen, and when that was: a
-    // lock is probed for its age once, and its age then advanced by the
-    // time waited since.
+    let mut broke = None;
+    // The lock last seen, and its age then and when, so it is probed once.
     let mut known: Option<(Identity, Duration, Instant)> = None;
-    // Attempts to create made after the deadline: a lock that vanished, or
-    // was just broken, still gets one, but a name released and retaken
-    // faster than this process can create it cannot keep it here for ever.
-    let mut late_attempts = 0;
+    let mut last: Option<(String, u64)> = None;
+    let mut looked_at: Option<Instant> = None;
     loop {
-        if Instant::now() >= deadline {
-            late_attempts += 1;
-            if late_attempts > 2 {
-                return Err(StoreError::LockTimeout(
-                    deadline.duration_since(waited_from),
-                ));
+        if let Some(file) = attempt.try_place(&lock).map_err(io_error)? {
+            return Ok(holding(dir, &token, file, broke, options));
+        }
+        let due = looked_at.is_none_or(|at| at.elapsed() >= LOOK_EVERY);
+        if due || Instant::now() >= deadline {
+            looked_at = Some(Instant::now());
+            match look(&lock).map_err(io_error)? {
+                None => {
+                    // Released since, or a cache that disagrees with itself.
+                    std::thread::sleep(VANISHED_PAUSE);
+                    looked_at = None;
+                    if Instant::now() < deadline {
+                        continue;
+                    }
+                }
+                Some(seen) if seen.id.token == token => {
+                    // A link whose reply was lost, seen through a fresher open
+                    // than the link count's `stat`: it is ours.
+                    let file = attempt.take_file().map_err(io_error)?;
+                    return Ok(holding(dir, &token, file, broke, options));
+                }
+                Some(seen) => {
+                    let age = match &known {
+                        Some((id, age, at)) if id.same(&seen.id) => *age + at.elapsed(),
+                        _ => {
+                            let age = age_of(dir, &token, seen.mtime).map_err(io_error)?;
+                            known = Some((seen.id.clone(), age, Instant::now()));
+                            age
+                        }
+                    };
+                    let reason = if dead_on_this_kernel(&seen, options) {
+                        Some(BreakReason::DeadOnThisKernel)
+                    } else if age >= options.stale_after && !seen.id.token.is_empty() {
+                        Some(BreakReason::Age)
+                    } else if age >= options.stale_after + options.stale_after {
+                        // A record still empty after twice the interval: an
+                        // exclusive create whose writer died before writing.
+                        Some(BreakReason::Age)
+                    } else {
+                        None
+                    };
+                    if let Some(reason) = reason {
+                        let sweep = reason == BreakReason::Age;
+                        if break_lock(dir, &token, &seen, sweep, &options.hooks)
+                            .map_err(io_error)?
+                        {
+                            broke = Some(reason);
+                            tracing::warn!(
+                                lock = LOCK_PATH,
+                                owner = %describe_owner(&seen.record),
+                                age_secs = age.as_secs(),
+                                reason = match reason {
+                                    BreakReason::Age => "stale",
+                                    BreakReason::DeadOnThisKernel =>
+                                        "its holder on this kernel is dead",
+                                },
+                                "broke the vault write lock of another writer"
+                            );
+                        }
+                        known = None;
+                        looked_at = None;
+                        continue;
+                    }
+                    last = Some((describe_owner(&seen.record), age.as_secs()));
+                }
             }
         }
-        if let Some((file, id)) = create(dir, &lock, &record).map_err(io_error)? {
-            return Ok(SharedLock {
-                dir: dir.to_path_buf(),
-                id,
-                _file: file,
-                broke_stale,
-            });
-        }
-        // Held: wait for it to go (then contend again at once), or to turn
-        // stale.
-        while let Some(seen) = look(&lock).map_err(io_error)? {
-            let age = match &known {
-                Some((id, age, at)) if *id == seen.id => *age + at.elapsed(),
-                _ => {
-                    let age = age_of(dir, &token, seen.mtime).map_err(io_error)?;
-                    known = Some((seen.id.clone(), age, Instant::now()));
-                    age
-                }
-            };
-            if age >= options.stale_after {
-                if let Some(hook) = &options.hooks.before_break {
-                    hook();
-                }
-                if break_stale(dir, &token, &seen).map_err(io_error)? {
-                    broke_stale = true;
-                    tracing::warn!(
-                        lock = LOCK_PATH,
-                        owner = %describe_owner(&seen.record),
-                        age_secs = age.as_secs(),
-                        "broke a stale vault write lock, taken for a crashed writer's"
-                    );
-                }
-                known = None;
-                break;
-            }
-            let now = Instant::now();
-            if now >= deadline {
-                return Err(StoreError::LockBusy {
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(match last {
+                Some((owner, age_secs)) => StoreError::LockBusy {
                     lock: LOCK_PATH.to_owned(),
-                    owner: describe_owner(&seen.record),
-                    age_secs: age.as_secs(),
+                    owner,
+                    age_secs,
                     stale_after_secs: options.stale_after.as_secs(),
                     waited: now.duration_since(waited_from),
-                });
-            }
-            std::thread::sleep(jitter(pause).min(deadline - now));
-            pause = (pause * 2).min(LONGEST_PAUSE);
+                },
+                None => StoreError::LockTimeout(now.duration_since(waited_from)),
+            });
         }
+        std::thread::sleep(jitter(pause).min(deadline - now));
+        pause = (pause * 2).min(LONGEST_PAUSE);
     }
 }
 
-/// Try to create the lock at `lock` with `record` inside. `None` when a
-/// lock is already there.
-fn create(dir: &Path, lock: &Path, record: &str) -> io::Result<Option<(File, Identity)>> {
-    let mut temp = tempfile::Builder::new()
-        .prefix(&format!("{LOCK_PREFIX}."))
-        .suffix(".new")
-        .tempfile_in(dir)?;
-    temp.write_all(record.as_bytes())?;
-    match fs::hard_link(temp.path(), lock) {
-        Ok(()) => return Ok(Some(held(temp.into_file(), record)?)),
-        Err(e) => {
-            // A network filesystem can lose the reply to a link it made: a
-            // retransmitted link then fails (with "exists", or otherwise)
-            // although the first one succeeded. The temp file's link count
-            // says which.
-            if link_count(temp.path()) >= 2 {
-                return Ok(Some(held(temp.into_file(), record)?));
-            }
-            if e.kind() == io::ErrorKind::AlreadyExists {
-                return Ok(None);
-            }
-            if !crate::store::noclobber_unsupported(&e) {
-                return Err(e);
-            }
-        }
+fn holding(
+    dir: &Path,
+    token: &str,
+    file: File,
+    broke: Option<BreakReason>,
+    options: &Options,
+) -> SharedLock {
+    let nlink_known = descriptor_link_count(&file).is_some_and(|n| n >= 1);
+    SharedLock {
+        held: Arc::new(Held {
+            dir: dir.to_path_buf(),
+            token: token.to_owned(),
+            file,
+            nlink_known,
+            refresh_after: options.refresh_after,
+            refreshed: Mutex::new(Instant::now()),
+        }),
+        broke,
     }
-    // No hard links on this filesystem: a rename that refuses to replace.
-    match temp.persist_noclobber(lock) {
-        Ok(file) => Ok(Some(held(file, record)?)),
-        Err(e) if e.error.kind() == io::ErrorKind::AlreadyExists => Ok(None),
-        Err(e) if crate::store::noclobber_unsupported(&e.error) => {
-            drop(e.file);
-            // Neither: an exclusive create, then the record. A contender
-            // reading the lock in between finds no owner named, and ages
-            // it by its mtime all the same.
-            match OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .open(lock)
-            {
-                Ok(mut file) => {
-                    file.write_all(record.as_bytes())?;
-                    Ok(Some(held(file, record)?))
+}
+
+/// Whether `seen` was taken by another process on this kernel, which must
+/// then be dead: the caller holds this kernel's `flock`, which a live
+/// holder would still hold. Own process excluded, since a filesystem that
+/// emulates `flock` with per-process locks (Linux NFS) lets two threads of
+/// one process hold it at once.
+fn dead_on_this_kernel(seen: &Seen, options: &Options) -> bool {
+    let Some(boot) = options.boot.as_deref() else {
+        return false;
+    };
+    let pid = std::process::id().to_string();
+    seen.field("boot") == Some(boot) && seen.field("process").is_some_and(|p| p != pid)
+}
+
+/// How a contender places its record at the lock's name, by the best
+/// primitive the filesystem has. Kept for the whole wait, so each attempt
+/// is one call.
+struct Attempt {
+    dir: PathBuf,
+    record: String,
+    temp: Option<tempfile::NamedTempFile>,
+    tier: Tier,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tier {
+    Link,
+    Rename,
+    Exclusive,
+}
+
+impl Attempt {
+    fn new(dir: &Path, record: &str) -> io::Result<Self> {
+        let mut attempt = Self {
+            dir: dir.to_path_buf(),
+            record: record.to_owned(),
+            temp: None,
+            tier: Tier::Link,
+        };
+        attempt.temp = Some(attempt.write_temp()?);
+        Ok(attempt)
+    }
+
+    fn write_temp(&self) -> io::Result<tempfile::NamedTempFile> {
+        let mut temp = tempfile::Builder::new()
+            .prefix("")
+            .suffix(".new")
+            .tempfile_in(&self.dir)?;
+        temp.write_all(self.record.as_bytes())?;
+        Ok(temp)
+    }
+
+    /// One attempt: the lock's file when placed, `None` when the name is
+    /// taken.
+    fn try_place(&mut self, lock: &Path) -> io::Result<Option<File>> {
+        loop {
+            match self.tier {
+                Tier::Link => {
+                    let temp = match &self.temp {
+                        Some(temp) => temp,
+                        None => {
+                            self.temp = Some(self.write_temp()?);
+                            self.temp.as_ref().expect("just set")
+                        }
+                    };
+                    match fs::hard_link(temp.path(), lock) {
+                        Ok(()) => return self.placed().map(Some),
+                        Err(e) => {
+                            // A lost reply to a link that was made.
+                            if link_count(temp.path()) >= 2 {
+                                return self.placed().map(Some);
+                            }
+                            match e.kind() {
+                                io::ErrorKind::AlreadyExists => return Ok(None),
+                                // The temp file went (a leftover sweep under
+                                // a skewed clock): write it again, retry.
+                                io::ErrorKind::NotFound => {
+                                    self.temp = None;
+                                    return Ok(None);
+                                }
+                                _ => {}
+                            }
+                            // `EPERM` from linking a file this process owns
+                            // is the filesystem refusing links.
+                            if !crate::store::noclobber_unsupported(&e) {
+                                return Err(e);
+                            }
+                            self.tier = Tier::Rename;
+                        }
+                    }
                 }
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(None),
-                Err(e) => Err(e),
+                Tier::Rename => {
+                    let temp = match self.temp.take() {
+                        Some(temp) => temp,
+                        None => self.write_temp()?,
+                    };
+                    match temp.persist_noclobber(lock) {
+                        Ok(file) => {
+                            announce(Tier::Rename);
+                            return Ok(Some(file));
+                        }
+                        Err(e) if e.error.kind() == io::ErrorKind::AlreadyExists => {
+                            self.temp = Some(e.file);
+                            return Ok(None);
+                        }
+                        // Not `EPERM` here: a rename in a folder this process
+                        // writes to has no "unsupported" reading of it.
+                        Err(e)
+                            if crate::store::noclobber_unsupported(&e.error)
+                                && e.error.raw_os_error() != Some(eperm()) =>
+                        {
+                            drop(e.file);
+                            self.tier = Tier::Exclusive;
+                        }
+                        Err(e) => return Err(e.error),
+                    }
+                }
+                Tier::Exclusive => {
+                    // An exclusive create, then the record: a contender
+                    // reading the lock in between finds no owner and does
+                    // not break it on that look.
+                    return match OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .create_new(true)
+                        .open(lock)
+                    {
+                        Ok(mut file) => {
+                            file.write_all(self.record.as_bytes())?;
+                            announce(Tier::Exclusive);
+                            Ok(Some(file))
+                        }
+                        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(None),
+                        Err(e) => Err(e),
+                    };
+                }
             }
         }
-        Err(e) => Err(e.error),
+    }
+
+    /// The link was made: the lock's file, the temp name removed.
+    fn placed(&mut self) -> io::Result<File> {
+        announce(Tier::Link);
+        self.take_file()
+    }
+
+    /// The temp file's handle, its own name removed (the lock's stays).
+    fn take_file(&mut self) -> io::Result<File> {
+        match self.temp.take() {
+            Some(temp) => Ok(temp.into_file()),
+            None => File::open(self.dir.join(LOCK_NAME)),
+        }
     }
 }
 
-/// The held lock's open file and identity. (`NamedTempFile::into_file`
-/// has removed the temp file's own name by now, leaving the lock's.)
-fn held(file: File, record: &str) -> io::Result<(File, Identity)> {
-    let meta = file.metadata()?;
-    let id = identity_of(&meta, record);
-    Ok((file, id))
+/// One debug line per process for each way a lock was created, so a run
+/// shows which primitive the filesystem offered.
+fn announce(tier: Tier) {
+    static SEEN: [AtomicBool; 3] = [
+        AtomicBool::new(false),
+        AtomicBool::new(false),
+        AtomicBool::new(false),
+    ];
+    let (slot, how) = match tier {
+        Tier::Link => (0, "a hard link"),
+        Tier::Rename => (1, "a no-clobber rename (this filesystem has no hard links)"),
+        Tier::Exclusive => (
+            2,
+            "an exclusive create (this filesystem has neither hard links nor a no-clobber rename)",
+        ),
+    };
+    if !SEEN[slot].swap(true, Ordering::Relaxed) {
+        tracing::debug!(
+            lock = LOCK_PATH,
+            "the vault write lock file is created by {how}"
+        );
+    }
+}
+
+fn eperm() -> i32 {
+    #[cfg(unix)]
+    {
+        libc::EPERM
+    }
+    #[cfg(not(unix))]
+    {
+        1
+    }
 }
 
 #[cfg(unix)]
@@ -375,10 +670,57 @@ fn link_count(_path: &Path) -> u64 {
     0
 }
 
+#[cfg(unix)]
+fn descriptor_link_count(file: &File) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    file.metadata().ok().map(|m| m.nlink())
+}
+
+#[cfg(not(unix))]
+fn descriptor_link_count(_file: &File) -> Option<u64> {
+    None
+}
+
+/// Set the file's mtime to now by the filesystem's clock (`UTIME_NOW`,
+/// which an NFS client sends as "the server's time"), never this process's.
+#[cfg(unix)]
+fn touch_now(file: &File) -> io::Result<()> {
+    use std::os::unix::io::AsRawFd;
+    let times = [
+        libc::timespec {
+            tv_sec: 0,
+            tv_nsec: libc::UTIME_OMIT,
+        },
+        libc::timespec {
+            tv_sec: 0,
+            tv_nsec: libc::UTIME_NOW,
+        },
+    ];
+    // SAFETY: a valid open descriptor and a two-element array, as
+    // `futimens` requires.
+    if unsafe { libc::futimens(file.as_raw_fd(), times.as_ptr()) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(unix))]
+fn touch_now(_file: &File) -> io::Result<()> {
+    Ok(())
+}
+
 /// The lock at `path`, if any, opened afresh (an open revalidates a network
 /// client's cached attributes, which a plain `stat` may answer from its
-/// cache), with its `fstat` and its record.
+/// cache), with its record. A stale handle is retried once.
 fn look(path: &Path) -> io::Result<Option<Seen>> {
+    match look_once(path) {
+        Err(e) if is_stale_handle(&e) => look_once(path),
+        other => other,
+    }
+}
+
+fn look_once(path: &Path) -> io::Result<Option<Seen>> {
     let file = match File::open(path) {
         Ok(file) => file,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -388,18 +730,42 @@ fn look(path: &Path) -> io::Result<Option<Seen>> {
     let mut bytes = Vec::new();
     file.take(RECORD_LIMIT).read_to_end(&mut bytes)?;
     let record = String::from_utf8_lossy(&bytes).into_owned();
+    #[cfg(unix)]
+    let inode = {
+        use std::os::unix::fs::MetadataExt;
+        Some((meta.dev(), meta.ino()))
+    };
+    #[cfg(not(unix))]
+    let inode = None;
     Ok(Some(Seen {
-        id: identity_of(&meta, &record),
+        id: Identity {
+            token: record_field(&record, "token")
+                .unwrap_or_default()
+                .to_owned(),
+            inode,
+        },
         mtime: meta.modified()?,
         record,
     }))
 }
 
-/// How old a lock whose mtime is `mtime` is, by the folder's own clock: a
-/// probe file is created beside it now, and the two mtimes compared. A
-/// lock stamped ahead of the probe is new.
+fn is_stale_handle(e: &io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        e.raw_os_error() == Some(libc::ESTALE)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = e;
+        false
+    }
+}
+
+/// How old a lock whose mtime is `mtime` is, by the folder's clock: a probe
+/// file is created beside it now, and the two mtimes compared. A lock
+/// stamped ahead of the probe is new.
 fn age_of(dir: &Path, token: &str, mtime: SystemTime) -> io::Result<Duration> {
-    let probe = dir.join(format!("{LOCK_PREFIX}.{token}.probe"));
+    let probe = dir.join(format!("{token}.probe"));
     let file = match OpenOptions::new().write(true).create_new(true).open(&probe) {
         Ok(file) => file,
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
@@ -417,55 +783,95 @@ fn age_of(dir: &Path, token: &str, mtime: SystemTime) -> io::Result<Duration> {
     Ok(now?.duration_since(mtime).unwrap_or(Duration::ZERO))
 }
 
-/// Break the stale lock `judged`: rename it to a name of this contender's
-/// own, which only one contender's rename can do, and check that what moved
-/// is the lock judged. A younger lock that replaced it in the meantime is
-/// put back. True when this contender broke it.
-fn break_stale(dir: &Path, token: &str, judged: &Seen) -> io::Result<bool> {
+/// Break the lock `judged`: look once more that it is still at the name,
+/// rename it to a name of this contender's own, which only one contender's
+/// rename can do, and check that what moved is the lock judged. A younger
+/// lock that replaced it in the meantime is put back. True when this
+/// contender broke it.
+fn break_lock(
+    dir: &Path,
+    token: &str,
+    judged: &Seen,
+    sweep: bool,
+    hooks: &Hooks,
+) -> io::Result<bool> {
     let lock = dir.join(LOCK_NAME);
-    let aside = dir.join(format!("{LOCK_PREFIX}.{token}.stale"));
+    match look(&lock)? {
+        Some(now) if now.id.same(&judged.id) => {}
+        // Released, broken by another, or replaced: nothing to break.
+        _ => return Ok(false),
+    }
+    if let Some(hook) = &hooks.before_break {
+        hook();
+    }
+    let aside = dir.join(format!("{token}.stale"));
     match fs::rename(&lock, &aside) {
         Ok(()) => {}
-        // Another contender broke it first.
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(e),
     }
     match look(&aside)? {
-        Some(moved) if moved.id == judged.id => {
+        Some(moved) if moved.id.same(&judged.id) => {
             let _ = fs::remove_file(&aside);
-            remove_leftovers(dir, judged.mtime);
+            if sweep {
+                remove_leftovers(dir, judged.mtime);
+            }
             Ok(true)
         }
         Some(_) => {
-            // A live lock, made after the one judged was broken by someone
-            // else: put it back. If a third lock has taken the name in the
-            // meantime, the one moved has lost its hold, and its holder
-            // refuses at its next check.
-            match fs::hard_link(&aside, &lock) {
-                Ok(()) => {}
-                Err(e) if crate::store::noclobber_unsupported(&e) && look(&lock)?.is_none() => {
-                    fs::rename(&aside, &lock)?;
-                    return Ok(false);
-                }
-                Err(_) => {}
+            if let Some(hook) = &hooks.after_wrong_move {
+                hook();
             }
-            let _ = fs::remove_file(&aside);
+            put_back(&aside, &lock);
             Ok(false)
         }
         None => Ok(false),
     }
 }
 
-/// Remove the protocol's files left by crashes: every `.write-lock.*` file
-/// no newer than a lock that was just found stale. A live process's temp,
-/// probe or aside file exists for microseconds, so none is that old.
+/// Put a live lock moved aside by mistake back at the lock's name, never
+/// over a lock that took the name meanwhile: that one wins, and the moved
+/// lock's holder finds its lock gone at its next check and refuses.
+fn put_back(aside: &Path, lock: &Path) {
+    match fs::hard_link(aside, lock) {
+        Ok(()) => {
+            let _ = fs::remove_file(aside);
+            return;
+        }
+        Err(e) if !crate::store::noclobber_unsupported(&e) => {
+            let _ = fs::remove_file(aside);
+            return;
+        }
+        Err(_) => {}
+    }
+    // No hard links: a rename that refuses to replace, if there is one.
+    let moved = match tempfile::TempPath::try_from_path(aside) {
+        Ok(moved) => moved,
+        Err(_) => {
+            let _ = fs::remove_file(aside);
+            return;
+        }
+    };
+    if let Err(e) = moved.persist_noclobber(lock) {
+        tracing::warn!(
+            lock = LOCK_PATH,
+            error = %e.error,
+            "moved a live vault write lock aside by mistake and could not put it back; its \
+             holder's next write stops"
+        );
+        // Dropping the returned path removes the moved lock.
+    }
+}
+
+/// Remove the protocol's files left by crashes: every file in the locks
+/// folder other than the lock that is no newer than a lock just found
+/// breakable. A live process's temp, probe or aside file is younger.
 fn remove_leftovers(dir: &Path, stale_mtime: SystemTime) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
-    let prefix = format!("{LOCK_PREFIX}.");
     for entry in entries.flatten() {
-        if !entry.file_name().to_string_lossy().starts_with(&prefix) {
+        if entry.file_name() == LOCK_NAME {
             continue;
         }
         let old = entry
@@ -479,9 +885,9 @@ fn remove_leftovers(dir: &Path, stale_mtime: SystemTime) {
 }
 
 /// The owner record written into a lock: who took it, for a person reading
-/// the busy error. Nothing in it is trusted for a decision except the
-/// token, which identifies the lock where inodes do not.
-fn owner_record(token: &str) -> String {
+/// the busy error, and the kernel's boot for the same-kernel break. The
+/// token identifies the lock.
+fn owner_record(token: &str, boot: Option<&str>) -> String {
     let program = std::env::args_os()
         .next()
         .and_then(|a| {
@@ -490,9 +896,10 @@ fn owner_record(token: &str) -> String {
                 .map(|n| n.to_string_lossy().into_owned())
         })
         .unwrap_or_else(|| "cdno".to_owned());
+    let boot = boot.map(|b| format!("boot: {b}\n")).unwrap_or_default();
     format!(
         "cuaderno vault write lock\ntoken: {token}\nprogram: {program} {version}\nprocess: {pid}\n\
-         taken: {taken}\n",
+         {boot}taken: {taken}\n",
         version = env!("CARGO_PKG_VERSION"),
         pid = std::process::id(),
         taken = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z"),
@@ -520,6 +927,49 @@ fn describe_owner(record: &str) -> String {
         ),
         _ => "a writer that has not written its owner record yet".to_owned(),
     }
+}
+
+/// This kernel's boot, as an opaque identifier that names nobody: shared by
+/// every process and container of one kernel (the `flock`'s reach), and
+/// different on another kernel. `None` where the platform does not say.
+pub(crate) fn kernel_boot_id() -> Option<String> {
+    static BOOT: OnceLock<Option<String>> = OnceLock::new();
+    BOOT.get_or_init(read_boot_id).clone()
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn read_boot_id() -> Option<String> {
+    let id = fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()?;
+    let id = id.trim();
+    (!id.is_empty()).then(|| id.to_owned())
+}
+
+#[cfg(target_vendor = "apple")]
+fn read_boot_id() -> Option<String> {
+    let name = c"kern.bootsessionuuid";
+    let mut buf = [0u8; 128];
+    let mut len: libc::size_t = buf.len();
+    // SAFETY: a NUL-terminated name, a buffer and its length, no new value.
+    let rc = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            buf.as_mut_ptr().cast(),
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 {
+        return None;
+    }
+    let id = String::from_utf8_lossy(&buf[..len.min(buf.len())]);
+    let id = id.trim_end_matches('\0').trim();
+    (!id.is_empty()).then(|| id.to_owned())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
+fn read_boot_id() -> Option<String> {
+    None
 }
 
 /// A token unique to one acquisition, from the standard library's

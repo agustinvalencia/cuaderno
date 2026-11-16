@@ -960,7 +960,7 @@ impl IndexHealth {
         match self.sqlite.reopen() {
             Ok(reopened) => Ok(plain(reopened)),
             Err(IndexError::StaleSidecars(_)) => {
-                let _lock = self.store.acquire_write_lock().map_err(|e| {
+                let _lock = self.store.acquire_index_lock().map_err(|e| {
                     format!("acquiring the vault write lock to set stale sidecars aside: {e}")
                 })?;
                 match self.sqlite.reopen_setting_aside_stale_sidecars() {
@@ -999,7 +999,7 @@ impl IndexHealth {
     /// `verifying`.
     fn set_aside_unopenable(&self, keep_copy: bool) -> Result<SetAside, IndexError> {
         let location = self.sqlite.location();
-        let _lock = self.store.acquire_write_lock().map_err(|e| {
+        let _lock = self.store.acquire_index_lock().map_err(|e| {
             IndexError::Update(format!(
                 "acquiring the vault write lock to set the damaged index aside: {e}"
             ))
@@ -1074,7 +1074,7 @@ impl IndexHealth {
             Some(Ok(rows)) if rows.is_empty() => return (0, Vec::new()),
             Some(Ok(rows)) => rows,
         };
-        let _lock = match self.store.acquire_write_lock() {
+        let _lock = match self.store.acquire_index_lock() {
             Ok(lock) => lock,
             Err(e) => {
                 return (

@@ -32,10 +32,12 @@
 //! lock file that a second kernel sees ([`crate::shared_lock`]), so cdno
 //! writers exclude each other there too, and the comparison is left to
 //! catch writers that take no lock. A lock file can be broken as stale
-//! under a holder that was suspended; so before each file op the commit
-//! checks that it still holds it, and otherwise stops, rolls back what it
-//! applied, and fails with [`StoreError::LockLost`] inside
-//! [`TransactionError::FileWrite`].
+//! under a holder that was suspended; so before each file op, and in the
+//! store again right before each rename, the commit checks that it still
+//! holds it (refreshing it when due), and otherwise stops, rolls back what
+//! it applied, and fails with [`TransactionError::LockLost`]. A transaction
+//! that writes only the index ([`VaultTransaction::index_only`]) takes the
+//! `flock` alone and may not stage a file op.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -77,6 +79,9 @@ pub struct VaultTransaction {
     /// Whether a replace or delete of a path this transaction never read is
     /// a bug in the caller (see [`require_reads`](Self::require_reads)).
     reads_required: bool,
+    /// Opened by [`index_only`](Self::index_only): holds the `flock` alone,
+    /// so a file op may not be staged on it.
+    index_only: bool,
 }
 
 /// File operations the transaction can apply. Each variant owns the
@@ -169,13 +174,37 @@ impl VaultTransaction {
     /// recorded for the commit's check.
     pub fn new(store: Arc<dyn VaultStore>, index: Arc<dyn VaultIndex>) -> Result<Self, StoreError> {
         let lock = store.acquire_write_lock()?;
+        Ok(Self::with_lock(store, index, lock, false))
+    }
+
+    /// A transaction that writes this machine's index and never a file:
+    /// reconciliation's (#1012). It takes the vault write lock with
+    /// [`VaultStore::acquire_index_lock`], so the `flock` alone, which
+    /// orders this kernel's index writers, and not the lock file every
+    /// kernel sees, which guards notes. Staging a file op on it panics, in
+    /// every build: a file written without the lock file would be a write
+    /// another kernel's writers do not exclude.
+    pub fn index_only(
+        store: Arc<dyn VaultStore>,
+        index: Arc<dyn VaultIndex>,
+    ) -> Result<Self, StoreError> {
+        let lock = store.acquire_index_lock()?;
+        Ok(Self::with_lock(store, index, lock, true))
+    }
+
+    fn with_lock(
+        store: Arc<dyn VaultStore>,
+        index: Arc<dyn VaultIndex>,
+        lock: VaultWriteLock,
+        index_only: bool,
+    ) -> Self {
         let journal = match store.read_journals() {
             Some(journals) => journals.open(),
             // A store that records nothing still gets a journal: the
             // staging methods record into it.
             None => Arc::new(ReadJournal::new()),
         };
-        Ok(Self {
+        Self {
             store,
             index,
             file_ops: Vec::new(),
@@ -183,7 +212,26 @@ impl VaultTransaction {
             lock,
             journal: Some(journal),
             reads_required: false,
-        })
+            index_only,
+        }
+    }
+
+    /// Undo what the commit applied, its lock being lost, and say so.
+    fn lock_lost(&self, applied: Vec<Undo>) -> TransactionError {
+        TransactionError::LockLost {
+            lock: crate::shared_lock::LOCK_PATH.to_owned(),
+            rollback_failures: rollback(&*self.store, applied),
+        }
+    }
+
+    /// Refuse a file op on an index-only transaction (see
+    /// [`index_only`](Self::index_only)).
+    fn file_op_allowed(&self) {
+        assert!(
+            !self.index_only,
+            "a file op was staged on an index-only transaction, which does not hold the vault \
+             write lock file (#1012): open it with VaultTransaction::new"
+        );
     }
 
     /// Declare that every file this transaction replaces, appends to or
@@ -242,6 +290,7 @@ impl VaultTransaction {
     // ---- file operation buffer --------------------------------------
 
     pub fn write_file(&mut self, path: VaultPath, content: impl Into<String>) {
+        self.file_op_allowed();
         self.observe_unseen(&path);
         self.file_ops.push(FileOp::Write {
             path,
@@ -256,6 +305,7 @@ impl VaultTransaction {
     /// overwrite. Use it for every new note whose path was chosen to be
     /// free, so the choice can never turn into a replace.
     pub fn create_file(&mut self, path: VaultPath, content: impl Into<String>) {
+        self.file_op_allowed();
         if let Some(journal) = &self.journal {
             journal.expect(&path, Observed::Absent);
         }
@@ -266,6 +316,7 @@ impl VaultTransaction {
     }
 
     pub fn append_to_file(&mut self, path: VaultPath, content: impl Into<String>) {
+        self.file_op_allowed();
         self.observe_unseen(&path);
         self.file_ops.push(FileOp::Append {
             path,
@@ -278,10 +329,12 @@ impl VaultTransaction {
     /// it discards nothing, and comparing would mean reading an
     /// attachment's bytes, which a move never does.
     pub fn move_file(&mut self, src: VaultPath, dest: VaultPath) {
+        self.file_op_allowed();
         self.file_ops.push(FileOp::Move { src, dest });
     }
 
     pub fn delete_file(&mut self, path: VaultPath) {
+        self.file_op_allowed();
         self.observe_unseen(&path);
         self.file_ops.push(FileOp::Delete { path });
     }
@@ -290,6 +343,7 @@ impl VaultTransaction {
     /// `dest` (an attachment, #154). Committed alongside the stub write,
     /// so a failed stub rolls the imported file back out.
     pub fn import_external(&mut self, src: PathBuf, dest: VaultPath) {
+        self.file_op_allowed();
         self.file_ops.push(FileOp::Import { src, dest });
     }
 
@@ -487,21 +541,36 @@ impl VaultTransaction {
         // Phase 1: file ops with undo capture.
         let mut applied: Vec<Undo> = Vec::with_capacity(self.file_ops.len());
         for op in &self.file_ops {
-            // Still the holder of the vault write lock (#1012)? A holder
-            // suspended past the stale interval has had its lock broken and
-            // may have a successor writing now: it must not replace a file,
-            // so it stops here and undoes what it applied (conditionally,
-            // so the successor's changes are never overwritten).
-            if let Err(source) = self.lock.verify() {
-                let rollback_failures = rollback(&*self.store, applied);
-                return Err(TransactionError::FileWrite {
-                    source,
-                    rollback_failures,
-                });
+            // Still the holder of the vault write lock file (#1012)? A
+            // holder suspended past the stale interval has had its lock
+            // broken and may have a successor writing now: it must not
+            // replace a file, so it stops here and undoes what it applied
+            // (conditionally, so a successor's change is never overwritten).
+            // The check also refreshes the lock in a long commit. The store
+            // checks once more right before each rename (`in_commit`).
+            match self.lock.still_held() {
+                Ok(true) => {}
+                Ok(false) => return Err(self.lock_lost(applied)),
+                Err(source) => {
+                    let rollback_failures = rollback(&*self.store, applied);
+                    return Err(TransactionError::FileWrite {
+                        source,
+                        rollback_failures,
+                    });
+                }
             }
-            match apply_file_op(&*self.store, op, &mut expect) {
+            let applied_op = {
+                let _scope = self.lock.in_commit();
+                apply_file_op(&*self.store, op, &mut expect)
+            };
+            match applied_op {
                 Ok(undo) => applied.push(undo),
                 Err(source) => {
+                    // The store's late check reports a lost lock as a
+                    // changed file; ask the lock which it was.
+                    if self.lock.has_lock_file() && matches!(self.lock.still_held(), Ok(false)) {
+                        return Err(self.lock_lost(applied));
+                    }
                     let rollback_failures = rollback(&*self.store, applied);
                     if let StoreError::Changed(path) = &source
                         && rollback_failures.is_empty()
@@ -516,6 +585,20 @@ impl VaultTransaction {
                     });
                 }
             }
+        }
+
+        // The files landed under the lock. A lock lost since must not let
+        // this commit write index rows over a successor's (the index is in
+        // the vault folder unless moved, #998): skip them and report the
+        // index stale, which the next reconciliation heals.
+        if !self.file_ops.is_empty() && matches!(self.lock.still_held(), Ok(false)) {
+            return Err(TransactionError::IndexStale(vec![IndexError::Update(
+                format!(
+                    "the vault write lock {} was broken by another writer after this commit's \
+                 files landed, so its index rows were not written",
+                    crate::shared_lock::LOCK_PATH
+                ),
+            )]));
         }
 
         // Only a change to these sets can change the answer for a link held
