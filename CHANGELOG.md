@@ -27,9 +27,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   (2 workers, at most 8 blocking threads, at most 4 tool calls running their work at once) rather
   than a worker per core and 512 blocking threads, since a desktop client may spawn several
   servers. When the client disconnects, the stdio server stops the sweep loop at once, lets rmcp
-  send pending replies for up to 5 seconds, waits for every tool call still running to finish (so a
-  write is never cut between its files; a call gives up on the vault lock after 5 seconds, and two
-  minutes is a backstop for one that hangs), and then waits at most 5 more seconds for a sweep
+  send pending replies for up to 5 seconds, waits for every tool call still running to finish (so the
+  server itself no longer cuts a write between its files; a call gives up on the vault lock after 5
+  seconds, two minutes is a backstop for one that hangs, and a client that kills the process
+  outright can still interrupt a write, as a crash can), and then waits at most 5 more seconds for a sweep
   still running before it exits. `CuadernoServer::tool_calls`, `with_tool_call_limit` and the
   `tool_calls` module count tool calls' blocking work for that drain.
 

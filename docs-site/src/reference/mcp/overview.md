@@ -46,11 +46,12 @@ sessions can show different sweeps.
 
 **When the client disconnects**, the stdio server, in order: stops the sweep loop at once, so no new
 sweep starts; lets rmcp send the replies of calls still running, for up to five seconds; waits for
-every tool call still running to finish, so a write is never cut between its files (a call gives up
-on the vault lock after five seconds and then does only its own work; two minutes is a backstop for
-one that hangs); and then gives a sweep still running at most five seconds more before it exits.
+every tool call still running to finish, so the server itself does not cut a write between its files
+(a call gives up on the vault lock after five seconds and then does only its own work; two minutes
+is a backstop for one that hangs); and then gives a sweep still running at most five seconds more before it exits.
 Nothing is lost if a sweep is cut short, since the next open reconciles again. An idle server exits
-at once, and one with only a sweep running within five seconds.
+at once, and one with only a sweep running within five seconds. The wait is the server's own: a
+client that kills the process outright, or a crash, can still interrupt a write part-way.
 
 ## The tool surface
 
