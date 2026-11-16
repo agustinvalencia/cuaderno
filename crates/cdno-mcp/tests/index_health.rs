@@ -931,3 +931,148 @@ fn a_rebuild_never_takes_back_an_index_another_vault_has_bound_since() {
         Some("/elsewhere/vault".to_owned())
     );
 }
+
+/// The stdio server's reading of the sweep interval (#1002): unset, empty
+/// or blank is the HTTP server's default, a number (spaces around it
+/// ignored) is taken as seconds, `0` included, and anything else is
+/// refused, naming the variable.
+#[test]
+fn the_stdio_sweep_interval_variable_parses() {
+    use cdno_mcp::index_health::{
+        DEFAULT_SWEEP_INTERVAL_SECS, SWEEP_INTERVAL_ENV, parse_sweep_interval,
+    };
+    use std::ffi::OsStr;
+
+    assert_eq!(DEFAULT_SWEEP_INTERVAL_SECS, 300);
+    assert_eq!(SWEEP_INTERVAL_ENV, "CDNO_MCP_RECONCILE_INTERVAL_SECS");
+    assert_eq!(parse_sweep_interval(None), Ok(300));
+    assert_eq!(parse_sweep_interval(Some(OsStr::new(""))), Ok(300));
+    assert_eq!(parse_sweep_interval(Some(OsStr::new("   "))), Ok(300));
+    assert_eq!(parse_sweep_interval(Some(OsStr::new("0"))), Ok(0));
+    assert_eq!(parse_sweep_interval(Some(OsStr::new(" 60 "))), Ok(60));
+    for bad in ["5m", "-1", "1.5", "sixty"] {
+        let err = parse_sweep_interval(Some(OsStr::new(bad))).unwrap_err();
+        assert!(err.contains(SWEEP_INTERVAL_ENV), "{err}");
+    }
+}
+
+/// The first sweep's jitter stays between half an interval and one, so a
+/// server never sweeps later than it did before the jitter.
+#[test]
+fn the_first_sweep_comes_between_half_an_interval_and_one() {
+    use cdno_mcp::index_health::first_sweep_delay;
+    use std::time::Duration;
+
+    let every = Duration::from_secs(300);
+    for random in [0, 1, 149_999, 150_000, u64::MAX] {
+        let delay = first_sweep_delay(every, random);
+        assert!(delay >= every / 2 && delay < every, "{delay:?}");
+    }
+    assert_eq!(first_sweep_delay(every, 0), every / 2);
+    assert_eq!(
+        first_sweep_delay(Duration::from_millis(1), 7),
+        Duration::from_millis(1)
+    );
+}
+
+/// An interval of `u64::MAX` seconds, which a configuration may give to
+/// mean "never", neither panics in the jitter nor ends the loop task (and
+/// the corruption listener with it): the deadlines are capped, not added
+/// past what an `Instant` can hold.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_huge_sweep_interval_keeps_the_loop_alive() {
+    use cdno_mcp::index_health::{MAX_SWEEP_INTERVAL, first_sweep_delay};
+    use std::time::Duration;
+
+    let huge = Duration::from_secs(u64::MAX);
+    for random in [0, 7, u64::MAX] {
+        assert!(first_sweep_delay(huge, random) >= huge / 2);
+        let capped = first_sweep_delay(MAX_SWEEP_INTERVAL, random);
+        assert!(capped >= MAX_SWEEP_INTERVAL / 2 && capped < MAX_SWEEP_INTERVAL);
+    }
+
+    let dir = TempDir::new().expect("tempdir");
+    cdno_cli::commands::init::run(dir.path()).expect("cdno init");
+    let opened = open_vault_checked(dir.path(), None).expect("open");
+    let health = Arc::new(IndexHealth::from_opened(&opened));
+    let started = health.start(u64::MAX);
+    let spawned = health.spawn_loop(Some(huge));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!started.is_finished(), "the started loop ended");
+    assert!(!spawned.is_finished(), "the spawned loop ended");
+    started.abort();
+    spawned.abort();
+}
+
+/// The tool-call count the stdio server drains at shutdown (#1002): a call
+/// is counted while its closure runs, still counted when its caller stops
+/// awaiting it, and `idle` returns once every closure has returned. The
+/// limit holds the others back, counted, until a turn frees.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tool_calls_are_counted_until_their_work_returns() {
+    use cdno_mcp::tool_calls::ToolCalls;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    let calls = Arc::new(ToolCalls::with_limit(1));
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+    let done = Arc::new(AtomicUsize::new(0));
+
+    let first = {
+        let (calls, done) = (Arc::clone(&calls), Arc::clone(&done));
+        tokio::spawn(async move {
+            calls
+                .run(move || {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    done.fetch_add(1, Ordering::SeqCst);
+                })
+                .await
+        })
+    };
+    tokio::task::spawn_blocking(move || started_rx.recv_timeout(Duration::from_secs(5)))
+        .await
+        .unwrap()
+        .expect("the first call's work started");
+    let second = {
+        let (calls, done) = (Arc::clone(&calls), Arc::clone(&done));
+        tokio::spawn(async move {
+            calls
+                .run(move || {
+                    done.fetch_add(1, Ordering::SeqCst);
+                })
+                .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while calls.in_flight() < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("both calls counted");
+    // The caller of the running one gives up; its work is still counted.
+    first.abort();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        done.load(Ordering::SeqCst),
+        0,
+        "the limit held the second back"
+    );
+    assert!(calls.in_flight() >= 1);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), calls.idle())
+            .await
+            .is_err(),
+        "idle while work runs"
+    );
+
+    release_tx.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), calls.idle())
+        .await
+        .expect("idle once the work has returned");
+    assert_eq!(done.load(Ordering::SeqCst), 2);
+    assert_eq!(calls.in_flight(), 0);
+    second.await.unwrap().unwrap();
+}

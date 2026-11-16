@@ -16,6 +16,32 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+- **The stdio server sweeps the index like the HTTP server** (closes #1002, part of #1005). The
+  stdio `cdno-mcp` used to reconcile once, at start, so a session that lived for hours never saw a
+  note that arrived by file sync or `git pull` (absent from `search_notes` and backlinks), kept the
+  rows of a note deleted elsewhere (`lint` and `triage_inbox` reported `could not read note: file
+  not found`), and could not search an edit made in an editor. (A `cdno` command's own writes were
+  always seen at once, since processes on one machine share the index.) It now runs
+  `cdno-mcp-server`'s sweep, through the same code (`IndexHealth::start`): every
+  `CDNO_MCP_RECONCILE_INTERVAL_SECS` seconds (the HTTP server's variable, default 300, `0` turns it
+  off) it reconciles the index with the notes, then runs the integrity check and the in-place
+  repair of #526, recurrence stop included. Each session sweeps on its own timer, and `index_status`
+  reports that server's own sweeps and repairs. On both servers the first sweep now comes at a
+  random point between half an interval and one after start, so sessions opened together do not
+  sweep in step. (`cdno now` stopped refreshing the index as a side effect in 0.46.0; this is what
+  picks up hand edits for a long-running stdio server instead.) A value that is not a whole number
+  of seconds stops the server at start, logged and naming the variable; an empty or blank one means
+  the default. The sweep writes nothing to stdout. The stdio runtime now has a fixed thread budget
+  (2 workers, at most 8 blocking threads, at most 4 tool calls running their work at once) rather
+  than a worker per core and 512 blocking threads, since a desktop client may spawn several
+  servers. When the client disconnects, the stdio server stops the sweep loop at once, lets rmcp
+  send pending replies for up to 5 seconds, waits for every tool call still running to finish (so the
+  server itself no longer cuts a write between its files; a call gives up on the vault lock after 5
+  seconds, two minutes is a backstop for one that hangs, and a client that kills the process
+  outright can still interrupt a write, as a crash can), and then waits at most 5 more seconds for a sweep
+  still running before it exits. `CuadernoServer::tool_calls`, `with_tool_call_limit` and the
+  `tool_calls` module count tool calls' blocking work for that drain.
+
 - **`cdno reindex` rebuilds the index in place** (closes #999, part of #1005). It used to delete
   `index.db` and its sidecars and start a new file, so a process that already had the index open
   (an MCP server, `cdno watch`) carried on against the deleted file with no error on either side.

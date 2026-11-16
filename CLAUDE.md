@@ -183,7 +183,10 @@ across `context.rs` / `creation.rs` / `lifecycle.rs` / `operations.rs`. JSON-Sch
 keep `schemars` out of the domain crate. Every handler routes its synchronous domain call through
 `CuadernoServer::with_vault`, which uses `spawn_blocking`. **Stdout is the JSON-RPC channel** — never
 print to it; log with `tracing` to stderr (`RUST_LOG=cdno_mcp=debug`). Tool descriptions are the only
-instruction surface an agent sees, so they must state the vault's conventions themselves.
+instruction surface an agent sees, so they must state the vault's conventions themselves. Both
+binaries start the same reconcile-and-check sweep through `IndexHealth::start`
+(`crates/cdno-mcp/src/index_health.rs`; interval `CDNO_MCP_RECONCILE_INTERVAL_SECS`, default 300,
+`0` off): a change to it lands on both servers, so never give one binary a loop of its own.
 
 ## Testing
 

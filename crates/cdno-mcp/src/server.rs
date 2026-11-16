@@ -68,6 +68,10 @@ pub struct CuadernoServer {
     // `with_index_health`; both binaries do, and the tools say so when
     // it is missing.
     index_health: Option<Arc<crate::index_health::IndexHealth>>,
+    // The tool calls running now, and the optional limit on how many run
+    // at once (#1002). Shared by every clone, so the stdio binary can wait
+    // for them at shutdown.
+    tool_calls: Arc<crate::tool_calls::ToolCalls>,
     // Merged dispatch table (the four per-group `#[tool_router]`s).
     // `#[tool_handler(router = self.tool_router)]` reads it at runtime;
     // dead-code analysis can't trace the proc-macro-generated reads.
@@ -90,8 +94,23 @@ impl CuadernoServer {
             sync_nudge: None,
             vault_root,
             index_health: None,
+            tool_calls: Arc::new(crate::tool_calls::ToolCalls::new()),
             tool_router,
         }
+    }
+
+    /// Run at most `limit` tool calls' blocking work at once (#1002); the
+    /// others wait their turn. The stdio binary sets this below its
+    /// blocking-pool size; without it there is no limit here.
+    pub fn with_tool_call_limit(mut self, limit: usize) -> Self {
+        self.tool_calls = Arc::new(crate::tool_calls::ToolCalls::with_limit(limit));
+        self
+    }
+
+    /// The tool calls this server (and every clone of it) has running, for
+    /// a binary that waits for them before it exits.
+    pub fn tool_calls(&self) -> Arc<crate::tool_calls::ToolCalls> {
+        Arc::clone(&self.tool_calls)
     }
 
     /// The vault's root on disk, as given to [`new`](Self::new).
@@ -141,6 +160,7 @@ impl CuadernoServer {
             sync_nudge: None,
             vault_root,
             index_health: None,
+            tool_calls: Arc::new(crate::tool_calls::ToolCalls::new()),
             tool_router: Self::context_router(),
         }
     }
@@ -165,6 +185,11 @@ impl CuadernoServer {
     /// pool instead of starving the accept loop. The closure returns
     /// whatever the call site needs (usually a `Result<T, DomainError>`
     /// that the caller then maps with `into_mcp_error`).
+    ///
+    /// The closure is counted in [`tool_calls`](Self::tool_calls) until it
+    /// returns, even when the caller stops awaiting it, so a stdio server
+    /// that is shutting down waits for a write rather than cutting it
+    /// inside its commit (#1002).
     pub(crate) async fn with_vault<R>(
         &self,
         f: impl FnOnce(&Vault) -> R + Send + 'static,
@@ -175,21 +200,19 @@ impl CuadernoServer {
         #[cfg(test)]
         WITH_VAULT_CALLS.with(|calls| calls.set(calls.get() + 1));
         let vault = Arc::clone(&self.vault);
-        tokio::task::spawn_blocking(move || f(&vault))
-            .await
-            .map_err(|e| {
-                // A JoinError here almost always means the closure
-                // panicked. Containing it as an error response (rather
-                // than unwinding the runtime) is deliberate — but the
-                // JoinError's Display embeds the panic payload, which
-                // must not reach the client (PR #307 audit note). Log
-                // the detail server-side; return a generic message.
-                tracing::error!(error = %e, "tool handler panicked on the blocking pool");
-                rmcp::model::ErrorData::internal_error(
-                    "internal error while executing the tool".to_string(),
-                    None,
-                )
-            })
+        self.tool_calls.run(move || f(&vault)).await.map_err(|e| {
+            // A JoinError here almost always means the closure
+            // panicked. Containing it as an error response (rather
+            // than unwinding the runtime) is deliberate — but the
+            // JoinError's Display embeds the panic payload, which
+            // must not reach the client (PR #307 audit note). Log
+            // the detail server-side; return a generic message.
+            tracing::error!(error = %e, "tool handler panicked on the blocking pool");
+            rmcp::model::ErrorData::internal_error(
+                "internal error while executing the tool".to_string(),
+                None,
+            )
+        })
     }
 }
 

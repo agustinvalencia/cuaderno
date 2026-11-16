@@ -359,6 +359,7 @@ dependencies = [
  "chrono",
  "clap",
  "jsonwebtoken",
+ "libc",
  "reqwest",
  "rmcp",
  "rusqlite",

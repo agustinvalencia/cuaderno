@@ -7,7 +7,8 @@
 //! notes it failed to index, and a damaged database stayed damaged until
 //! somebody with a shell on the host deleted it.
 //!
-//! - **Assess.** Every sweep reconciles, then runs `PRAGMA quick_check`
+//! - **Assess.** Every sweep, on either server ([`IndexHealth::start`]
+//!   starts the loop for both, #1002), reconciles, then runs `PRAGMA quick_check`
 //!   (the thorough `integrity_check` when the sweep could not index some
 //!   notes, at most once an hour, and whenever damage only the thorough
 //!   check sees is still outstanding). Page-level damage can leave every
@@ -77,6 +78,43 @@ pub const INTEGRITY_RECHECK: Duration = Duration::from_secs(3600);
 /// How many failing notes a sweep names, in the log and in the record.
 /// The first few show what is wrong; all of them would bury it.
 pub const FAILING_NOTES_SHOWN: usize = 5;
+
+/// Seconds between two sweeps unless configured, on both servers.
+pub const DEFAULT_SWEEP_INTERVAL_SECS: u64 = 300;
+
+/// The variable both servers read the sweep interval from, in seconds; `0`
+/// turns the sweeps off. `cdno-mcp-server` also takes it as
+/// `--reconcile-interval-secs`; the stdio `cdno-mcp`, launched from a
+/// client's config, reads only the variable (#1002).
+pub const SWEEP_INTERVAL_ENV: &str = "CDNO_MCP_RECONCILE_INTERVAL_SECS";
+
+/// The sweep interval in seconds from [`SWEEP_INTERVAL_ENV`], for the stdio
+/// server: unset, empty or only spaces (as with `CUADERNO_INDEX_PATH`)
+/// means [`DEFAULT_SWEEP_INTERVAL_SECS`]. Spaces around a number are
+/// ignored, which the HTTP server's flag parser does not do. A value that
+/// is not a whole number of seconds is an error naming the variable, so a
+/// typo stops the server at start rather than silently running on the
+/// default.
+pub fn sweep_interval_secs_from_env() -> Result<u64, String> {
+    parse_sweep_interval(std::env::var_os(SWEEP_INTERVAL_ENV).as_deref())
+}
+
+/// [`sweep_interval_secs_from_env`] on a given value, for tests.
+pub fn parse_sweep_interval(value: Option<&std::ffi::OsStr>) -> Result<u64, String> {
+    let blank = |v: &&std::ffi::OsStr| v.to_str().is_some_and(|s| s.trim().is_empty());
+    let Some(value) = value.filter(|v| !blank(v)) else {
+        return Ok(DEFAULT_SWEEP_INTERVAL_SECS);
+    };
+    value
+        .to_str()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .ok_or_else(|| {
+            format!(
+                "{SWEEP_INTERVAL_ENV} must be a whole number of seconds (0 turns the sweeps off), \
+                 got {value:?}"
+            )
+        })
+}
 
 /// How the server paces and bounds its own repairs.
 #[derive(Debug, Clone, Copy)]
@@ -813,30 +851,70 @@ impl IndexHealth {
         }
     }
 
+    /// Start the health loop with a sweep every `interval_secs` seconds, or
+    /// with the sweeps off when it is `0`, and say which at start. Both
+    /// servers start their loop here (#1002), so they share one interval
+    /// default, one meaning of `0` and one loop. The handle lets a caller
+    /// that is shutting down stop the loop from starting another sweep;
+    /// dropping it leaves the loop running.
+    pub fn start(self: &Arc<Self>, interval_secs: u64) -> tokio::task::JoinHandle<()> {
+        if interval_secs > 0 {
+            tracing::info!(
+                interval_secs,
+                "periodic reconciliation and index check enabled"
+            );
+            self.spawn_loop(Some(Duration::from_secs(interval_secs)))
+        } else {
+            tracing::warn!(
+                "periodic reconciliation disabled ({SWEEP_INTERVAL_ENV} or \
+                 --reconcile-interval-secs is 0); out-of-band edits will not appear in the index \
+                 until restart"
+            );
+            // Still listen for a tool call that meets a damaged index.
+            self.spawn_loop(None)
+        }
+    }
+
     /// Run [`sweep`](Self::sweep) every `every`, and
     /// [`on_corruption_seen`](Self::on_corruption_seen) whenever a tool
-    /// call reports corruption. With `every` `None` (the stdio server, or
-    /// sweeps turned off) only the second runs, so a tool call that meets
-    /// damage still starts a repair on every server.
+    /// call reports corruption. With `every` `None` (sweeps turned off)
+    /// only the second runs, so a tool call that meets damage still starts
+    /// a repair on every server.
+    ///
+    /// A sweep runs on the blocking pool, one at a time: the next tick
+    /// waits for the running sweep to finish, and a tick missed meanwhile
+    /// is delayed rather than replayed. The first sweep comes after a
+    /// random [`first_sweep_delay`], between half an interval and one.
+    /// Aborting the returned task stops
+    /// further sweeps; a sweep already running finishes on its thread.
     ///
     /// Known benign race (PR #304 review, correctness finding 2): a sweep
     /// reads file state *before* taking the per-note write lock, so a
     /// tool-call write landing in that window can be shadowed by a stale
     /// index row, which the *next* sweep heals (mtime mismatch). Worst
     /// case is stale search results for one interval; no note is touched.
-    pub fn spawn_loop(self: &Arc<Self>, every: Option<Duration>) {
+    pub fn spawn_loop(self: &Arc<Self>, every: Option<Duration>) -> tokio::task::JoinHandle<()> {
         let health = Arc::clone(self);
         tokio::spawn(async move {
+            // Opening the vault has just reconciled and checked, so the first
+            // sweep waits; how long is drawn between half an interval and a
+            // whole one, so servers started together (sessions a client
+            // restores at once) do not sweep in phase for ever.
+            // An interval past the cap means "never" in practice; capping
+            // it keeps every deadline the loop computes (now + delay, then
+            // + interval per tick) representable, since adding to an
+            // `Instant` panics on overflow and the panic would end this
+            // task, the corruption listener with it.
             let mut interval = every.map(|every| {
-                let mut interval = tokio::time::interval(every);
+                let every = every.min(MAX_SWEEP_INTERVAL);
+                let now = tokio::time::Instant::now();
+                let first = now
+                    .checked_add(first_sweep_delay(every, random_u64()))
+                    .unwrap_or(now + MAX_SWEEP_INTERVAL);
+                let mut interval = tokio::time::interval_at(first, every);
                 interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 interval
             });
-            // The first tick fires immediately; skip it, since opening the
-            // vault has just reconciled and checked.
-            if let Some(interval) = interval.as_mut() {
-                interval.tick().await;
-            }
             loop {
                 let corruption = match interval.as_mut() {
                     Some(interval) => tokio::select! {
@@ -861,8 +939,39 @@ impl IndexHealth {
                     tracing::warn!(error = %e, "index health task panicked");
                 }
             }
-        });
+        })
     }
+}
+
+/// The wait before the first sweep: half of `every` plus a share of the
+/// other half picked by `random`, so always in `[every / 2, every)` (or
+/// `every` itself when it is too short to split).
+pub fn first_sweep_delay(every: Duration, random: u64) -> Duration {
+    let half = every / 2;
+    let spread = u64::try_from((every - half).as_millis()).unwrap_or(u64::MAX);
+    if spread == 0 {
+        return every;
+    }
+    half.saturating_add(Duration::from_millis(random % spread))
+}
+
+/// The longest sweep interval the loop uses: ten years, which is "never"
+/// for a server process. A longer one (up to `u64::MAX` seconds, which a
+/// configuration may give to mean never) is taken as this.
+pub const MAX_SWEEP_INTERVAL: Duration = Duration::from_secs(10 * 365 * 24 * 3600);
+
+/// A random number from the standard library's per-process hash seed: no
+/// dependency, and different in every process, which is all the jitter
+/// needs.
+fn random_u64() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos()),
+    );
+    hasher.finish()
 }
 
 fn repair_state(state: &State) -> RepairState {

@@ -18,9 +18,11 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use cdno_mcp::index_health::SWEEP_INTERVAL_ENV;
 use serde_json::{Value, json};
 
 #[path = "support/process.rs"]
@@ -45,6 +47,11 @@ struct McpSubprocess {
     // Each line of stdout pushes onto this receiver; reader thread
     // owns the actual ChildStdout.
     rx: Receiver<String>,
+    // Every line the child wrote to stdout so far, read or not.
+    stdout_lines: Arc<Mutex<Vec<String>>>,
+    // Everything the child wrote to stderr so far, collected by a drain
+    // thread so the child never blocks on a full pipe.
+    stderr: Arc<Mutex<Vec<u8>>>,
 }
 
 impl McpSubprocess {
@@ -55,17 +62,28 @@ impl McpSubprocess {
     /// [`spawn`](Self::spawn) with `CUADERNO_INDEX_PATH` set to `index`,
     /// or removed when `None` so no test inherits the developer's value.
     fn spawn_with_index(vault_root: &Path, index: Option<&Path>) -> Self {
+        Self::spawn_with_env(vault_root, index, &[])
+    }
+
+    /// [`spawn_with_index`](Self::spawn_with_index) with extra environment.
+    /// The sweep interval variable is removed unless `env` sets it, so every
+    /// other test runs on the default interval, which no test outlasts.
+    fn spawn_with_env(vault_root: &Path, index: Option<&Path>, env: &[(&str, &str)]) -> Self {
         let bin = env!("CARGO_BIN_EXE_cdno-mcp");
         let mut cmd = Command::new(bin);
         match index {
             Some(path) => cmd.env(cdno_core::paths::INDEX_PATH_ENV, path),
             None => cmd.env_remove(cdno_core::paths::INDEX_PATH_ENV),
         };
-        let mut child = cmd
+        cmd.env_remove(SWEEP_INTERVAL_ENV)
             .env("CUADERNO_VAULT_PATH", vault_root)
             // Quiet logs in tests; the binary writes to stderr so
             // RUST_LOG=off keeps test output clean.
-            .env("RUST_LOG", "off")
+            .env("RUST_LOG", "off");
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -78,19 +96,53 @@ impl McpSubprocess {
 
         // Drain stderr in the background so the child can write
         // unbounded log output without us blocking.
+        let collected = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&collected);
         thread::spawn(move || {
             use std::io::Read;
-            let mut sink = Vec::new();
             let mut s = stderr;
-            let _ = s.read_to_end(&mut sink);
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = s.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                sink.lock().unwrap().extend_from_slice(&buf[..n]);
+            }
         });
 
-        let rx = spawn_line_reader(stdout);
+        let stdout_lines = Arc::new(Mutex::new(Vec::new()));
+        let rx = spawn_line_reader(stdout, Arc::clone(&stdout_lines));
 
         Self {
             child,
             stdin: Some(stdin),
             rx,
+            stdout_lines,
+            stderr: collected,
+        }
+    }
+
+    /// What the child has written to stderr so far.
+    fn stderr_text(&self) -> String {
+        String::from_utf8_lossy(&self.stderr.lock().unwrap()).into_owned()
+    }
+
+    /// Close stdin, as a client that disconnects does, and wait at most
+    /// `deadline` for the process to exit. Returns how long it took and how
+    /// it exited; panics, after killing it, if it overstays.
+    fn close_and_wait(&mut self, deadline: Duration) -> (Duration, std::process::ExitStatus) {
+        drop(self.stdin.take());
+        let start = Instant::now();
+        loop {
+            if let Some(status) = self.child.try_wait().expect("try_wait") {
+                return (start.elapsed(), status);
+            }
+            if start.elapsed() >= deadline {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                panic!("cdno-mcp did not exit within {deadline:?} of stdin closing");
+            }
+            thread::sleep(Duration::from_millis(20));
         }
     }
 
@@ -170,12 +222,24 @@ impl Drop for McpSubprocess {
 
 /// Spawn a background thread that pulls lines off `stdout` and
 /// pushes them onto a channel. Lets the test's reads be
-/// timeout-bounded.
-fn spawn_line_reader(stdout: ChildStdout) -> Receiver<String> {
+/// timeout-bounded. Every line is also kept in `transcript`, bytes that
+/// are not UTF-8 included (lossily), so a test can inspect all of stdout
+/// after the reads have consumed it.
+fn spawn_line_reader(stdout: ChildStdout, transcript: Arc<Mutex<Vec<String>>>) -> Receiver<String> {
     let (tx, rx) = std::sync::mpsc::channel();
     thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines().map_while(Result::ok) {
+        let mut reader = BufReader::new(stdout);
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            let line = String::from_utf8_lossy(&buf)
+                .trim_end_matches(['\n', '\r'])
+                .to_owned();
+            transcript.lock().unwrap().push(line.clone());
             if tx.send(line).is_err() {
                 break;
             }
@@ -1092,4 +1156,443 @@ fn the_stdio_server_refuses_a_relative_index_path() {
     );
     assert!(!cwd.path().join("cache").exists());
     assert_eq!(index_files_in_meta_dir(dir.path()), Vec::<String>::new());
+}
+
+// ---------------------------------------------------------------------
+// The periodic sweep (#1002)
+// ---------------------------------------------------------------------
+
+/// An inbox note with `body`, at `inbox/<stem>.md`.
+fn write_inbox_note(vault: &Path, stem: &str, body: &str) {
+    std::fs::write(
+        vault.join("inbox").join(format!("{stem}.md")),
+        format!("---\ntype: inbox\ncreated: 2026-05-08\n---\n\n{body}\n"),
+    )
+    .unwrap();
+}
+
+/// One `tools/call`, returning the whole response.
+fn call_tool(mcp: &mut McpSubprocess, id: u64, name: &str, arguments: Value) -> Value {
+    mcp.send(&json!({
+        "jsonrpc": "2.0", "id": id, "method": "tools/call",
+        "params": { "name": name, "arguments": arguments }
+    }));
+    mcp.read_response(id)
+}
+
+/// Whether `search_notes` for `word` names the note `stem`.
+fn search_finds(mcp: &mut McpSubprocess, id: u64, word: &str, stem: &str) -> bool {
+    call_tool(mcp, id, "search_notes", json!({ "query": word }))
+        .to_string()
+        .contains(stem)
+}
+
+/// Poll `check` every 200ms until it holds or `deadline` passes, so a test
+/// waits only as long as the sweep takes and never longer than the bound.
+fn eventually(deadline: Duration, mut check: impl FnMut() -> bool) -> bool {
+    let start = Instant::now();
+    loop {
+        if check() {
+            return true;
+        }
+        if start.elapsed() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// Long enough for a one-second sweep to have run on a loaded runner, short
+/// enough that a sweep that never runs fails in seconds.
+const SWEEP_DEADLINE: Duration = Duration::from_secs(15);
+
+/// The acceptance test of #1002: a note created, a note deleted and a note
+/// edited on disk under a running stdio server all reach `search_notes` and
+/// `lint` through the sweep, with no tool call that writes.
+#[test]
+fn the_stdio_server_sweeps_out_of_band_changes_into_the_index() {
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    write_inbox_note(
+        dir.path(),
+        "2026-05-08-edited",
+        "Surrogate model calibration.",
+    );
+    write_inbox_note(dir.path(), "2026-05-08-deleted", "Marmalade residuals.");
+    let mut mcp = McpSubprocess::spawn_with_env(dir.path(), None, &[(SWEEP_INTERVAL_ENV, "1")]);
+    initialise(&mut mcp);
+
+    // What the index holds at open.
+    assert!(search_finds(&mut mcp, 2, "marmalade", "2026-05-08-deleted"));
+    assert!(!search_finds(&mut mcp, 3, "zephyr", "2026-05-09-created"));
+    assert!(!search_finds(&mut mcp, 4, "quinoa", "2026-05-08-edited"));
+
+    // Out of band: one note arrives, one goes, one is edited. The edit's
+    // mtime is moved on explicitly so it differs from the indexed one even
+    // on a filesystem with coarse timestamps.
+    write_inbox_note(dir.path(), "2026-05-09-created", "Zephyr ablation.");
+    std::fs::remove_file(dir.path().join("inbox/2026-05-08-deleted.md")).unwrap();
+    write_inbox_note(
+        dir.path(),
+        "2026-05-08-edited",
+        "Quinoa sweep, recalibrated.",
+    );
+    std::fs::File::options()
+        .write(true)
+        .open(dir.path().join("inbox/2026-05-08-edited.md"))
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() + Duration::from_secs(10))
+        .unwrap();
+
+    let mut id = 10;
+    let checks: [(&str, &str, bool, &str); 3] = [
+        (
+            "zephyr",
+            "2026-05-09-created",
+            true,
+            "a note created on disk was never indexed",
+        ),
+        (
+            "marmalade",
+            "2026-05-08-deleted",
+            false,
+            "a note deleted on disk stayed searchable",
+        ),
+        (
+            "quinoa",
+            "2026-05-08-edited",
+            true,
+            "a note edited on disk was never reindexed",
+        ),
+    ];
+    for (word, stem, present, failure) in checks {
+        assert!(
+            eventually(SWEEP_DEADLINE, || {
+                id += 1;
+                search_finds(&mut mcp, id, word, stem) == present
+            }),
+            "{failure}"
+        );
+    }
+    // The fault the issue names: a deleted note's rows make `lint` report
+    // a note it cannot read. After the sweep it names nothing of it.
+    let lint = call_payload(&call_tool(&mut mcp, 100, "lint", json!({})));
+    assert!(
+        !lint.to_string().contains("2026-05-08-deleted"),
+        "lint still reports the deleted note: {lint}"
+    );
+    let status = call_payload(&call_tool(&mut mcp, 101, "index_status", json!({})));
+    assert!(status["last_sweep"].is_object(), "{status}");
+    assert_eq!(status["healthy"], json!(true), "{status}");
+}
+
+/// `0` turns the sweep off: a note created on disk stays out of the index
+/// over several would-be intervals, and no sweep is ever recorded.
+#[test]
+fn a_zero_interval_disables_the_stdio_sweep() {
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    let mut mcp = McpSubprocess::spawn_with_env(dir.path(), None, &[(SWEEP_INTERVAL_ENV, "0")]);
+    initialise(&mut mcp);
+
+    write_inbox_note(dir.path(), "2026-05-09-created", "Zephyr ablation.");
+    thread::sleep(Duration::from_secs(3));
+    assert!(!search_finds(&mut mcp, 2, "zephyr", "2026-05-09-created"));
+    let status = call_payload(&call_tool(&mut mcp, 3, "index_status", json!({})));
+    assert!(status["last_sweep"].is_null(), "{status}");
+}
+
+/// A value that is not a number of seconds stops the server at start,
+/// naming the variable, rather than running on the default.
+#[test]
+fn the_stdio_server_refuses_a_malformed_sweep_interval() {
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    let (status, stderr) = exit_within_deadline(
+        Command::new(env!("CARGO_BIN_EXE_cdno-mcp"))
+            .env("CUADERNO_VAULT_PATH", dir.path())
+            .env_remove(cdno_core::paths::INDEX_PATH_ENV)
+            .env(SWEEP_INTERVAL_ENV, "5m")
+            .env("RUST_LOG", "off"),
+    );
+    assert!(!status.success(), "a malformed interval must refuse");
+    assert!(stderr.contains(SWEEP_INTERVAL_ENV), "{stderr}");
+}
+
+/// Stdout is the JSON-RPC channel. With every log level on and sweeps that
+/// apply changes and warn about a note that does not parse, every line on
+/// stdout is still a JSON-RPC message, and the sweeps' logs are on stderr.
+#[test]
+fn the_stdio_sweep_writes_nothing_but_json_rpc_to_stdout() {
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    let mut mcp = McpSubprocess::spawn_with_env(
+        dir.path(),
+        None,
+        &[(SWEEP_INTERVAL_ENV, "1"), ("RUST_LOG", "trace")],
+    );
+    initialise(&mut mcp);
+
+    // A note that never parses makes every sweep warn, naming it; new notes
+    // make sweeps apply changes (logged in the same warning while the broken
+    // note is there).
+    std::fs::write(
+        dir.path().join("inbox/2026-05-08-broken.md"),
+        "---\ntype: [unclosed\n---\n",
+    )
+    .unwrap();
+    for n in 0..3 {
+        write_inbox_note(dir.path(), &format!("2026-05-1{n}-arrived"), "Zephyr.");
+        thread::sleep(Duration::from_millis(1200));
+    }
+    assert!(
+        eventually(SWEEP_DEADLINE, || {
+            let stderr = mcp.stderr_text();
+            stderr.contains("periodic reconciliation could not index some notes")
+                && stderr.contains("2026-05-08-broken")
+        }),
+        "no sweep logged the broken note to stderr: {}",
+        mcp.stderr_text()
+    );
+    assert!(
+        eventually(SWEEP_DEADLINE, || search_finds(
+            &mut mcp,
+            2,
+            "zephyr",
+            "2026-05-12-arrived"
+        )),
+        "the sweeps never applied the new notes"
+    );
+    call_payload(&call_tool(&mut mcp, 3, "get_orientation", json!({})));
+    let (_, status) = mcp.close_and_wait(Duration::from_secs(15));
+    assert!(status.success(), "{status:?}");
+
+    // The reader thread disconnects the channel at the child's EOF, by
+    // which point the transcript holds every line stdout carried.
+    while mcp.rx.recv_timeout(Duration::from_secs(5)).is_ok() {}
+    let lines = mcp.stdout_lines.lock().unwrap().clone();
+    assert!(
+        lines.len() >= 3,
+        "initialize, a search and get_orientation at least: {lines:?}"
+    );
+    for line in &lines {
+        let value: Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("a non-JSON line on stdout `{line}`: {e}"));
+        assert_eq!(value["jsonrpc"], "2.0", "not a JSON-RPC message: {line}");
+    }
+}
+
+/// A client that disconnects while no sweep runs gets a prompt exit, with
+/// the sweep loop on its default interval.
+#[test]
+fn the_stdio_server_exits_promptly_when_stdin_closes_between_sweeps() {
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    let mut mcp = McpSubprocess::spawn(dir.path());
+    initialise(&mut mcp);
+    call_payload(&call_tool(&mut mcp, 2, "get_orientation", json!({})));
+
+    let (took, status) = mcp.close_and_wait(Duration::from_secs(10));
+    assert!(status.success(), "{status:?}");
+    // Normally a few milliseconds. The bound is the sweep grace: an idle
+    // server must not spend it, and a runner slowed by instrumentation
+    // still exits well inside it.
+    assert!(
+        took < Duration::from_secs(5),
+        "exit took {took:?} with nothing running"
+    );
+}
+
+/// A client that disconnects while a sweep runs gets an exit within the
+/// shutdown grace (5s), not when the sweep ends. The sweep is held running
+/// deterministically: this test holds the vault write lock, so the sweep's
+/// first new note waits out the 5s lock timeout, and each of the eight
+/// after it waits again, some 45s in all.
+#[test]
+fn the_stdio_server_exits_within_the_grace_when_stdin_closes_during_a_sweep() {
+    use cdno_core::store::{FsVaultStore, VaultStore};
+
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    let mut mcp = McpSubprocess::spawn_with_env(dir.path(), None, &[(SWEEP_INTERVAL_ENV, "1")]);
+    initialise(&mut mcp);
+
+    let store = FsVaultStore::new(dir.path());
+    let lock = store.acquire_write_lock().expect("the vault lock");
+    for n in 0..9 {
+        write_inbox_note(dir.path(), &format!("2026-05-1{n}-arrived"), "Zephyr.");
+    }
+    // Past the next one-second tick, so the sweep is running and waiting
+    // on the lock when stdin closes.
+    thread::sleep(Duration::from_millis(2500));
+
+    let (took, status) = mcp.close_and_wait(Duration::from_secs(30));
+    drop(lock);
+    assert!(status.success(), "{status:?}");
+    // No tool call is in flight, so rmcp's drain and the tool-call drain
+    // are immediate and the exit is the 5s grace: at least most of it
+    // (the sweep was holding the exit), and far less than the sweep's ~40s.
+    assert!(
+        took >= Duration::from_secs(4),
+        "exit took {took:?}: the grace was not exercised, so no sweep was running"
+    );
+    assert!(
+        took < Duration::from_secs(9),
+        "exit took {took:?}; the grace is 5s and the sweep had ~40s left"
+    );
+}
+
+/// Serve the named pipe at `fifo` to whoever opens it for reading: report
+/// the first reader through `reader_seen`, hold every reader until
+/// `release`, then hand it `content` and close, once per open, until the
+/// path is no longer a pipe (the write replaced it) or `stop`.
+#[cfg(unix)]
+fn serve_fifo(
+    fifo: std::path::PathBuf,
+    content: String,
+    reader_seen: Arc<std::sync::atomic::AtomicBool>,
+    release: Arc<std::sync::atomic::AtomicBool>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+) -> thread::JoinHandle<()> {
+    use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
+    use std::sync::atomic::Ordering;
+
+    thread::spawn(move || {
+        while !stop.load(Ordering::SeqCst) {
+            let still_a_pipe = std::fs::symlink_metadata(&fifo)
+                .map(|m| m.file_type().is_fifo())
+                .unwrap_or(false);
+            if !still_a_pipe {
+                return;
+            }
+            // Non-blocking, so this fails at once (ENXIO) while no reader
+            // has the pipe open, rather than waiting for one.
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&fifo)
+            {
+                Ok(mut writer) => {
+                    reader_seen.store(true, Ordering::SeqCst);
+                    while !release.load(Ordering::SeqCst) && !stop.load(Ordering::SeqCst) {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    let _ = writer.write_all(content.as_bytes());
+                    drop(writer);
+                    // Let the reader see the end of input before another
+                    // open could hand it the content twice.
+                    thread::sleep(Duration::from_millis(300));
+                }
+                Err(_) => thread::sleep(Duration::from_millis(20)),
+            }
+        }
+    })
+}
+
+/// A write still running when the client disconnects completes, every file
+/// of it and its index rows, before the process exits (#1002). The write is
+/// a rename that rewrites references in three notes. It is held
+/// deterministically, with no timing in the server's code involved: after
+/// the server has indexed the notes, one linking note is swapped for a
+/// named pipe holding the same text, so the rename's read of it blocks
+/// until the test writes into the pipe. The test waits until the read is
+/// blocked (the write is in flight), closes stdin, waits past rmcp's 5s
+/// drain and the 5s sweep grace (when the server used to exit, cutting the
+/// write), checks the server is still running, and only then releases the
+/// read.
+#[cfg(unix)]
+#[test]
+fn a_write_in_flight_at_disconnect_completes_before_the_stdio_server_exits() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    std::fs::write(
+        dir.path().join("projects/surrogate-model.md"),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nCalibrating.\n\n## Next Actions\n\n## Milestones\n",
+    )
+    .unwrap();
+    let linking = ["2026-05-08-one", "2026-05-08-two", "2026-05-08-three"];
+    for stem in linking {
+        write_inbox_note(dir.path(), stem, "See [[surrogate-model]].");
+    }
+    let mut mcp = McpSubprocess::spawn(dir.path());
+    // Opening the vault indexed every note, the one about to become a pipe
+    // included.
+    initialise(&mut mcp);
+
+    let held = dir.path().join(format!("inbox/{}.md", linking[0]));
+    let content = std::fs::read_to_string(&held).unwrap();
+    std::fs::remove_file(&held).unwrap();
+    let c_path = std::ffi::CString::new(held.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: a valid NUL-terminated path and a plain mode.
+    assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o644) }, 0, "mkfifo");
+    let (reader_seen, release, stop) = (
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let server = serve_fifo(
+        held.clone(),
+        content,
+        Arc::clone(&reader_seen),
+        Arc::clone(&release),
+        Arc::clone(&stop),
+    );
+
+    mcp.send(&json!({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": { "name": "rename_note", "arguments": {
+            "note": "surrogate-model", "to": "emulator-study"
+        } }
+    }));
+    let in_flight = eventually(Duration::from_secs(30), || {
+        reader_seen.load(Ordering::SeqCst)
+    });
+    if !in_flight {
+        stop.store(true, Ordering::SeqCst);
+        panic!("the rename never read the held note");
+    }
+
+    // The client goes away with the write in flight, and the server stays
+    // past the point where it used to exit.
+    drop(mcp.stdin.take());
+    thread::sleep(Duration::from_secs(11));
+    let still_running = mcp.child.try_wait().expect("try_wait").is_none();
+    release.store(true, Ordering::SeqCst);
+    assert!(still_running, "the server exited with the write in flight");
+    let (_, status) = mcp.close_and_wait(Duration::from_secs(60));
+    stop.store(true, Ordering::SeqCst);
+    server.join().unwrap();
+    assert!(status.success(), "{status:?}");
+
+    // Every file of the rename landed.
+    assert!(dir.path().join("projects/emulator-study.md").is_file());
+    assert!(!dir.path().join("projects/surrogate-model.md").exists());
+    for stem in linking {
+        let body = std::fs::read_to_string(dir.path().join(format!("inbox/{stem}.md"))).unwrap();
+        assert!(body.contains("[[emulator-study]]"), "{stem}: {body}");
+    }
+    let today = chrono::Local::now().date_naive();
+    let daily = dir
+        .path()
+        .join(format!("journal/{}/daily/{today}.md", today.format("%Y")));
+    let log = std::fs::read_to_string(&daily).unwrap_or_default();
+    assert!(log.contains("renamed [[emulator-study]]"), "{log}");
+
+    // And its index update: the rows already name the new path, read
+    // straight from the file, with no open that would reconcile first.
+    let index = rusqlite::Connection::open_with_flags(
+        dir.path().join(cdno_core::paths::INDEX_DB),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let paths: Vec<String> = index
+        .prepare("SELECT path FROM notes WHERE path LIKE 'projects/%'")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(paths, vec!["projects/emulator-study.md".to_owned()]);
 }

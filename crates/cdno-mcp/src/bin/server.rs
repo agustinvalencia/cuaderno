@@ -59,13 +59,14 @@
 //!
 //! # Index freshness
 //!
-//! Unlike a stdio session, this process is long-running while other
-//! writers (the CLI, editors, sync tools) mutate the markdown
-//! underneath it. Markdown is the source of truth and the index is a
-//! cache, so the server re-runs the reconciliation pass on an
-//! interval (`--reconcile-interval-secs`, default 300, 0 disables) as
-//! the correctness backstop; a file watcher (GH #49) can later reduce
-//! the latency but never replaces this loop.
+//! This process is long-running while other writers (the CLI, editors,
+//! sync tools) mutate the markdown underneath it. Markdown is the source
+//! of truth and the index is a cache, so the server re-runs the
+//! reconciliation pass on an interval (`--reconcile-interval-secs`,
+//! default 300, 0 disables) as the correctness backstop; a file watcher
+//! (GH #49) can later reduce the latency but never replaces this loop.
+//! The stdio binary starts the same loop
+//! ([`cdno_mcp::index_health::IndexHealth::start`], #1002).
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -181,8 +182,13 @@ struct ServeArgs {
     read_only: bool,
 
     /// Seconds between index-reconciliation passes (the correctness
-    /// backstop against out-of-band edits). 0 disables the loop.
-    #[arg(long, env = "CDNO_MCP_RECONCILE_INTERVAL_SECS", default_value_t = 300)]
+    /// backstop against out-of-band edits). 0 disables the loop. The
+    /// stdio `cdno-mcp` reads the same variable, with the same default.
+    #[arg(
+        long,
+        env = cdno_mcp::index_health::SWEEP_INTERVAL_ENV,
+        default_value_t = cdno_mcp::index_health::DEFAULT_SWEEP_INTERVAL_SECS
+    )]
     reconcile_interval_secs: u64,
 
     /// Seconds between git checkpoints of the vault (commit-if-dirty;
@@ -373,17 +379,10 @@ async fn serve() -> Result<()> {
         // (RFC 0006 §8.4).
         cdno_mcp::startup::log_method_notice(&opened.vault);
 
+        // The same loop the stdio server starts (#1002). It runs until the
+        // process exits.
         let health = Arc::new(cdno_mcp::index_health::IndexHealth::from_opened(&opened));
-        if args.reconcile_interval_secs > 0 {
-            health.spawn_loop(Some(Duration::from_secs(args.reconcile_interval_secs)));
-        } else {
-            // Still listen for a tool call that meets a damaged index.
-            health.spawn_loop(None);
-            tracing::warn!(
-                "periodic reconciliation disabled (--reconcile-interval-secs 0); \
-                 out-of-band edits will not appear in the index until restart"
-            );
-        }
+        drop(health.start(args.reconcile_interval_secs));
 
         // One sentinel handle, shared by the post-write nudge (#540)
         // and the nudge-only sweep (#541) — two producers of the same

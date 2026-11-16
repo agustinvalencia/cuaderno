@@ -17,6 +17,42 @@ Two binaries serve the same tool catalogue:
 - **`cdno-mcp-server`** speaks MCP **Streamable HTTP** for remote clients — see
   [The HTTP server](http-server.md) for its flags and security model.
 
+## Keeping up with changes made elsewhere
+
+A server lives for as long as its session, often hours. On one machine every process shares one
+index, so a change made through cuaderno, by a `cdno` command or another server, is in the index at
+once, and any `cdno` command that opens the index also reconciles it for everyone. What a running
+server does not see by itself is a change made **outside** cuaderno: an edit in your editor, a file
+sync, a `git pull`, or a writer on another machine that keeps its own index
+([`CUADERNO_INDEX_PATH`](../../concepts/vault-structure.md#keeping-the-index-on-each-machine)).
+Both servers therefore run the same periodic **sweep**: every `CDNO_MCP_RECONCILE_INTERVAL_SECS`
+seconds (300, five minutes, by default) they reconcile the index with the notes on disk, so a note
+that arrived, changed or was deleted that way reaches `search_notes`, `lint`, backlinks and the
+context tools within one interval at most (sooner if a `cdno` command runs meanwhile), and then
+check the index file as [The index looks after itself](#the-index-looks-after-itself) describes.
+The first sweep comes at a random point between half an interval and one after start, so sessions
+opened together do not sweep together. `0` turns the sweep off; the server then sees such changes
+only when it restarts or a `cdno` command reconciles. For the stdio `cdno-mcp`, set the variable in
+the client's `env` block (see
+[Connect to Claude](../../getting-started/connect-to-claude.md#register-the-server)); a value that is
+not a whole number of seconds stops it at start, with the reason in the client's log for the
+server. `cdno-mcp-server` also takes it as `--reconcile-interval-secs`. The sweep writes nothing to
+stdout, which is the JSON-RPC channel: its logs go to stderr.
+
+**Several sessions, several sweeps.** Each open session (each client window, each `cdno-mcp`
+process) runs its own sweep on its own timer. What [`index_status`](reads.md) reports, the last
+sweep, the repair state and the recent repairs, is that one server's record, not the index's: two
+sessions can show different sweeps.
+
+**When the client disconnects**, the stdio server, in order: stops the sweep loop at once, so no new
+sweep starts; lets rmcp send the replies of calls still running, for up to five seconds; waits for
+every tool call still running to finish, so the server itself does not cut a write between its files
+(a call gives up on the vault lock after five seconds and then does only its own work; two minutes
+is a backstop for one that hangs); and then gives a sweep still running at most five seconds more before it exits.
+Nothing is lost if a sweep is cut short, since the next open reconciles again. An idle server exits
+at once, and one with only a sweep running within five seconds. The wait is the server's own: a
+client that kills the process outright, or a crash, can still interrupt a write part-way.
+
 ## The tool surface
 
 The server advertises **68 tools**. This reference groups them by purpose:
@@ -33,8 +69,8 @@ client gets the same structures whichever surface it uses.
 ## The index looks after itself
 
 The index is a cache of the notes, rebuilt from them at will, so the servers repair it without
-asking. Both check its database file when they start, and `cdno-mcp-server` checks it again after
-every [reconciliation sweep](http-server.md#flags). A damaged index is rebuilt from the notes and
+asking. Both check its database file when they start, and again after every
+[reconciliation sweep](#keeping-up-with-changes-made-elsewhere). A damaged index is rebuilt from the notes and
 copied into the live file in place, without a restart, so every process on this machine using the
 vault sees the repair at once. A copy of the first damaged file of a streak is kept beside it, under its file name with `.previous`
 appended: `.cuaderno/index.db.previous` at the default location, or next to the file
