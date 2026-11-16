@@ -159,6 +159,11 @@ fn a_sweep_of_a_sound_index_does_not_rebuild() {
     let status = health.status();
     assert!(status.healthy);
     assert!(status.last_rebuild.is_none());
+    assert!(status.files.held);
+    assert!(
+        status.last_reopen.is_none(),
+        "nothing moved, nothing reopened"
+    );
     let sweep = status.last_sweep.expect("the sweep is recorded");
     assert_eq!(sweep.errors, 0);
     assert!(sweep.scanned >= NOTES);
@@ -172,8 +177,8 @@ fn rebuilds_are_spaced_apart() {
 
     let first = health.rebuild("test").expect("the first rebuild runs");
     assert!(first.rebuilt);
-    match health.rebuild("test") {
-        Err(RebuildRefused::TooSoon(wait)) => {
+    match health.rebuild("test").map_err(|r| (r.refused, r.reopen)) {
+        Err((RebuildRefused::TooSoon(wait), None)) => {
             assert!(wait <= cdno_mcp::index_health::MIN_REBUILD_INTERVAL)
         }
         other => panic!("a second rebuild straight away must be refused, got {other:?}"),
@@ -197,6 +202,9 @@ async fn index_status_and_rebuild_index_over_the_handlers() {
     assert_eq!(status["healthy"], true, "{status}");
     assert_eq!(status["check"]["kind"], "quick_check");
     assert!(status["damage_at_open"].is_null());
+    assert_eq!(status["files"]["held"], true, "{status}");
+    assert!(status["last_reopen"].is_null());
+    assert_eq!(status["reopens_recent"], 0);
 
     let rebuilt = decode_json(
         &server
@@ -219,6 +227,10 @@ async fn index_status_and_rebuild_index_over_the_handlers() {
     );
     let data = refused.data.expect("a refusal carries a rejection payload");
     assert!(data.to_string().contains("rebuild_refused"), "{data}");
+    assert!(
+        data.to_string().contains("\"too_soon\""),
+        "a reason a client can match: {data}"
+    );
 }
 
 #[tokio::test]
@@ -393,10 +405,9 @@ fn writes_committed_during_a_rebuild_are_in_the_index_afterwards() {
 #[test]
 fn damage_to_the_file_header_under_a_live_connection_is_repaired_in_place() {
     // The server's connection holds the header in its cache, so the
-    // in-place copy writes it back: the running server repairs the file,
-    // and `restart_required` stays false. (That state is reached only when
-    // the copy itself fails as damage; no test reproduces that with a live
-    // connection.)
+    // in-place copy writes it back: the running server repairs the file in
+    // place, with nothing set aside. (A header the copy itself cannot
+    // write over is set aside and replaced: `index_health_unwritable.rs`.)
     let dir = vault_with_notes();
     let opened = open_vault_checked(dir.path(), None).unwrap();
     let path = index_path(dir.path());
@@ -408,9 +419,13 @@ fn damage_to_the_file_header_under_a_live_connection_is_repaired_in_place() {
     let record = health.rebuild("test").unwrap();
 
     assert!(record.rebuilt, "{:?}", record.failure);
-    assert!(!record.restart_required);
+    assert!(!record.set_aside);
     let status = health.status();
-    assert!(!status.restart_required);
+    assert!(status.files.held, "{:?}", status.files);
+    assert!(
+        status.last_reopen.is_none(),
+        "an in-place repair reopens nothing"
+    );
     assert_eq!(status.repair, RepairState::Automatic);
     // Closing the last connection checkpoints the copy into the main file.
     drop(health);
@@ -1075,4 +1090,475 @@ async fn tool_calls_are_counted_until_their_work_returns() {
     assert_eq!(done.load(Ordering::SeqCst), 2);
     assert_eq!(calls.in_flight(), 0);
     second.await.unwrap().unwrap();
+}
+
+/// How many inbox notes the index file at `path` holds, read through a new
+/// connection: what any other process opening the path sees.
+fn inbox_rows_on_disk(path: &Path) -> i64 {
+    rusqlite::Connection::open(path)
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM notes WHERE path LIKE 'inbox/%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+fn capture(opened: &cdno_mcp::bootstrap::OpenedVault, text: &str) {
+    let at = NaiveDate::from_ymd_opt(2026, 3, 2)
+        .unwrap()
+        .and_hms_opt(9, 0, 0)
+        .unwrap();
+    opened.vault.capture_to_inbox(at, text).unwrap();
+}
+
+#[test]
+fn a_sweep_reopens_an_index_whose_file_was_deleted_under_it_and_reports_it() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+    let path = index_path(dir.path());
+    // `reindex --rebind`, or the open's self-heal in another process.
+    cdno_core::index::SqliteIndex::remove(&path);
+    let before = health.status();
+    assert!(!before.files.held, "{:?}", before.files);
+    assert!(!before.healthy, "a copy nobody else sees is not healthy");
+
+    health.sweep();
+
+    let status = health.status();
+    assert!(status.files.held, "{:?}", status.files);
+    assert!(status.healthy, "{status:?}");
+    let reopen = status.last_reopen.clone().expect("the sweep reopened");
+    assert!(reopen.reopened, "{:?}", reopen.failure);
+    assert_eq!(reopen.trigger, "the sweep");
+    assert!(
+        reopen.found.contains("deleted or moved"),
+        "{}",
+        reopen.found
+    );
+    assert_eq!(status.reopens_recent, 1);
+    assert_eq!(status.damage_rebuilds_recent, 0, "a reopen is not a repair");
+    assert!(status.last_rebuild.is_none());
+    // The reconcile after the reopen refilled the file at the path.
+    assert!(indexed_notes(&opened) >= NOTES);
+    capture(&opened, "surrogate model after the reopen");
+    assert_eq!(inbox_rows_on_disk(&path), 1);
+}
+
+#[test]
+fn a_sweep_reopens_an_index_whose_sidecars_were_unlinked_and_its_writes_reach_the_file() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+    let path = index_path(dir.path());
+    // Another kernel's last connection closing.
+    std::fs::remove_file(beside(&path, "-wal")).unwrap();
+    std::fs::remove_file(beside(&path, "-shm")).unwrap();
+    capture(&opened, "into the orphaned log");
+
+    health.sweep();
+
+    let status = health.status();
+    let reopen = status.last_reopen.clone().expect("the sweep reopened");
+    assert!(reopen.reopened, "{:?}", reopen.failure);
+    assert!(reopen.found.contains("-wal"), "{}", reopen.found);
+    assert!(status.files.held);
+    assert!(status.healthy, "{status:?}");
+    // What only the orphaned log held is written again from the notes.
+    assert_eq!(inbox_rows_on_disk(&path), 1);
+    capture(&opened, "after the reopen");
+    assert_eq!(inbox_rows_on_disk(&path), 2);
+}
+
+#[test]
+fn a_corruption_signal_reopens_moved_files_before_checking_them() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+    let path = index_path(dir.path());
+    std::fs::remove_file(beside(&path, "-wal")).unwrap();
+    std::fs::remove_file(beside(&path, "-shm")).unwrap();
+
+    health.on_corruption_seen();
+
+    let status = health.status();
+    let reopen = status.last_reopen.clone().expect("the signal reopened");
+    assert!(reopen.reopened);
+    assert_eq!(reopen.trigger, "a tool call met a damaged index");
+    assert!(status.last_rebuild.is_none(), "a sound file is not rebuilt");
+    assert!(status.healthy, "{status:?}");
+}
+
+#[test]
+fn a_rebuild_asked_for_reopens_moved_files_first() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+    let path = index_path(dir.path());
+    cdno_core::index::SqliteIndex::remove(&path);
+
+    let record = health.rebuild("rebuild_index was called").unwrap();
+
+    assert!(record.rebuilt, "{:?}", record.failure);
+    let status = health.status();
+    assert!(status.files.held);
+    assert_eq!(
+        status.last_reopen.unwrap().trigger,
+        "rebuild_index was called"
+    );
+    assert_eq!(
+        status.reopens_recent, 0,
+        "a requested reopen is not counted"
+    );
+    let notes: i64 = rusqlite::Connection::open(&path)
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0))
+        .unwrap();
+    assert!(
+        notes as usize >= NOTES,
+        "the rebuild reached the file at the path"
+    );
+}
+
+fn unlink_sidecars(path: &Path) {
+    std::fs::remove_file(beside(path, "-wal")).unwrap();
+    std::fs::remove_file(beside(path, "-shm")).unwrap();
+}
+
+fn put_probe(sqlite: &cdno_core::index::SqliteIndex, value: &str) {
+    sqlite
+        .with_connection(|c| {
+            c.execute(
+                "INSERT OR REPLACE INTO index_meta (key, value) VALUES ('probe', ?1)",
+                [value],
+            )
+        })
+        .unwrap();
+}
+
+fn probe_of(sqlite: &cdno_core::index::SqliteIndex) -> Option<String> {
+    use rusqlite::OptionalExtension;
+    sqlite
+        .with_connection(|c| {
+            c.query_row(
+                "SELECT value FROM index_meta WHERE key = 'probe'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
+        })
+        .unwrap()
+}
+
+#[test]
+fn reopens_are_spaced_and_until_one_is_made_nothing_reconciles_into_or_checks_the_orphan() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+    let path = index_path(dir.path());
+    unlink_sidecars(&path);
+    health.sweep();
+    assert!(health.status().last_reopen.unwrap().reopened);
+
+    // Again within the minute: not reopened yet, and not used either.
+    unlink_sidecars(&path);
+    capture(&opened, "written while the files are not held");
+    health.sweep();
+
+    let status = health.status();
+    assert!(!status.files.held, "{:?}", status.files);
+    assert_eq!(status.files.kind, "sidecars_moved");
+    assert!(!status.healthy);
+    assert!(!status.check.ok);
+    assert!(
+        status.check.problems[0].starts_with("not checked"),
+        "{:?}",
+        status.check.problems
+    );
+    let sweep = status.last_sweep.unwrap();
+    assert!(
+        sweep
+            .failure
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("skipped"),
+        "{sweep:?}"
+    );
+    assert_eq!(status.reopens_recent, 1);
+    assert_eq!(status.repair, RepairState::Automatic);
+}
+
+#[test]
+fn a_sweep_reopens_an_index_whose_file_was_replaced_and_serves_the_new_file() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+    let path = index_path(dir.path());
+    // A finished index built elsewhere, moved in the way `cdno reindex`
+    // replaces a file: the old files aside, the new one in their place.
+    let replacement = dir.path().join("replacement.db");
+    {
+        let other = cdno_core::index::SqliteIndex::open(&replacement).unwrap();
+        put_probe(&other, "from the replacement");
+    }
+    cdno_core::index::SqliteIndex::set_aside(&cdno_core::paths::IndexLocation {
+        path: path.clone(),
+        overridden: false,
+    })
+    .unwrap();
+    std::fs::rename(&replacement, &path).unwrap();
+
+    health.sweep();
+
+    let status = health.status();
+    let reopen = status.last_reopen.clone().unwrap();
+    assert!(reopen.reopened, "{reopen:?}");
+    assert_eq!(reopen.kind, "database_moved");
+    assert!(reopen.found.contains("replaced"), "{}", reopen.found);
+    assert!(!reopen.set_aside && !reopen.stale_sidecars_set_aside);
+    assert!(status.healthy, "{status:?}");
+    assert_eq!(
+        probe_of(&opened.sqlite).as_deref(),
+        Some("from the replacement")
+    );
+    assert!(
+        indexed_notes(&opened) >= NOTES,
+        "reconciled into the new file"
+    );
+}
+
+#[test]
+fn a_restore_of_the_main_file_alone_sets_the_old_sidecars_aside_and_serves_the_backup() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+    let path = index_path(dir.path());
+    let backup = dir.path().join("backup.db");
+    {
+        let other = cdno_core::index::SqliteIndex::open(&backup).unwrap();
+        put_probe(&other, "from the backup");
+    }
+    put_probe(&opened.sqlite, "in the old log");
+    // `mv backup.db index.db`: the server's -wal and -shm stay at the path.
+    std::fs::rename(&backup, &path).unwrap();
+
+    health.sweep();
+
+    let status = health.status();
+    let reopen = status.last_reopen.clone().unwrap();
+    assert!(reopen.reopened, "{reopen:?}");
+    assert!(reopen.done.contains(".stale-wal"), "{}", reopen.done);
+    assert!(reopen.stale_sidecars_set_aside, "{reopen:?}");
+    assert!(beside(&path, ".stale-wal").exists());
+    assert_eq!(probe_of(&opened.sqlite).as_deref(), Some("from the backup"));
+    let probe_elsewhere: String = rusqlite::Connection::open(&path)
+        .unwrap()
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'probe'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(probe_elsewhere, "from the backup");
+    assert!(status.healthy, "{status:?}");
+}
+
+#[test]
+fn two_servers_on_one_vault_one_sets_a_damaged_file_aside_and_the_other_reopens() {
+    let dir = vault_with_notes();
+    let first = open_vault_checked(dir.path(), None).unwrap();
+    let second = open_vault_with_index(dir.path(), None).unwrap();
+    let path = index_path(dir.path());
+    let policy = RepairPolicy {
+        min_rebuild_interval: std::time::Duration::ZERO,
+        ..RepairPolicy::default()
+    };
+    let one = IndexHealth::from_opened(&first).with_policy(policy);
+    let two = IndexHealth::from_opened(&second).with_policy(policy);
+    // The header recipe of `index_health_unwritable`: the first server's
+    // page cache goes stale over a destroyed header.
+    second
+        .sqlite
+        .with_connection(|c| c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);"))
+        .unwrap();
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[..100].fill(0xA5);
+    std::fs::write(&path, bytes).unwrap();
+    put_probe(&second.sqlite, "stale the cache");
+
+    one.sweep();
+    let rebuilt = one.status().last_rebuild.unwrap();
+    assert!(rebuilt.set_aside, "{rebuilt:?}");
+
+    two.sweep();
+
+    let status = two.status();
+    let reopen = status
+        .last_reopen
+        .clone()
+        .expect("the second server reopened");
+    assert!(reopen.reopened, "{reopen:?}");
+    assert_eq!(reopen.kind, "database_moved");
+    assert!(!reopen.set_aside, "the first server did that, not this one");
+    assert!(status.healthy, "{status:?}");
+    assert!(indexed_notes(&second) >= NOTES);
+    assert!(one.status().healthy);
+}
+
+#[test]
+fn a_reopen_carries_the_snapshots_the_orphaned_log_held() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+    let path = index_path(dir.path());
+    // Two archived notes whose snapshots are only in the log once the
+    // sidecars go: one still verifies, one was edited since.
+    let note = |name: &str| {
+        cdno_core::path::VaultPath::new(format!("journal/2025/daily/{name}.md")).unwrap()
+    };
+    let kept = note("2025-01-01");
+    let edited = note("2025-01-02");
+    for p in [&kept, &edited] {
+        let content = std::fs::read_to_string(dir.path().join(p.to_string())).unwrap();
+        let snapshot = cdno_core::index::ArchivalSnapshot {
+            frozen_size: content.len() as u64,
+            frozen_hash: cdno_core::hash::content_hash(&content),
+            archived_at_ns: 1,
+            masked_hash: None,
+            mask_version: None,
+            masked_size: None,
+        };
+        opened.index.record_archival_snapshot(p, &snapshot).unwrap();
+    }
+    unlink_sidecars(&path);
+    std::fs::write(
+        dir.path().join(edited.to_string()),
+        "---\ntype: daily\n---\n# edited\n",
+    )
+    .unwrap();
+
+    health.sweep();
+
+    let reopen = health.status().last_reopen.unwrap();
+    assert!(reopen.reopened);
+    assert_eq!(reopen.snapshots_carried, 1, "{reopen:?}");
+    assert_eq!(reopen.snapshots_lost.len(), 1, "{reopen:?}");
+    assert!(
+        reopen.snapshots_lost[0].contains("no longer verifies"),
+        "{reopen:?}"
+    );
+    assert!(
+        opened
+            .index
+            .find_archival_snapshot(&kept)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        opened
+            .index
+            .find_archival_snapshot(&edited)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn a_requested_rebuild_refused_after_a_reopen_reconciles_and_says_so() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+    let path = index_path(dir.path());
+    assert!(health.rebuild("rebuild_index was called").unwrap().rebuilt);
+    cdno_core::index::SqliteIndex::remove(&path);
+
+    let refusal = health
+        .rebuild("rebuild_index was called")
+        .expect_err("within the rebuild spacing");
+
+    assert_eq!(refusal.refused.code(), "too_soon");
+    assert!(refusal.reopen.as_ref().is_some_and(|r| r.reopened));
+    assert!(refusal.to_string().contains("reopened"), "{refusal}");
+    assert!(
+        indexed_notes(&opened) >= NOTES,
+        "the reopened file was reconciled"
+    );
+}
+
+#[test]
+fn a_file_replaced_by_one_that_will_not_open_is_set_aside_on_the_reopen_and_recorded() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+    let path = index_path(dir.path());
+    cdno_core::index::SqliteIndex::remove(&path);
+    // The SQLite header, then nothing SQLite can read.
+    let mut corrupt = b"SQLite format 3\0".to_vec();
+    corrupt.extend(std::iter::repeat_n(0xFFu8, 4096));
+    std::fs::write(&path, &corrupt).unwrap();
+
+    health.sweep();
+
+    let status = health.status();
+    let reopen = status.last_reopen.clone().unwrap();
+    assert!(reopen.reopened, "{reopen:?}");
+    assert!(reopen.set_aside, "{reopen:?}");
+    assert!(
+        reopen.done.contains("set the unopenable file"),
+        "{}",
+        reopen.done
+    );
+    let previous = reopen.previous.clone().expect("the first copy is kept");
+    assert_eq!(std::fs::read(&previous).unwrap(), corrupt);
+    assert!(status.healthy, "{status:?}");
+    assert!(indexed_notes(&opened) >= NOTES);
+    assert!(reopen.failure.is_none(), "{reopen:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_signal_inside_the_reopen_spacing_is_deferred_to_its_end_not_dropped() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let spacing = std::time::Duration::from_millis(500);
+    let health = Arc::new(IndexHealth::from_opened(&opened).with_policy(RepairPolicy {
+        min_reopen_interval: spacing,
+        ..RepairPolicy::default()
+    }));
+    // A sweep interval far longer than the spacing: a reopen within the
+    // deadline below can only come from the deferral.
+    health.spawn_loop(Some(std::time::Duration::from_secs(3600)));
+    let path = index_path(dir.path());
+
+    unlink_sidecars(&path);
+    let h = Arc::clone(&health);
+    tokio::task::spawn_blocking(move || h.on_corruption_seen())
+        .await
+        .unwrap();
+    assert_eq!(health.status().reopens_recent, 1);
+
+    // Again inside the spacing: refused now, armed for its end.
+    unlink_sidecars(&path);
+    let h = Arc::clone(&health);
+    tokio::task::spawn_blocking(move || h.on_corruption_seen())
+        .await
+        .unwrap();
+    let waiting = health.status();
+    assert!(!waiting.files.held);
+    assert!(waiting.next_reopen_in_secs.is_some(), "{waiting:?}");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let status = health.status();
+        if status.files.held && status.reopens_recent == 2 {
+            assert!(status.next_reopen_in_secs.is_none());
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the deferred reopen never came: {status:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
 }

@@ -27,9 +27,10 @@
 //! **A file too damaged to rebuild in place** (SQLite refuses to open it,
 //! or to copy over it) is the one case that still needs a new file: under
 //! the vault write lock it is moved aside to `<index>.previous` and a new
-//! index is built from the notes. A process that had the old file open
-//! stays on it until it restarts, and the output says so. Its snapshots
-//! are lost with it.
+//! index is built from the notes. An MCP server that had the old file open
+//! finds it moved and reopens the new one by itself (#1000); any other
+//! process (`cdno watch`) stays on it until it restarts, and the output
+//! says so. Its snapshots are lost with it.
 //!
 //! **The index location** is wherever [`bootstrap::index_location`]
 //! resolves it — `CUADERNO_INDEX_PATH` when set (#998). An overridden file
@@ -198,8 +199,9 @@ pub fn run(root: &Path, rebind: bool, drop_snapshots: bool) -> Result<()> {
                 previous.display()
             );
             println!(
-                "Restart any process that had the index open (an MCP server, `cdno watch`): \
-                 until it restarts it keeps using the old file."
+                "An MCP server that had the index open reopens the new one on its next sweep, or \
+                 at the next tool call that meets the damage. Restart any other process that had \
+                 it open (`cdno watch`): until it restarts it keeps using the old file."
             );
         }
         Rebuilt::Rebound { from } => {

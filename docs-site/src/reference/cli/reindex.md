@@ -51,9 +51,10 @@ check could not run at all, it says that instead, and keeps the copy too.
 
 A file too damaged to rebuild in place (one SQLite refuses to open, or to write over) is the one
 case that still needs a new file. `reindex` moves it aside to `.previous`, under the vault write
-lock, builds a new index from the notes, and tells you to **restart any process that had the index
-open**: until it restarts, such a process keeps using the old file. The archival snapshots in the
-damaged file are lost with it.
+lock, and builds a new index from the notes. An MCP server that had the index open finds the file
+moved on its next sweep and reopens the new one by itself; `reindex` tells you to **restart any
+other process that had it open** (`cdno watch`): until it restarts, such a process keeps using the
+old file. The archival snapshots in the damaged file are lost with it.
 
 When `CUADERNO_INDEX_PATH` is set, `reindex` rebuilds the file it names, leaves `.cuaderno/`
 alone, and prints the file's path. It refuses, changing nothing, when that file is not one cuaderno
@@ -85,6 +86,10 @@ both survive a rebuild. A snapshot whose note is no longer indexed (deleted, or 
 carried, and `reindex` names it in a warning.
 
 `--drop-snapshots` rebuilds without them, and says how many it dropped (or that there were none).
+One edge: an MCP server whose index files move under it at the same moment (a restore, another
+`reindex` that set a file aside) carries the snapshot rows its old connection still held into the
+file it reopens, those whose notes still verify, so such a row can come back; run it again if
+`cdno lint` still names one.
 Use it only for a snapshot that can never verify again, such as the one [`cdno lint`](lint.md)
 reports as predating the masked hash: every archived action note then loses its frozen-prefix
 check, and `cdno open` no longer warns before opening one, since nothing re-records a snapshot for

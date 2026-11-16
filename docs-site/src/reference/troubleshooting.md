@@ -30,8 +30,9 @@ rebuilt index without a restart. See [Business rules](../concepts/business-rules
 [`cdno reindex`](cli/reindex.md#what-it-does).
 
 If `reindex` says the index was **too damaged to rebuild in place**, it has moved the damaged file
-aside (with `.previous` appended to its name) and built a new one. Restart any MCP server or
-`cdno watch` using the vault: until it restarts it keeps reading the old file.
+aside (with `.previous` appended to its name) and built a new one. An MCP server using the vault
+finds the file moved on its next sweep and reopens the new one by itself; restart `cdno watch`,
+which until it restarts keeps reading the old file.
 
 If it fails with `timed out … waiting for the vault write lock` (and "another cdno process is
 writing this vault"), another command or server was writing the vault the whole time; nothing was
@@ -70,9 +71,38 @@ Then restart the server. The stop also ends by itself once a check finds the fil
 while the other machine still writes the file.
 The copy of the first damaged file is kept beside the index, with `.previous` appended to its name.
 
-If `index_status` reports `restart_required`, the file is too damaged for the running server to
-write over, and it stops repairing by itself: restart the server, whose start replaces it. The
-notes are intact either way.
+A file too damaged for the running server to write over in place is moved aside the same way and
+replaced by a fresh one, filled from the notes; `last_rebuild.set_aside` in `index_status` says so.
+No restart is needed, and the notes are intact either way.
+
+## The index files keep moving under the server
+
+The symptom: the server log shows "the index files changed under this server; reopened the index"
+again and again, each line with what it found and what it did, then one error saying the index
+files keep changing, and `index_status` reports `repair: reopen_recurring`. The server keeps
+reopening every time: at its next sweep (every `CDNO_MCP_RECONCILE_INTERVAL_SECS`, 300 s by
+default, never when sweeps are off) or the next tool call that meets the damage, and never twice
+within a minute; a call that meets it inside that minute has the reopen made at the minute's end.
+So between a move and the reopen the server can answer from its own copy for up to a sweep
+interval when nothing fails; `files.held` and `next_reopen_in_secs` in `index_status` say where it
+stands. The report ends by itself once the moves stop. One reopen is normal after a `cdno reindex` that had to
+set a damaged file aside, a `--rebind`, or a restore from backup: the server picks up the new file
+by itself. What to do depends on `last_reopen.kind`:
+
+- **`sidecars_moved`** (the `-wal` or `-shm` deleted): almost always a process on another machine
+  or kernel (a container sharing the vault folder with the host) that removes them each time it
+  exits, because it cannot see that the server still has them open. Give each machine its own
+  index with `CUADERNO_INDEX_PATH` (or `--index-path`), then restart the server. Until then, between
+  reopens the server reads and writes a copy no other process sees.
+- **`database_moved`** (the database file deleted or replaced): nearly always something on this
+  machine: repeated `cdno reindex` set-asides or `--rebind`, restores, `git clean -x` in a vault
+  that is a git repository, or a sync tool syncing the index file. Find what replaces it; a
+  separate index does not help.
+
+After a restore that replaced only `index.db`, the old file's log is moved aside as
+`<index>.stale-wal` / `.stale-shm`: kept for diagnosis only, and safe to delete. A reopen drops what
+only the old copy held; archival snapshots it could not carry are listed in
+`last_reopen.snapshots_lost`, and each costs `lint`'s frozen-prefix check on that note.
 
 ## The index path is refused
 

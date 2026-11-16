@@ -219,8 +219,9 @@ fn empty_in_place(
                 emptying = %e,
                 index_path = %location.path.display(),
                 "rebuilding the damaged index failed and it could not be emptied in place; \
-                 setting it aside and starting from an empty one (another process with it open \
-                 keeps the old file until it restarts)"
+                 setting it aside and starting from an empty one (another server with it open \
+                 reopens on its next sweep; any other process keeps the old file until it \
+                 restarts)"
             );
             drop(sqlite);
             if location.overridden {

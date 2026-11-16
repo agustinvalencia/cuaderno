@@ -97,8 +97,44 @@ as the one that found the damage finds the file sound again (another process rep
 other writer went away); otherwise it stays until a `rebuild_index` succeeds or the server
 restarts. A successful `rebuild_index` allows one more automatic repair before the server stops
 again, not a fresh count, so answering each stop with it cannot keep a shared index repairing. A file too
-damaged for the running server to write over is reported as `restart_required`: the server needs a
-restart, whose start replaces such a file; the notes are intact.
+damaged to write over in place (its header) is moved aside to `.previous` under the vault write lock
+and replaced by a fresh one, filled from the notes, without a restart (`last_rebuild.set_aside` in
+`index_status`); its archival snapshots are lost.
+
+**When the files move under a server.** A server opens the index once and reads and writes it
+through its open files, not its path. When another process deletes, moves aside or replaces the
+database file (`cdno reindex` setting a damaged file aside, `cdno reindex --rebind`, the open-time
+self-heal, a restore from backup), or deletes its `-wal` and `-shm` (a process on another kernel,
+which cannot see this one's locks, closing as "the last connection"; or `rm`, `git clean -x`, a
+sync tool), the server would go on with files no other process sees, and its own check would
+describe that copy rather than the file. So the first thing every sweep does, and every tool call
+that meets a damaged index, is a cheap check that the files the server holds are still the ones at
+the index path. When they are not, the server reopens the index on the file at the path, reconciles
+it, and only then checks it, rebuilding it as above if the file itself is damaged. It always
+reopens, at its next sweep or the next call that meets damage, and never twice within a minute (a
+call inside that minute has the reopen made at its end, `next_reopen_in_secs` in `index_status`);
+until it has, it neither reconciles into nor checks its own copy,
+and `index_status` says `files.held: false` and runs no check. Two cases are handled under the
+vault write lock first: a restore that replaced only `index.db` leaves the old file's `-wal` and
+`-shm` at the path, which are moved aside to `.stale-wal` / `.stale-shm` (opening the restored file
+beside them would replay the old log onto it), and a file at the path that will not open is set
+aside like any damaged file. Each reopen is one WARN line saying what was found and what was done,
+and `index_status` reports the latest (`last_reopen`).
+
+What a reopen loses: anything the old connection had committed only to files nobody else could see
+is dropped. The notes' rows are written again by the reconciliation; the archival snapshots `lint`
+checks archived actions against cannot be, so the old connection's rows are carried into the
+reopened file where it has none for that note, the note is indexed, and the note still verifies
+against the snapshot; the rest are listed in `last_reopen.snapshots_lost`. A reopen fixes the
+server's view, not damage, so it never counts towards the stop above. Reopens that recur (three
+within an hour) are reported once in the log and as `repair: reopen_recurring`, and the report
+ends by itself when they stop; the server keeps reopening throughout. What it means depends on what
+moved: vanished `-wal`/`-shm` are the signature of another machine or container sharing the index
+file, and the advice is to give this machine its own index; a database file that keeps being
+replaced is nearly always something on this machine, and the advice is to find what replaces it.
+Only SQLite is kept from tripping the check: checkpoints keep the log's file, and no other SQLite
+connection on the machine can delete it while the server holds it open, but `rm`, `git clean -x` or
+a sync tool can, and each such move is a reopen. Off unix (Windows) nothing is checked.
 
 ## Focus
 

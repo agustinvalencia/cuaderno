@@ -1492,6 +1492,18 @@ pub(in crate::vault) fn frozen_prefix_verifies(
     plain == Extent::Verified || matches!(masked, MaskedVerdict::Checked(Extent::Verified, _, _))
 }
 
+/// Whether an archived note's current `content` still verifies against
+/// `snap`, by the rule lint applies ([`frozen_prefix_verifies`]): for a
+/// caller outside the domain that must decide whether a snapshot row is
+/// still true of its note before carrying it into another index (a
+/// server's reopen, #1000).
+pub fn archival_snapshot_verifies(
+    content: &str,
+    snap: &cdno_core::index::ArchivalSnapshot,
+) -> bool {
+    frozen_prefix_verifies(content, snap)
+}
+
 /// The verdict of one hash path in [`check_append_only`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Extent {

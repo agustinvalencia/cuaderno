@@ -72,6 +72,19 @@ impl DomainError {
             _ => false,
         }
     }
+
+    /// True when the failure is the index being between connections
+    /// ([`cdno_core::error::IndexError::Detached`], #1000): the server is
+    /// reopening it, and neither the notes nor the index file are damaged.
+    pub fn is_index_detached(&self) -> bool {
+        match self {
+            DomainError::Index(e) => e.is_detached(),
+            DomainError::Transaction(cdno_core::error::TransactionError::IndexStale(errors)) => {
+                errors.iter().any(cdno_core::error::IndexError::is_detached)
+            }
+            _ => false,
+        }
+    }
 }
 
 impl DomainError {

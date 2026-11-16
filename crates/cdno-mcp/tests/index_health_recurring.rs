@@ -84,7 +84,24 @@ fn recurring_damage_is_said_once_in_the_log_and_on_every_client_error() {
     assert!(hint.contains("its own index"), "{hint}");
     assert!(!hint.contains("rebuilds it if it is"), "{hint}");
 
-    // The person's `rebuild_index` ends the stop, and the hint follows.
+    // While the server does not hold its files, `index_status` runs no
+    // check on its own copy, so a pass there cannot end the stop.
+    cdno_core::index::SqliteIndex::set_aside(&cdno_core::paths::IndexLocation {
+        path: opened.index_path.clone(),
+        overridden: false,
+    })
+    .unwrap();
+    let unheld = health.status();
+    assert!(!unheld.files.held);
+    assert!(
+        unheld.check.problems[0].starts_with("not checked"),
+        "{unheld:?}"
+    );
+    assert_eq!(unheld.repair, RepairState::DamageRecurring);
+    assert!(unheld.damage_repair_stopped);
+
+    // The person's `rebuild_index` reopens, ends the stop, and the hint
+    // follows.
     assert!(health.rebuild("rebuild_index was called").unwrap().rebuilt);
     assert!(damage_hint().contains("rebuilds it if it is"));
 }
