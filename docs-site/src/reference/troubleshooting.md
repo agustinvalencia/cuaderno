@@ -24,17 +24,36 @@ conflict can occasionally confuse it. Rebuild it:
 cdno reindex
 ```
 
-The Markdown files are always authoritative, so a rebuild is safe. See
-[Business rules](../concepts/business-rules.md).
+The Markdown files are always authoritative, so a rebuild is safe. It rebuilds the index in place
+and keeps the archival snapshots, so a running server or `cdno watch` on this machine sees the
+rebuilt index without a restart. See [Business rules](../concepts/business-rules.md) and
+[`cdno reindex`](cli/reindex.md#what-it-does).
+
+If `reindex` says the index was **too damaged to rebuild in place**, it has moved the damaged file
+aside (with `.previous` appended to its name) and built a new one. An MCP server using the vault
+finds the file moved on its next sweep and reopens the new one by itself; restart `cdno watch`,
+which until it restarts keeps reading the old file.
+
+If it fails with `timed out … waiting for the vault write lock` (and "another cdno process is
+writing this vault"), another command or server was writing the vault the whole time; nothing was
+changed, so run it again.
+
+An assistant connected through an MCP server catches up with notes changed outside cuaderno (in
+your editor, by a sync) on its next sweep, every `CDNO_MCP_RECONCILE_INTERVAL_SECS` seconds (300 by
+default): a note you just saved in an editor may be missing from its searches for up to that long.
+Any `cdno` command that opens the index (`cdno lint`, `cdno search`, …) catches every server on the
+machine up at once; or set a shorter interval in the client's `env` block. A value of `0` turns the
+sweep off, and then only such a command or a restart catches the server up. See
+[Keeping up with changes made elsewhere](mcp/overview.md#keeping-up-with-changes-made-elsewhere).
 
 On a server (`cdno-mcp`, `cdno-mcp-server`) the index is checked and repaired without you: see
 [The index looks after itself](mcp/overview.md#the-index-looks-after-itself). An error that says "the notes on disk are intact; the index … may be damaged" means the server
 is checking the index and rebuilds it if the check confirms the damage, and it also says whether
 that call's write was saved. Ask the assistant for `index_status` to see how it went (it also names
 the index file in use, which `CUADERNO_INDEX_PATH` may have moved), or `rebuild_index` to force it.
-Run `cdno reindex`
-against a vault a server has open only with the server stopped: two processes writing one index
-file is one way it gets damaged.
+`cdno reindex` on the same machine is safe beside a running server: it rebuilds the file in place,
+and the server reads the result. What damages an index is two machines or kernels writing one file
+(below).
 
 ## The index keeps being damaged
 
@@ -52,9 +71,38 @@ Then restart the server. The stop also ends by itself once a check finds the fil
 while the other machine still writes the file.
 The copy of the first damaged file is kept beside the index, with `.previous` appended to its name.
 
-If `index_status` reports `restart_required`, the file is too damaged for the running server to
-write over, and it stops repairing by itself: restart the server, whose start replaces it. The
-notes are intact either way.
+A file too damaged for the running server to write over in place is moved aside the same way and
+replaced by a fresh one, filled from the notes; `last_rebuild.set_aside` in `index_status` says so.
+No restart is needed, and the notes are intact either way.
+
+## The index files keep moving under the server
+
+The symptom: the server log shows "the index files changed under this server; reopened the index"
+again and again, each line with what it found and what it did, then one error saying the index
+files keep changing, and `index_status` reports `repair: reopen_recurring`. The server keeps
+reopening every time: at its next sweep (every `CDNO_MCP_RECONCILE_INTERVAL_SECS`, 300 s by
+default, never when sweeps are off) or the next tool call that meets the damage, and never twice
+within a minute; a call that meets it inside that minute has the reopen made at the minute's end.
+So between a move and the reopen the server can answer from its own copy for up to a sweep
+interval when nothing fails; `files.held` and `next_reopen_in_secs` in `index_status` say where it
+stands. The report ends by itself once the moves stop. One reopen is normal after a `cdno reindex` that had to
+set a damaged file aside, a `--rebind`, or a restore from backup: the server picks up the new file
+by itself. What to do depends on `last_reopen.kind`:
+
+- **`sidecars_moved`** (the `-wal` or `-shm` deleted): almost always a process on another machine
+  or kernel (a container sharing the vault folder with the host) that removes them each time it
+  exits, because it cannot see that the server still has them open. Give each machine its own
+  index with `CUADERNO_INDEX_PATH` (or `--index-path`), then restart the server. Until then, between
+  reopens the server reads and writes a copy no other process sees.
+- **`database_moved`** (the database file deleted or replaced): nearly always something on this
+  machine: repeated `cdno reindex` set-asides or `--rebind`, restores, `git clean -x` in a vault
+  that is a git repository, or a sync tool syncing the index file. Find what replaces it; a
+  separate index does not help.
+
+After a restore that replaced only `index.db`, the old file's log is moved aside as
+`<index>.stale-wal` / `.stale-shm`: kept for diagnosis only, and safe to delete. A reopen drops what
+only the old copy held; archival snapshots it could not carry are listed in
+`last_reopen.snapshots_lost`, and each costs `lint`'s frozen-prefix check on that note.
 
 ## The index path is refused
 
@@ -73,7 +121,8 @@ value that cannot be that file is refused before anything is opened:
 - **"belongs to the vault at …"**: the file is another vault's index. Each vault needs its own
   file; set the variable only for the process that serves this vault. To give the file to this vault
   on purpose, first stop whatever serves the vault it belongs to, then run `cdno reindex --rebind`
-  here, which rebuilds it and discards the other vault's index. Where only the server is installed,
+  here, which discards the other vault's index, archival snapshots included, and builds a new one
+  for this vault. Where only the server is installed,
   delete the file instead; the next start rebuilds it.
 
 See [Keeping the index on each machine](../concepts/vault-structure.md#keeping-the-index-on-each-machine).

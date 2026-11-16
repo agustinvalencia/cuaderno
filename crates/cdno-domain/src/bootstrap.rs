@@ -128,7 +128,7 @@ pub fn open_vault_with_index(
 /// written over (a corruption error from the copy), the index is emptied in
 /// place instead, under the vault write lock and only if it still fails its
 /// check there, and the startup reconciliation fills it (the snapshots are
-/// then lost, as with `cdno reindex`). Any other failure (the vault lock
+/// then lost, as when `cdno reindex` must set such a file aside). Any other failure (the vault lock
 /// held past its timeout by another process repairing the same file, a busy
 /// database, an I/O error) leaves the index as it is: the server starts on
 /// it, reports the damage, and its sweep or the next tool call to meet the
@@ -219,8 +219,9 @@ fn empty_in_place(
                 emptying = %e,
                 index_path = %location.path.display(),
                 "rebuilding the damaged index failed and it could not be emptied in place; \
-                 setting it aside and starting from an empty one (another process with it open \
-                 keeps the old file until it restarts)"
+                 setting it aside and starting from an empty one (another server with it open \
+                 reopens on its next sweep; any other process keeps the old file until it \
+                 restarts)"
             );
             drop(sqlite);
             if location.overridden {

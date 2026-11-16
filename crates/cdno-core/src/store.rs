@@ -55,8 +55,10 @@ impl Drop for VaultWriteLock {
 /// which returns a no-op guard. The lock is one per open file, so code that
 /// takes it again in the same thread (a reconcile pass's per-note
 /// transactions) would otherwise wait for itself until the timeout. Only
-/// [`crate::reconcile::rebuild`] uses it, for the pass it runs under the
-/// lock; anything else would lose the lock's protection.
+/// [`crate::reconcile::rebuild`] uses it: for the pass it runs under the
+/// lock, and for its earlier passes into the fresh index, which no other
+/// process can see and so needs no lock; anything else would lose the
+/// lock's protection.
 pub(crate) struct LockHeldStore(pub(crate) Arc<dyn VaultStore>);
 
 impl VaultStore for LockHeldStore {

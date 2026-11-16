@@ -91,3 +91,8 @@ toml = { workspace = true }
 # cdno-cli is a dev-dep so the e2e subprocess test can seed a vault
 # via `cdno init` before launching cdno-mcp against it.
 cdno-cli = { path = "../cdno-cli" }
+
+[target.'cfg(unix)'.dev-dependencies]
+# The e2e test of a write in flight at disconnect holds the write on a
+# named pipe (`mkfifo`, `O_NONBLOCK`).
+libc = "0.2"

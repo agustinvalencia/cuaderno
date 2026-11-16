@@ -46,9 +46,12 @@ pub(crate) fn message(e: &DomainError) -> String {
     if let DomainError::Transaction(cdno_core::error::TransactionError::IndexStale(errors)) = e {
         log_index_stale(errors);
     }
-    if !e.is_index_corruption() {
+    let detached = e.is_index_detached();
+    if !e.is_index_corruption() && !detached {
         return e.to_string();
     }
+    // Either wakes the loop: a detached index is retried at once, subject
+    // to the reopen spacing, rather than at the next sweep.
     crate::index_health::corruption_seen();
     // Only an `IndexStale` commit has written its files: any other index
     // error on a write path comes from a lookup made before anything was
@@ -60,7 +63,11 @@ pub(crate) fn message(e: &DomainError) -> String {
     );
     format!(
         "{e} \u{2014} {} {}",
-        crate::index_health::damage_hint(),
+        if detached {
+            crate::index_health::DETACHED_HINT
+        } else {
+            crate::index_health::damage_hint()
+        },
         if saved {
             INDEX_DAMAGED_SAVED
         } else {
@@ -220,6 +227,16 @@ mod tests {
         let m = message(&e);
         assert!(m.contains("the notes on disk are intact"), "{m}");
         assert!(m.contains("This write was saved"), "{m}");
+    }
+
+    #[test]
+    fn an_index_between_connections_says_it_is_being_reopened_not_damaged() {
+        let m = message(&DomainError::Index(IndexError::Detached));
+        assert!(m.contains("being reopened"), "{m}");
+        assert!(m.contains("the notes on disk are intact"), "{m}");
+        assert!(!m.contains("may be damaged"), "{m}");
+        let e = DomainError::Transaction(TransactionError::IndexStale(vec![IndexError::Detached]));
+        assert!(message(&e).contains("This write was saved"));
     }
 
     #[test]

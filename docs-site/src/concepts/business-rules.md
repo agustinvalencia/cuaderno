@@ -8,8 +8,12 @@ commands behave the way they do.
 The files on disk are canonical. The SQLite index in `.cuaderno/index.db` is a **cache** — it makes
 search, linting, and link lookups fast, but it can always be rebuilt from the Markdown. A stale
 index is recoverable; a stale *file* would be data loss, so the tool never lets the cache override
-the files. You can delete `index.db` at any time, or rebuild it explicitly with
-[`cdno reindex`](../reference/cli/reindex.md).
+the files. You can rebuild it explicitly with [`cdno reindex`](../reference/cli/reindex.md), which
+rebuilds it in place, so a running MCP server or `cdno watch` on the same machine sees the result
+(a process on another machine sharing the file does not; see
+[Keeping the index on each machine](vault-structure.md#keeping-the-index-on-each-machine)). Deleting `index.db`
+by hand also loses no note, but a process that has it open keeps reading the deleted file until it
+restarts, and the archival snapshots are gone with it.
 
 ## Startup reconciliation
 
@@ -18,7 +22,9 @@ and [shell completion](../reference/cli/completions.md#what-a-tab-press-reads), 
 note files; neither opens the index), MCP session, and app launch, Cuaderno reconciles the index against the
 filesystem — comparing modification times and content hashes — and quietly repairs anything stale
 before doing your command. This is why edits you make to notes by hand (in your editor, via sync)
-are picked up without a manual reindex.
+are picked up without a manual reindex. An MCP server, which can stay open for hours, also
+reconciles on a timer, every five minutes by default (see
+[Keeping up with changes made elsewhere](../reference/mcp/overview.md#keeping-up-with-changes-made-elsewhere)).
 
 ## The five-project cap
 

@@ -31,6 +31,11 @@ Add `cdno-mcp` to your client's MCP configuration. For Claude Desktop, edit
   this vault folder is also reached from another machine (a container, a network share): it names
   this machine's own index file, as an absolute path. See
   [Keeping the index on each machine](../concepts/vault-structure.md#keeping-the-index-on-each-machine).
+- `CDNO_MCP_RECONCILE_INTERVAL_SECS` is optional too: how often, in seconds, the server catches its
+  index up with notes changed outside cuaderno (your editor, a file sync, `git pull`); a `cdno`
+  command's changes are seen at once. The default is `300`; `0` turns it off. For example `"env": { "CUADERNO_VAULT_PATH": "/Users/you/notebook",
+  "CDNO_MCP_RECONCILE_INTERVAL_SECS": "60" }`. See
+  [Keeping up with changes made elsewhere](../reference/mcp/overview.md#keeping-up-with-changes-made-elsewhere).
 
 Restart the client. Cuaderno's tools then appear in the client's tool list.
 

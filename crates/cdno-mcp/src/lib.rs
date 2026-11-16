@@ -56,6 +56,7 @@ mod rejection;
 pub mod server;
 pub mod smoke;
 pub mod startup;
+pub mod tool_calls;
 mod util;
 mod verify;
 

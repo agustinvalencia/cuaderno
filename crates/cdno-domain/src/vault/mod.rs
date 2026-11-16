@@ -114,6 +114,7 @@ pub(in crate::vault) fn iso_week_label(date: chrono::NaiveDate) -> String {
 // The readers that answer without the index (#1003, #1007).
 pub use catalog::Catalog;
 pub use journal::Journal;
+pub use lint::archival_snapshot_verifies;
 
 pub use capture::InboxItem;
 pub use commitments::{CommitmentEntry, CommitmentSource};

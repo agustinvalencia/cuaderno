@@ -126,9 +126,15 @@ CUADERNO_INDEX_PATH=/var/lib/cuaderno/surrogate-model.db \
 - **One file per vault.** An overridden index records the vault it belongs to, and opening it for a
   different vault is refused with an error that names both; so is a plain `cdno reindex` there. To
   give the file to another vault on purpose, first stop whatever serves the vault it belongs to,
-  then run [`cdno reindex --rebind`](../reference/cli/reindex.md) in the other vault: it rebuilds
-  the file for that vault, discarding the old vault's index, and says so. Where only the server is
-  installed, delete the file instead.
+  then run [`cdno reindex --rebind`](../reference/cli/reindex.md) in the other vault: it deletes
+  the old vault's index, archival snapshots included, builds a new file for that vault, and says
+  so. Where only the server is installed, delete the file instead. (An ordinary `cdno reindex` in
+  the vault the file belongs to rebuilds it in place and keeps the snapshots.)
+- **The binding is the vault's path.** Move or rename the vault folder and the index reads as
+  another vault's: every open is refused, naming the old path. The way out is the same
+  `cdno reindex --rebind`, run in the vault at its new path, and it costs that vault's **own**
+  archival snapshots, since the file is rebuilt from nothing (see
+  [Rebinding](../reference/cli/reindex.md#rebinding)). Deleting the file costs the same.
 - **Persistent storage, in a directory the process owns.** SQLite's `-wal` and `-shm` files, and any
   file a rebuild writes, are created beside the database file, so its directory must be writable
   and must not be a single file mounted on its own. A missing parent directory is created. An index
@@ -139,7 +145,17 @@ CUADERNO_INDEX_PATH=/var/lib/cuaderno/surrogate-model.db \
   fresh file a rebuild builds, and the `.previous` copy it keeps of a damaged file, sit beside the
   override's database file, nothing is written under `.cuaderno/`, and the rebuilt index stays bound
   to its vault. A file the override refuses (not cuaderno's index, or another vault's) is refused at
-  start as above, never repaired or moved aside.
+  start as above, never repaired or moved aside. When the file is deleted or replaced under a
+  running server (a `--rebind`, a restore), the server reopens it on its next sweep through the same
+  guards: a file now bound to another vault is refused, and the server says so in `index_status`
+  rather than writing into it.
+- **The symptom of a shared index, without the override.** A process on another kernel that cannot
+  see the server's locks deletes the index's `-wal` and `-shm` each time it exits, taking itself for
+  the last user of the file. A server notices on its next sweep and reopens the index, logging each
+  reopen; three within an hour are reported as `repair: reopen_recurring` with
+  `last_reopen.kind: sidecars_moved` (the server keeps reopening). That is the cue to set
+  `CUADERNO_INDEX_PATH` on one side (see
+  [Troubleshooting](../reference/troubleshooting.md#the-index-files-keep-moving-under-the-server)).
 - **Keep it off the shared folder.** Use the machine's own storage. An override inside the vault
   works, but the file stays on the share, a file-sync tool picks it up, and only `cdno-mcp-server`'s
   git checkpoints exclude it: the CLI and the stdio server add no ignore rule, so your own
@@ -157,8 +173,9 @@ CUADERNO_INDEX_PATH=/var/lib/cuaderno/surrogate-model.db \
 
 **What it does not do.** The override stops the damage, not the staleness. Each machine's index
 learns of the other machine's writes only when it reconciles: the CLI at every command except [`cdno now`](../reference/cli/now.md) and [shell completion](../reference/cli/completions.md#what-a-tab-press-reads), which never open the index, the HTTP
-server at start and then every `--reconcile-interval-secs` (300 seconds by default), and the stdio
-server only at start ([#1002](https://github.com/agustinvalencia/cuaderno/issues/1002)). In that
+and stdio servers at start and then on every sweep, every `CDNO_MCP_RECONCILE_INTERVAL_SECS`
+seconds (300 by default; `--reconcile-interval-secs` on the HTTP server; see
+[Keeping up with changes made elsewhere](../reference/mcp/overview.md#keeping-up-with-changes-made-elsewhere)). In that
 window search and backlinks can miss the other side's latest notes, and the active-project cap and
 the check that a new note's name is unique are made against that stale view, so the cap can be
 exceeded or a name taken twice until someone reconciles. The override separates the index only.
@@ -168,9 +185,10 @@ which makes a lost line rare but not impossible: the two machines' write locks s
 other, and a lock they both see is [#1012](https://github.com/agustinvalencia/cuaderno/issues/1012).
 
 **Moving an index.** No migration is needed: the new file starts empty and the next open rebuilds
-it from the Markdown. Like any rebuild, it starts without the archival snapshots, so
-[`cdno lint`](../reference/cli/lint.md) loses its frozen-prefix check on archived actions (see
-[`cdno reindex`](../reference/cli/reindex.md)). Do **not** delete the old `.cuaderno/index.db` while
+it from the Markdown. A new file starts without the archival snapshots (only a rebuild of an
+existing index carries them across), so [`cdno lint`](../reference/cli/lint.md) loses its
+frozen-prefix check on archived actions (see
+[`cdno reindex`](../reference/cli/reindex.md#archival-snapshots)). Do **not** delete the old `.cuaderno/index.db` while
 another machine still uses the default location for the same vault; it is that machine's index.
 
 Next: [Business rules](business-rules.md).

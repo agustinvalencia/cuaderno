@@ -193,6 +193,22 @@ pub enum IndexError {
     )]
     NotAnIndex { path: String },
 
+    /// The index's connection was closed for a reopen and the file at its
+    /// path could not be opened again yet (#1000). Nothing is wrong with
+    /// the notes, and the index file itself may be sound; the server
+    /// retries the reopen.
+    #[error(
+        "the index is being reopened: its files were replaced or deleted under this process, \
+         and the file at its path could not be opened again yet"
+    )]
+    Detached,
+
+    /// A reopen found the database file replaced while the old file's
+    /// `-wal` or `-shm` were left at the path, and was not allowed to move
+    /// them aside. Nothing was changed.
+    #[error("{0}")]
+    StaleSidecars(String),
+
     #[error("SQLite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
 }
@@ -372,5 +388,11 @@ impl IndexError {
                     rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
                 )
         )
+    }
+
+    /// True for [`IndexError::Detached`]: the index is between connections,
+    /// not damaged.
+    pub fn is_detached(&self) -> bool {
+        matches!(self, Self::Detached)
     }
 }
