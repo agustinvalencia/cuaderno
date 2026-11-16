@@ -17,6 +17,23 @@ Two binaries serve the same tool catalogue:
 - **`cdno-mcp-server`** speaks MCP **Streamable HTTP** for remote clients — see
   [The HTTP server](http-server.md) for its flags and security model.
 
+## Keeping up with changes made elsewhere
+
+A server lives for as long as its session, often hours, while notes change under it: an edit in your
+editor, a `cdno` command, a file sync or a `git pull`. Both servers therefore run the same periodic
+**sweep**: every `CDNO_MCP_RECONCILE_INTERVAL_SECS` seconds (300, five minutes, by default) they
+reconcile the index with the notes on disk, so a note that arrived, changed or was deleted elsewhere
+reaches `search_notes`, `lint`, backlinks and the context tools within one interval, and then check
+the index file as [The index looks after itself](#the-index-looks-after-itself) describes. `0` turns
+the sweep off; the server then sees such changes only when it restarts. For the stdio `cdno-mcp`, set
+the variable in the client's `env` block (see
+[Connect to Claude](../../getting-started/connect-to-claude.md#register-the-server)); a value that is
+not a whole number of seconds stops it at start. `cdno-mcp-server` also takes it as
+`--reconcile-interval-secs`. The sweep writes nothing to stdout, which is the JSON-RPC channel: its
+logs go to stderr. When the client disconnects, the stdio server stops the sweep and exits; a sweep
+that is still running gets five seconds to finish, and nothing is lost if it is cut short, since the
+next open reconciles again.
+
 ## The tool surface
 
 The server advertises **68 tools**. This reference groups them by purpose:
@@ -33,8 +50,8 @@ client gets the same structures whichever surface it uses.
 ## The index looks after itself
 
 The index is a cache of the notes, rebuilt from them at will, so the servers repair it without
-asking. Both check its database file when they start, and `cdno-mcp-server` checks it again after
-every [reconciliation sweep](http-server.md#flags). A damaged index is rebuilt from the notes and
+asking. Both check its database file when they start, and again after every
+[reconciliation sweep](#keeping-up-with-changes-made-elsewhere). A damaged index is rebuilt from the notes and
 copied into the live file in place, without a restart, so every process on this machine using the
 vault sees the repair at once. A copy of the first damaged file of a streak is kept beside it, under its file name with `.previous`
 appended: `.cuaderno/index.db.previous` at the default location, or next to the file

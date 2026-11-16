@@ -931,3 +931,25 @@ fn a_rebuild_never_takes_back_an_index_another_vault_has_bound_since() {
         Some("/elsewhere/vault".to_owned())
     );
 }
+
+/// The stdio server's reading of the sweep interval (#1002): unset or empty
+/// is the HTTP server's default, a number is taken as seconds, `0` included,
+/// and anything else is refused, naming the variable.
+#[test]
+fn the_sweep_interval_variable_parses_like_the_http_flag() {
+    use cdno_mcp::index_health::{
+        DEFAULT_SWEEP_INTERVAL_SECS, SWEEP_INTERVAL_ENV, parse_sweep_interval,
+    };
+    use std::ffi::OsStr;
+
+    assert_eq!(DEFAULT_SWEEP_INTERVAL_SECS, 300);
+    assert_eq!(SWEEP_INTERVAL_ENV, "CDNO_MCP_RECONCILE_INTERVAL_SECS");
+    assert_eq!(parse_sweep_interval(None), Ok(300));
+    assert_eq!(parse_sweep_interval(Some(OsStr::new(""))), Ok(300));
+    assert_eq!(parse_sweep_interval(Some(OsStr::new("0"))), Ok(0));
+    assert_eq!(parse_sweep_interval(Some(OsStr::new(" 60 "))), Ok(60));
+    for bad in ["5m", "-1", "1.5", "sixty"] {
+        let err = parse_sweep_interval(Some(OsStr::new(bad))).unwrap_err();
+        assert!(err.contains(SWEEP_INTERVAL_ENV), "{err}");
+    }
+}

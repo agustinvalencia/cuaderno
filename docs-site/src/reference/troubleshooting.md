@@ -27,6 +27,13 @@ cdno reindex
 The Markdown files are always authoritative, so a rebuild is safe. See
 [Business rules](../concepts/business-rules.md).
 
+An assistant connected through an MCP server catches up with notes changed outside it on its next
+sweep, every `CDNO_MCP_RECONCILE_INTERVAL_SECS` seconds (300 by default): a note you just saved may
+be missing from its searches for up to that long. Set a shorter interval in the client's `env`
+block, or restart the client, if that is too long; a value of `0` turns the sweep off, and then
+only a restart catches the server up. See
+[Keeping up with changes made elsewhere](mcp/overview.md#keeping-up-with-changes-made-elsewhere).
+
 On a server (`cdno-mcp`, `cdno-mcp-server`) the index is checked and repaired without you: see
 [The index looks after itself](mcp/overview.md#the-index-looks-after-itself). An error that says "the notes on disk are intact; the index … may be damaged" means the server
 is checking the index and rebuilds it if the check confirms the damage, and it also says whether

@@ -7,7 +7,8 @@
 //! notes it failed to index, and a damaged database stayed damaged until
 //! somebody with a shell on the host deleted it.
 //!
-//! - **Assess.** Every sweep reconciles, then runs `PRAGMA quick_check`
+//! - **Assess.** Every sweep, on either server ([`IndexHealth::start`]
+//!   starts the loop for both, #1002), reconciles, then runs `PRAGMA quick_check`
 //!   (the thorough `integrity_check` when the sweep could not index some
 //!   notes, at most once an hour, and whenever damage only the thorough
 //!   check sees is still outstanding). Page-level damage can leave every
@@ -77,6 +78,40 @@ pub const INTEGRITY_RECHECK: Duration = Duration::from_secs(3600);
 /// How many failing notes a sweep names, in the log and in the record.
 /// The first few show what is wrong; all of them would bury it.
 pub const FAILING_NOTES_SHOWN: usize = 5;
+
+/// Seconds between two sweeps unless configured, on both servers.
+pub const DEFAULT_SWEEP_INTERVAL_SECS: u64 = 300;
+
+/// The variable both servers read the sweep interval from, in seconds; `0`
+/// turns the sweeps off. `cdno-mcp-server` also takes it as
+/// `--reconcile-interval-secs`; the stdio `cdno-mcp`, launched from a
+/// client's config, reads only the variable (#1002).
+pub const SWEEP_INTERVAL_ENV: &str = "CDNO_MCP_RECONCILE_INTERVAL_SECS";
+
+/// The sweep interval in seconds from [`SWEEP_INTERVAL_ENV`], for the stdio
+/// server: unset or empty (as with `CUADERNO_INDEX_PATH`) means
+/// [`DEFAULT_SWEEP_INTERVAL_SECS`]. A value that is not a whole number of
+/// seconds is an error naming the variable, so a typo stops the server at
+/// start rather than silently running on the default.
+pub fn sweep_interval_secs_from_env() -> Result<u64, String> {
+    parse_sweep_interval(std::env::var_os(SWEEP_INTERVAL_ENV).as_deref())
+}
+
+/// [`sweep_interval_secs_from_env`] on a given value, for tests.
+pub fn parse_sweep_interval(value: Option<&std::ffi::OsStr>) -> Result<u64, String> {
+    let Some(value) = value.filter(|v| !v.is_empty()) else {
+        return Ok(DEFAULT_SWEEP_INTERVAL_SECS);
+    };
+    value
+        .to_str()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .ok_or_else(|| {
+            format!(
+                "{SWEEP_INTERVAL_ENV} must be a whole number of seconds (0 turns the sweeps off), \
+                 got {value:?}"
+            )
+        })
+}
 
 /// How the server paces and bounds its own repairs.
 #[derive(Debug, Clone, Copy)]
@@ -804,18 +839,47 @@ impl IndexHealth {
         }
     }
 
+    /// Start the health loop with a sweep every `interval_secs` seconds, or
+    /// with the sweeps off when it is `0`, and say which at start. Both
+    /// servers start their loop here (#1002), so they share one interval
+    /// default, one meaning of `0` and one loop. The handle lets a caller
+    /// that is shutting down stop the loop from starting another sweep;
+    /// dropping it leaves the loop running.
+    pub fn start(self: &Arc<Self>, interval_secs: u64) -> tokio::task::JoinHandle<()> {
+        if interval_secs > 0 {
+            tracing::info!(
+                interval_secs,
+                "periodic reconciliation and index check enabled"
+            );
+            self.spawn_loop(Some(Duration::from_secs(interval_secs)))
+        } else {
+            tracing::warn!(
+                "periodic reconciliation disabled ({SWEEP_INTERVAL_ENV} or \
+                 --reconcile-interval-secs is 0); out-of-band edits will not appear in the index \
+                 until restart"
+            );
+            // Still listen for a tool call that meets a damaged index.
+            self.spawn_loop(None)
+        }
+    }
+
     /// Run [`sweep`](Self::sweep) every `every`, and
     /// [`on_corruption_seen`](Self::on_corruption_seen) whenever a tool
-    /// call reports corruption. With `every` `None` (the stdio server, or
-    /// sweeps turned off) only the second runs, so a tool call that meets
-    /// damage still starts a repair on every server.
+    /// call reports corruption. With `every` `None` (sweeps turned off)
+    /// only the second runs, so a tool call that meets damage still starts
+    /// a repair on every server.
+    ///
+    /// A sweep runs on the blocking pool, one at a time: the next tick
+    /// waits for the running sweep to finish, and a tick missed meanwhile
+    /// is delayed rather than replayed. Aborting the returned task stops
+    /// further sweeps; a sweep already running finishes on its thread.
     ///
     /// Known benign race (PR #304 review, correctness finding 2): a sweep
     /// reads file state *before* taking the per-note write lock, so a
     /// tool-call write landing in that window can be shadowed by a stale
     /// index row, which the *next* sweep heals (mtime mismatch). Worst
     /// case is stale search results for one interval; no note is touched.
-    pub fn spawn_loop(self: &Arc<Self>, every: Option<Duration>) {
+    pub fn spawn_loop(self: &Arc<Self>, every: Option<Duration>) -> tokio::task::JoinHandle<()> {
         let health = Arc::clone(self);
         tokio::spawn(async move {
             let mut interval = every.map(|every| {
@@ -852,7 +916,7 @@ impl IndexHealth {
                     tracing::warn!(error = %e, "index health task panicked");
                 }
             }
-        });
+        })
     }
 }
 

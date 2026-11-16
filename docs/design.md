@@ -1071,7 +1071,7 @@ For the HTTP transport specifically, a periodic full reconciliation (every 5 min
 
 **Integrity recovery.** The index is a cache — the vault files are the source of truth — so a corrupt index is always safe to discard and rebuild. A CLI command does not pay a check on every invocation (tens of milliseconds per startup); recovery is triggered three ways. Opening an index that fails with a corruption-shaped SQLite error (`DatabaseCorrupt` / `NotADatabase`) transparently drops the file and reopens fresh, and reconciliation then repopulates it. A long-running MCP server, which opens once, runs `PRAGMA quick_check` at start and after every sweep (the thorough `integrity_check` when notes fail to index, or when a tool call meets a corruption error), and on damage rebuilds the index from the notes into a fresh file and copies it over the live one in place (`reconcile::rebuild`, #526), so every process on that machine sees the repair without a restart; `index_status` and `rebuild_index` expose it to a client with no shell. And `cdno reindex` forces a clean rebuild on demand. Either way no data is lost. This contains a fault on one machine (a torn write, a crash, a bad page); it is not protection for an index file shared between two machines or kernels, whose locks do not reach each other, so a server that keeps finding damage after its repairs stops repairing by itself and says to give each machine its own index (`CUADERNO_INDEX_PATH`).
 
-**The practical guarantee.** After these guards, the worst case is: you edit a file in Obsidian, the watcher misses the event, and for up to 5 minutes (HTTP) or until the next CLI invocation (stdio) the index is stale. The next operation detects and corrects the inconsistency before proceeding. There is no scenario where the index silently diverges and causes incorrect behaviour — every read path checks freshness, and every write path ensures consistency.
+**The practical guarantee.** After these guards, the worst case is: you edit a file in Obsidian, the watcher misses the event, and for up to 5 minutes (either MCP server's sweep interval, `CDNO_MCP_RECONCILE_INTERVAL_SECS`, #1002) or until the next CLI invocation the index is stale. The next operation detects and corrects the inconsistency before proceeding. There is no scenario where the index silently diverges and causes incorrect behaviour — every read path checks freshness, and every write path ensures consistency.
 
 -----
 
@@ -1752,7 +1752,8 @@ cdno-mcp-server --bind 127.0.0.1:8787 --vault ~/vault
 - Axum mounting rmcp's Streamable HTTP service at `/mcp` (stateless JSON mode — SSE is
   unsupported by Claude's remote-connector infrastructure)
 - Long-running process; periodic index reconciliation (`--reconcile-interval-secs`) is the
-  correctness backstop against out-of-band edits; file watching (#49) is a future latency add-on
+  correctness backstop against out-of-band edits; file watching (#49) is a future latency add-on.
+  The stdio binary runs the same loop, configured by `CDNO_MCP_RECONCILE_INTERVAL_SECS` (#1002)
 - **No authentication in the binary** — static tokens are not spec-legal for remote MCP.
   OAuth 2.1 terminates at an identity-aware proxy (Cloudflare Access Managed OAuth); the origin
   validates the proxy-injected JWT (#302). Until #302 lands the binary refuses non-loopback binds
