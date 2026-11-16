@@ -132,6 +132,31 @@ pub enum StoreError {
     #[error("timed out after {0:?} waiting for the vault write lock")]
     LockTimeout(std::time::Duration),
 
+    /// The vault write lock file every kernel sees (#1012) stayed held by
+    /// another writer for the whole wait. `owner` is what its record says,
+    /// in words; `age_secs` its age by the folder's clock.
+    #[error(
+        "timed out after {waited:?} waiting for the vault write lock: {lock} is held by {owner}, \
+         and is {age_secs}s old; another cdno process is writing this vault, here or on another \
+         machine. A lock left by a writer that crashed is broken by the next write once it is \
+         {stale_after_secs}s old"
+    )]
+    LockBusy {
+        lock: String,
+        owner: String,
+        age_secs: u64,
+        stale_after_secs: u64,
+        waited: std::time::Duration,
+    },
+
+    /// The store's own check inside a commit, right before a rename, an
+    /// unlink or a copy into place (#1012), found the commit's vault write
+    /// lock file no longer its own, and did nothing. Only a commit with a
+    /// lock file can meet it, and the commit turns it into
+    /// [`TransactionError::LockLost`]: it never reaches a caller as is.
+    #[error("the vault write lock {lock} is no longer this write's; nothing was done")]
+    LockLost { lock: String },
+
     /// The path escapes the vault root once symlinks are resolved —
     /// or its confinement could not be verified (fail closed).
     /// `VaultPath` already rejects `..`/absolute lexically; this
@@ -158,6 +183,16 @@ pub enum IndexError {
 
     #[error("index update failed: {0}")]
     Update(String),
+
+    /// The vault write lock (the index's `flock`) could not be taken for
+    /// `what`. The lock's own error is kept, so a caller can tell a busy
+    /// vault from a failure by its type.
+    #[error("{what}: {source}")]
+    Lock {
+        what: String,
+        #[source]
+        source: StoreError,
+    },
 
     #[error("failed to open index at {path}: {source}")]
     Open {
@@ -347,6 +382,41 @@ pub enum TransactionError {
         join_paths(paths)
     )]
     Conflict { paths: Vec<VaultPath> },
+
+    /// This writer's hold on the vault write lock file (#1012) is gone:
+    /// another writer broke it (this one was suspended or stopped past the
+    /// stale interval), so the commit stopped before its next file op, or
+    /// right before a rename, and undid what it had applied. Each undo is
+    /// conditional, so one that would overwrite the successor's change is
+    /// refused and listed in `rollback_failures`. With none, nothing was
+    /// written and running the operation again is safe; with some, those
+    /// files may hold part of this write. The index is untouched.
+    #[error("{}", lock_lost_message(lock, rollback_failures))]
+    LockLost {
+        lock: String,
+        rollback_failures: Vec<StoreError>,
+    },
+}
+
+fn lock_lost_message(lock: &str, rollback_failures: &[StoreError]) -> String {
+    let head = format!(
+        "the vault write lock {lock} was broken by another writer while this write held it, so \
+         the write stopped"
+    );
+    if rollback_failures.is_empty() {
+        format!("{head}; nothing it wrote was kept, run the operation again")
+    } else {
+        let failed = rollback_failures
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ");
+        format!(
+            "{head}, and undoing what it had written failed for {} file(s), which may now hold \
+             part of it: {failed}",
+            rollback_failures.len()
+        )
+    }
 }
 
 fn join_paths(paths: &[VaultPath]) -> String {
@@ -364,7 +434,7 @@ impl TransactionError {
     pub fn is_index_corruption(&self) -> bool {
         match self {
             Self::IndexStale(errors) => errors.iter().any(IndexError::is_corruption),
-            Self::FileWrite { .. } | Self::Conflict { .. } => false,
+            Self::FileWrite { .. } | Self::Conflict { .. } | Self::LockLost { .. } => false,
         }
     }
 }

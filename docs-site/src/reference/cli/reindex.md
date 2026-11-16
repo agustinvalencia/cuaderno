@@ -39,11 +39,13 @@ replaced, so a process **on this machine** that already has it open (an MCP serv
 [`cdno watch`](watch.md)) reads the rebuilt index on its next query, with no restart, and no write
 by another command on this machine lands half before and half after. A process on another machine
 or kernel sharing the file (a container bind-mounting the vault, a network share) is not covered:
-SQLite's locks and the vault lock do not reach it, which is why each machine should have its own
-index (see
+SQLite's locks do not reach it, and `reindex` takes only the part of the vault write lock that orders
+this machine's processes (the index is not shared, the notes are), which is why each machine should
+have its own index (see
 [Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine)).
 While another command holds the vault write lock, `reindex` waits for it (up to five seconds), and
-then fails with the usual lock error, leaving the index as it was.
+then fails with the usual lock error, leaving the index as it was; it exits with status 75, like a
+write that found the vault busy.
 
 If the index failed its integrity check, `reindex` says so, and keeps a copy of the damaged file
 beside it with `.previous` appended to its name (`.cuaderno/index.db.previous` by default). If the

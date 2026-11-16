@@ -864,6 +864,9 @@ fn completion_leaves_a_live_index_its_sidecars_and_the_lock_untouched() {
         "the write is in the -wal"
     );
     let before = cuaderno_files(vault.path());
+    // A file created and removed in `.cuaderno/` (the write lock file,
+    // #1012, is gone again on release) still changes the folder's mtime.
+    let folder_mtime = std::fs::metadata(&cuaderno).unwrap().modified().unwrap();
 
     let mut offered = std::collections::BTreeSet::new();
     for (index, words) in COMPLETERS {
@@ -877,6 +880,11 @@ fn completion_leaves_a_live_index_its_sidecars_and_the_lock_untouched() {
         );
     }
     assert_eq!(cuaderno_files(vault.path()), before);
+    assert_eq!(
+        std::fs::metadata(&cuaderno).unwrap().modified().unwrap(),
+        folder_mtime,
+        "a file was created or removed in .cuaderno/ (the write lock file?)"
+    );
     // The live connection still reads its own uncheckpointed write.
     let x: i64 = conn
         .query_row("SELECT x FROM completion_probe", [], |row| row.get(0))

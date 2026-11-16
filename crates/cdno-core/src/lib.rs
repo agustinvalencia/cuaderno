@@ -22,6 +22,7 @@ pub mod path;
 pub mod paths;
 pub mod read_journal;
 pub mod reconcile;
+pub mod shared_lock;
 pub mod slug;
 pub mod store;
 pub mod template;

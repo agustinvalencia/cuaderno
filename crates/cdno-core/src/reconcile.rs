@@ -267,11 +267,14 @@ fn rebuild_inner(
     };
 
     before_lock();
-    let _lock = store.acquire_write_lock().map_err(|e| {
-        IndexError::Update(format!(
-            "acquiring the vault write lock to replace the index: {e}"
-        ))
-    })?;
+    // The `flock` alone (#1012): this pass writes the index, never a note,
+    // and the lock file guards notes across kernels.
+    let _lock = store
+        .acquire_index_lock()
+        .map_err(|source| IndexError::Lock {
+            what: "acquiring the vault write lock to replace the index".to_owned(),
+            source,
+        })?;
     // Lock held: this pass's transactions must not try to take it again.
     let held: Arc<dyn VaultStore> = Arc::new(crate::store::LockHeldStore(store.clone()));
     let last = reconcile(&held, &fresh_index, scope)?;
@@ -373,9 +376,13 @@ pub fn reconcile(
             // op failure — means the note is *still* in the index, so
             // we record it as an error rather than marking it removed.
             // The next reconciliation pass will retry.
-            let mut tx = VaultTransaction::new(store.clone(), index.clone()).map_err(|e| {
-                IndexError::Update(format!("acquiring write lock during reconcile: {e}"))
-            })?;
+            let mut tx =
+                VaultTransaction::index_only(store.clone(), index.clone()).map_err(|e| {
+                    IndexError::Lock {
+                        what: "acquiring the vault write lock during reconcile".to_owned(),
+                        source: e,
+                    }
+                })?;
             tx.remove_note(path.clone());
             match tx.commit() {
                 Ok(_) => report.removed += 1,
@@ -426,8 +433,11 @@ pub fn reconcile(
     let aliases_after = AliasMap::from_rows(index.list_aliases()?);
     if report.added > 0 || report.removed > 0 || aliases_after != aliases_before {
         let healed = store
-            .acquire_write_lock()
-            .map_err(|e| IndexError::Update(format!("acquiring write lock: {e}")))
+            .acquire_index_lock()
+            .map_err(|source| IndexError::Lock {
+                what: "acquiring the vault write lock".to_owned(),
+                source,
+            })
             .and_then(|_lock| {
                 // Index-only writes with no transaction to carry them, so
                 // the vault write lock is held explicitly, as every other
@@ -487,8 +497,11 @@ pub fn reconcile(
         // An FTS row whose note is gone. `remove_note` deletes both the
         // (already-absent) notes row and the FTS row, so it's the right
         // primitive even though only the FTS side has anything to drop.
-        let mut tx = VaultTransaction::new(store.clone(), index.clone()).map_err(|e| {
-            IndexError::Update(format!("acquiring write lock during reconcile: {e}"))
+        let mut tx = VaultTransaction::index_only(store.clone(), index.clone()).map_err(|e| {
+            IndexError::Lock {
+                what: "acquiring the vault write lock during reconcile".to_owned(),
+                source: e,
+            }
         })?;
         tx.remove_note(path.clone());
         match tx.commit() {
@@ -582,7 +595,7 @@ fn backfill_fts_one(
         .map_err(|e| format!("frontmatter parse failed: {e}"))?;
     let title = crate::note::fts_title(path, Some(&frontmatter), body);
 
-    let mut tx = VaultTransaction::new(store.clone(), index.clone())
+    let mut tx = VaultTransaction::index_only(store.clone(), index.clone())
         .map_err(|e| format!("acquiring write lock: {e}"))?;
     tx.replace_fts(path.clone(), title, body.to_owned());
     tx.commit().map_err(|e| format!("commit failed: {e}"))?;
@@ -607,7 +620,7 @@ fn restamp_meta(
     updated.size = size;
     updated.indexed_at_ns = system_time_to_ns(SystemTime::now());
 
-    let mut tx = VaultTransaction::new(store.clone(), index.clone())
+    let mut tx = VaultTransaction::index_only(store.clone(), index.clone())
         .map_err(|e| format!("acquiring write lock: {e}"))?;
     tx.upsert_note(updated);
     tx.commit()
@@ -635,7 +648,7 @@ fn refuse_unadmitted(
     has_row: bool,
 ) -> String {
     if has_row {
-        let dropped = VaultTransaction::new(store.clone(), index.clone())
+        let dropped = VaultTransaction::index_only(store.clone(), index.clone())
             .map_err(|e| format!("acquiring write lock: {e}"))
             .and_then(|mut tx| {
                 tx.remove_note(path.clone());
@@ -874,7 +887,7 @@ fn reconcile_one(
         Outcome::Added
     };
 
-    let mut tx = VaultTransaction::new(store.clone(), index.clone())
+    let mut tx = VaultTransaction::index_only(store.clone(), index.clone())
         .map_err(|e| format!("acquiring write lock: {e}"))?;
     tx.upsert_note(entry);
     tx.replace_deadlines(path.clone(), deadlines);

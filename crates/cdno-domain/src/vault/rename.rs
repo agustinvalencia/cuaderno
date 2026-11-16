@@ -354,6 +354,14 @@ impl Vault {
     /// The caller decides when: the preview takes it without the lock, the
     /// write under it (T20).
     pub fn rename_snapshot(&self) -> Result<VaultSnapshot, DomainError> {
+        self.rename_snapshot_with(|| {})
+    }
+
+    /// [`rename_snapshot`](Self::rename_snapshot), calling `keep_alive`
+    /// every few hundred notes: the write takes it under the vault write
+    /// lock, and a scan of a large vault over a slow share makes no file op
+    /// that would refresh the lock (#1012).
+    fn rename_snapshot_with(&self, keep_alive: impl Fn()) -> Result<VaultSnapshot, DomainError> {
         let classified = cdno_core::classify::classify(&self.store, &self.note_scope()?)?;
 
         let mut snapshot = VaultSnapshot {
@@ -366,7 +374,10 @@ impl Vault {
             files: classified.files,
             ..VaultSnapshot::default()
         };
-        for path in classified.notes {
+        for (n, path) in classified.notes.into_iter().enumerate() {
+            if n % 200 == 199 {
+                keep_alive();
+            }
             let content = self.store.read_file(&path)?;
             if content.contains(ALIASES_KEY)
                 && let Some(frontmatter) = frontmatter_json(&path, &content)
@@ -1282,7 +1293,7 @@ impl Vault {
     ) -> Result<RenameOutcome, DomainError> {
         let mut tx = self.transaction()?; // lock held from here to the commit (#196)
         guard()?;
-        let snapshot = self.rename_snapshot()?;
+        let snapshot = self.rename_snapshot_with(|| tx.keep_alive())?;
         let plan = self.plan(&snapshot, target, mode, reason, at)?;
         ensure_destinations_free(&*self.store, &plan, true)?;
         if let Some(expected) = expected_plan
@@ -1314,7 +1325,12 @@ impl Vault {
             // A file the plan read changed underneath it (#1001): nothing
             // was written, or what was is rolled back, and the destination
             // folder may be left empty as after a failed write.
-            Err(conflict @ TransactionError::Conflict { .. }) => {
+            // The vault write lock was broken under the rename (#1012): it
+            // stopped and undid what it could; the error names any file it
+            // could not undo.
+            Err(
+                conflict @ (TransactionError::Conflict { .. } | TransactionError::LockLost { .. }),
+            ) => {
                 if let Some((_, new_folder)) = &folders {
                     prune_folder_tree(&*self.store, new_folder);
                 }
@@ -1566,7 +1582,9 @@ fn failed_path(error: &cdno_core::error::StoreError) -> Option<VaultPath> {
         | StoreError::OutsideVault(p)
         | StoreError::Io { path: p, .. } => p,
         StoreError::Changed(p) => return Some(p.clone()),
-        StoreError::LockTimeout(_) => return None,
+        StoreError::LockTimeout(_) | StoreError::LockBusy { .. } | StoreError::LockLost { .. } => {
+            return None;
+        }
     };
     VaultPath::new(raw.as_str()).ok()
 }

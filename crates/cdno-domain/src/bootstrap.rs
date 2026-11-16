@@ -179,7 +179,7 @@ fn empty_in_place(
     root: &Path,
     cause: &IndexError,
 ) -> Result<SqliteIndex, BootstrapError> {
-    let _lock = match store.acquire_write_lock() {
+    let _lock = match store.acquire_index_lock() {
         Ok(lock) => lock,
         Err(e) => {
             tracing::warn!(

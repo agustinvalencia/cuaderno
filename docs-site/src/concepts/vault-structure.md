@@ -61,6 +61,7 @@ vault/
 └── .cuaderno/
     ├── config.toml               # vault configuration
     ├── index.db                  # SQLite index cache (auto-created, rebuildable)
+    ├── .lock, locks/             # the vault write lock (locks/write.lock only while a write runs)
     └── templates/                # note templates (override the built-ins)
 ```
 
@@ -94,6 +95,68 @@ vault/
   instead; see [Keeping the index on each machine](#keeping-the-index-on-each-machine).
 - **`templates/`** — the note templates `cdno` fills when scaffolding a note. The built-ins are
   written here at `init` so you can edit them; pure variable substitution, no logic.
+- **`.lock`** and **`locks/`** — the vault write lock. Every write takes both, one after the
+  other, and holds them while it reads and rewrites notes. `.lock` stays (an empty file the
+  operating system locks), and only processes on the same machine see that lock. `locks/write.lock`
+  exists only while a write holds it, and processes on another machine or in a container that share
+  the folder see it too (see [Sharing a vault between machines](#sharing-a-vault-between-machines)).
+  Other files in `locks/` live for an instant while a write takes or breaks the lock. None of them
+  is a note; the folder keeps itself out of git (its own `.gitignore`), and should be kept out of
+  a sync tool (below).
+
+## Sharing a vault between machines
+
+When one vault folder is reachable from two operating systems **at the same time** (a host and a
+container that mounts it, or two computers on a network share), the writes of both are kept apart by
+`.cuaderno/locks/write.lock`, a lock file both sides see: a write on one side waits for a write on
+the other, so neither replaces a note the other has just changed, provided the share shows each
+side the other's renames when it reads (see the share's cache below). What still matters:
+
+- **Upgrade every side together.** 0.46.0 and older take neither this lock nor the check that a note
+  did not change under a write, so with one side on such a version lines are still lost, silently.
+  An older `cdno` or `cdno-mcp-server` is no more excluded than an editor is.
+- **Writers that take no lock** (an editor, a sync tool) are not excluded by it. A write that finds
+  the note changed under it refuses, writing nothing (see
+  [Troubleshooting](../reference/troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared)).
+- **A writer that crashes holding the lock** leaves `write.lock` behind. The next write on the same
+  machine (or a container of the same kernel reaching the folder through the same mount, a
+  restarted one included) takes it over at once. One on the other machine waits until the lock is
+  30 seconds old, failing as busy until then, and then takes it over by itself
+  (see [Troubleshooting](../reference/troubleshooting.md#a-write-fails-with-timed-out--waiting-for-the-vault-write-lock)).
+- **A writer paused while holding it** (a laptop asleep, a paused container) has it taken over once
+  it is 30 seconds old; when it wakes, its write stops and undoes itself. One that stops in the very
+  last instant of a write, between its last check and replacing the note, can still overwrite a
+  line the other side wrote meanwhile: the lock narrows that to one step, and nothing short of the
+  file server itself can close it.
+- **The config and the templates are not covered.** Editing `config.toml` or a template through
+  cdno (`cdno config` edits, `cdno templates` eject, save and sync) takes no lock, on one machine
+  or two; do that from one side at a time.
+- **Give each machine its own index**, next section: the lock keeps the notes safe, not a SQLite file
+  shared between two kernels.
+- **The share's cache.** A VM share that caches file names (virtiofs in its default mode, or
+  `cache=always`) can show one side a note the other side has just replaced. cdno asks the file
+  server for a fresh answer before it writes, and retries a read for about a second and a half
+  while the cache catches up, but on a share that ignores that request (or on a guest that is not
+  Linux) mount the share with `cache=none`, or give each side its own copy of the vault. NFS and
+  SMB shares in their ordinary configurations are not affected.
+- **Not on an object-store mount.** A bucket mounted as a folder cannot create a file exclusively
+  across two machines, so the lock excludes nothing there.
+
+**Synced copies are a different case.** A tool that keeps two copies of the vault in step (git,
+Syncthing, Dropbox, iCloud Drive) is not two machines writing one folder: each machine writes its own
+copy, its own lock keeps its own writers apart, and the tool resolves conflicts between the copies.
+The lock file does nothing across copies; a copy of it that the tool carries over can only make the
+other machine wait (up to 30 seconds), or have a write there refused (and retried, for the commands
+that add to a note) when the tool carries a break back onto a newer lock, never lose a line. So
+keep the folder out of the sync, and let the tool leave `.cuaderno/.lock` alone too (replacing it
+under a writer splits the lock):
+
+- git: nothing to do; the folder carries its own `.gitignore`. If a copy of it was ever committed,
+  `git rm -r --cached .cuaderno/locks`.
+- Syncthing: a line `.cuaderno/locks` in `.stignore`.
+- Dropbox: mark `.cuaderno/locks` as ignored.
+- A tool with no ignore rules (iCloud Drive): expect an occasional wait of up to 30 seconds on the
+  other machine after a write here.
 
 ## Keeping the index on each machine
 
@@ -179,10 +242,10 @@ seconds (300 by default; `--reconcile-interval-secs` on the HTTP server; see
 window search and backlinks can miss the other side's latest notes, and the active-project cap and
 the check that a new note's name is unique are made against that stale view, so the cap can be
 exceeded or a name taken twice until someone reconciles. The override separates the index only.
-For the notes themselves, a write now refuses to replace a note that changed while it was being
-prepared ([a write fails with "changed on disk …"](../reference/troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared)),
-which makes a lost line rare but not impossible: the two machines' write locks still do not see each
-other, and a lock they both see is [#1012](https://github.com/agustinvalencia/cuaderno/issues/1012).
+For the notes themselves, the two machines' writes are kept apart by the lock file both see
+([Sharing a vault between machines](#sharing-a-vault-between-machines)), and a write still refuses
+to replace a note that something else changed while it was being prepared
+([a write fails with "changed on disk …"](../reference/troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared)).
 
 **Moving an index.** No migration is needed: the new file starts empty and the next open rebuilds
 it from the Markdown. A new file starts without the archival snapshots (only a rebuild of an

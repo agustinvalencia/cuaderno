@@ -82,3 +82,59 @@ fn every_other_failure_keeps_the_generic_status_and_no_object() {
         assert!(rejection(err).is_none(), "{err:?}");
     }
 }
+
+#[test]
+fn a_busy_vault_and_a_cleanly_lost_lock_exit_with_tempfail_too() {
+    // #1012: the lock held by another writer for the whole wait, or broken
+    // under the write with everything undone. Nothing was written either
+    // way, and running the command again is the remedy.
+    let busy = anyhow::Error::from(DomainError::Store(StoreError::LockBusy {
+        lock: ".cuaderno/locks/write.lock".into(),
+        owner: "cdno-mcp-server 0.47.0 (process 7 …)".into(),
+        age_secs: 4,
+        stale_after_secs: 30,
+        waited: std::time::Duration::from_secs(5),
+    }));
+    assert_eq!(special_status(&busy), Some(75));
+    let object = rejection(&busy).unwrap();
+    assert_eq!(object["code"], "vault_busy");
+    assert_eq!(object["details"]["age_secs"], 4);
+    let flock = anyhow::Error::from(DomainError::Store(StoreError::LockTimeout(
+        std::time::Duration::from_secs(5),
+    )));
+    assert_eq!(special_status(&flock), Some(75));
+
+    let lost = |rollback_failures| {
+        anyhow::Error::from(DomainError::Transaction(TransactionError::LockLost {
+            lock: ".cuaderno/locks/write.lock".into(),
+            rollback_failures,
+        }))
+    };
+    let clean = lost(Vec::new());
+    assert_eq!(special_status(&clean), Some(75));
+    assert_eq!(rejection(&clean).unwrap()["details"]["lock_lost"], true);
+    // One whose undo failed may be part-written: the generic failure.
+    let partial = lost(vec![StoreError::Changed(vp("a.md"))]);
+    assert_eq!(special_status(&partial), None);
+    assert!(
+        partial.to_string().contains("may now hold part of it"),
+        "{partial}"
+    );
+}
+
+#[test]
+fn a_busy_lock_inside_an_index_error_exits_with_tempfail_too() {
+    // `cdno reindex`, and a command's opening reconciliation, report the
+    // lock's error inside an index error, wrapped in context.
+    let index = cdno_core::error::IndexError::Lock {
+        what: "acquiring the vault write lock to replace the index".into(),
+        source: StoreError::LockTimeout(std::time::Duration::from_secs(5)),
+    };
+    let wrapped = Err::<(), _>(index)
+        .context("rebuilding the index; it was left as it was")
+        .unwrap_err();
+    assert_eq!(special_status(&wrapped), Some(75));
+    let object = rejection(&wrapped).unwrap();
+    assert_eq!(object["code"], "vault_busy");
+    assert_eq!(object["details"]["waited_secs"], 5);
+}

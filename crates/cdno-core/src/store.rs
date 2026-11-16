@@ -9,12 +9,18 @@ use crate::error::StoreError;
 use crate::file_meta::FileMeta;
 use crate::path::VaultPath;
 use crate::read_journal::{Observed, ReadJournals};
+use crate::shared_lock::{self, SharedLock};
 
 /// How long [`VaultStore::acquire_write_lock`] waits for the vault write
 /// lock before giving up. Bounded so a wedged holder surfaces as a
-/// [`StoreError::LockTimeout`] rather than an unbounded hang; mirrors the
-/// SQLite index's `busy_timeout`. The OS releases the lock on process
-/// death, so a crashed holder never deadlocks the next writer.
+/// [`StoreError::LockTimeout`] (or, for the lock file, a
+/// [`StoreError::LockBusy`] naming its holder) rather than an unbounded
+/// hang; mirrors the SQLite index's `busy_timeout`. One deadline covers
+/// both locks. The OS releases the `flock` on process death; a crashed
+/// holder's lock file is broken at once by a writer on its kernel, and by
+/// one on another kernel once it is
+/// [`STALE_AFTER`](crate::shared_lock::STALE_AFTER) old, until when such a
+/// writer waits this long and fails as busy.
 const WRITE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Filename prefix for the in-progress temp file that atomic writes
@@ -24,24 +30,81 @@ const WRITE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 /// of any lock. Exposed for the checkpoint to build its exclude rule.
 pub const WIP_TEMP_PREFIX: &str = ".cdno-wip-";
 
-/// Guard for the vault write lock (#196). For [`FsVaultStore`] it holds an
-/// OS advisory lock on `.cuaderno/.lock`; for in-memory stores it is a
-/// no-op. The lock releases when this guard drops — and, being tied to an
-/// open file descriptor, on process death too.
+/// Guard for the vault write lock (#196, #1012). For [`FsVaultStore`] it
+/// holds an OS advisory lock on `.cuaderno/.lock` (which orders the
+/// writers of one kernel) and, unless taken for the index only
+/// ([`VaultStore::acquire_index_lock`]), the lock file every kernel sees,
+/// `.cuaderno/locks/write.lock` (see [`crate::shared_lock`]); for in-memory
+/// stores it is a no-op. Both release when this guard drops, the lock file
+/// first. On process death the OS frees the `flock`; the lock file is left,
+/// and broken by the next writer (at once on the same kernel, after
+/// [`STALE_AFTER`](crate::shared_lock::STALE_AFTER) on another).
 #[derive(Debug)]
 pub struct VaultWriteLock {
     file: Option<File>,
+    shared: Option<SharedLock>,
 }
 
 impl VaultWriteLock {
     /// A no-op guard, for stores that share no on-disk lock file.
     fn noop() -> Self {
-        Self { file: None }
+        Self {
+            file: None,
+            shared: None,
+        }
+    }
+
+    /// Whether this guard still holds the vault write lock file (#1012):
+    /// false when another writer broke it (this process was suspended past
+    /// the stale interval). A no-op guard, and one without the lock file,
+    /// always holds. Refreshes the lock's mtime when it is due, so a holder
+    /// that keeps asking is never taken for a crashed one. A commit asks
+    /// before each file operation and again right before each rename; any
+    /// other holder asks before its decisive step.
+    pub fn still_held(&self) -> Result<bool, StoreError> {
+        match &self.shared {
+            Some(shared) => shared.still_held(),
+            None => Ok(true),
+        }
+    }
+
+    /// Refresh the lock file if it is due, checking ownership only then
+    /// (see [`VaultTransaction::keep_alive`](crate::transaction::VaultTransaction::keep_alive)).
+    pub fn keep_alive(&self) {
+        if let Some(shared) = &self.shared {
+            shared.keep_alive();
+        }
+    }
+
+    /// Whether this guard holds the lock file every kernel sees, as opposed
+    /// to the `flock` alone (or nothing).
+    pub fn has_lock_file(&self) -> bool {
+        self.shared.is_some()
+    }
+
+    /// Whether taking this lock broke another writer's lock file (#1012),
+    /// and why. Diagnostic: a warning is logged when it happens.
+    pub fn broke_lock(&self) -> Option<crate::shared_lock::BreakReason> {
+        self.shared.as_ref().and_then(SharedLock::broke)
+    }
+
+    /// Whether taking this lock broke another writer's lock file.
+    pub fn broke_stale_lock(&self) -> bool {
+        self.broke_lock().is_some()
+    }
+
+    /// Let the store's conditional writes on this thread check this lock
+    /// right before their rename, until the returned scope drops.
+    pub(crate) fn in_commit(&self) -> Option<crate::shared_lock::CommitScope> {
+        self.shared.as_ref().map(SharedLock::in_commit)
     }
 }
 
 impl Drop for VaultWriteLock {
     fn drop(&mut self) {
+        // The lock file first, while the `flock` still keeps this kernel's
+        // other writers waiting, so none of them polls for it.
+        drop(self.shared.take());
         if let Some(file) = &self.file {
             // Dropping the file closes the fd, which releases the lock
             // anyway; the explicit unlock just makes release prompt.
@@ -102,6 +165,14 @@ impl VaultStore for LockHeldStore {
         self.0.import_external(src, dest)
     }
     fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
+        // Its holder took the index lock (the `flock` alone): a transaction
+        // that may write notes must not open under it without the lock file.
+        panic!(
+            "a note-writing transaction was opened under an index-only lock (#1012): use \
+             VaultTransaction::index_only"
+        );
+    }
+    fn acquire_index_lock(&self) -> Result<VaultWriteLock, StoreError> {
         Ok(VaultWriteLock::noop())
     }
     // The comparison (#1001) is the inner store's: only the lock differs.
@@ -257,9 +328,24 @@ pub trait VaultStore: Send + Sync {
     ///
     /// The default is a no-op — correct for in-memory stores and test
     /// doubles, which share no on-disk file across processes.
-    /// [`FsVaultStore`] overrides it with an OS advisory lock.
+    /// [`FsVaultStore`] overrides it with an OS advisory lock, then the lock
+    /// file every kernel sees (#1012, [`crate::shared_lock`]). Every holder
+    /// that writes notes, or reads them for a write, comes through here:
+    /// every transaction that stages a file op, and the git checkpoint.
     fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
         Ok(VaultWriteLock::noop())
+    }
+
+    /// Acquire the vault write lock for a holder that writes only this
+    /// machine's index and no note: reconciliation's per-note index
+    /// transactions, link re-resolution, an index rebuild's locked pass, the
+    /// index's set-aside and reopen. [`FsVaultStore`] takes the `flock`
+    /// alone, which orders this kernel's index writers; the lock file guards
+    /// notes across kernels, and each kernel's index is its own (#998), so
+    /// these holders neither pay for it nor keep the other kernel's writers
+    /// waiting. The default takes the full lock, which is never wrong.
+    fn acquire_index_lock(&self) -> Result<VaultWriteLock, StoreError> {
+        self.acquire_write_lock()
     }
 
     // ---- compare before rename (#1001) ---------------------------------
@@ -697,6 +783,15 @@ pub struct FsVaultStore {
     /// Where the write lock lives when not `.cuaderno/.lock`; see
     /// `with_lock_file` (a test seam behind the `test-support` feature).
     lock_file: Option<PathBuf>,
+    /// Whether the write lock takes the lock file every kernel sees
+    /// (#1012) after the `flock`. Always true outside tests; see
+    /// `without_shared_lock`.
+    shared_lock: bool,
+    /// How the lock file is taken: production values outside tests.
+    shared_lock_options: shared_lock::Options,
+    /// How long the write lock is waited for: [`WRITE_LOCK_TIMEOUT`]
+    /// outside tests.
+    lock_timeout: Duration,
     /// Reads recorded for open transactions (#1001). Per instance: a
     /// clone starts with none open.
     journals: ReadJournals,
@@ -713,6 +808,11 @@ struct TestHooks {
     before_compare: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Makes the no-clobber rename of a create fail with this OS error.
     noclobber_error: Option<i32>,
+    /// Runs inside a move, after its checks and right before its rename.
+    before_move: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Answers for the file server's forced attributes (`statx` with
+    /// `AT_STATX_FORCE_SYNC` on Linux), in their place.
+    forced_attrs: Option<ForcedAttrsHook>,
 }
 
 impl std::fmt::Debug for TestHooks {
@@ -720,6 +820,8 @@ impl std::fmt::Debug for TestHooks {
         f.debug_struct("TestHooks")
             .field("before_compare", &self.before_compare.is_some())
             .field("noclobber_error", &self.noclobber_error)
+            .field("before_move", &self.before_move.is_some())
+            .field("forced_attrs", &self.forced_attrs.is_some())
             .finish()
     }
 }
@@ -730,6 +832,9 @@ impl Clone for FsVaultStore {
         // re-memoises lazily, keeping the OnceLock semantics simple.
         let mut clone = Self::new(self.root.clone());
         clone.lock_file.clone_from(&self.lock_file);
+        clone.shared_lock = self.shared_lock;
+        clone.shared_lock_options = self.shared_lock_options.clone();
+        clone.lock_timeout = self.lock_timeout;
         clone.hooks = self.hooks.clone();
         clone
     }
@@ -738,7 +843,7 @@ impl Clone for FsVaultStore {
 /// Whether a failed no-clobber rename means the filesystem cannot do one
 /// at all (no rename flag, no hard links), as opposed to an ordinary
 /// failure that must be reported.
-fn noclobber_unsupported(e: &io::Error) -> bool {
+pub(crate) fn noclobber_unsupported(e: &io::Error) -> bool {
     if matches!(
         e.kind(),
         io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput
@@ -764,22 +869,101 @@ impl FsVaultStore {
             root: root.into(),
             root_canon: std::sync::OnceLock::new(),
             lock_file: None,
+            shared_lock: true,
+            shared_lock_options: shared_lock::Options::default(),
+            lock_timeout: WRITE_LOCK_TIMEOUT,
             journals: ReadJournals::new(),
             hooks: TestHooks::default(),
         }
     }
 
-    /// Take the write lock on `lock_file` (an absolute path) instead of
-    /// the vault's `.cuaderno/.lock`.
+    /// Take the `flock` on `lock_file` (an absolute path) instead of the
+    /// vault's `.cuaderno/.lock`.
     ///
     /// A test seam, compiled only with the `test-support` feature: two
-    /// stores over one folder with different lock files hold their locks
-    /// independently, which is how a test reproduces a folder written from
-    /// two kernels, where `flock` is not shared (#1001). A real vault
-    /// always locks `.cuaderno/.lock`.
+    /// stores over one folder with different lock files hold their
+    /// `flock`s independently, which is how a test reproduces a folder
+    /// written from two kernels, where `flock` is not shared (#1001). They
+    /// still contend for the lock file in the vault's `.cuaderno/locks/` (#1012),
+    /// as two kernels do; add [`without_shared_lock`](Self::without_shared_lock)
+    /// for writers no lock excludes. A real vault always locks
+    /// `.cuaderno/.lock`.
+    ///
+    /// Such a store stands for another kernel, so it is also given a boot
+    /// identifier of its own, derived from `lock_file`: otherwise the
+    /// same-kernel break (#1012) would take another "kernel"'s live lock in
+    /// the same test process for a dead one. [`with_boot_id`](Self::with_boot_id)
+    /// overrides it.
     #[cfg(feature = "test-support")]
     pub fn with_lock_file(mut self, lock_file: impl Into<PathBuf>) -> Self {
-        self.lock_file = Some(lock_file.into());
+        let lock_file = lock_file.into();
+        self.shared_lock_options.boot = Some(format!("test-kernel-{}", lock_file.display()));
+        self.lock_file = Some(lock_file);
+        self
+    }
+
+    /// Write `boot` as this store's kernel boot identifier in its lock
+    /// records, and break at once a lock whose record carries it (test
+    /// seam, `test-support` only). `None` turns the same-kernel break off.
+    #[cfg(feature = "test-support")]
+    pub fn with_boot_id(mut self, boot: Option<&str>) -> Self {
+        self.shared_lock_options.boot = boot.map(str::to_owned);
+        self
+    }
+
+    /// Run `hook` when this store's ownership check finds its lock's name
+    /// missing, before it pauses and looks once more (test seam,
+    /// `test-support` only).
+    #[cfg(feature = "test-support")]
+    pub fn with_on_name_missing_hook(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
+        self.shared_lock_options.hooks.on_name_missing = Some(Arc::new(hook));
+        self
+    }
+
+    /// Run `hook` when this store has moved aside a lock that is not the
+    /// one it judged breakable, right before it puts it back (test seam,
+    /// `test-support` only).
+    #[cfg(feature = "test-support")]
+    pub fn with_after_wrong_move_hook(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
+        self.shared_lock_options.hooks.after_wrong_move = Some(Arc::new(hook));
+        self
+    }
+
+    /// Take only the `flock`, never the lock file every kernel sees
+    /// (#1012): a writer that predates it, such as an older cdno (test
+    /// seam, `test-support` only). Two such stores over one folder with
+    /// their own lock files ([`with_lock_file`](Self::with_lock_file)) hold
+    /// transactions at the same moment, which is how the compare before
+    /// rename (#1001) is tested against writers no lock excludes.
+    #[cfg(feature = "test-support")]
+    pub fn without_shared_lock(mut self) -> Self {
+        self.shared_lock = false;
+        self
+    }
+
+    /// Refresh a held lock file at its next ownership check once it is
+    /// `after` old, instead of five seconds (test seam, `test-support`
+    /// only).
+    #[cfg(feature = "test-support")]
+    pub fn with_refresh_after(mut self, after: Duration) -> Self {
+        self.shared_lock_options.refresh_after = after;
+        self
+    }
+
+    /// Wait `timeout` for the write lock instead of five seconds (test
+    /// seam, `test-support` only).
+    #[cfg(feature = "test-support")]
+    pub fn with_lock_timeout(mut self, timeout: Duration) -> Self {
+        self.lock_timeout = timeout;
+        self
+    }
+
+    /// Run `hook` when this store has judged the lock file stale, right
+    /// before it renames it aside to break it (test seam, `test-support`
+    /// only).
+    #[cfg(feature = "test-support")]
+    pub fn with_before_break_hook(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
+        self.shared_lock_options.hooks.before_break = Some(Arc::new(hook));
         self
     }
 
@@ -789,6 +973,28 @@ impl FsVaultStore {
     #[cfg(feature = "test-support")]
     pub fn with_before_compare_hook(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
         self.hooks.before_compare = Some(Arc::new(hook));
+        self
+    }
+
+    /// Answer the file server's forced attributes with `hook` instead of
+    /// `statx` (test seam, `test-support` only): called with a file's path
+    /// and `true` for its open descriptor, `false` for its name. Lets a
+    /// test on any platform play a share that answers a stale cached size,
+    /// or a name whose file has no link left.
+    #[cfg(feature = "test-support")]
+    pub fn with_forced_attrs_hook(
+        mut self,
+        hook: impl Fn(&Path, bool) -> Option<ForcedAttrs> + Send + Sync + 'static,
+    ) -> Self {
+        self.hooks.forced_attrs = Some(Arc::new(hook));
+        self
+    }
+
+    /// Run `hook` inside every move, after its checks and right before its
+    /// rename (test seam, `test-support` only).
+    #[cfg(feature = "test-support")]
+    pub fn with_before_move_hook(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
+        self.hooks.before_move = Some(Arc::new(hook));
         self
     }
 
@@ -913,6 +1119,11 @@ impl FsVaultStore {
         if let Some(hook) = &self.hooks.before_compare {
             hook();
         }
+        // A commit's write: is its vault write lock file still its own
+        // (#1012)? Checked here, after the slow part, so what is left
+        // uncovered is the comparison and the rename alone. Outside a
+        // commit with a lock file this passes.
+        crate::shared_lock::commit_still_holds()?;
         match expected {
             None => {
                 tmp.persist(full)
@@ -938,10 +1149,14 @@ impl FsVaultStore {
                     // (some network and VM shares support neither the
                     // rename flag nor hard links) falls back to checking
                     // for absence and renaming: the window a replace has,
-                    // rather than failing every creation there. Any other
-                    // error is reported as it is.
+                    // rather than failing every creation there. That check
+                    // is an `lstat` a share's client may answer from its
+                    // cache, so there a negative entry can let a create
+                    // replace a note another kernel just made: a documented
+                    // limit of such filesystems. Any other error is
+                    // reported as it is.
                     Err((e, tmp)) if noclobber_unsupported(&e) => {
-                        if file_identity(full).is_some() {
+                        if file_identity(full, &self.hooks).is_some() {
                             return Err(StoreError::Changed(path.clone()));
                         }
                         tmp.persist(full)
@@ -956,8 +1171,23 @@ impl FsVaultStore {
             // `stat` and the rename; no rename can be conditional on what
             // it replaces, so the gap cannot be closed here.
             Some(expected) => {
-                let identity = file_identity(full);
-                if observe_full(full, path)? != expected || file_identity(full) != identity {
+                let identity = file_identity(full, &self.hooks);
+                // A name the file server says no longer names a file: this
+                // client's entry for it is stale, and what it read through
+                // it was a replaced note (#1012).
+                if let Some((dev, ..)) = identity
+                    && names_a_replaced_file(full, dev, &self.hooks)
+                {
+                    tracing::debug!(
+                        %path,
+                        "the compare before rename met a stale entry of the share's name cache \
+                         (the file it names has no link left); refused"
+                    );
+                    return Err(StoreError::Changed(path.clone()));
+                }
+                if observe_full(full, path, &self.hooks)? != expected
+                    || file_identity(full, &self.hooks) != identity
+                {
                     // Dropping `tmp` deletes the temp file.
                     return Err(StoreError::Changed(path.clone()));
                 }
@@ -977,8 +1207,8 @@ impl FsVaultStore {
 
 /// What is at `full` right now, read straight from disk (not recorded in
 /// any read journal).
-fn observe_full(full: &Path, path: &VaultPath) -> Result<Observed, StoreError> {
-    match fs::read(full) {
+fn observe_full(full: &Path, path: &VaultPath, hooks: &TestHooks) -> Result<Observed, StoreError> {
+    match read_fresh(full, hooks) {
         Ok(bytes) => Ok(Observed::of_bytes(&bytes)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Observed::Absent),
         Err(e) => Err(io_to_store_error(e, path)),
@@ -988,7 +1218,20 @@ fn observe_full(full: &Path, path: &VaultPath) -> Result<Observed, StoreError> {
 /// Which file is at `full`, as one `stat` tells it: a writer that replaces
 /// the file by rename gives it a new inode, and one that edits it in place
 /// changes its size or times. `None` when nothing (readable) is there.
-fn file_identity(full: &Path) -> Option<(u64, u64, u64, i64, i64, i64, i64)> {
+/// Where the file server can be asked (Linux, #1012), its forced answer,
+/// never a share client's cached attributes; otherwise an `lstat`.
+fn file_identity(full: &Path, hooks: &TestHooks) -> Option<(u64, u64, u64, i64, i64, i64, i64)> {
+    if let Some(a) = forced_attrs_of_name(full, hooks) {
+        return Some((
+            a.dev,
+            a.ino,
+            a.size,
+            a.mtime.0,
+            i64::from(a.mtime.1),
+            a.ctime.0,
+            i64::from(a.ctime.1),
+        ));
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -1032,14 +1275,15 @@ fn io_to_store_error(err: io::Error, path: &VaultPath) -> StoreError {
 
 impl VaultStore for FsVaultStore {
     fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
-        let result =
-            fs::read_to_string(self.resolve(path)?).map_err(|e| io_to_store_error(e, path));
+        let result = read_text_fresh(&self.resolve(path)?, &self.hooks)
+            .map_err(|e| io_to_store_error(e, path));
         self.journals.record(path, &result);
         result
     }
 
     fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
-        let result = fs::read(self.resolve(path)?).map_err(|e| io_to_store_error(e, path));
+        let result =
+            read_fresh(&self.resolve(path)?, &self.hooks).map_err(|e| io_to_store_error(e, path));
         self.journals.record(path, &result);
         result
     }
@@ -1056,7 +1300,7 @@ impl VaultStore for FsVaultStore {
         // negligible at note scale. The read-modify window is covered
         // by the vault write lock for all transactional callers.
         let full = self.resolve(path)?;
-        let existing = match fs::read_to_string(&full) {
+        let existing = match read_text_fresh(&full, &self.hooks) {
             Ok(content) => content,
             Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(io_to_store_error(e, path)),
@@ -1085,7 +1329,7 @@ impl VaultStore for FsVaultStore {
         expected: Observed,
     ) -> Result<(), StoreError> {
         let full = self.resolve(path)?;
-        let existing = match fs::read_to_string(&full) {
+        let existing = match read_text_fresh(&full, &self.hooks) {
             Ok(content) => Some(content),
             Err(e) if e.kind() == io::ErrorKind::NotFound => None,
             Err(e) => return Err(io_to_store_error(e, path)),
@@ -1104,11 +1348,11 @@ impl VaultStore for FsVaultStore {
         let src_full = self.resolve(src)?;
         let dest_full = self.resolve(dest)?;
 
-        // Preflight the destination manually: `fs::rename` on Unix
-        // silently overwrites the target, which violates the trait's
-        // AlreadyExists contract. A TOCTOU race with an external
-        // process is theoretically possible but irrelevant for a
-        // single-writer vault.
+        // The early, readable refusal; the rename below decides (#1012).
+        // This `exists` may be answered from a share's cache, and a plain
+        // `rename` replaces what is there, so a guest with a cached
+        // negative entry would move a file over a note the host had just
+        // made.
         if dest_full.exists() {
             return Err(StoreError::AlreadyExists(dest.to_string()));
         }
@@ -1118,11 +1362,31 @@ impl VaultStore for FsVaultStore {
         if let Some(parent) = dest_full.parent() {
             fs::create_dir_all(parent).map_err(|e| io_to_store_error(e, dest))?;
         }
+        if let Some(hook) = &self.hooks.before_move {
+            hook();
+        }
+        // A commit's move: still the lock's holder (#1012)?
+        crate::shared_lock::commit_still_holds()?;
+        let is_dir = fs::symlink_metadata(&src_full).is_ok_and(|m| m.is_dir());
+        if !is_dir {
+            match rename_noclobber(&src_full, &dest_full) {
+                Ok(true) => return Ok(()),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                    return Err(StoreError::AlreadyExists(dest.to_string()));
+                }
+                Err(e) => return Err(io_to_store_error(e, src)),
+                // No no-clobber primitive here: the checked rename below,
+                // with the window the check above leaves.
+                Ok(false) => {}
+            }
+        }
         fs::rename(&src_full, &dest_full).map_err(|e| io_to_store_error(e, src))
     }
 
     fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
         let full = self.resolve(path)?;
+        // A commit's delete: still the lock's holder (#1012)?
+        crate::shared_lock::commit_still_holds()?;
         // `fs::remove_file` errors with NotFound if the path doesn't
         // exist; let io_to_store_error translate that into the trait's
         // contract variant.
@@ -1308,6 +1572,9 @@ impl VaultStore for FsVaultStore {
         tmp.as_file()
             .sync_all()
             .map_err(|e| io_to_store_error(e, dest))?;
+        // A commit's import, after its copy (the slow part): still the
+        // lock's holder (#1012)?
+        crate::shared_lock::commit_still_holds()?;
         tmp.persist_noclobber(&full)
             .map_err(|e| io_to_store_error(e.error, dest))?;
         // Same durability posture as `atomic_write`: make the rename
@@ -1323,18 +1590,388 @@ impl VaultStore for FsVaultStore {
     }
 
     fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
-        // The lock file lives in `.cuaderno/` — present in any real vault,
-        // but create it defensively so a freshly-`init`ed vault locks too.
+        let (file, started, deadline) = self.take_flock()?;
+        // Then the lock file another kernel sees (#1012), within the same
+        // deadline. Under the `flock`, so only one process of this kernel
+        // polls for it. On failure the `flock` is released with `file`.
+        let shared = if self.shared_lock {
+            let dir = self.root.join(shared_lock::LOCKS_DIR);
+            fs::create_dir_all(&dir).map_err(|e| StoreError::Io {
+                path: shared_lock::LOCKS_DIR.to_string(),
+                source: e,
+            })?;
+            ensure_locks_ignored(&dir);
+            Some(shared_lock::acquire(
+                &dir,
+                deadline,
+                started,
+                &self.shared_lock_options,
+                flock_identity(&file).as_deref(),
+            )?)
+        } else {
+            None
+        };
+        Ok(VaultWriteLock {
+            file: Some(file),
+            shared,
+        })
+    }
+
+    fn acquire_index_lock(&self) -> Result<VaultWriteLock, StoreError> {
+        let (file, _, _) = self.take_flock()?;
+        Ok(VaultWriteLock {
+            file: Some(file),
+            shared: None,
+        })
+    }
+}
+
+/// The device and inode of the `flock` file, as `dev:ino` from its own
+/// descriptor: what a lock's record names so that a contender can tell
+/// "the same `flock`" from "the same kernel" (#1012).
+#[cfg(unix)]
+fn flock_identity(file: &File) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    file.metadata()
+        .ok()
+        .map(|m| format!("{}:{}", m.dev(), m.ino()))
+}
+
+#[cfg(not(unix))]
+fn flock_identity(_file: &File) -> Option<String> {
+    None
+}
+
+/// Make the locks folder ignore itself in git (#1012): a `.gitignore`
+/// holding `*`, created once and never rewritten, so a vault kept in git
+/// needs no rule of its own. Best effort: a failure costs only that.
+fn ensure_locks_ignored(dir: &Path) {
+    static DONE: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+    {
+        let mut done = DONE.lock().unwrap_or_else(|e| e.into_inner());
+        if done.iter().any(|d| d == dir) {
+            return;
+        }
+        done.push(dir.to_path_buf());
+    }
+    let path = dir.join(".gitignore");
+    if path.exists() {
+        return;
+    }
+    match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(mut file) => {
+            use std::io::Write;
+            let _ = file
+                .write_all(b"# cuaderno's vault write lock files (#1012): never commit them.\n*\n");
+        }
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(e) => tracing::debug!(error = %e, "could not write .cuaderno/locks/.gitignore"),
+    }
+}
+
+/// How long a read waits, in turn, before trying a file again whose name a
+/// share's cache answered stale (see [`read_fresh`]): about 1.5 s in all,
+/// the last pause longer than the one-second entry timeout that a common
+/// VM share's default mode (virtiofs `cache=auto`) keeps names for.
+const STALE_READ_PAUSES: [Duration; 5] = [
+    Duration::from_millis(20),
+    Duration::from_millis(50),
+    Duration::from_millis(100),
+    Duration::from_millis(250),
+    Duration::from_millis(1100),
+];
+
+/// What the file server says of a file right now, not what this client
+/// cached of it (#1012): on Linux, `statx` with `AT_STATX_FORCE_SYNC`,
+/// which makes a FUSE client (virtiofs) send a fresh `GETATTR` whatever its
+/// attribute timeout, and an NFS client revalidate; a local filesystem
+/// ignores the flag. Unavailable elsewhere. Public only for the
+/// `test-support` seam [`FsVaultStore::with_forced_attrs_hook`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ForcedAttrs {
+    pub nlink: u64,
+    pub size: u64,
+    pub dev: u64,
+    pub ino: u64,
+    pub mtime: (i64, u32),
+    pub ctime: (i64, u32),
+}
+
+/// A test's stand-in for the forced `statx`: called with the file's path,
+/// and `true` for the open descriptor's attributes, `false` for the name's.
+type ForcedAttrsHook = Arc<dyn Fn(&Path, bool) -> Option<ForcedAttrs> + Send + Sync>;
+
+fn forced_attrs_of_file(file: &File, full: &Path, hooks: &TestHooks) -> Option<ForcedAttrs> {
+    if let Some(hook) = &hooks.forced_attrs {
+        return hook(full, true);
+    }
+    platform_forced_attrs_of_file(file)
+}
+
+fn forced_attrs_of_name(full: &Path, hooks: &TestHooks) -> Option<ForcedAttrs> {
+    if let Some(hook) = &hooks.forced_attrs {
+        return hook(full, false);
+    }
+    platform_forced_attrs_of_name(full)
+}
+
+/// One read's outcome.
+enum ReadOnce {
+    Fresh(Vec<u8>),
+    /// The file opened through the name has no name left: the name's cached
+    /// entry is stale.
+    Replaced,
+    /// The bytes read disagree with the size the server reports, or the
+    /// server's attributes changed during the read: a stale cached size
+    /// (a share applies the replaced file's size to the new file), or a
+    /// file changed while it was read.
+    Torn {
+        read: u64,
+        size: u64,
+    },
+}
+
+/// Read `full`, trying again when the answer looks like a stale cache
+/// rather than the file (#1012):
+///
+/// - a "not found" for a name its folder's listing has;
+/// - a file opened through the name that no longer has any name (a link
+///   count of 0, asked of the file server where the platform can force
+///   that, on a filesystem whose link counts this process has seen mean
+///   something);
+/// - where the server can be asked (Linux), fewer or more bytes than the
+///   size it reports for the open file, or its size, inode or mtime
+///   changing during the read. A VM share was measured applying the old
+///   file's cached size to the new file that replaced it, which cut a read
+///   of the new note to the old length: an append composed from that would
+///   write the note back without its tail.
+///
+/// Each retry opens the file again (so a stale entry or a clamped size is
+/// looked up afresh), after listing the folder for a replaced file (which
+/// lets a client that reads directories with attributes replace the stale
+/// entry). The report is the last answer: the "not found", or an error
+/// saying the share kept serving a stale view. A file that is really
+/// absent costs one listing of its folder, and nothing more.
+fn read_fresh(full: &Path, hooks: &TestHooks) -> io::Result<Vec<u8>> {
+    let mut pauses = STALE_READ_PAUSES.iter();
+    let mut attempt = 0;
+    loop {
+        let stale = match read_once(full, hooks) {
+            Ok(ReadOnce::Fresh(bytes)) => return Ok(bytes),
+            Ok(ReadOnce::Replaced) => {
+                // Listed for its side effect: a fresh entry for the name.
+                let _ = listed_in_folder(full);
+                io::Error::other(
+                    "the vault folder's file share kept answering with a file that had been \
+                     replaced; nothing was read, try again",
+                )
+            }
+            Ok(ReadOnce::Torn { read, size }) => io::Error::other(format!(
+                "the vault folder's file share kept answering with a stale view of the file \
+                 (read {read} bytes where the server reports {size}); nothing was read, try again"
+            )),
+            Err(e) if e.kind() == io::ErrorKind::NotFound && listed_in_folder(full) => e,
+            Err(e) => return Err(e),
+        };
+        attempt += 1;
+        match pauses.next() {
+            Some(pause) => {
+                tracing::debug!(
+                    path = %full.display(),
+                    attempt,
+                    reason = %stale,
+                    "read through a stale entry of the share's cache; trying again"
+                );
+                std::thread::sleep(*pause);
+            }
+            None => return Err(stale),
+        }
+    }
+}
+
+/// [`read_fresh`], as UTF-8 text (as `fs::read_to_string` reports it).
+fn read_text_fresh(full: &Path, hooks: &TestHooks) -> io::Result<String> {
+    String::from_utf8(read_fresh(full, hooks)?)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+/// One read, checked against the server's own account of the file where
+/// it can be had. The forced attributes are taken **before** the read: on
+/// Linux a FUSE client's `GETATTR` reply also refreshes the inode's cached
+/// size (outside writeback-cache mode), so the read that follows is not
+/// clamped to a stale one; and the byte count is still checked, since a
+/// client may not.
+fn read_once(full: &Path, hooks: &TestHooks) -> io::Result<ReadOnce> {
+    use std::io::Read;
+    let mut file = File::open(full)?;
+    let before = forced_attrs_of_file(&file, full, hooks);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let meta = file.metadata()?;
+        let nlink = before.map_or(meta.nlink(), |a| a.nlink);
+        if crate::shared_lock::link_counts_trusted(meta.dev()) && nlink == 0 {
+            return Ok(ReadOnce::Replaced);
+        }
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    if let Some(before) = before {
+        let read = bytes.len() as u64;
+        if read != before.size {
+            return Ok(ReadOnce::Torn {
+                read,
+                size: before.size,
+            });
+        }
+        let after = forced_attrs_of_file(&file, full, hooks);
+        let view = |a: &ForcedAttrs| (a.size, a.ino, a.mtime);
+        if after.as_ref().map(view) != Some(view(&before)) {
+            return Ok(ReadOnce::Torn {
+                read,
+                size: after.map_or(before.size, |a| a.size),
+            });
+        }
+    }
+    Ok(ReadOnce::Fresh(bytes))
+}
+
+#[cfg(target_os = "linux")]
+fn platform_forced_attrs_of_file(file: &File) -> Option<ForcedAttrs> {
+    use std::os::unix::io::AsRawFd;
+    forced_statx(file.as_raw_fd(), c"", libc::AT_EMPTY_PATH)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn platform_forced_attrs_of_file(_file: &File) -> Option<ForcedAttrs> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn platform_forced_attrs_of_name(full: &Path) -> Option<ForcedAttrs> {
+    use std::os::unix::ffi::OsStrExt;
+    let name = std::ffi::CString::new(full.as_os_str().as_bytes()).ok()?;
+    forced_statx(libc::AT_FDCWD, &name, libc::AT_SYMLINK_NOFOLLOW)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn platform_forced_attrs_of_name(_full: &Path) -> Option<ForcedAttrs> {
+    None
+}
+
+/// `statx(dirfd, path, flags | AT_STATX_FORCE_SYNC, ...)` by its system call
+/// (the C library's wrapper is missing on older musl), read from the
+/// kernel's fixed `struct statx` layout: `stx_mask` at 0, `stx_nlink` at 16,
+/// `stx_ino` at 32, `stx_size` at 40, `stx_ctime` at 96, `stx_mtime` at
+/// 112 (each a 64-bit second and a 32-bit nanosecond), `stx_dev_major` and
+/// `stx_dev_minor` at 136 and 140. `None` when the call fails or does not
+/// return every field asked for.
+#[cfg(target_os = "linux")]
+fn forced_statx(
+    dirfd: libc::c_int,
+    path: &std::ffi::CStr,
+    flags: libc::c_int,
+) -> Option<ForcedAttrs> {
+    const AT_STATX_FORCE_SYNC: libc::c_int = 0x2000;
+    // STATX_NLINK | STATX_MTIME | STATX_CTIME | STATX_INO | STATX_SIZE
+    const WANTED: u32 = 0x0004 | 0x0040 | 0x0080 | 0x0100 | 0x0200;
+    #[repr(C, align(8))]
+    struct Statx([u8; 256]);
+    let mut buf = Statx([0; 256]);
+    // SAFETY: a valid descriptor or AT_FDCWD, a NUL-terminated path, and a
+    // writable buffer of the kernel's `struct statx` size.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_statx,
+            dirfd,
+            path.as_ptr(),
+            flags | AT_STATX_FORCE_SYNC,
+            WANTED,
+            buf.0.as_mut_ptr(),
+        )
+    };
+    if rc != 0 {
+        return None;
+    }
+    let b = &buf.0;
+    let u32_at =
+        |at: usize| -> Option<u32> { Some(u32::from_ne_bytes(b[at..at + 4].try_into().ok()?)) };
+    let u64_at =
+        |at: usize| -> Option<u64> { Some(u64::from_ne_bytes(b[at..at + 8].try_into().ok()?)) };
+    let time_at = |at: usize| -> Option<(i64, u32)> { Some((u64_at(at)? as i64, u32_at(at + 8)?)) };
+    if u32_at(0)? & WANTED != WANTED {
+        return None;
+    }
+    let (major, minor) = (u64::from(u32_at(136)?), u64::from(u32_at(140)?));
+    // glibc's `makedev`, so `dev` equals an `fstat`'s `st_dev`.
+    let dev = ((major & 0xffff_f000) << 32)
+        | ((major & 0x0fff) << 8)
+        | ((minor & 0xffff_ff00) << 12)
+        | (minor & 0xff);
+    Some(ForcedAttrs {
+        nlink: u64::from(u32_at(16)?),
+        size: u64_at(40)?,
+        dev,
+        ino: u64_at(32)?,
+        mtime: time_at(112)?,
+        ctime: time_at(96)?,
+    })
+}
+
+/// Whether the name `full` resolves, by the file server's fresh answer, to
+/// a file with no name left: a stale entry of a share's name cache for a
+/// note replaced by rename (#1012). Never on a filesystem whose link counts
+/// this process has not seen mean something; never where the server cannot
+/// be asked (off Linux), where only the client's cached count is to be had.
+fn names_a_replaced_file(full: &Path, dev: u64, hooks: &TestHooks) -> bool {
+    crate::shared_lock::link_counts_trusted(dev)
+        && forced_attrs_of_name(full, hooks).is_some_and(|a| a.nlink == 0)
+}
+
+/// Whether the listing of `full`'s folder names it: the server's answer,
+/// which a cached "not found" for the name itself may contradict.
+fn listed_in_folder(full: &Path) -> bool {
+    let (Some(parent), Some(name)) = (full.parent(), full.file_name()) else {
+        return false;
+    };
+    fs::read_dir(parent)
+        .map(|entries| entries.flatten().any(|e| e.file_name() == name))
+        .unwrap_or(false)
+}
+
+/// Rename `src` to `dest` unless something is at `dest`, decided by the
+/// file server (#1012): `renameat2(RENAME_NOREPLACE)` on Linux,
+/// `renamex_np(RENAME_EXCL)` on macOS, a link and an unlink elsewhere (the
+/// same primitive the store's creates use, `persist_noclobber`). `Ok(false)`
+/// when the filesystem has none of them; the caller then falls back.
+fn rename_noclobber(src: &Path, dest: &Path) -> io::Result<bool> {
+    let moving = tempfile::TempPath::try_from_path(src)?;
+    match moving.persist_noclobber(dest) {
+        Ok(()) => Ok(true),
+        Err(e) => {
+            // Never let the returned path delete the file it names.
+            let unsupported = noclobber_unsupported(&e.error);
+            let _ = e.path.keep();
+            if unsupported { Ok(false) } else { Err(e.error) }
+        }
+    }
+}
+
+impl FsVaultStore {
+    /// Take the `flock` on `.cuaderno/.lock`, polling to this store's lock
+    /// deadline. Returns the locked file, when the wait began, and the
+    /// deadline, which a following lock-file wait shares.
+    fn take_flock(&self) -> Result<(File, Instant, Instant), StoreError> {
+        // The lock lives in `.cuaderno/` — present in any real vault, but
+        // create it defensively so a freshly-`init`ed vault locks too.
+        let dir = self.root.join(crate::paths::CUADERNO_DIR);
+        fs::create_dir_all(&dir).map_err(|e| StoreError::Io {
+            path: crate::paths::CUADERNO_DIR.to_string(),
+            source: e,
+        })?;
         let lock_path = match &self.lock_file {
             Some(lock_file) => lock_file.clone(),
-            None => {
-                let dir = self.root.join(crate::paths::CUADERNO_DIR);
-                fs::create_dir_all(&dir).map_err(|e| StoreError::Io {
-                    path: crate::paths::CUADERNO_DIR.to_string(),
-                    source: e,
-                })?;
-                dir.join(".lock")
-            }
+            None => dir.join(".lock"),
         };
         let lock_name = ".cuaderno/.lock";
         let file = OpenOptions::new()
@@ -1350,13 +1987,14 @@ impl VaultStore for FsVaultStore {
         // Poll `try_lock` to a deadline rather than block forever: a wedged
         // holder times out, and the OS frees the lock on process death so a
         // crashed holder never deadlocks us.
-        let deadline = Instant::now() + WRITE_LOCK_TIMEOUT;
+        let started = Instant::now();
+        let deadline = started + self.lock_timeout;
         loop {
             match file.try_lock() {
-                Ok(()) => return Ok(VaultWriteLock { file: Some(file) }),
+                Ok(()) => return Ok((file, started, deadline)),
                 Err(TryLockError::WouldBlock) => {
                     if Instant::now() >= deadline {
-                        return Err(StoreError::LockTimeout(WRITE_LOCK_TIMEOUT));
+                        return Err(StoreError::LockTimeout(self.lock_timeout));
                     }
                     std::thread::sleep(Duration::from_millis(20));
                 }

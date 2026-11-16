@@ -768,6 +768,9 @@ fn line_leaves_an_existing_index_and_the_lock_untouched() {
     assert!(index.is_some(), "the normal verb left an index");
     let lock = file_state(&cuaderno.join(".lock"));
     let before = cuaderno_files(dir.path());
+    // A file created and removed in `.cuaderno/` (the write lock file,
+    // #1012, is gone again on release) still changes the folder's mtime.
+    let folder_mtime = fs::metadata(&cuaderno).unwrap().modified().unwrap();
 
     let out = assert_cmd::Command::cargo_bin("cdno")
         .unwrap()
@@ -790,6 +793,11 @@ fn line_leaves_an_existing_index_and_the_lock_untouched() {
     );
     // No -wal or -shm created or removed, nor anything else.
     assert_eq!(cuaderno_files(dir.path()), before);
+    assert_eq!(
+        fs::metadata(&cuaderno).unwrap().modified().unwrap(),
+        folder_mtime,
+        "a file was created or removed in .cuaderno/ (the write lock file?)"
+    );
 }
 
 /// A file's bytes and mtime, as [`file_state`] reads them.

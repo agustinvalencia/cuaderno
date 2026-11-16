@@ -43,11 +43,13 @@
 //!   already on this side. Splitting them would deliver one broken-note
 //!   condition in two different shapes depending on which layer noticed.
 //!
-//! The rest of `StoreError` (`PermissionDenied`, `Io`, `LockTimeout`,
-//! `OutsideVault`, `Changed`) is machinery, as are `Index`, `Transaction`
-//! (except its `Conflict`, `concurrent_change`: a file changed underneath
-//! the write, nothing was written, and the caller's remedy is to call
-//! again, #1001), `Config`,
+//! A busy vault write lock (`LockBusy`, `LockTimeout`) is `vault_busy`
+//! (#1012): nothing was done and calling again later is the remedy. The
+//! rest of `StoreError` (`PermissionDenied`, `Io`, `OutsideVault`,
+//! `Changed`) is machinery, as are `Index`, `Transaction` (except its
+//! `Conflict`, `concurrent_change`: a file changed underneath the write,
+//! nothing was written, and the caller's remedy is to call again, #1001,
+//! and a `LockLost` whose rollback was clean, the same code), `Config`,
 //! `Template`, `Parse`, and the method-version gate's `MethodVersionAhead`
 //! and `VaultNeedsMigration`. `Path` stays mechanical too: MCP tools take
 //! slugs, never paths, so a `PathError` means the *server* built a bad
@@ -174,6 +176,7 @@ pub(crate) enum RejectionCode {
     UnrepresentableFrontmatterValue,
     UnresolvedPrompts,
     VarsUnsupportedForTypst,
+    VaultBusy,
     WaitingOnNotFound,
 }
 
@@ -208,6 +211,9 @@ fn rejection_message(code: RejectionCode, e: &DomainError) -> String {
         // when to stop.
         RejectionCode::ConcurrentChange => {
             let paths = match e {
+                DomainError::Transaction(TransactionError::LockLost { .. }) => {
+                    return "this write's hold on the vault write lock was taken over by another writer (this server was paused or stalled while holding it), so it stopped and nothing it wrote was kept. Make the same call again".to_owned();
+                }
                 DomainError::Transaction(TransactionError::Conflict { paths }) => paths
                     .iter()
                     .map(ToString::to_string)
@@ -219,6 +225,9 @@ fn rejection_message(code: RejectionCode, e: &DomainError) -> String {
                 "{paths} changed on disk while this write was being prepared, most likely by another writer, and nothing was written. Make the same call again, reading the file first if what you are writing was composed from an earlier read of it. If it is refused again, tell the person that another program is writing that file"
             )
         }
+        RejectionCode::VaultBusy => format!(
+            "{e}. Nothing was done. Make the same call again in a few seconds; if it is refused again for longer than the lock's stale interval, tell the person which program holds the lock"
+        ),
         RejectionCode::SlugTaken => format!(
             "{e}; if that is the note you meant, use it; otherwise ask the person for another name, do not suffix it yourself"
         ),
@@ -625,6 +634,39 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             RejectionCode::ConcurrentChange,
             json!({ "paths": paths.iter().map(ToString::to_string).collect::<Vec<_>>() }),
         ),
+        // The vault write lock broken under the write (#1012), and every
+        // file it had written put back: nothing was written, so it is the
+        // same "call again" as a changed file. One whose undo failed is
+        // part-written, and the machine's to report, below.
+        DomainError::Transaction(TransactionError::LockLost {
+            rollback_failures, ..
+        }) if rollback_failures.is_empty() => (
+            RejectionCode::ConcurrentChange,
+            json!({ "paths": [], "lock_lost": true }),
+        ),
+        // The vault write lock held by another writer for the whole wait
+        // (#1012): nothing was done, and the same call a little later is the
+        // remedy, so the caller gets a code it can wait on rather than a
+        // protocol error.
+        DomainError::Store(StoreError::LockBusy {
+            lock,
+            owner,
+            age_secs,
+            stale_after_secs,
+            ..
+        }) => (
+            RejectionCode::VaultBusy,
+            json!({
+                "lock": lock,
+                "owner": owner,
+                "age_secs": age_secs,
+                "stale_after_secs": stale_after_secs,
+            }),
+        ),
+        DomainError::Store(StoreError::LockTimeout(waited)) => (
+            RejectionCode::VaultBusy,
+            json!({ "lock": ".cuaderno/.lock", "waited_secs": waited.as_secs() }),
+        ),
 
         // -------------------------------------------------------------
         // Mechanical failures: the machine under the call, not the call.
@@ -638,14 +680,19 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         DomainError::Store(
             StoreError::PermissionDenied(_)
             | StoreError::Io { .. }
-            | StoreError::LockTimeout(_)
             | StoreError::OutsideVault(_)
-            | StoreError::Changed(_),
+            | StoreError::Changed(_)
+            // The store's signal inside a commit, which the commit turns
+            // into `TransactionError::LockLost` before any caller sees it;
+            // listed here only because the match is exhaustive.
+            | StoreError::LockLost { .. },
         )
         | DomainError::Index(_)
         | DomainError::Parse(_)
         | DomainError::Transaction(
-            TransactionError::FileWrite { .. } | TransactionError::IndexStale(_),
+            TransactionError::FileWrite { .. }
+            | TransactionError::IndexStale(_)
+            | TransactionError::LockLost { .. },
         )
         | DomainError::Path(_)
         | DomainError::Template(_)
@@ -1050,6 +1097,35 @@ mod tests {
     }
 
     #[test]
+    fn a_busy_vault_and_a_cleanly_lost_lock_are_rejections_to_retry() {
+        // #1012: nothing was done, and the same call later is the remedy.
+        let busy = classify(&DomainError::Store(StoreError::LockBusy {
+            lock: ".cuaderno/locks/write.lock".into(),
+            owner: "cdno 0.47.0 (process 7 …)".into(),
+            age_secs: 3,
+            stale_after_secs: 30,
+            waited: std::time::Duration::from_secs(5),
+        }))
+        .expect("a busy lock is a rejection");
+        assert_eq!(busy["code"], "vault_busy");
+        assert_eq!(busy["details"]["age_secs"], 3);
+        assert_eq!(busy["details"]["stale_after_secs"], 30);
+        let timeout = classify(&DomainError::Store(StoreError::LockTimeout(
+            std::time::Duration::from_secs(5),
+        )))
+        .expect("a contended flock is a rejection");
+        assert_eq!(timeout["code"], "vault_busy");
+
+        let lost = classify(&DomainError::Transaction(TransactionError::LockLost {
+            lock: ".cuaderno/locks/write.lock".into(),
+            rollback_failures: Vec::new(),
+        }))
+        .expect("a lock lost with everything undone is a rejection");
+        assert_eq!(lost["code"], "concurrent_change");
+        assert_eq!(lost["details"]["lock_lost"], true);
+    }
+
+    #[test]
     fn a_concurrent_change_classifies_with_its_paths_and_the_remedy() {
         // #1001: a file the write would replace changed underneath it.
         // Nothing was written; the caller's move is to call again.
@@ -1137,12 +1213,14 @@ mod tests {
             "permission denied is the machine, not the call"
         );
         assert!(classify(&DomainError::Index(IndexError::Query("boom".into()))).is_none());
+        // A lock broken under a write whose undo failed: part-written, the
+        // machine's to report.
         assert!(
-            classify(&DomainError::Store(StoreError::LockTimeout(
-                std::time::Duration::from_secs(5)
-            )))
-            .is_none(),
-            "a contended write lock is a retry, not a different argument"
+            classify(&DomainError::Transaction(TransactionError::LockLost {
+                lock: ".cuaderno/locks/write.lock".into(),
+                rollback_failures: vec![StoreError::PermissionDenied("a.md".into())],
+            }))
+            .is_none()
         );
 
         // The method-version gate (RFC 0006 §8.4): only an upgrade or a

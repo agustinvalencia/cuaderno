@@ -26,3 +26,7 @@ tracing-subscriber.workspace = true
 # Builds the SQLite "malformed" error a damaged index file returns, for
 # the test index that fails like one (#526).
 rusqlite.workspace = true
+# Two stores over one folder with independent `flock`s, the two-kernel
+# case of the vault write lock (#1012). Only a dev-dependency turns the
+# feature on, so a production build never has the seams.
+cdno-core = { workspace = true, features = ["test-support"] }
