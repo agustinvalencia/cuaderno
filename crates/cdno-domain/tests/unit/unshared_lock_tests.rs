@@ -255,6 +255,9 @@ fn a_log_that_never_converges_returns_the_conflict_and_writes_nothing() {
     assert!(err.is_concurrent_change(), "{err:?}");
     assert!(err.to_string().contains(DAILY), "{err}");
     assert!(err.to_string().contains("nothing was written"), "{err}");
+    // The bound itself, written out, so a change to it is a change here too
+    // (the docs state it).
+    assert_eq!(cdno_domain::vault::CONFLICT_ATTEMPTS, 5);
     assert_eq!(
         other.compared.load(Ordering::SeqCst),
         cdno_domain::vault::CONFLICT_ATTEMPTS as usize,
@@ -456,5 +459,42 @@ fn a_notes_entry_and_a_section_append_are_retried_onto_the_fresh_note() {
     assert!(other.fired() >= 2);
     for n in 0..other.fired() {
         assert!(note.contains(&format!("other writer {n}\n")), "{note}");
+    }
+}
+
+#[test]
+fn an_action_added_from_a_stale_read_of_its_map_is_retried_onto_the_fresh_map() {
+    // A retried verb other than the log: the map changes underneath the
+    // first attempt, and the bullet lands on the map as it now is.
+    use cdno_domain::frontmatter::EnergyLevel;
+    let map = "projects/surrogate-model.md";
+    let inner = Arc::new(MemoryVaultStore::new());
+    inner
+        .write_file(
+            &VaultPath::new(map).unwrap(),
+            "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-06-01\n---\n\n\
+             # Surrogate model\n\n## Current State\nGoing.\n\n## Next Actions\n",
+        )
+        .unwrap();
+    let other = Arc::new(OtherWriter::new(inner.clone(), map));
+    let vault = vault_over(other.clone() as Arc<dyn VaultStore>);
+    other.arm(Interference::FirstAttempt);
+    vault
+        .add_action(
+            at(),
+            "surrogate-model",
+            "Run the ablation",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    assert!(other.fired() >= 1);
+    let body = inner.read_file(&VaultPath::new(map).unwrap()).unwrap();
+    assert!(body.contains("Run the ablation"), "{body}");
+    for n in 0..other.fired() {
+        assert!(
+            body.contains(&format!("other writer {n}\n")),
+            "the other writer's change survives:\n{body}"
+        );
     }
 }

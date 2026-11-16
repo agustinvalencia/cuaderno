@@ -185,7 +185,8 @@ impl VaultTransaction {
     /// was not read inside the transaction then fails a debug assertion,
     /// so a verb that reads before it opens its transaction (or not at all)
     /// fails its tests instead of being compared from the moment it
-    /// staged. A release build keeps that staging-time comparison.
+    /// staged. A release build keeps that staging-time comparison and logs
+    /// a warning naming the path.
     /// Ignored over a store that records no reads.
     pub fn require_reads(mut self) -> Self {
         self.reads_required = true;
@@ -206,13 +207,24 @@ impl VaultTransaction {
         let Ok(observed) = self.store.observe(path) else {
             return;
         };
-        debug_assert!(
-            !(self.reads_required
-                && self.store.read_journals().is_some()
-                && observed != Observed::Absent),
-            "{path} is staged for a replace, append or delete without having been read \
-             inside the transaction: open the transaction before reading (#196, #1001)"
-        );
+        if self.reads_required
+            && self.store.read_journals().is_some()
+            && observed != Observed::Absent
+        {
+            // A bug in the verb: a test build fails on it; a release build
+            // keeps this later baseline and leaves a trace in the log.
+            if cfg!(debug_assertions) {
+                panic!(
+                    "{path} is staged for a replace, append or delete without having been read \
+                     inside the transaction: open the transaction before reading (#196, #1001)"
+                );
+            }
+            tracing::warn!(
+                %path,
+                "staged for a replace, append or delete without having been read inside the \
+                 transaction; compared from staging instead (#196, #1001)"
+            );
+        }
         journal.record(path, observed);
     }
 

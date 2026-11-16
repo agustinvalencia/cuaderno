@@ -693,7 +693,7 @@ pub struct FsVaultStore {
     /// before its root exists (PR #306 verification finding).
     root_canon: std::sync::OnceLock<PathBuf>,
     /// Where the write lock lives when not `.cuaderno/.lock`; see
-    /// [`with_lock_file`](Self::with_lock_file).
+    /// `with_lock_file` (a test seam behind the `test-support` feature).
     lock_file: Option<PathBuf>,
     /// Reads recorded for open transactions (#1001). Per instance: a
     /// clone starts with none open.

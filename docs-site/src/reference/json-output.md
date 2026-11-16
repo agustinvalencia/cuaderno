@@ -140,8 +140,9 @@ prints the usual `{code, message, details}` object and exits `1`, writing nothin
 
 Any write verb can be refused because a file it would replace changed on disk while it was being
 prepared (another program or another machine wrote it). Nothing was written. Under `--json` it
-prints the object the MCP server returns, on stdout, and exits `75` rather than `1` (see
-[exit statuses](cli/overview.md#exit-statuses)):
+prints, on stdout, an object with the same `code` and `details` as the MCP server's rejection, and
+exits `75` rather than `1` (see [exit statuses](cli/overview.md#exit-statuses)). The `message` is
+the error's own text; the MCP message words its advice for an agent instead.
 
 ```json
 {
@@ -151,8 +152,8 @@ prints the object the MCP server returns, on stdout, and exits `75` rather than 
 }
 ```
 
-Running the same command again is safe. The commands that add to a note have already retried a few
-times; see [troubleshooting](troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared).
+Running the same command again is safe. The commands that add to a note have already retried
+several times; see [troubleshooting](troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared).
 
 ## `search --json` → an array of hits
 

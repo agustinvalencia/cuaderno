@@ -264,10 +264,15 @@ replaced it, and cdno refused to overwrite the change. **Nothing was written**, 
 command again is safe: it reads the note as it now is and applies your change to that. Over MCP the
 same refusal is a tool result with code `concurrent_change` and the note's path; the CLI exits with
 status 75 (see [exit statuses](cli/overview.md#exit-statuses)), and under `--json` prints
-`{"code": "concurrent_change", …}`, so a script can retry it. The commands that add to a note
-(`cdno log`, `log note`, `capture`, the action, milestone and tracking commands) already retry a few
-times on their own, so you see this from them only when the note keeps changing; a script that
-retries should still stop after a few attempts.
+`{"code": "concurrent_change", …}`, so a script can retry it.
+
+The commands and tools that add to a note retry it on their own, up to five attempts over about
+half a second, so you see it from them only when the note keeps changing: log and notes entries,
+section appends, captures and inbox discards, and the action, milestone, waiting-on and tracking
+verbs. The ones that replace what you may have composed from an earlier look (a section replace,
+the project state, the core question, frontmatter, a revision, a rename) and the create and
+lifecycle verbs (creating a note, promoting an action, handing off, parking, closing) return it at
+once. A script that retries should still stop after a few attempts.
 
 Inside one operating system cdno's write lock keeps its own writers apart, so the usual cause is a
 vault folder written from two at once, whose locks do not see each other: the host and a container
@@ -276,9 +281,10 @@ editor, a sync tool) does it too. If it happens often, give each side its own co
 sync them, or make one side the only writer.
 
 The check narrows the risk; it does not remove it. A write that lands in the instant between cdno's
-last check and its own write can still be overwritten: across a container's file share, about one
-append in a thousand under steady writing from both sides. Do not run two writers on one shared
-folder and rely on this; a lock both sides see is planned in #1012.
+last check and its own write can still be overwritten: one append of 1,200 in a measurement across
+a container's file share with both sides writing steadily. Do not run two writers on one shared
+folder and rely on this; a lock both sides see is planned in
+[#1012](https://github.com/agustinvalencia/cuaderno/issues/1012).
 
 ## A link to an old name still works in cdno but not in my editor
 

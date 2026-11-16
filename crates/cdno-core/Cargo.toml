@@ -27,6 +27,9 @@ tempfile.workspace = true
 # workspace manifest for the rationale.
 notify.workspace = true
 notify-debouncer-mini.workspace = true
+# A release-build trace where a domain verb breaks the read-inside-the-
+# transaction rule a debug build asserts (#1001).
+tracing.workspace = true
 
 # Process-group kill for a timed-out git (git.rs).
 [target.'cfg(unix)'.dependencies]

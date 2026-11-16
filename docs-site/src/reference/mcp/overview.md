@@ -150,7 +150,18 @@ succeeds on the next call, because what was wrong was the moment, not the call.
 
 | Code | `details` | When |
 |---|---|---|
-| `concurrent_change` | `paths` | The files that changed underneath the write. Nothing was written. Make the same call again, reading the file first if what you are writing was composed from an earlier read of it. If it is refused again, tell the person another program is writing that file. The tools that add to a note (`append_to_log`, `note_to_daily`, `capture`, the action, milestone, waiting-on and tracking tools, a section append) have already tried a few times before you see it. |
+| `concurrent_change` | `paths` | The files that changed underneath the write. Nothing was written. Make the same call again, reading the file first if what you are writing was composed from an earlier read of it. If it is refused again, tell the person another program is writing that file. |
+
+The tools that add to a note have already made up to five attempts before you see it:
+`append_to_log`, `note_to_daily`, `upsert_daily_section` with `append`, `capture`,
+`discard_inbox_item`, the action tools (`add_action`, `start_action`, `start_unplanned_action`,
+`switch_action`, `switch_unplanned_action`, `pause_action`, `resume_action`, `complete_action`,
+`drop_action`), the milestone tools (`add_milestone`, `complete_milestone`, `drop_milestone`),
+`add_waiting_on`, `resolve_waiting_on` and `create_tracking_entry`. The others return it at once: the
+ones that replace content you may have composed from an earlier read (a section replace,
+`update_project_state`, `set_core_question`, `set_frontmatter`, `revise_note`), `rename_note`, and
+the create and lifecycle tools (`create_*`, `promote_action`, `hand_off_project`, parking,
+activating and closing projects, commitments, questions, filing to a portfolio).
 
 `concurrent_change` is not a stale-read check: it compares what the server read during this call,
 not what you read in an earlier one. See

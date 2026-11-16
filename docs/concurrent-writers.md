@@ -30,15 +30,22 @@ second apart per side, so contention is moderate. The container's index was kept
 | This change, four runs of 150 + 150 | 1,200 | 1,197 | 1 acknowledged and missing; 2 refused with the conflict error and correctly absent |
 
 So the check takes the loss from about 5% to under 0.1% in that configuration, and does not reach
-zero. The line that was lost was acknowledged to its writer: window 1 below.
+zero. The line that was lost was acknowledged to its writer: window 1 below. The two refused
+appends had used up the retry budget then in place (four attempts, a 5 to 20 ms pause), which is
+why it is now five attempts with pauses up to about a quarter of a second.
+
+What was measured is the branch before its final rework of the retry and of the journal (the
+thread rule, the disagreeing-read rule, `create_file`); the rename-side check, which decides window
+1, is unchanged since.
 
 **Why a one-machine figure is not representative.** Two writers in a tight loop on one Mac lose 0 to
 2 lines of 300 with the check and about 150 without it (the ignored test
 `on_a_real_folder_only_the_gap_before_the_rename_remains`). That low figure is an artefact: `sync_all`
 on macOS is a full device flush (`F_FULLFSYNC`), which serialises the two writers into strict
-alternation and acts as an accidental shared lock. A reviewer reproduced the protocol standalone:
-with a plain `fsync` the same check lost 38 to 52 of 300, and with a short delay between the last
-check and the rename nearly every contended line. What decides the rate is the width of the gap
+alternation and acts as an accidental shared lock. The same protocol reproduced standalone (two
+processes, 150 appends each, on APFS) lost 0 to 1 of 300 with the full flush, 38 to 52 of 300 with a
+plain `fsync`, and nearly every contended line with a 300 µs pause between the last check and the
+rename; with no check at all it lost 147 to 149. What decides the rate is the width of the gap
 between the last check and the rename against the rest of the cycle, and across a VM file share
 every step is a round trip through the share. A guest that answers the re-read or the `stat` from
 its own cache would also compare stale data and pass.
@@ -79,7 +86,8 @@ verb that forgot would silently skip the check. So the store records instead:
   operation's read, so the domain does not rely on it: its transactions declare `require_reads`, and
   staging a replace, append or delete of an existing file that was not read inside the transaction
   fails a debug assertion. The domain suite exercises every verb, so a verb that reads before it
-  opens its transaction fails its tests; a release build keeps the staging-time comparison.
+  opens its transaction fails its tests; a release build keeps the staging-time comparison and
+  logs a warning naming the path, so a server's log shows the broken rule.
 - **No store opts out silently.** `read_journals`, `write_file_expecting` and
   `append_to_file_expecting` have no default on `VaultStore`: each store states whether it records
   reads, and a wrapper delegates (as the lock-holding store `reconcile::rebuild` uses does). A store
@@ -135,25 +143,28 @@ it. Two layers:
   `DomainError::Transaction`, "… changed on disk while this write was being prepared, most likely by
   another writer; nothing was written, run the operation again". `DomainError::is_concurrent_change`
   names it.
-- **The append-shaped verbs retry** (`Vault::retry_on_conflict`, `vault/conflict_retry.rs`): four
-  attempts in all, with a short growing pause, before the conflict is returned. A refused commit
-  wrote nothing, every verb writes in one transaction, and the comparison is against the
-  transaction's own reads, so a retry is exactly as safe as the verb's no-conflict path. Nearly every
-  mutating verb appends a history line to today's daily note, so that note is where conflicts arise
-  whichever verb is called. Retried: `log_to_daily_note`, `note_to_daily`, `upsert_daily_section`
-  with `append`, `capture_to_inbox`, `discard_inbox_item`, the action verbs (`add`, `start`,
-  `start_unplanned`, `switch`, `switch_unplanned`, `pause`, `resume`, `complete`, `drop`), the
-  milestone verbs (`add`, `complete`, `drop`), the waiting-on verbs (`add`, `resolve`), and
-  `add_tracking_entry`.
+- **The append-shaped verbs retry** (`Vault::retry_on_conflict`, `vault/conflict_retry.rs`, whose
+  module doc holds the list the other docs follow): five attempts in all, the first retry after
+  about 5 ms and the last after about 250 ms (about 0.4 s of pauses in all), before the conflict is
+  returned. Each retried conflict is logged at debug with its path and attempt, and a final one at
+  warn. A refused commit wrote nothing, every verb writes in one transaction, and the comparison is
+  against the transaction's own reads, so a retry is exactly as safe as the verb's no-conflict path.
+  Nearly every mutating verb appends a history line to today's daily note, so that note is where
+  conflicts arise whichever verb is called. Retried: `log_to_daily_note`, `note_to_daily`,
+  `upsert_daily_section` with `append`, `capture_to_inbox`, `discard_inbox_item`, the action verbs
+  (`add`, `start`, `start_unplanned`, `switch`, `switch_unplanned`, `pause`, `resume`, `complete`,
+  `drop`), the milestone verbs (`add`, `complete`, `drop`), the waiting-on verbs (`add`,
+  `resolve`), and `add_tracking_entry`.
 - **Not retried, and why.** The verbs that replace content a caller may have composed from what it
-  read earlier (`upsert_*_section` without `append`, `update_project_state`, `set_frontmatter`,
-  `revise_note`), and `rename_note`, which writes a plan the caller may have approved by its hash.
-  Retrying them would be as safe as their no-conflict path, but a conflict says the note is being
-  written right now, which is the moment to let the caller look again. Whether the caller's own
-  earlier read is stale is a different question that this does not answer (#563). The create and
-  lifecycle verbs (projects, questions, portfolios, commitments, stewardships, closures, migration)
-  do not retry yet either; they are as safe to retry and are left out only to keep this change
-  reviewable.
+  read earlier (`upsert_*_section` without `append`, `update_project_state`, `set_core_question`,
+  `set_frontmatter`, `revise_note`), and `rename_note`, which writes a plan the caller may have
+  approved by its hash. Retrying them would be as safe as their no-conflict path, but a conflict
+  says the note is being written right now, which is the moment to let the caller look again.
+  Whether the caller's own earlier read is stale is a different question that this does not answer
+  (#563). The create and lifecycle verbs (`create_*`, `promote_action`, `hand_off_project`, parking,
+  activating and closing projects, commitments, questions, portfolio filing, migration) do not
+  retry yet either; they are as safe to retry and are left out only to keep this change reviewable.
+
 
 The interfaces surface the error so a caller can act on it:
 
@@ -171,8 +182,9 @@ The interfaces surface the error so a caller can act on it:
    considered: it briefly publishes the conflicting content, which a third read can build on, and
    its support across VM file shares is unknown). A writer that renames inside this gap is still
    overwritten. This is the line lost in the two-kernel measurement above.
-2. **Between the comparison and the unlink of a deleted file.** A delete compares the file it read
-   and then removes it; a change landing between the two is removed with it.
+2. **Between the comparison and the unlink of a deleted file, or the rename of a moved one.** A
+   delete compares the file it read and then removes it, and a move whose source was read compares
+   it and then renames it away; a change landing between the two is removed or carried off with it.
 3. **A move's destination** is checked for absence and then renamed onto (`FsVaultStore::move_file`,
    older than this change): a file another writer creates there in between is replaced.
 4. **A caller's earlier read** is no baseline (#563, unchanged by this change). An agent that read a
@@ -248,7 +260,8 @@ lock. The two are complements.
 - `cdno-domain/tests/unit/unshared_lock_tests.rs`:
   - two `Vault`s logging to one daily note lose no line;
   - a stale read is retried onto the fresh note, including a notes entry and a section append;
-  - a log that never converges returns the conflict after exactly four attempts and writes nothing;
+  - a log that never converges returns the conflict after exactly five attempts and writes nothing;
+  - `add_action` from a stale read of its map is retried onto the fresh map;
   - a section replace from a stale read is refused, not retried;
   - a capture and a stewardship never replace one made at the same path meanwhile;
   - a discard logs the text it deletes.
