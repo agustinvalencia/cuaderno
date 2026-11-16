@@ -99,6 +99,127 @@ pub struct ReconciliationIssue {
     pub reason: String,
 }
 
+/// What [`rebuild`] did.
+#[derive(Debug, Default)]
+pub struct RebuildReport {
+    /// Notes the rebuilt index holds.
+    pub notes: usize,
+    /// Notes the rebuild could not index, from its last pass. Usually a
+    /// note that does not parse, which no rebuild fixes (`lint` names it).
+    pub errors: Vec<ReconciliationIssue>,
+    /// Archival snapshot rows copied from the old index. A row that reads
+    /// without error but holds wrong bytes is carried as it is, and would
+    /// show later as a false "frozen note edited" in `lint`.
+    pub snapshots_carried: usize,
+    /// Rows that could not be carried, or a reason none could: the old
+    /// index's damage reached them, or their note is not in the rebuilt
+    /// index (it is gone, or it does not parse). Each lost row only loses
+    /// `lint`'s frozen-prefix check on that archived note; nothing else
+    /// depends on it.
+    pub snapshots_lost: Vec<String>,
+}
+
+/// Rebuild `index` from the markdown and copy the result into it in place
+/// ([`SqliteIndex::replace_contents_from`](crate::index::SqliteIndex::replace_contents_from)):
+/// the repair for a damaged index, seen at once by every process on this
+/// machine that has it open.
+///
+/// It contains a fault on one machine (a torn write, a crash, a bad page).
+/// It is no protection for an index shared between two machines or
+/// kernels, where neither the vault lock nor SQLite's locks reach the
+/// other side and the damage returns after each repair; there each machine
+/// needs its own index ([`crate::paths::INDEX_PATH_ENV`]).
+///
+/// 1. A full pass into a fresh index beside the live one, which keeps
+///    serving meanwhile, then a second one for whatever changed during the
+///    first. Unchanged notes are skipped by mtime, so it is quick, and it
+///    keeps the pass under the lock short.
+/// 2. The fresh index is checked, and when `keep_copy` is set and the live
+///    file is damaged, a copy of it is kept as `.previous` (a rebuild of a
+///    sound index keeps no copy, so it cannot overwrite the copy of a
+///    damaged one; a caller repairing the same damage again passes `false`
+///    to keep the first copy of the streak).
+/// 3. Under the vault write lock, so no commit by a process on this
+///    machine can land in between: a last pass into the fresh index, which
+///    makes it exactly the notes on disk at this moment; the archival
+///    snapshots carried across (the one table the notes cannot
+///    regenerate), for the notes the fresh index holds; then the copy,
+///    without checking the fresh index a second time.
+///
+/// A snapshot whose note the fresh index lacks is lost, not carried with a
+/// note row taken from the damaged file: that note is gone or does not
+/// parse, and a row from the old file would put back a note that is not
+/// on disk.
+///
+/// The caller must not hold the vault write lock itself: it is one per open
+/// file, so taking it twice in one thread would wait out the timeout.
+pub fn rebuild(
+    store: &Arc<dyn VaultStore>,
+    index: &crate::index::SqliteIndex,
+    scope: &NoteScope,
+    keep_copy: bool,
+) -> Result<RebuildReport, IndexError> {
+    rebuild_with(store, index, scope, keep_copy, || {})
+}
+
+/// [`rebuild`], running `before_lock` after the unlocked passes and the
+/// check, just before the vault write lock is taken: the window in which
+/// another writer's commit reaches the notes but not yet the fresh index.
+/// A seam for tests that must land a write in exactly that window; every
+/// other caller wants [`rebuild`].
+pub fn rebuild_with(
+    store: &Arc<dyn VaultStore>,
+    index: &crate::index::SqliteIndex,
+    scope: &NoteScope,
+    keep_copy: bool,
+    before_lock: impl FnOnce(),
+) -> Result<RebuildReport, IndexError> {
+    let fresh = index.open_fresh_beside()?;
+    let fresh_index = fresh.index();
+    reconcile(store, &fresh_index, scope)?;
+    reconcile(store, &fresh_index, scope)?;
+    let problems = fresh.quick_check()?;
+    if !problems.is_empty() {
+        return Err(IndexError::Update(format!(
+            "the rebuilt index failed its own check, so it was not copied in: {}",
+            problems.join("; ")
+        )));
+    }
+    if keep_copy && !index.quick_check().map(|p| p.is_empty()).unwrap_or(false) {
+        index.keep_previous_copy();
+    }
+
+    before_lock();
+    let _lock = store.acquire_write_lock().map_err(|e| {
+        IndexError::Update(format!(
+            "acquiring the vault write lock to replace the index: {e}"
+        ))
+    })?;
+    // Lock held: this pass's transactions must not try to take it again.
+    let held: Arc<dyn VaultStore> = Arc::new(crate::store::LockHeldStore(store.clone()));
+    let last = reconcile(&held, &fresh_index, scope)?;
+    let mut report = RebuildReport {
+        errors: last.errors,
+        ..RebuildReport::default()
+    };
+    match index.list_archival_snapshots() {
+        Ok(rows) => {
+            for (path, snapshot) in rows {
+                match fresh_index.record_archival_snapshot(&path, &snapshot) {
+                    Ok(()) => report.snapshots_carried += 1,
+                    Err(e) => report.snapshots_lost.push(format!("{path}: {e}")),
+                }
+            }
+        }
+        Err(e) => report
+            .snapshots_lost
+            .push(format!("the old index's snapshots could not be read: {e}")),
+    }
+    report.notes = fresh_index.list_all_paths()?.len();
+    index.replace_contents_from(&fresh)?;
+    Ok(report)
+}
+
 /// Reconcile the index against the filesystem. See module docs for the
 /// algorithm. Returns `Err` only for catastrophic failures (e.g. the
 /// vault walk itself fails); per-file errors accumulate into the
@@ -402,35 +523,99 @@ fn restamp_meta(
     Ok(())
 }
 
+/// Whether a note of `note_type` at `path` may be indexed: a `.typ` whose `type` does not admit
+/// Typst may not. Empty `typst_types` means no check, as when no folder admits Typst.
+fn type_admitted(path: &VaultPath, note_type: &str, typst_types: &[String]) -> bool {
+    crate::paths::note_format(path) != Some(crate::paths::NoteFormat::Typst)
+        || typst_types.is_empty()
+        || typst_types.iter().any(|t| t == note_type)
+}
+
 /// A `.typ` whose `type` does not admit Typst is refused, and any row it already has is dropped,
 /// so a note edited in place to such a type, or a type un-admitted by the config, does not stay
 /// indexed as what it was. The path stays in the classifier's note set, so the orphan pass would
-/// not remove it.
+/// not remove it. Returns the reason recorded for the file.
 fn refuse_unadmitted(
     store: &Arc<dyn VaultStore>,
     index: &Arc<dyn VaultIndex>,
     path: &VaultPath,
     note_type: &str,
     has_row: bool,
-    typst_types: &[String],
-) -> Result<(), String> {
-    if crate::paths::note_format(path) != Some(crate::paths::NoteFormat::Typst)
-        || typst_types.is_empty()
-        || typst_types.iter().any(|t| t == note_type)
-    {
-        return Ok(());
-    }
+) -> String {
     if has_row {
-        let mut tx = VaultTransaction::new(store.clone(), index.clone())
-            .map_err(|e| format!("acquiring write lock: {e}"))?;
-        tx.remove_note(path.clone());
-        tx.commit()
-            .map_err(|e| format!("failed to drop the row of a refused Typst note: {e}"))?;
+        let dropped = VaultTransaction::new(store.clone(), index.clone())
+            .map_err(|e| format!("acquiring write lock: {e}"))
+            .and_then(|mut tx| {
+                tx.remove_note(path.clone());
+                tx.commit()
+                    .map(|_| ())
+                    .map_err(|e| format!("failed to drop the row of a refused Typst note: {e}"))
+            });
+        if let Err(reason) = dropped {
+            return reason;
+        }
     }
-    Err(format!(
+    format!(
         "`{path}` is a Typst note of type `{note_type}`, which does not admit Typst; \
          it is not indexed"
-    ))
+    )
+}
+
+/// A note's bytes as reconciliation reads them, once they pass every check that decides from
+/// the bytes alone whether the note is indexed.
+#[derive(Debug)]
+pub struct Admitted<'a> {
+    pub frontmatter: crate::frontmatter::Frontmatter,
+    pub body: &'a str,
+    /// The `type` field, which the index row carries as its note type.
+    pub note_type: String,
+    pub title: Option<String>,
+}
+
+/// Why [`admit`] keeps a note out of the index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refusal {
+    /// The bytes do not make a note: a parse failure, or a missing or malformed field. The
+    /// string is the reason reconciliation records.
+    Invalid(String),
+    /// A `.typ` whose `type` (carried here) does not admit Typst.
+    Unadmitted(String),
+}
+
+/// Decide from a classified note's `content` alone whether reconciliation indexes it, and with
+/// which type: it parses, its `type` is a string, Typst admits that type when the note is a
+/// `.typ`, and its `title` and `tags` fields are well formed.
+///
+/// The one place that decision is made. Reconciliation indexes a note through it, and a reader
+/// that must answer without the index (shell completion, #1007) asks it of the classifier's
+/// notes, so the two cannot disagree on which notes an up-to-date index holds.
+pub fn admit<'a>(
+    path: &VaultPath,
+    content: &'a str,
+    typst_types: &[String],
+) -> Result<Admitted<'a>, Refusal> {
+    let (frontmatter, body) = crate::frontmatter::parse_note(path, content)
+        .map_err(|e| Refusal::Invalid(format!("frontmatter parse failed: {e}")))?;
+    let note_type = frontmatter
+        .require_field::<String>("type")
+        .map_err(|e| Refusal::Invalid(format!("missing or invalid `type` field: {e}")))?;
+    if !type_admitted(path, &note_type, typst_types) {
+        return Err(Refusal::Unadmitted(note_type));
+    }
+    let title = frontmatter
+        .optional_field::<String>("title")
+        .map_err(|e| Refusal::Invalid(format!("invalid `title` field: {e}")))?;
+    // The same check `extract_note_facets` makes of `tags:`, made here so the decision is
+    // whole before anything is written.
+    frontmatter
+        .optional_field::<Vec<String>>("tags")
+        .map_err(|e| Refusal::Invalid(format!("invalid `tags` field: {e}")))?;
+    Ok(Admitted {
+        frontmatter,
+        body,
+        note_type,
+        title,
+    })
 }
 
 /// Per-file outcome reported back to the caller counters.
@@ -460,8 +645,16 @@ fn reconcile_one(
 
     // Before either shortcut below: a config change that un-admits a type must drop a row
     // whose file has not changed.
-    if let Some(entry) = &existing {
-        refuse_unadmitted(store, index, path, &entry.note_type, true, typst_types)?;
+    if let Some(entry) = &existing
+        && !type_admitted(path, &entry.note_type, typst_types)
+    {
+        return Err(refuse_unadmitted(
+            store,
+            index,
+            path,
+            &entry.note_type,
+            true,
+        ));
     }
 
     // Fast path (#94): an already-indexed file whose mtime and size both
@@ -505,22 +698,24 @@ fn reconcile_one(
     let mtime_ns = meta.mtime_ns();
     let indexed_at_ns = system_time_to_ns(SystemTime::now());
 
-    let (frontmatter, body) = crate::frontmatter::parse_note(path, &content)
-        .map_err(|e| format!("frontmatter parse failed: {e}"))?;
-    let note_type = frontmatter
-        .require_field::<String>("type")
-        .map_err(|e| format!("missing or invalid `type` field: {e}"))?;
-    refuse_unadmitted(
-        store,
-        index,
-        path,
-        &note_type,
-        existing.is_some(),
-        typst_types,
-    )?;
-    let title = frontmatter
-        .optional_field::<String>("title")
-        .map_err(|e| format!("invalid `title` field: {e}"))?;
+    let Admitted {
+        frontmatter,
+        body,
+        note_type,
+        title,
+    } = match admit(path, &content, typst_types) {
+        Ok(admitted) => admitted,
+        Err(Refusal::Invalid(reason)) => return Err(reason),
+        Err(Refusal::Unadmitted(note_type)) => {
+            return Err(refuse_unadmitted(
+                store,
+                index,
+                path,
+                &note_type,
+                existing.is_some(),
+            ));
+        }
+    };
 
     // Serialise the parsed frontmatter once — reused for the wikilink scan
     // and the `NoteEntry.frontmatter` column below.
@@ -531,9 +726,9 @@ fn reconcile_one(
     // Resolution staleness is bounded by the next reconcile pass (every
     // Vault::new) — see `extractors::resolve_wikilinks` for the
     // exact-then-basename policy.
-    // An invalid `tags:` value fails the whole note here, as it always
-    // has: the row stays unstamped, so the note is retried and reported
-    // on every pass until fixed.
+    // An invalid `tags:` value was already refused by `admit` above (the
+    // row stays unstamped, so the note is retried and reported on every
+    // pass until fixed), so the `tags` facet here is always `Ok`.
     let crate::extractors::NoteFacets { tags, links } = crate::extractors::extract_note_facets(
         path,
         &frontmatter,

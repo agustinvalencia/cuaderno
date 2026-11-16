@@ -8,10 +8,20 @@
 //!
 //! 2. **Dynamic per-flag completion** via `CompleteEnv` (the runtime
 //!    completion protocol the script invokes back into the binary).
-//!    For slug-valued flags we open the vault on the fly and offer
+//!    For slug-valued flags we read the vault on the fly and offer
 //!    real project / portfolio / stewardship / question slugs as
-//!    candidates. `--query` on `cdno action {promote,complete}` reads
-//!    the action bullets on the chosen project.
+//!    candidates, and note slugs for `cdno open`.
+//!
+//! ## Completion never writes
+//!
+//! A Tab press runs the binary, and opening the vault the ordinary way
+//! opens the SQLite index: it migrates and reconciles, and on exit SQLite
+//! checkpoints and removes the `-wal`/`-shm` files. Beside a long-lived
+//! server whose locks this process cannot see, that damages the server's
+//! index (#1007). So the completers read through a [`Catalog`], which
+//! answers from the notes on disk with reconciliation's own rules and opens
+//! neither the index nor the write lock: a completion creates, writes and
+//! removes nothing in the vault.
 //!
 //! ## Failure mode
 //!
@@ -23,14 +33,13 @@
 
 use std::ffi::OsStr;
 use std::io;
-use std::path::Path;
 
 use chrono::Local;
 use clap_complete::Shell;
 use clap_complete::engine::CompletionCandidate;
 use clap_complete::env::Shells;
 
-use cdno_domain::Vault;
+use cdno_domain::Catalog;
 
 use crate::bootstrap;
 
@@ -79,20 +88,14 @@ pub fn print_script(shell: Shell) -> io::Result<()> {
 // Vault opening — silent best-effort.
 // ---------------------------------------------------------------------
 
-/// Discover the vault from CWD and open it. Returns `None` on any
-/// failure (no vault discovered, config invalid, index corrupt). The
-/// caller is a tab-completion path; surfacing the error would smear
-/// it across the user's prompt.
-fn try_open_vault() -> Option<Vault> {
+/// Discover the vault from CWD and open its [`Catalog`]. Returns `None`
+/// on any failure (no vault discovered, config invalid). The caller is a
+/// tab-completion path; surfacing the error would smear it across the
+/// user's prompt.
+fn try_open_vault() -> Option<Catalog> {
     let cwd = std::env::current_dir().ok()?;
     let root = bootstrap::discover_vault_root(&cwd)?;
-    open_vault_at(&root)
-}
-
-/// Open the vault at `root`. Pulled out so unit tests can target a
-/// known fixture directory rather than relying on CWD.
-fn open_vault_at(root: &Path) -> Option<Vault> {
-    bootstrap::open_vault(root).ok().map(|(v, _report)| v)
+    bootstrap::open_catalog(&root).ok()
 }
 
 // ---------------------------------------------------------------------
@@ -272,7 +275,7 @@ pub fn complete_note_ref(_current: &OsStr) -> Vec<CompletionCandidate> {
     let Some(vault) = try_open_vault() else {
         return Vec::new();
     };
-    let Ok(candidates) = vault.list_note_candidates() else {
+    let Ok(paths) = vault.note_paths() else {
         return Vec::new();
     };
     let mut out: Vec<CompletionCandidate> = ["today", "yesterday", "tomorrow"]
@@ -282,10 +285,7 @@ pub fn complete_note_ref(_current: &OsStr) -> Vec<CompletionCandidate> {
     // `open::slug_of`, not the local `slug_from_path`: the latter takes the
     // bare file stem, which would offer `_index` for every portfolio and
     // expanded stewardship instead of the name they are addressed by.
-    let mut slugs: Vec<String> = candidates
-        .iter()
-        .map(|c| crate::commands::open::slug_of(&c.path))
-        .collect();
+    let mut slugs: Vec<String> = paths.iter().map(crate::commands::open::slug_of).collect();
     slugs.sort_unstable();
     slugs.dedup();
     out.extend(slugs.into_iter().map(CompletionCandidate::new));

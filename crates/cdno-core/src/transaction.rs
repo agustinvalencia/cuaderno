@@ -8,8 +8,11 @@
 //! the previously-applied writes are rolled back in reverse order.
 //! Index updates happen after all file writes succeed; if an index
 //! call fails, files are left correct on disk and the index error is
-//! surfaced as [`TransactionError::IndexStale`] — reconciliation on
-//! next startup heals the divergence.
+//! surfaced as [`TransactionError::IndexStale`]. The next reconciliation
+//! heals the divergence: the next CLI command's, a server's periodic
+//! sweep, or, when the index file itself is damaged, a server's in-place
+//! repair ([`crate::reconcile::rebuild`]). A stdio server with sweeps off
+//! catches up only at its next start, unless a tool call meets damage.
 //!
 //! **Scope.** This primitive provides *file-level consistency within a
 //! single process*. It is not crash-safe: a power cut mid-commit can

@@ -9,8 +9,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
-use std::sync::Mutex;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension, params};
@@ -84,6 +85,16 @@ pub fn canonical_vault_root(root: &Path) -> String {
 /// dep until there's evidence.
 pub struct SqliteIndex {
     conn: Mutex<Connection>,
+    /// Where the database file lives, so [`open_fresh_beside`](Self::open_fresh_beside)
+    /// can build a fresh index beside it.
+    path: PathBuf,
+    /// The canonical vault root an overridden index is bound to (#998), as
+    /// [`open_location`](Self::open_location) checked it; `None` at the
+    /// default location, which is never bound. A rebuild carries it: the
+    /// fresh index is bound to the same root before it is copied in, so a
+    /// rebuilt overridden index is still bound to this vault, and the copy
+    /// refuses a live file another vault has bound since.
+    binding: Option<String>,
 }
 
 impl std::fmt::Debug for SqliteIndex {
@@ -147,12 +158,23 @@ impl SqliteIndex {
     /// core of [`open`](Self::open), split out so `open` can retry it on
     /// a fresh file after discarding a corrupt one.
     fn open_connection(path: &Path) -> Result<Self, IndexError> {
+        Self::open_connection_sized(path, None)
+    }
+
+    /// [`open_connection`](Self::open_connection), setting the page size
+    /// first when one is given. It only takes effect on a new, empty file.
+    fn open_connection_sized(path: &Path, page_size: Option<u32>) -> Result<Self, IndexError> {
         let conn = Connection::open(path)?;
+        if let Some(size) = page_size {
+            conn.pragma_update(None, "page_size", size)?;
+        }
         configure_connection(&conn)?;
         apply_pending_migrations(&conn)?;
 
         Ok(Self {
             conn: Mutex::new(conn),
+            path: path.to_path_buf(),
+            binding: None,
         })
     }
 
@@ -174,6 +196,13 @@ impl SqliteIndex {
     ///   this root is opened with no write for the binding. `cdno reindex
     ///   --rebind`, which deletes and rebuilds the file, is the way to give
     ///   it to another vault.
+    ///
+    /// A first binding that fails because the file is damaged does not fail
+    /// the open: the file passed both guards, the binding is tried again at
+    /// every open while none is recorded, and a rebuild
+    /// ([`crate::reconcile::rebuild`]) writes it into the fresh index it
+    /// copies in. Failing here would stop a long-running server from ever
+    /// reaching the check that repairs the file (#526).
     pub fn open_location(
         location: &crate::paths::IndexLocation,
         vault_root: &Path,
@@ -194,11 +223,35 @@ impl SqliteIndex {
                 root,
             });
         }
-        let index = Self::open(path)?;
+        let mut index = Self::open(path)?;
         if bound.is_none() {
-            index.bind_vault_root(path, &root)?;
+            match index.bind_vault_root(path, &root) {
+                Ok(()) => {}
+                Err(err) if err.is_corruption() => {}
+                Err(err) => return Err(err),
+            }
         }
+        index.binding = Some(root);
         Ok(index)
+    }
+
+    /// The canonical vault root this index was opened bound to, or `None`
+    /// at the default location.
+    pub fn binding(&self) -> Option<&str> {
+        self.binding.as_deref()
+    }
+
+    /// The vault root recorded in this index's own `index_meta`, read
+    /// through its connection; `None` when none is recorded.
+    fn recorded_vault_root(&self) -> Result<Option<String>, IndexError> {
+        let conn = self.lock_conn();
+        conn.query_row(
+            "SELECT value FROM index_meta WHERE key = ?1",
+            params![VAULT_ROOT_KEY],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(IndexError::from)
     }
 
     /// Bind this index to the vault at `root` (a canonical root, as
@@ -375,19 +428,304 @@ impl SqliteIndex {
         remove_index_files(path.as_ref());
     }
 
-    /// Run `PRAGMA quick_check` — the cheap subset of `integrity_check`
-    /// that still catches the common corruption modes.
-    ///
-    /// Not invoked automatically on open: for a CLI-style invocation
-    /// pattern, every command is a fresh startup and this would add
-    /// tens of milliseconds to each call. Callers that care about
-    /// integrity (e.g. a future `cdno doctor`) invoke this explicitly.
-    /// If any routine query elsewhere returns a corruption-shaped
-    /// error, the recovery path is to drop the index and reconcile.
+    /// Whether [`quick_check`](Self::quick_check) finds nothing: a yes/no
+    /// for callers that do not need the problem lines. The servers call
+    /// `quick_check` itself; see there for when it runs.
     pub fn check_integrity(&self) -> Result<bool, IndexError> {
+        Ok(self.quick_check()?.is_empty())
+    }
+
+    /// The problems `PRAGMA quick_check` reports, at most
+    /// [`CHECK_PROBLEM_LIMIT`] of them; empty when the file is sound.
+    ///
+    /// The cheap subset of [`integrity_check`](Self::integrity_check)
+    /// that still catches the common corruption modes. Not run by
+    /// [`open`](Self::open): a CLI command is a fresh start each time and
+    /// would pay tens of milliseconds for it. A long-lived process opens
+    /// once and can afford it, so the MCP servers run it at start
+    /// (`cdno_domain::bootstrap::open_vault_checked`) and after every
+    /// reconciliation sweep, and rebuild the index
+    /// ([`crate::reconcile::rebuild`]) when it fails.
+    ///
+    /// Page-level damage can leave every ordinary query working while
+    /// writes to the damaged pages fail, so this check, not query
+    /// errors, is the dependable signal. A check that itself fails with
+    /// a corruption code reports that error as its one problem rather
+    /// than failing: the answer to "is it damaged?" is then yes.
+    pub fn quick_check(&self) -> Result<Vec<String>, IndexError> {
+        self.run_check("quick_check")
+    }
+
+    /// [`quick_check`](Self::quick_check)'s thorough sibling, `PRAGMA
+    /// integrity_check`: it also compares every index with its table, so
+    /// it finds rows missing from an index that `quick_check` skips. It
+    /// is slower (it reads every index), so it runs on demand, not on
+    /// every sweep.
+    pub fn integrity_check(&self) -> Result<Vec<String>, IndexError> {
+        self.run_check("integrity_check")
+    }
+
+    fn run_check(&self, pragma: &str) -> Result<Vec<String>, IndexError> {
         let conn = self.lock_conn();
-        let result: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
-        Ok(result == "ok")
+        let rows = conn
+            .prepare(&format!("PRAGMA {pragma}({CHECK_PROBLEM_LIMIT})"))
+            .and_then(|mut stmt| {
+                stmt.query_map([], |r| r.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<String>>>()
+            });
+        match rows.map_err(IndexError::from) {
+            Ok(rows) if rows.len() == 1 && rows[0] == "ok" => {
+                // A sound file with no schema (an empty database) checks
+                // as "ok" too, and reads as an empty vault (#520).
+                let has_schema: bool = conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations')",
+                    [],
+                    |r| r.get(0),
+                )?;
+                if has_schema {
+                    Ok(Vec::new())
+                } else {
+                    Ok(vec!["the index has no schema".to_string()])
+                }
+            }
+            Ok(rows) => Ok(rows),
+            Err(e) if e.is_corruption() => Ok(vec![e.to_string()]),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// A new, empty index beside this one, under a name no other process
+    /// or rebuild uses (`<index>.rebuild-<16 hex digits>`, next to the
+    /// database file wherever that is), to be populated and then copied in
+    /// with [`replace_contents_from`](Self::replace_contents_from). Its
+    /// files are removed when the returned handle drops.
+    ///
+    /// An overridden index's fresh copy is bound to the same vault root
+    /// before anything else is written to it, so the copy carries the
+    /// binding in; it never inherits a binding from the live file, whose
+    /// `index_meta` may be among the damage.
+    ///
+    /// The name is unique because two processes can find the same damage
+    /// at once (two servers starting, a sweep beside a session's start);
+    /// with one shared name each would delete or rename the other's
+    /// half-built file. It is random rather than derived from the process
+    /// id, since two servers in two containers on one vault are commonly
+    /// both process 1. A name already taken is never reused: the main file
+    /// is created exclusively, and a clash draws another name.
+    pub fn open_fresh_beside(&self) -> Result<FreshIndex, IndexError> {
+        let path = loop {
+            let candidate = sibling(&self.path, &format!("{REBUILD_SUFFIX}-{}", random_tag()));
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&candidate)
+            {
+                Ok(_) => break candidate,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => {
+                    return Err(IndexError::Open {
+                        path: candidate.display().to_string(),
+                        source: e,
+                    });
+                }
+            }
+        };
+        // The backup copy refuses a WAL destination whose page size differs
+        // from the source's, so the fresh file takes the live one's (read
+        // from the header, which survives most damage). A header too
+        // damaged to read leaves SQLite's default.
+        let page_size: Option<u32> = self
+            .lock_conn()
+            .query_row("PRAGMA page_size", [], |r| r.get(0))
+            .ok();
+        let opened = Self::open_connection_sized(&path, page_size).and_then(|mut index| {
+            if let Some(root) = &self.binding {
+                index.bind_vault_root(&path, root)?;
+                index.binding = Some(root.clone());
+            }
+            Ok(index)
+        });
+        match opened {
+            Ok(index) => Ok(FreshIndex {
+                index: Some(Arc::new(index)),
+                path,
+                checked: std::sync::atomic::AtomicBool::new(false),
+            }),
+            Err(e) => {
+                remove_index_files(&path);
+                Err(e)
+            }
+        }
+    }
+
+    /// Replace everything this index holds with the contents of `fresh`,
+    /// in place, through SQLite's online backup API.
+    ///
+    /// The file is never renamed or reopened: its pages are overwritten
+    /// under SQLite's own write lock, so every connection to it on this
+    /// machine, in this process and in any other (a second server, `cdno
+    /// watch`, a CLI command), reads the new contents on its next query. A
+    /// rename would repair only the process that did it and leave the
+    /// others on the damaged file. Damaged pages do not stop the copy: it
+    /// writes every page of the destination and reads none of its b-trees.
+    ///
+    /// This contains a fault on one machine (a torn write, a crash, a bad
+    /// page). It is no protection for an index file shared between two
+    /// machines or kernels: SQLite's locks do not cross that boundary, so
+    /// the other side's writes keep damaging it after each copy. Each
+    /// machine needs its own index ([`crate::paths::INDEX_PATH_ENV`]).
+    ///
+    /// Keeping a copy of the damaged file for diagnosis is the caller's
+    /// choice, before it takes any lock: [`keep_previous_copy`](Self::keep_previous_copy).
+    ///
+    /// `fresh` must pass `quick_check` first, or nothing is touched; a
+    /// check it already passed through [`FreshIndex::quick_check`] counts,
+    /// so a caller that checked it before taking a lock is not made to
+    /// repeat the scan under the lock. In [`crate::reconcile::rebuild`]
+    /// that check passed before the last, locked pass and the snapshot
+    /// carry wrote to the fresh index, so those last writes are copied in
+    /// unchecked. That is accepted: they are ordinary transactions on a
+    /// file this process created moments ago and nothing else writes, the
+    /// same writes every commit makes unchecked, while a second scan would
+    /// hold the vault lock, and every writer waiting on it, for the length
+    /// of a whole-file read. For an
+    /// overridden index, `fresh` must also be bound to this index's vault
+    /// root ([`open_fresh_beside`](Self::open_fresh_beside) does that), and
+    /// a live file that now records another vault's root is refused with
+    /// [`IndexError::BoundToOtherVault`]: something rebound it since this
+    /// process opened it, and overwriting it would take it back. A live
+    /// binding too damaged to read does not stop the copy. A failed copy
+    /// leaves the live file as it was, since the copy is one write
+    /// transaction. The caller decides what else must hold still
+    /// meanwhile: [`crate::reconcile::rebuild`] holds the vault write lock,
+    /// so no commit by a process on this machine lands half before and half
+    /// after.
+    pub fn replace_contents_from(&self, fresh: &FreshIndex) -> Result<(), IndexError> {
+        if !fresh.checked.load(std::sync::atomic::Ordering::Acquire) {
+            let problems = fresh.quick_check()?;
+            if !problems.is_empty() {
+                return Err(IndexError::Update(format!(
+                    "the rebuilt index failed its own check, so it was not copied in: {}",
+                    problems.join("; ")
+                )));
+            }
+        }
+        if let Some(root) = &self.binding {
+            let carried = fresh.sqlite().recorded_vault_root()?;
+            if carried.as_deref() != Some(root.as_str()) {
+                return Err(IndexError::Update(format!(
+                    "the rebuilt index is not bound to the vault at {root}, so it was not \
+                     copied in"
+                )));
+            }
+            if let Ok(Some(live)) = self.recorded_vault_root()
+                && live != *root
+            {
+                return Err(IndexError::BoundToOtherVault {
+                    index: self.path.display().to_string(),
+                    bound: live,
+                    root: root.clone(),
+                });
+            }
+        }
+        let source = fresh.sqlite().lock_conn();
+        let mut live = self.lock_conn();
+
+        let backup = rusqlite::backup::Backup::new(&source, &mut live)?;
+        let deadline = std::time::Instant::now() + REPLACE_TIMEOUT;
+        loop {
+            // -1: every page in one step, so the copy is one transaction.
+            match backup.step(-1)? {
+                rusqlite::backup::StepResult::Done => break,
+                rusqlite::backup::StepResult::More => {}
+                rusqlite::backup::StepResult::Busy | rusqlite::backup::StepResult::Locked => {
+                    if std::time::Instant::now() >= deadline {
+                        return Err(IndexError::Update(format!(
+                            "the index stayed busy for {REPLACE_TIMEOUT:?}; nothing was replaced"
+                        )));
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Copy the index file and its WAL byte for byte to `<index>.previous`
+    /// (and `.previous-wal`), replacing an older copy, for diagnosis. Best
+    /// effort: a failure must not stop a repair. A copy taken while
+    /// another process writes can be torn, which is acceptable for a file
+    /// nothing reads back. The copy is of the WAL at the path, which is not
+    /// what this process sees if its sidecars were unlinked under it.
+    ///
+    /// At an overridden location the name `<index>.previous` sits in a
+    /// directory cuaderno does not own, so an existing file there is only
+    /// replaced when it is recognisably a cuaderno index
+    /// ([`ensure_discardable`](Self::ensure_discardable)); otherwise no copy
+    /// is kept.
+    pub fn keep_previous_copy(&self) {
+        let previous = sibling(&self.path, PREVIOUS_SUFFIX);
+        if self.binding.is_some() && Self::ensure_discardable(&previous).is_err() {
+            return;
+        }
+        keep_previous_copy(&self.path);
+    }
+
+    /// Remove the rebuild files a killed rebuild left beside the index at
+    /// `index_path` ([`open_fresh_beside`](Self::open_fresh_beside)'s
+    /// `<index>.rebuild-<tag>`, with its `-wal` and `-shm`): nothing else
+    /// ever deletes them. Only names of exactly that shape, so a file of
+    /// someone else's that merely shares the prefix in an override's
+    /// directory is left alone, and only ones untouched for an hour, so a
+    /// rebuild running in another process right now keeps its files.
+    pub fn clear_stale_rebuilds(index_path: &Path) {
+        let (Some(dir), Some(name)) = (index_path.parent(), index_path.file_name()) else {
+            return;
+        };
+        let name = name.to_string_lossy();
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if !is_rebuild_file_name(&name, &entry.file_name().to_string_lossy()) {
+                continue;
+            }
+            let stale = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > Duration::from_secs(3600));
+            if stale {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+
+    /// The database file this index reads and writes.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Move the index files at `location` aside to `<index>.previous`, so
+    /// the next [`open`](Self::open) starts from an empty file. The last
+    /// resort of a process that finds damage at open and cannot rebuild in
+    /// place; any other process still holding the file stays on the moved
+    /// one, so the caller must hold the vault write lock.
+    ///
+    /// At an overridden location an existing `.previous` that is not
+    /// recognisably a cuaderno index is refused with
+    /// [`IndexError::NotAnIndex`] rather than replaced, and nothing moves.
+    pub fn set_aside(location: &crate::paths::IndexLocation) -> Result<(), IndexError> {
+        let path = location.path.as_path();
+        let previous = sibling(path, PREVIOUS_SUFFIX);
+        if location.overridden {
+            Self::ensure_discardable(&previous)?;
+        }
+        remove_index_files(&previous);
+        move_index_files(path, &previous);
+        Ok(())
     }
 
     /// Borrow the underlying connection under the mutex for ad-hoc
@@ -409,7 +747,136 @@ impl SqliteIndex {
 /// cache, so these are recovered by dropping the file and reconciling
 /// rather than surfaced to the user.
 fn is_recoverable_corruption(err: &IndexError) -> bool {
-    matches!(err, IndexError::Sqlite(e) if is_corruption(e))
+    err.is_corruption()
+}
+
+/// The most problems an integrity check reports. The first few name the
+/// damage; a full list on a badly broken file would only be noise.
+pub const CHECK_PROBLEM_LIMIT: usize = 20;
+
+/// Stem of the suffix a rebuild's fresh index is built under; each one
+/// adds a random tag ([`SqliteIndex::open_fresh_beside`]).
+pub const REBUILD_SUFFIX: &str = ".rebuild";
+
+/// Sixteen hex digits that no other process is likely to draw: the
+/// standard library's per-process random hash keys over the process id,
+/// the time and a counter. No new dependency for a file name.
+fn random_tag() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u32(std::process::id());
+    hasher.write_u64(NEXT.fetch_add(1, Ordering::Relaxed));
+    if let Ok(since) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        hasher.write_u128(since.as_nanos());
+    }
+    format!("{:016x}", hasher.finish())
+}
+
+/// Whether `file_name` is a rebuild file of the index named `index_name`:
+/// `<index_name>.rebuild-<tag>`, optionally with `-wal` or `-shm`, where
+/// the tag is [`random_tag`]'s sixteen hex digits, or the `<pid>-<n>` an
+/// earlier build of this branch wrote.
+pub fn is_rebuild_file_name(index_name: &str, file_name: &str) -> bool {
+    let Some(rest) = file_name
+        .strip_prefix(index_name)
+        .and_then(|r| r.strip_prefix(REBUILD_SUFFIX))
+        .and_then(|r| r.strip_prefix('-'))
+    else {
+        return false;
+    };
+    let rest = rest
+        .strip_suffix("-wal")
+        .or_else(|| rest.strip_suffix("-shm"))
+        .unwrap_or(rest);
+    let hex = rest.len() == 16 && rest.bytes().all(|b| b.is_ascii_hexdigit());
+    let digits = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
+    let legacy = rest
+        .split_once('-')
+        .is_some_and(|(pid, n)| digits(pid) && digits(n));
+    hex || legacy
+}
+
+/// How long [`SqliteIndex::replace_contents_from`] waits for the live
+/// file's write lock before giving up: the same as a writer waits for the
+/// vault lock, which the caller holds meanwhile.
+const REPLACE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// A fresh index built beside a live one, for a rebuild. Its files are
+/// removed when it drops.
+pub struct FreshIndex {
+    // `Option` so `drop` can release the connection before deleting the
+    // files it has open.
+    index: Option<Arc<SqliteIndex>>,
+    path: PathBuf,
+    /// Set once [`quick_check`](Self::quick_check) has found it sound.
+    checked: std::sync::atomic::AtomicBool,
+}
+
+impl FreshIndex {
+    /// The fresh index, to populate through the trait.
+    pub fn index(&self) -> Arc<dyn VaultIndex> {
+        self.sqlite_arc()
+    }
+
+    fn sqlite_arc(&self) -> Arc<SqliteIndex> {
+        self.index.clone().expect("present until drop")
+    }
+
+    fn sqlite(&self) -> &SqliteIndex {
+        self.index.as_deref().expect("present until drop")
+    }
+
+    /// `quick_check` on the fresh index, so a caller can check it before
+    /// taking a lock. A pass is remembered, and
+    /// [`SqliteIndex::replace_contents_from`] does not repeat it.
+    pub fn quick_check(&self) -> Result<Vec<String>, IndexError> {
+        let problems = self.sqlite().quick_check()?;
+        self.checked
+            .store(problems.is_empty(), std::sync::atomic::Ordering::Release);
+        Ok(problems)
+    }
+
+    /// Where its database file is.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for FreshIndex {
+    fn drop(&mut self) {
+        drop(self.index.take());
+        remove_index_files(&self.path);
+    }
+}
+
+/// Copy the index file and its WAL to `<index>.previous` (and
+/// `.previous-wal`), replacing an older copy. Best effort: it is for
+/// diagnosis only, and a failure must not stop a repair.
+fn keep_previous_copy(path: &Path) {
+    let previous = sibling(path, PREVIOUS_SUFFIX);
+    remove_index_files(&previous);
+    let _ = fs::copy(path, &previous);
+    let wal = sibling(path, "-wal");
+    if wal.exists() {
+        let _ = fs::copy(&wal, sibling(&previous, "-wal"));
+    }
+}
+
+/// Suffix of the copy of the replaced index a rebuild keeps, one
+/// generation deep.
+pub const PREVIOUS_SUFFIX: &str = ".previous";
+
+/// SQLite's sidecars beside the main file: the write-ahead log and its
+/// shared-memory index.
+const SIDECARS: [&str; 3] = ["", "-wal", "-shm"];
+
+/// `path` with `suffix` appended to its file name (`index.db` →
+/// `index.db.previous`, `index.db-wal`).
+fn sibling(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
 }
 
 /// Whether the SQLite database at `path` carries cuaderno's own mark,
@@ -435,13 +902,6 @@ fn has_cuaderno_mark(path: &Path) -> rusqlite::Result<bool> {
     )
 }
 
-/// `path` with `suffix` appended to its file name (`-wal`, `-shm`).
-fn sibling(path: &Path, suffix: &str) -> std::path::PathBuf {
-    let mut name = path.as_os_str().to_owned();
-    name.push(suffix);
-    std::path::PathBuf::from(name)
-}
-
 /// A `file:` URI opening `path` read-only and immutable. Every byte outside
 /// the unreserved set and `/` is percent-encoded, so a path holding `?`,
 /// `#` or `%` cannot be read as URI syntax.
@@ -459,7 +919,8 @@ fn immutable_uri(path: &Path) -> String {
     uri
 }
 
-/// The SQLite error codes behind [`is_recoverable_corruption`].
+/// The SQLite error codes of a damaged file, as [`IndexError::is_corruption`]
+/// reads them, for a bare `rusqlite` error.
 fn is_corruption(err: &rusqlite::Error) -> bool {
     matches!(
         err,
@@ -474,15 +935,19 @@ fn is_corruption(err: &rusqlite::Error) -> bool {
 /// Remove the SQLite index file and its `-wal` / `-shm` sidecars,
 /// ignoring not-found. Used to drop a corrupt cache before rebuilding.
 fn remove_index_files(path: &Path) {
-    for suffix in ["", "-wal", "-shm"] {
-        let target = if suffix.is_empty() {
-            path.to_path_buf()
-        } else {
-            let mut name = path.as_os_str().to_owned();
-            name.push(suffix);
-            std::path::PathBuf::from(name)
-        };
-        let _ = fs::remove_file(target);
+    for suffix in SIDECARS {
+        let _ = fs::remove_file(sibling(path, suffix));
+    }
+}
+
+/// Rename the index file and its sidecars from `from` to `to`, each
+/// keeping its own suffix, ignoring any that do not exist. The sidecars
+/// go first: a process that opens `from` in between then finds the main
+/// file without its WAL and reads an older, consistent state, rather than
+/// a new main file beside the old WAL, which SQLite would replay onto it.
+fn move_index_files(from: &Path, to: &Path) {
+    for suffix in ["-wal", "-shm", ""] {
+        let _ = fs::rename(sibling(from, suffix), sibling(to, suffix));
     }
 }
 

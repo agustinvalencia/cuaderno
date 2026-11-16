@@ -65,7 +65,8 @@ tracing-subscriber = { workspace = true }
 # is async (rmcp's ServiceExt is async). `net`/`signal`/`time` are
 # for `cdno-mcp-server` only: the TCP listener, ctrl-c graceful
 # shutdown, and the periodic index-reconciliation interval (GH #60).
-tokio = { workspace = true, features = ["net", "signal", "time"] }
+# `sync` is for the index-health loop's corruption wake-up (#526).
+tokio = { workspace = true, features = ["net", "signal", "time", "sync"] }
 
 # Serialisation. schemars is pinned to the same major as rmcp 1.7's
 # transitive version so the derive macro's `::schemars::...` paths
@@ -79,6 +80,8 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 
 [dev-dependencies]
+# The index-health tests damage a real database file and read its page size.
+rusqlite = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 chrono = { workspace = true }

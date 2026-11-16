@@ -91,7 +91,13 @@ The layering is load-bearing; each crate has a rule that the code enforces:
 under `src/vault/` and each attaches its own `impl Vault { ... }` block** — add a new operation as a
 new file there rather than growing `mod.rs`. `Journal` (`vault/journal.rs`) is the index-free focus
 reader (a store and the `[focus]` windows) that `Vault`'s focus readers delegate to; `cdno now` opens
-only a `Journal`, never the index.
+only a `Journal`, never the index. `Catalog` (`vault/catalog.rs`) is the index-free reader of the
+listings shell completion offers: it takes the notes `classify` finds and that
+`cdno_core::reconcile::admit` (the one place that decides whether a note is indexed, and with which
+type) accepts, and hands their typed paths to the same folds `Vault` hands its index rows to; shell
+completion opens only a `Catalog`. A listing is one fold shared by `Vault` and the index-free
+reader, never a second implementation. An index-free reader is for implicit, high-frequency paths
+that run beside a server unasked (a prompt hook, a Tab press); explicit read verbs keep the index.
 
 **Project resolvers.** Every verb that reads or writes a project map's body picks one of two
 resolvers in `vault/projects/mod.rs`: `resolve_open_project` (an active or a parked map, folder and
@@ -112,7 +118,10 @@ third lookup.
 - **Domain writes go through `VaultTransaction`** (`cdno-core/src/transaction.rs`): buffer file ops and
   index ops, then `commit()`. File writes are atomic-ish with reverse-order rollback; index updates
   run after all file writes succeed, and an index failure surfaces as `IndexStale` (files are
-  correct, next startup reconciles). Not crash-safe by design. **Known exceptions that bypass the
+  correct; the next reconciliation catches the index up: the next CLI command, a server's sweep, or,
+  when the index file is damaged, a server's in-place repair). Not crash-safe by design. The repair,
+  `reconcile::rebuild`, writes the live index file in place through SQLite's backup API, under the
+  vault write lock but outside `VaultTransaction`; it touches only the index, never a note. **Known exceptions that bypass the
   transaction AND the write lock**: `write_note_raw` (no live caller since the desktop was removed, kept per #601), template
   eject/save (and `templates sync`, which writes through `save_template`), and `save_config_raw` — these call `store.write_file` directly, so the cross-process
   serialisation guarantee does not cover them. Do not add new raw-write paths on their precedent.

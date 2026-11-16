@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use cdno_mcp::CuadernoServer;
-use cdno_mcp::bootstrap::open_vault_with_index;
+use cdno_mcp::bootstrap::open_vault_checked;
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use tracing_subscriber::EnvFilter;
@@ -38,11 +38,11 @@ async fn main() -> Result<()> {
     let root = vault_root_from_env()?;
     tracing::info!(vault_root = %root.display(), "starting cdno-mcp");
 
-    // A stdio session is short-lived, so only the `vault` is kept;
-    // the store/index/ignore handles (used by the HTTP binary's
-    // reconciliation loop) are dropped.
+    // Checked at open, like the HTTP server, at the index location the
+    // override names (#998). The store/index/scope handles go to the
+    // index-health supervisor; there is no sweep loop here.
     let index_override = cdno_core::paths::index_override_from_env();
-    let opened = open_vault_with_index(&root, index_override.as_deref()).inspect_err(|e| {
+    let opened = open_vault_checked(&root, index_override.as_deref()).inspect_err(|e| {
         tracing::error!(error = %e, vault_root = %root.display(), "failed to open vault");
     })?;
     tracing::info!(index_path = %opened.index_path.display(), "index opened");
@@ -51,7 +51,13 @@ async fn main() -> Result<()> {
     // (RFC 0006 §8.4).
     cdno_mcp::startup::log_method_notice(&opened.vault);
 
-    let server = CuadernoServer::new(Arc::new(opened.vault), root.clone());
+    // No sweep loop here, but `index_status` and `rebuild_index` work the
+    // same as over HTTP, and a tool call that meets a damaged index still
+    // starts a repair (#526).
+    let health = Arc::new(cdno_mcp::index_health::IndexHealth::from_opened(&opened));
+    health.spawn_loop(None);
+    let server =
+        CuadernoServer::new(Arc::new(opened.vault), root.clone()).with_index_health(health);
     // Derive the count from the merged router rather than hardcoding it,
     // so the startup log can't fall out of sync as tools are added.
     tracing::info!(

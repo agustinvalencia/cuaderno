@@ -18,7 +18,7 @@ Plus the [global options](overview.md#global-options). `reindex` ignores `--json
 ## When you need it
 
 Almost never — Cuaderno reconciles the index automatically on every run of any command but
-[`now`](now.md) (see
+[`now`](now.md), and shell completion does not open it (see
 [Business rules](../../concepts/business-rules.md#startup-reconciliation)). Reach for `reindex` when:
 
 - search or link results look wrong after a large external edit or a sync conflict, or

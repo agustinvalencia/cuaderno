@@ -50,6 +50,80 @@ impl Drop for VaultWriteLock {
     }
 }
 
+/// A store whose write lock the caller already holds: every operation goes
+/// to `inner`, except [`acquire_write_lock`](VaultStore::acquire_write_lock),
+/// which returns a no-op guard. The lock is one per open file, so code that
+/// takes it again in the same thread (a reconcile pass's per-note
+/// transactions) would otherwise wait for itself until the timeout. Only
+/// [`crate::reconcile::rebuild`] uses it, for the pass it runs under the
+/// lock; anything else would lose the lock's protection.
+pub(crate) struct LockHeldStore(pub(crate) Arc<dyn VaultStore>);
+
+impl VaultStore for LockHeldStore {
+    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        self.0.read_file(path)
+    }
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.0.read_bytes(path)
+    }
+    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.0.write_file(path, content)
+    }
+    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.0.append_to_file(path, content)
+    }
+    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        self.0.move_file(src, dest)
+    }
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        self.0.delete_file(path)
+    }
+    fn remove_dir_if_empty(&self, dir: &VaultPath) -> Result<bool, StoreError> {
+        self.0.remove_dir_if_empty(dir)
+    }
+    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
+        self.0.exists(path)
+    }
+    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.0.list_dir(path)
+    }
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.0.walk_dir(path)
+    }
+    fn walk_dirs(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.0.walk_dirs(path)
+    }
+    fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
+        self.0.metadata(path)
+    }
+    fn import_external(&self, src: &Path, dest: &VaultPath) -> Result<(), StoreError> {
+        self.0.import_external(src, dest)
+    }
+    fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
+        Ok(VaultWriteLock::noop())
+    }
+    // The comparison (#1001) is the inner store's: only the lock differs.
+    fn read_journals(&self) -> Option<&ReadJournals> {
+        self.0.read_journals()
+    }
+    fn write_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: Observed,
+    ) -> Result<(), StoreError> {
+        self.0.write_file_expecting(path, content, expected)
+    }
+    fn append_to_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: Observed,
+    ) -> Result<(), StoreError> {
+        self.0.append_to_file_expecting(path, content, expected)
+    }
+}
+
 /// Abstract storage backend for a vault.
 ///
 /// Implementations provide file-level operations against a rooted

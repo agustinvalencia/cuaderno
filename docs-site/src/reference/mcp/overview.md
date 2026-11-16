@@ -19,7 +19,7 @@ Two binaries serve the same tool catalogue:
 
 ## The tool surface
 
-The server advertises **66 tools**. This reference groups them by purpose:
+The server advertises **68 tools**. This reference groups them by purpose:
 
 | Group | Page | What's in it |
 |-------|------|--------------|
@@ -29,6 +29,40 @@ The server advertises **66 tools**. This reference groups them by purpose:
 
 Every tool returns typed JSON; the shapes mirror the CLI's [`--json`](../json-output.md) output, so a
 client gets the same structures whichever surface it uses.
+
+## The index looks after itself
+
+The index is a cache of the notes, rebuilt from them at will, so the servers repair it without
+asking. Both check its database file when they start, and `cdno-mcp-server` checks it again after
+every [reconciliation sweep](http-server.md#flags). A damaged index is rebuilt from the notes and
+copied into the live file in place, without a restart, so every process on this machine using the
+vault sees the repair at once. A copy of the first damaged file of a streak is kept beside it, under its file name with `.previous`
+appended: `.cuaderno/index.db.previous` at the default location, or next to the file
+`CUADERNO_INDEX_PATH` (or `--index-path`) names, where an overridden index is repaired in place and
+stays bound to its vault (see
+[Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine)).
+A file the override refuses (not cuaderno's index, or another vault's) stops the server at start
+and is never repaired or moved. A tool call that meets a damaged index starts a thorough check
+straight away, on either server, and a repair if the check confirms the damage; its error says that
+the notes on disk are intact and whether that call's write was saved.
+[`index_status`](reads.md) reports the index's health and the file it checked, and [`rebuild_index`](writes.md#the-index) forces a rebuild, so a client
+with no shell on the server's machine can still recover. No note is ever changed by any of this.
+
+**What it is, and is not.** This contains a fault on one machine: a torn write, a crash, a bad
+page. It is not protection for an index file shared between two machines or kernels (a container
+and its host, a network share): their locks do not reach each other, so the other side's writes
+damage the file again after each repair. So a server counts the repairs damage triggers, and after
+three within an hour it stops repairing by itself, logs one error saying that something else is
+writing the index file, and reports `repair: damage_recurring` in `index_status`, with the same
+advice in every damaged-index error a client gets: give this machine its own index, as
+[Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine)
+explains. Only repairs that succeed are counted. The stop ends by itself when a check as thorough
+as the one that found the damage finds the file sound again (another process repaired it, or the
+other writer went away); otherwise it stays until a `rebuild_index` succeeds or the server
+restarts. A successful `rebuild_index` allows one more automatic repair before the server stops
+again, not a fresh count, so answering each stop with it cannot keep a shared index repairing. A file too
+damaged for the running server to write over is reported as `restart_required`: the server needs a
+restart, whose start replaces such a file; the notes are intact.
 
 ## Focus
 

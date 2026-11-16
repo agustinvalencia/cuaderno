@@ -228,7 +228,7 @@ pub fn spawn(root: PathBuf, index_path: &Path, every: Duration, mode: Checkpoint
     match relocated_index_exclude_pattern(&root, index_path) {
         Ok(None) => {}
         Ok(Some(pattern)) => {
-            if let Err(e) = ensure_excluded(&root, &pattern) {
+            if let Err(e) = ensure_excluded(&root, std::slice::from_ref(&pattern)) {
                 tracing::warn!(
                     error = %e,
                     index_path = %index_path.display(),
@@ -620,19 +620,39 @@ fn warn_paused_op(last_warned: &AtomicU64, op: &PausedGitOp) {
     }
 }
 
-/// Idempotently add the atomic-write temp-file prefix to the repo's
-/// local `.git/info/exclude` (not the tracked `.gitignore`, so the
-/// user's ignore file is untouched). Ensures `git add -A` never stages
-/// an in-flight temp sibling.
+/// The patterns [`ensure_wip_excluded`] keeps in `.git/info/exclude`
+/// whatever the index location: the atomic-write temp prefix (bare, so git
+/// applies it at any depth), and the default index location with every
+/// file beside it, anchored at the repository root. The index is a cache,
+/// and a rebuild leaves a `.previous` copy and, while it runs, a
+/// `.rebuild-*` file beside the database; a vault that ignores only
+/// `index.db` would otherwise commit them (#526 review).
+///
+/// The default rule stays when a per-machine override (#998) moves the
+/// index: a file left at the default location from before the move is a
+/// cache all the same. An override inside the vault gets its own rule on
+/// top ([`relocated_index_exclude_pattern`]); one outside the vault needs
+/// none.
+fn excluded_patterns() -> [String; 2] {
+    [
+        format!("{}*", cdno_core::store::WIP_TEMP_PREFIX),
+        format!("/{}*", cdno_core::paths::INDEX_DB),
+    ]
+}
+
+/// Idempotently add [`excluded_patterns`] to the repo's local
+/// `.git/info/exclude` (not the tracked `.gitignore`, so the user's ignore
+/// file is untouched). Ensures `git add -A` never stages an in-flight temp
+/// sibling or anything of an index at the default location.
 fn ensure_wip_excluded(root: &Path) -> Result<()> {
-    ensure_excluded(root, &format!("{}*", cdno_core::store::WIP_TEMP_PREFIX))
+    ensure_excluded(root, &excluded_patterns())
 }
 
 /// The `.git/info/exclude` pattern for an index that a per-machine
 /// override (#998) placed inside the vault, or `Ok(None)` when there is
 /// nothing to add: the index is outside the vault (the intended setup),
-/// or at the default `.cuaderno/index.db`, which the sweep has always
-/// left to the vault's own `.gitignore` and still does. `Err` says why
+/// or at the default `.cuaderno/index.db`, which the unconditional rule of
+/// [`excluded_patterns`] already covers. `Err` says why
 /// no rule could be built (a path that does not canonicalise, or a
 /// component git's exclude syntax cannot carry: a newline, non-UTF-8),
 /// for the caller to warn about.
@@ -685,17 +705,21 @@ fn relocated_index_exclude_pattern(
     Ok(Some(pattern))
 }
 
-/// Idempotently append one pattern to the repo's local
-/// `.git/info/exclude`.
-fn ensure_excluded(root: &Path, pattern: &str) -> Result<()> {
+/// Idempotently append each of `patterns` that is not there yet to the
+/// repo's local `.git/info/exclude`. Each is written exactly as given: bare
+/// to match at any depth (the wip prefix), or `/`-anchored for one path (an
+/// index).
+fn ensure_excluded(root: &Path, patterns: &[String]) -> Result<()> {
     use std::io::Write;
     let info = root.join(".git").join("info");
     std::fs::create_dir_all(&info).context("creating .git/info")?;
     let exclude = info.join("exclude");
     let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
-    // The pattern is written exactly as given: bare to match at any
-    // depth (the wip prefix), or `/`-anchored for one path (an index).
-    if existing.lines().any(|l| l.trim() == pattern) {
+    let missing: Vec<&String> = patterns
+        .iter()
+        .filter(|p| !existing.lines().any(|l| l.trim() == p.as_str()))
+        .collect();
+    if missing.is_empty() {
         return Ok(());
     }
     let mut f = std::fs::OpenOptions::new()
@@ -703,7 +727,12 @@ fn ensure_excluded(root: &Path, pattern: &str) -> Result<()> {
         .append(true)
         .open(&exclude)
         .context("opening .git/info/exclude")?;
-    writeln!(f, "{pattern}").context("appending to .git/info/exclude")?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        writeln!(f).context("appending to .git/info/exclude")?;
+    }
+    for pattern in missing {
+        writeln!(f, "{pattern}").context("appending to .git/info/exclude")?;
+    }
     Ok(())
 }
 
@@ -884,12 +913,39 @@ mod tests {
         ensure_wip_excluded(dir.path()).unwrap();
         let exclude =
             std::fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap_or_default();
-        let pattern = format!("{}*", cdno_core::store::WIP_TEMP_PREFIX);
-        assert_eq!(
-            exclude.lines().filter(|l| l.trim() == pattern).count(),
-            1,
-            "the exclude rule must be written exactly once"
-        );
+        for pattern in excluded_patterns() {
+            assert_eq!(
+                exclude.lines().filter(|l| l.trim() == pattern).count(),
+                1,
+                "the exclude rule {pattern} must be written exactly once"
+            );
+        }
+    }
+
+    #[test]
+    fn the_index_and_its_rebuild_files_are_never_staged() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        ensure_wip_excluded(dir.path()).unwrap();
+        let cuaderno = dir.path().join(".cuaderno");
+        std::fs::create_dir_all(&cuaderno).unwrap();
+        for name in [
+            "index.db",
+            "index.db-wal",
+            "index.db.previous",
+            "index.db.rebuild-1-0",
+        ] {
+            std::fs::write(cuaderno.join(name), b"x").unwrap();
+        }
+        std::fs::write(cuaderno.join("config.toml"), b"x").unwrap();
+        let out = run_git(
+            dir.path(),
+            &["status", "--porcelain", "--untracked-files=all"],
+        )
+        .unwrap();
+        let status = String::from_utf8_lossy(&out.stdout);
+        assert!(status.contains("config.toml"), "{status}");
+        assert!(!status.contains("index.db"), "{status}");
     }
 
     #[test]
@@ -927,8 +983,8 @@ mod tests {
             .unwrap()
             .expect("inside");
         assert_eq!(pattern, "/local-cache/index.db*");
-        ensure_excluded(dir.path(), &pattern).unwrap();
-        ensure_excluded(dir.path(), &pattern).unwrap();
+        ensure_excluded(dir.path(), std::slice::from_ref(&pattern)).unwrap();
+        ensure_excluded(dir.path(), std::slice::from_ref(&pattern)).unwrap();
         let exclude = std::fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
         assert_eq!(exclude.lines().filter(|l| *l == pattern).count(), 1);
 

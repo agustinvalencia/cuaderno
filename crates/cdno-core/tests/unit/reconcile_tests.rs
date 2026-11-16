@@ -2781,3 +2781,62 @@ fn a_typst_note_written_through_a_transaction_indexes_as_a_reconciled_one() {
     assert_eq!(written.fts_title(path).as_deref(), Some("Error budget"));
     assert_eq!(written.fts_title(path), reconciled.fts_title(path));
 }
+
+// ---------------------------------------------------------------------
+// `admit` — the decision reconciliation makes from a note's bytes (#1007).
+// ---------------------------------------------------------------------
+
+#[test]
+fn admit_names_the_type_of_a_note_reconciliation_indexes() {
+    use cdno_core::reconcile::admit;
+    let md = VaultPath::new("projects/surrogate-model.md").unwrap();
+    let admitted = admit(
+        &md,
+        "---\ntype: project\ntitle: Surrogate model\ntags: [a]\n---\n# Surrogate model\n",
+        &[],
+    )
+    .expect("admitted");
+    assert_eq!(admitted.note_type, "project");
+    assert_eq!(admitted.title.as_deref(), Some("Surrogate model"));
+    assert_eq!(admitted.body, "# Surrogate model\n");
+
+    let typ = VaultPath::new("concepts/bias-variance-split.typ").unwrap();
+    let source = "#metadata((type: \"concept\")) <cdno>\n\n= Bias variance split\n";
+    let admitted = admit(&typ, source, &["concept".to_owned()]).expect("admitted");
+    assert_eq!(admitted.note_type, "concept");
+}
+
+#[test]
+fn admit_refuses_what_reconciliation_leaves_out_of_the_index() {
+    use cdno_core::reconcile::{Refusal, admit};
+    let md = VaultPath::new("projects/surrogate-model.md").unwrap();
+    for (content, reason) in [
+        ("# No frontmatter at all\n", "frontmatter parse failed"),
+        (
+            "---\nstatus: active\n---\n",
+            "missing or invalid `type` field",
+        ),
+        (
+            "---\ntype: [project]\n---\n",
+            "missing or invalid `type` field",
+        ),
+        (
+            "---\ntype: project\ntitle: [x]\n---\n",
+            "invalid `title` field",
+        ),
+        ("---\ntype: project\ntags: 3\n---\n", "invalid `tags` field"),
+    ] {
+        match admit(&md, content, &[]) {
+            Err(Refusal::Invalid(got)) => assert!(got.starts_with(reason), "{content:?}: {got}"),
+            other => panic!("{content:?}: expected Invalid({reason}), got {other:?}"),
+        }
+    }
+
+    // A `.typ` whose type the vault does not admit as Typst.
+    let typ = VaultPath::new("concepts/bias-variance-split.typ").unwrap();
+    let source = "#metadata((type: \"project\")) <cdno>\n\n= Not here\n";
+    assert_eq!(
+        admit(&typ, source, &["concept".to_owned()]).unwrap_err(),
+        Refusal::Unadmitted("project".to_owned())
+    );
+}

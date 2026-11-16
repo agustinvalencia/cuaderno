@@ -495,6 +495,39 @@ impl CuadernoServer {
         let dtos: Vec<SearchResultDto> = results.into_iter().map(Into::into).collect();
         json_result(dtos)
     }
+
+    #[tool(
+        description = "The health of the vault's index (the cache of the notes search, context and writes read), as this server sees the file. Normally a `quick_check`, milliseconds; while damage only the thorough `integrity_check` sees is outstanding it reports that check instead, reusing one from the last minute or running one, which reads the whole file and makes other tool calls wait (seconds on a large vault), so do not poll it in a loop. Returns `check` (`kind`, `ok`, `problems`, `at`), `index_path` (`<vault>/.cuaderno/index.db` unless `CUADERNO_INDEX_PATH` or `--index-path` moved it), `last_sweep` (counts, and the first notes it could not index with why), `last_rebuild`, `damage_at_open`, and `damage_rebuilds_recent` (repairs damage triggered in the last hour). `repair` is what the server does about damage now: `automatic`; `damage_recurring` (the damage came back after repeated repairs, so it stopped repairing: another machine or container is writing the index file; tell the person `advice`, which is to give this machine its own index; it ends by itself when a check finds the file sound again, else at a successful `rebuild_index` or a restart); or `restart_required` (too damaged for the running server to write over: tell the person the server needs a restart; `restart_required` is also true). `healthy`: the check passed, no more thorough check has found damage since the index was last sound, and the damage is not recurring. `notes_not_indexed` counts notes the latest sweep could not index, nearly always notes that do not parse (`lint` names them), which leave `healthy` alone. Call it when a tool reports a damaged index or `index stale after successful commit`, or results look wrong. The notes on disk are the source of truth; an unhealthy index never means they are lost. The repair contains a fault on one machine; it does not make an index shared between machines safe. `rebuild_index` forces a rebuild."
+    )]
+    pub async fn index_status(
+        &self,
+        Parameters(_input): Parameters<EmptyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let health = index_health_or_error(self)?;
+        let status = tokio::task::spawn_blocking(move || health.status())
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "index_status panicked on the blocking pool");
+                ErrorData::internal_error(
+                    "internal error while checking the index".to_string(),
+                    None,
+                )
+            })?;
+        json_result(status)
+    }
+}
+
+/// The server's index-health supervisor, or the error a server without
+/// one returns (both binaries attach one; a bare test server may not).
+pub(crate) fn index_health_or_error(
+    server: &CuadernoServer,
+) -> Result<std::sync::Arc<crate::index_health::IndexHealth>, ErrorData> {
+    server.index_health().cloned().ok_or_else(|| {
+        ErrorData::internal_error(
+            "index health is not available on this server".to_string(),
+            None,
+        )
+    })
 }
 
 /// Refuse a note reference naming somewhere outside the vault as

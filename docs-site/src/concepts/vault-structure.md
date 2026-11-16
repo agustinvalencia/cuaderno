@@ -133,6 +133,13 @@ CUADERNO_INDEX_PATH=/var/lib/cuaderno/surrogate-model.db \
   file a rebuild writes, are created beside the database file, so its directory must be writable
   and must not be a single file mounted on its own. A missing parent directory is created. An index
   on storage that is wiped (a container's writable layer, say) is rebuilt from nothing each time.
+- **The servers repair it where it is.** An MCP server checks and repairs an overridden index like
+  one at the default location (see
+  [The index looks after itself](../reference/mcp/overview.md#the-index-looks-after-itself)): the
+  fresh file a rebuild builds, and the `.previous` copy it keeps of a damaged file, sit beside the
+  override's database file, nothing is written under `.cuaderno/`, and the rebuilt index stays bound
+  to its vault. A file the override refuses (not cuaderno's index, or another vault's) is refused at
+  start as above, never repaired or moved aside.
 - **Keep it off the shared folder.** Use the machine's own storage. An override inside the vault
   works, but the file stays on the share, a file-sync tool picks it up, and only `cdno-mcp-server`'s
   git checkpoints exclude it: the CLI and the stdio server add no ignore rule, so your own
@@ -149,7 +156,7 @@ CUADERNO_INDEX_PATH=/var/lib/cuaderno/surrogate-model.db \
   setting has to differ from one machine to the next.
 
 **What it does not do.** The override stops the damage, not the staleness. Each machine's index
-learns of the other machine's writes only when it reconciles: the CLI at every command except [`cdno now`](../reference/cli/now.md), which never opens the index, the HTTP
+learns of the other machine's writes only when it reconciles: the CLI at every command except [`cdno now`](../reference/cli/now.md) and [shell completion](../reference/cli/completions.md#what-a-tab-press-reads), which never open the index, the HTTP
 server at start and then every `--reconcile-interval-secs` (300 seconds by default), and the stdio
 server only at start ([#1002](https://github.com/agustinvalencia/cuaderno/issues/1002)). In that
 window search and backlinks can miss the other side's latest notes, and the active-project cap and

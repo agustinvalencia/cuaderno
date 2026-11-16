@@ -375,3 +375,74 @@ fn an_index_under_a_path_with_uri_characters_is_still_recognised() {
     );
     drop(SqliteIndex::open_location(&overridden(&index), &vault).unwrap());
 }
+
+/// The in-place rebuild (#526) over an overridden index: the fresh file is
+/// built beside the override, bound to the same vault before the copy, so
+/// the live file comes out bound and still cuaderno's.
+#[test]
+fn an_in_place_copy_keeps_an_overridden_index_bound_to_its_vault() {
+    let (_dir, a, _b, index) = two_vaults();
+    let live = SqliteIndex::open_location(&overridden(&index), &a).unwrap();
+    assert_eq!(live.binding(), Some(canonical_vault_root(&a).as_str()));
+
+    let fresh = live.open_fresh_beside().unwrap();
+    assert_eq!(fresh.path().parent(), index.parent(), "built beside it");
+    assert_eq!(
+        SqliteIndex::bound_vault_root(fresh.path()).unwrap(),
+        Some(canonical_vault_root(&a))
+    );
+    live.replace_contents_from(&fresh).unwrap();
+    drop(fresh);
+    drop(live);
+
+    SqliteIndex::ensure_discardable(&index).expect("still cuaderno's index");
+    assert_eq!(
+        SqliteIndex::bound_vault_root(&index).unwrap(),
+        Some(canonical_vault_root(&a))
+    );
+    drop(SqliteIndex::open_location(&overridden(&index), &a).unwrap());
+}
+
+/// The default location is never bound, before or after a rebuild.
+#[test]
+fn an_in_place_copy_at_the_default_location_writes_no_binding() {
+    let dir = TempDir::new().unwrap();
+    let location = IndexLocation {
+        path: dir.path().join(INDEX_DB),
+        overridden: false,
+    };
+    let live = SqliteIndex::open_location(&location, dir.path()).unwrap();
+    assert_eq!(live.binding(), None);
+    let fresh = live.open_fresh_beside().unwrap();
+    live.replace_contents_from(&fresh).unwrap();
+    drop(fresh);
+    drop(live);
+    assert_eq!(SqliteIndex::bound_vault_root(&location.path).unwrap(), None);
+}
+
+/// A live file rebound to another vault since it was opened is not taken
+/// back by a copy: the copy is refused and the other binding stays.
+#[test]
+fn an_in_place_copy_refuses_a_file_another_vault_bound_since() {
+    let (_dir, a, b, index) = two_vaults();
+    let live = SqliteIndex::open_location(&overridden(&index), &a).unwrap();
+    let other = canonical_vault_root(&b);
+    live.with_connection(|c| {
+        c.execute(
+            "UPDATE index_meta SET value = ?1 WHERE key = 'vault_root'",
+            [&other],
+        )
+    })
+    .unwrap();
+    let fresh = live.open_fresh_beside().unwrap();
+
+    let err = live.replace_contents_from(&fresh).unwrap_err();
+
+    assert!(
+        matches!(err, IndexError::BoundToOtherVault { .. }),
+        "{err:?}"
+    );
+    drop(fresh);
+    drop(live);
+    assert_eq!(SqliteIndex::bound_vault_root(&index).unwrap(), Some(other));
+}

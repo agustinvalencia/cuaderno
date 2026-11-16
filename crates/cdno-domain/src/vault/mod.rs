@@ -24,6 +24,7 @@ use std::sync::Arc;
 use cdno_core::classify::NoteScope;
 use cdno_core::config::VaultConfig;
 use cdno_core::index::VaultIndex;
+use cdno_core::path::VaultPath;
 use cdno_core::reconcile::{ReconciliationReport, reconcile};
 use cdno_core::store::VaultStore;
 use cdno_core::transaction::VaultTransaction;
@@ -34,6 +35,7 @@ use crate::method_version::{Gate, METHOD_VERSION, UNSTAMPED_READS_AS, method_gat
 
 mod actions;
 mod capture;
+mod catalog;
 mod closure;
 mod commitments;
 pub mod config;
@@ -109,6 +111,10 @@ pub(in crate::vault) fn iso_week_label(date: chrono::NaiveDate) -> String {
     format!("{}-W{:02}", iso.year(), iso.week())
 }
 
+// The readers that answer without the index (#1003, #1007).
+pub use catalog::Catalog;
+pub use journal::Journal;
+
 pub use capture::InboxItem;
 pub use commitments::{CommitmentEntry, CommitmentSource};
 pub use config::{ConfigDocument, ConfigSaveError, ConfigValidationError, validate_config_str};
@@ -122,7 +128,6 @@ pub use context::{
 #[doc(hidden)]
 pub use context::{days_since_mtime_in, mtime_threshold_ns_in};
 pub use daily::{DailyNoteView, DailySection};
-pub use journal::Journal;
 pub use links::ResolvedLink;
 pub use method_status::MethodStatus;
 pub use migrate::{
@@ -208,8 +213,9 @@ fn note_scope_for(config: &VaultConfig) -> Result<NoteScope, DomainError> {
     })
 }
 
-/// The config checks every open of a vault runs, [`Vault::new`] and
-/// [`Journal::new`] alike, so a config one refuses the other refuses too.
+/// The config checks every open of a vault runs, [`Vault::new`],
+/// [`Journal::new`] and [`Catalog::new`] alike, so a config one refuses the
+/// others refuse too.
 pub(in crate::vault) fn validate_config_at_open(
     config: &mut VaultConfig,
 ) -> Result<(), DomainError> {
@@ -226,6 +232,17 @@ pub(in crate::vault) fn validate_config_at_open(
 }
 
 impl Vault {
+    /// The [`NoteScope`] a vault opened on `config` would reconcile with,
+    /// for a caller that has to reconcile before the vault exists (the
+    /// checked open's rebuild of a damaged index, #526). Validates a copy
+    /// of the config the way [`new`](Self::new) validates its own.
+    pub fn note_scope_of(config: &VaultConfig) -> Result<NoteScope, DomainError> {
+        let mut config = config.clone();
+        config.ignore_set()?;
+        crate::type_registry::TypeRegistry::validate(&mut config)?;
+        note_scope_for(&config)
+    }
+
     /// Construct a vault and run startup reconciliation. The returned
     /// [`ReconciliationReport`] lets callers surface scan counts or
     /// per-file issues without re-running the pass.
@@ -262,6 +279,21 @@ impl Vault {
 
     pub fn config(&self) -> &VaultConfig {
         &self.config
+    }
+
+    /// The indexed notes of `note_type`, in path order: what the listing
+    /// folds shared with [`Catalog`] are handed when they answer from the
+    /// index.
+    pub(in crate::vault) fn indexed_paths(
+        &self,
+        note_type: crate::note_type::NoteType,
+    ) -> Result<Vec<VaultPath>, DomainError> {
+        Ok(self
+            .index
+            .list_by_type(note_type.as_str())?
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect())
     }
 
     /// A registry view over this vault's built-in and config-defined note

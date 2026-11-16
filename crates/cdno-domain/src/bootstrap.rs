@@ -27,7 +27,7 @@ use cdno_core::classify::NoteScope;
 use cdno_core::config::VaultConfig;
 use cdno_core::error::{ConfigError, IndexError, IndexPathError};
 use cdno_core::index::{SqliteIndex, VaultIndex};
-use cdno_core::paths;
+use cdno_core::paths::{self, IndexLocation};
 use cdno_core::reconcile::ReconciliationReport;
 use cdno_core::store::{FsVaultStore, VaultStore};
 
@@ -46,6 +46,19 @@ pub struct OpenedVault {
     pub index: Arc<dyn VaultIndex>,
     pub scope: Arc<NoteScope>,
     pub report: ReconciliationReport,
+    /// The same index as [`index`](Self::index), concretely: the handle
+    /// a long-lived caller checks and rebuilds in place (#526). `index`
+    /// and this are one object, so a rebuild through it is seen through
+    /// the vault too.
+    pub sqlite: Arc<SqliteIndex>,
+    /// What [`open_vault_checked`] found wrong with the index before it
+    /// rebuilt it; `None` when it found nothing, or when the open did not
+    /// check.
+    pub damage_at_open: Option<Vec<String>>,
+    /// True when the open found damage and repaired it (rebuilt the index,
+    /// or emptied it for the startup reconciliation to fill); false when it
+    /// found none, did not check, or started on the damaged file as it is.
+    pub repaired_at_open: bool,
     /// The index database file this open used, after the per-machine
     /// override was resolved ([`paths::resolve_index_path`]). Kept so
     /// a long-running caller can name it in logs and keep it out of a
@@ -86,7 +99,7 @@ pub enum BootstrapError {
 /// The index is at its default location, `<root>/.cuaderno/index.db`; a
 /// binary that honours an override calls [`open_vault_with_index`].
 pub fn open_vault(root: &Path) -> Result<OpenedVault, BootstrapError> {
-    open_vault_with_index(root, None)
+    open(root, None, false)
 }
 
 /// [`open_vault`] with the index override the binary read
@@ -100,6 +113,151 @@ pub fn open_vault_with_index(
     root: &Path,
     index_override: Option<&OsStr>,
 ) -> Result<OpenedVault, BootstrapError> {
+    open(root, index_override, false)
+}
+
+/// [`open_vault_with_index`] for a long-lived process: before the startup
+/// reconciliation, run `PRAGMA quick_check` on the index, and if it
+/// reports damage, rebuild it in place from the notes
+/// ([`cdno_core::reconcile::rebuild`]), keeping a copy of the damaged file
+/// beside it as `<index>.previous` and carrying across the archival
+/// snapshots it can still read. It also clears rebuild files a killed
+/// rebuild left behind.
+///
+/// When the rebuild fails because the live file is too damaged to be
+/// written over (a corruption error from the copy), the index is emptied in
+/// place instead, under the vault write lock and only if it still fails its
+/// check there, and the startup reconciliation fills it (the snapshots are
+/// then lost, as with `cdno reindex`). Any other failure (the vault lock
+/// held past its timeout by another process repairing the same file, a busy
+/// database, an I/O error) leaves the index as it is: the server starts on
+/// it, reports the damage, and its sweep or the next tool call to meet the
+/// damage tries again. So a second server starting while the first repairs
+/// never undoes the first's repair.
+///
+/// The index is wherever the override puts it, and every file the repair
+/// writes sits beside that file. The override's refusals come first and are
+/// final: a file that is not cuaderno's index, or is bound to another vault,
+/// fails the open exactly as in [`open_vault_with_index`], and is never
+/// checked, rebuilt or set aside. A rebuilt overridden index stays bound to
+/// this vault.
+///
+/// A damaged file can open and answer queries normally, so the open-time
+/// self-heal, which only catches a file SQLite refuses outright, misses
+/// it, and a restart then reopens the same damage (#526). The check costs
+/// tens of milliseconds, which a CLI pays on every command and a server
+/// pays once.
+pub fn open_vault_checked(
+    root: &Path,
+    index_override: Option<&OsStr>,
+) -> Result<OpenedVault, BootstrapError> {
+    open(root, index_override, true)
+}
+
+/// The checked open's fallback when the rebuild could not write over the
+/// damaged file: empty the index in place, so the startup reconciliation
+/// fills it and any other process holding the file sees the same
+/// empty-then-filled index. Renaming the file away would strand those
+/// processes on the damaged one, so that is only the last resort, when even
+/// the in-place copy is refused as damage (a header too damaged to write
+/// over).
+///
+/// Everything here runs under the vault write lock, taken once: without it
+/// nothing is emptied or moved, and the server starts on the index as it is.
+/// Under the lock the file is checked again, and left alone when another
+/// process has repaired it in the meantime.
+///
+/// Neither step ever takes an overridden file from another vault: a
+/// [`IndexError::BoundToOtherVault`] from the emptying is returned as is,
+/// and before an overridden file is set aside the open's guards run again,
+/// under the lock, so a file replaced or rebound since the open is refused
+/// rather than moved.
+fn empty_in_place(
+    sqlite: SqliteIndex,
+    store: &Arc<dyn VaultStore>,
+    location: &IndexLocation,
+    root: &Path,
+    cause: &IndexError,
+) -> Result<SqliteIndex, BootstrapError> {
+    let _lock = match store.acquire_write_lock() {
+        Ok(lock) => lock,
+        Err(e) => {
+            tracing::warn!(
+                error = %cause,
+                lock = %e,
+                index_path = %location.path.display(),
+                "the damaged index could not be rebuilt, and the vault write lock is held \
+                 elsewhere; starting on the index as it is (the sweep or a tool call retries)"
+            );
+            return Ok(sqlite);
+        }
+    };
+    if sqlite.quick_check().is_ok_and(|p| p.is_empty()) {
+        tracing::info!(
+            index_path = %location.path.display(),
+            "another process repaired the index meanwhile; leaving it as it is"
+        );
+        return Ok(sqlite);
+    }
+    let emptied = (|| {
+        let empty = sqlite.open_fresh_beside()?;
+        sqlite.replace_contents_from(&empty)
+    })();
+    match emptied {
+        Ok(()) => {
+            tracing::warn!(
+                error = %cause,
+                "rebuilding the damaged index failed; emptied it in place, and the startup \
+                 reconciliation refills it from the notes"
+            );
+            Ok(sqlite)
+        }
+        Err(e @ IndexError::BoundToOtherVault { .. }) => Err(e.into()),
+        Err(e) if e.is_corruption() => {
+            tracing::warn!(
+                error = %cause,
+                emptying = %e,
+                index_path = %location.path.display(),
+                "rebuilding the damaged index failed and it could not be emptied in place; \
+                 setting it aside and starting from an empty one (another process with it open \
+                 keeps the old file until it restarts)"
+            );
+            drop(sqlite);
+            if location.overridden {
+                SqliteIndex::ensure_discardable(&location.path)?;
+                let canonical = cdno_core::index::canonical_vault_root(root);
+                if let Some(bound) = SqliteIndex::bound_vault_root(&location.path)?
+                    && bound != canonical
+                {
+                    return Err(IndexError::BoundToOtherVault {
+                        index: location.path.display().to_string(),
+                        bound,
+                        root: canonical,
+                    }
+                    .into());
+                }
+            }
+            SqliteIndex::set_aside(location)?;
+            Ok(SqliteIndex::open_location(location, root)?)
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %cause,
+                emptying = %e,
+                index_path = %location.path.display(),
+                "the damaged index could not be rebuilt or emptied; starting on it as it is \
+                 (the sweep or a tool call retries)"
+            );
+            Ok(sqlite)
+        }
+    }
+}
+
+fn open(
+    root: &Path,
+    index_override: Option<&OsStr>,
+    check: bool,
+) -> Result<OpenedVault, BootstrapError> {
     let cuaderno_dir = root.join(paths::CUADERNO_DIR);
     if !cuaderno_dir.is_dir() {
         return Err(BootstrapError::NotAVault {
@@ -112,7 +270,62 @@ pub fn open_vault_with_index(
     // A malformed glob is a config error, reported before the index opens.
     config.ignore_set()?;
     let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(root));
-    let index: Arc<dyn VaultIndex> = Arc::new(SqliteIndex::open_location(&location, root)?);
+    // The override's refusals (not an index, bound to another vault)
+    // happen here, before any check or repair can touch the file.
+    let mut sqlite = SqliteIndex::open_location(&location, root)?;
+    let mut damage_at_open = None;
+    let mut repaired_at_open = false;
+    if check {
+        SqliteIndex::clear_stale_rebuilds(&location.path);
+        // A check that cannot run (a busy or unreadable file) is no reason
+        // to refuse to start: before the check existed the server would
+        // have started, and the sweep checks again.
+        let problems = sqlite.quick_check().unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "the index integrity check could not run at open");
+            Vec::new()
+        });
+        if !problems.is_empty() {
+            tracing::warn!(
+                problems = ?problems,
+                index_path = %location.path.display(),
+                "the index failed its integrity check at open; rebuilding it from the notes \
+                 (a copy of the damaged file is kept beside it, with `.previous` appended)"
+            );
+            let scope = Vault::note_scope_of(&config)?;
+            match cdno_core::reconcile::rebuild(&store, &sqlite, &scope, true) {
+                Ok(rebuilt) => {
+                    if !rebuilt.snapshots_lost.is_empty() {
+                        tracing::warn!(
+                            lost = ?rebuilt.snapshots_lost,
+                            "some archival snapshots could not be carried into the rebuilt index"
+                        );
+                    }
+                }
+                // Never empty or set aside a file another vault has bound
+                // since the open: refuse, as the open itself would have.
+                Err(e @ IndexError::BoundToOtherVault { .. }) => return Err(e.into()),
+                // Only a file too damaged to write over is emptied or set
+                // aside. Anything else, a lock another process holds while
+                // it repairs the same file above all, leaves the index as
+                // it is for the sweep or a tool call to retry.
+                Err(e) if e.is_corruption() => {
+                    sqlite = empty_in_place(sqlite, &store, &location, root, &e)?;
+                }
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    index_path = %location.path.display(),
+                    "the damaged index could not be rebuilt at open; starting on it as it is \
+                     (the sweep or a tool call retries)"
+                ),
+            }
+            // Repaired: rebuilt, or emptied for the startup reconcile to
+            // fill; not when it started on the damaged file as it is.
+            repaired_at_open = sqlite.quick_check().is_ok_and(|p| p.is_empty());
+            damage_at_open = Some(problems);
+        }
+    }
+    let sqlite = Arc::new(sqlite);
+    let index: Arc<dyn VaultIndex> = sqlite.clone();
     let (vault, report) = Vault::new(store.clone(), index.clone(), config)?;
     let scope = Arc::new(vault.note_scope()?);
     tracing::debug!(
@@ -129,6 +342,9 @@ pub fn open_vault_with_index(
         index,
         scope,
         report,
+        sqlite,
+        damage_at_open,
+        repaired_at_open,
         index_path: location.path,
     })
 }
