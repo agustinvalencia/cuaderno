@@ -97,8 +97,28 @@ as the one that found the damage finds the file sound again (another process rep
 other writer went away); otherwise it stays until a `rebuild_index` succeeds or the server
 restarts. A successful `rebuild_index` allows one more automatic repair before the server stops
 again, not a fresh count, so answering each stop with it cannot keep a shared index repairing. A file too
-damaged for the running server to write over is reported as `restart_required`: the server needs a
-restart, whose start replaces such a file; the notes are intact.
+damaged to write over in place (its header) is moved aside to `.previous` under the vault write lock
+and replaced by a fresh one, filled from the notes, without a restart (`last_rebuild.set_aside` in
+`index_status`); its archival snapshots are lost.
+
+**When the files move under a server.** A server opens the index once and reads and writes it
+through its open files, not its path. When another process deletes, moves aside or replaces the
+database file (`cdno reindex` setting a damaged file aside, `cdno reindex --rebind`, the open-time
+self-heal, a restore from backup), or deletes its `-wal` and `-shm` (a process on another kernel,
+which cannot see this one's locks, closing as "the last connection"), the server would go on with
+files no other process sees, and its own check would describe that copy rather than the file. So
+the first thing every sweep does, and every tool call that meets a damaged index, is a cheap check
+that the files the server holds are still the ones at the index path. When they are not, the server
+reopens the index on the file at the path, reconciles it, and only then checks it, rebuilding it as
+above if the file itself is damaged. Each reopen is logged at WARN with what was found, and
+`index_status` reports the latest one (`last_reopen`) and whether the server holds its files now
+(`files`). A reopen fixes the server's view, not damage, so it does not count towards the stop
+above; but files that keep moving mean something else is managing the index file, so after three
+automatic reopens within an hour the server stops reopening by itself, says so once in the log, and
+reports `repair: reopen_recurring` with the same advice: give this machine its own index. A
+`rebuild_index` reopens first and ends that stop. Nothing on one machine trips the check while the
+server is running: checkpoints keep the log's file, and no other process there can delete it while
+the server holds it open.
 
 ## Focus
 

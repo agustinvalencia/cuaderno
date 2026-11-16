@@ -82,7 +82,11 @@ pub fn canonical_vault_root(root: &Path) -> String {
 /// measurable bottleneck — e.g. an agentic flow where multiple
 /// workers read vault state while one writes. SQLite itself always
 /// serialises writers, so a pool helps readers only; don't add the
-/// dep until there's evidence.
+/// dep until there's evidence. The connection behind the mutex can be
+/// replaced ([`reopen`](Self::reopen), #1000) when the files it holds are
+/// no longer the ones at its path, so holders of the index never see the
+/// swap; a pool would have to swap every connection the same way, and
+/// close them all before the first reopen of the same file.
 pub struct SqliteIndex {
     conn: Mutex<Connection>,
     /// Where the database file lives, so [`open_fresh_beside`](Self::open_fresh_beside)
@@ -95,6 +99,169 @@ pub struct SqliteIndex {
     /// rebuilt overridden index is still bound to this vault, and the copy
     /// refuses a live file another vault has bound since.
     binding: Option<String>,
+    /// The files the connection holds, as they were when it opened them,
+    /// for [`check_files`](Self::check_files) to compare with what the path
+    /// names now (#1000). Locked only while the connection is, and after it.
+    held: Mutex<HeldFiles>,
+}
+
+/// A file's identity on disk: the device and inode a descriptor to it
+/// refers to, which a path that has been unlinked, renamed over or
+/// recreated no longer shares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileId {
+    dev: u64,
+    ino: u64,
+}
+
+/// The identity of the file at `path` now, or `None` when there is none
+/// (or, off unix, always: there the check rests on SQLite's own).
+fn file_id(path: &Path) -> Option<FileId> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        fs::metadata(path).ok().map(|m| FileId {
+            dev: m.dev(),
+            ino: m.ino(),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// What a connection holds: the database file and, in WAL mode, its
+/// write-ahead log and shared-memory file, recorded right after the open
+/// (when the connection has all three open and keeps them open until it
+/// closes), under the name SQLite itself resolved, so an index reached
+/// through a symlink is compared at the files SQLite uses.
+#[derive(Debug, Clone)]
+struct HeldFiles {
+    db_path: PathBuf,
+    db: Option<FileId>,
+    wal: Option<FileId>,
+    shm: Option<FileId>,
+    /// Set when a reopen closed the connection and could not open the file
+    /// again: the mutex then holds a placeholder, and every query fails
+    /// until a reopen succeeds.
+    detached: Option<String>,
+}
+
+impl HeldFiles {
+    fn of(conn: &Connection, path: &Path) -> Self {
+        let db_path = conn
+            .path()
+            .filter(|p| !p.is_empty())
+            .map_or_else(|| path.to_path_buf(), PathBuf::from);
+        Self {
+            db: file_id(&db_path),
+            wal: file_id(&sibling(&db_path, "-wal")),
+            shm: file_id(&sibling(&db_path, "-shm")),
+            db_path,
+            detached: None,
+        }
+    }
+}
+
+/// What [`SqliteIndex::check_files`] found: whether the files the
+/// connection reads and writes are still the ones its path names (#1000).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileCheck {
+    /// They are.
+    Held,
+    /// The database file at the path is not the one the connection has
+    /// open: it was deleted, moved aside or replaced. The connection reads
+    /// and writes a file no other process opening the path sees.
+    DatabaseMoved(String),
+    /// The database file is the one the connection has open, but its
+    /// write-ahead log or shared-memory file was deleted or replaced at the
+    /// path: the connection commits into, and reads through, orphans.
+    SidecarsMoved(String),
+    /// A reopen closed the connection and could not open the file again,
+    /// so nothing is held and every query fails until a reopen succeeds.
+    Detached(String),
+}
+
+impl FileCheck {
+    /// True when the connection's files are the ones at the path.
+    pub fn is_held(&self) -> bool {
+        matches!(self, Self::Held)
+    }
+
+    /// What was found, in a sentence, or `None` when the files are held.
+    pub fn finding(&self) -> Option<&str> {
+        match self {
+            Self::Held => None,
+            Self::DatabaseMoved(s) | Self::SidecarsMoved(s) | Self::Detached(s) => Some(s),
+        }
+    }
+}
+
+impl std::fmt::Display for FileCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            self.finding()
+                .unwrap_or("the index files are the ones at its path"),
+        )
+    }
+}
+
+/// Whether SQLite itself reports the database file `conn` has open as
+/// moved: `SQLITE_FCNTL_HAS_MOVED`, which compares the open descriptor's
+/// inode with the file the path names now (true when the path names none).
+/// A VFS that does not implement it reports not moved.
+fn sqlite_says_moved(conn: &Connection) -> bool {
+    let mut moved: std::os::raw::c_int = 0;
+    // SAFETY: the handle is valid for the borrow of `conn`, the schema
+    // name is NUL-terminated, and HAS_MOVED writes one `int` through the
+    // pointer, which points at a live `c_int`.
+    let rc = unsafe {
+        rusqlite::ffi::sqlite3_file_control(
+            conn.handle(),
+            c"main".as_ptr(),
+            rusqlite::ffi::SQLITE_FCNTL_HAS_MOVED,
+            (&mut moved as *mut std::os::raw::c_int).cast(),
+        )
+    };
+    rc == rusqlite::ffi::SQLITE_OK && moved != 0
+}
+
+/// Whether the database file `held` records is still the one at its path.
+fn database_finding(conn: &Connection, held: &HeldFiles) -> Option<String> {
+    let path = held.db_path.display();
+    let now = file_id(&held.db_path);
+    if sqlite_says_moved(conn) || (held.db.is_some() && now != held.db) {
+        return Some(if now.is_none() {
+            format!("the index database file {path} was deleted or moved away")
+        } else {
+            format!("the index database file {path} was replaced by another file")
+        });
+    }
+    None
+}
+
+/// Close a connection whose files may no longer be its own without
+/// touching any file by name. The last connection to a WAL database
+/// normally checkpoints on close and then deletes `-wal` and `-shm` AT THE
+/// PATH: when the database file has moved, SQLite skips that itself
+/// (`SQLITE_FCNTL_HAS_MOVED`), but when only the sidecars were deleted
+/// under it, it would checkpoint its orphaned log over pages another
+/// process may have changed since and then delete whatever sidecars the
+/// path names now, another connection's. `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE`
+/// skips both: the close checkpoints nothing and deletes nothing (both
+/// halves are measured in the core `index_reopen_tests`). A close
+/// that fails (it cannot, with no statement outstanding under the mutex)
+/// leaks the connection rather than panicking in `Drop`.
+fn close_detached(conn: Connection) {
+    let _ = conn.set_db_config(
+        rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+        true,
+    );
+    if let Err((conn, _)) = conn.close() {
+        std::mem::forget(conn);
+    }
 }
 
 impl std::fmt::Debug for SqliteIndex {
@@ -131,8 +298,9 @@ impl SqliteIndex {
     /// in its place, for the caller's reconciliation to fill (#206). That
     /// self-heal takes no lock and cannot rebuild in place, since there is
     /// no connection to copy into: a process that already has the file
-    /// open (a server, `cdno watch`) stays on the deleted file until it
-    /// restarts, as with any file that damaged. `cdno reindex` does not
+    /// open stays on the deleted file until it reopens (a server finds it
+    /// moved on its next sweep, [`check_files`](Self::check_files)) or, for
+    /// one that never checks (`cdno watch`), restarts. `cdno reindex` does not
     /// use it: it opens through
     /// [`open_location_unhealed`](Self::open_location_unhealed) and moves
     /// such a file aside under the vault write lock (#999).
@@ -178,18 +346,166 @@ impl SqliteIndex {
     /// [`open_connection`](Self::open_connection), setting the page size
     /// first when one is given. It only takes effect on a new, empty file.
     fn open_connection_sized(path: &Path, page_size: Option<u32>) -> Result<Self, IndexError> {
-        let conn = Connection::open(path)?;
-        if let Some(size) = page_size {
-            conn.pragma_update(None, "page_size", size)?;
-        }
-        configure_connection(&conn)?;
-        apply_pending_migrations(&conn)?;
-
+        let conn = open_configured(path, page_size)?;
         Ok(Self {
+            held: Mutex::new(HeldFiles::of(&conn, path)),
             conn: Mutex::new(conn),
             path: path.to_path_buf(),
             binding: None,
         })
+    }
+
+    fn lock_held(&self) -> std::sync::MutexGuard<'_, HeldFiles> {
+        self.held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Whether the files this index's connection reads and writes are still
+    /// the ones its path names (#1000): the database file (its device and
+    /// inode, and SQLite's own `SQLITE_FCNTL_HAS_MOVED`), and the `-wal`
+    /// and `-shm` a WAL-mode connection keeps open from its open to its
+    /// close. A few `stat` calls, so cheap enough for every sweep and every
+    /// corruption-shaped error.
+    ///
+    /// What it catches: the database deleted, moved aside or replaced at the
+    /// path (`cdno reindex`'s set-aside, `reindex --rebind`, the open's
+    /// self-heal, a restore), and the sidecars deleted under the connection
+    /// by a process that took itself for the last connection, which happens
+    /// when the two run on kernels whose locks do not reach each other (a
+    /// container and its host, a network share) and the other one exits.
+    ///
+    /// What does not trip it: anything on one machine while this connection
+    /// is open. A checkpoint, even `TRUNCATE`, keeps the log's inode, and no
+    /// other connection on this kernel can take the exclusive lock that
+    /// deleting the log needs while this one holds its shared lock. A
+    /// sidecar that did not exist at the open is recorded the first time
+    /// it is seen rather than reported.
+    pub fn check_files(&self) -> FileCheck {
+        let conn = self.lock_conn();
+        let mut held = self.lock_held();
+        if let Some(error) = &held.detached {
+            return FileCheck::Detached(format!(
+                "the index connection was closed and could not be opened again: {error}"
+            ));
+        }
+        if let Some(finding) = database_finding(&conn, &held) {
+            return FileCheck::DatabaseMoved(finding);
+        }
+        if held.db.is_none() {
+            held.db = file_id(&held.db_path);
+        }
+        let held = &mut *held;
+        let db_path = &held.db_path;
+        for (suffix, recorded) in [("-wal", &mut held.wal), ("-shm", &mut held.shm)] {
+            let path = sibling(db_path, suffix);
+            match (*recorded, file_id(&path)) {
+                (Some(was), Some(now)) if was != now => {
+                    return FileCheck::SidecarsMoved(format!(
+                        "{} was replaced by another file while this connection had it open",
+                        path.display()
+                    ));
+                }
+                (Some(_), None) => {
+                    return FileCheck::SidecarsMoved(format!(
+                        "{} was deleted while this connection had it open",
+                        path.display()
+                    ));
+                }
+                (None, now @ Some(_)) => *recorded = now,
+                _ => {}
+            }
+        }
+        FileCheck::Held
+    }
+
+    /// Replace this index's connection with a fresh one at the same path,
+    /// behind the same mutex, so every holder of the index carries on with
+    /// no change: what to do when [`check_files`](Self::check_files) finds
+    /// the files gone (#1000). The new connection is opened as at
+    /// [`open_location`](Self::open_location), with its migrations, and an
+    /// overridden index keeps its guards and its binding: a file at the path
+    /// that is not cuaderno's index, or is bound to another vault, is
+    /// refused with nothing changed, and an unbound one is bound to this
+    /// vault. There is no self-heal: a file that will not open is returned
+    /// as the error, for the caller to set aside under the vault write lock.
+    ///
+    /// Nothing is in flight on the old connection meanwhile: every
+    /// statement and transaction runs under the mutex, which this holds for
+    /// the swap. The old connection is closed without checkpointing and
+    /// without deleting any file ([`close_detached`]); what it had committed
+    /// only to its own orphaned files is dropped, and the caller's
+    /// reconciliation writes it again from the notes.
+    ///
+    /// The order differs with what moved. When the database file at the
+    /// path is another file, the new connection is opened first and the old
+    /// one is kept when that fails. When it is the same file (only the
+    /// sidecars went), the old connection is closed first: SQLite shares one
+    /// shared-memory mapping per database inode between the connections of a
+    /// process, so a new connection opened beside the old one would read
+    /// through the old, orphaned `-shm`. If the open then fails, the index
+    /// is left detached ([`FileCheck::Detached`]): every query fails until a
+    /// reopen succeeds.
+    ///
+    /// The process must hold no other connection to the file meanwhile, for
+    /// the same reason; a server holds one.
+    pub fn reopen(&self) -> Result<(), IndexError> {
+        let mut conn = self.lock_conn();
+        let mut held = self.lock_held();
+        let same_file = held.detached.is_none() && database_finding(&conn, &held).is_none();
+        if same_file {
+            let placeholder = Connection::open_in_memory()?;
+            close_detached(std::mem::replace(&mut *conn, placeholder));
+            match self.open_for_reopen() {
+                Ok(fresh) => *conn = fresh,
+                Err(e) => {
+                    held.detached = Some(e.to_string());
+                    return Err(e);
+                }
+            }
+        } else {
+            let fresh = self.open_for_reopen()?;
+            close_detached(std::mem::replace(&mut *conn, fresh));
+        }
+        *held = HeldFiles::of(&conn, &self.path);
+        Ok(())
+    }
+
+    /// A new connection at this index's path for [`reopen`](Self::reopen),
+    /// through the guards and binding rules of the open.
+    fn open_for_reopen(&self) -> Result<Connection, IndexError> {
+        let Some(root) = &self.binding else {
+            return open_configured(&self.path, None);
+        };
+        Self::ensure_discardable(&self.path)?;
+        let bound = Self::bound_vault_root(&self.path)?;
+        if let Some(bound) = &bound
+            && bound != root
+        {
+            return Err(IndexError::BoundToOtherVault {
+                index: self.path.display().to_string(),
+                bound: bound.clone(),
+                root: root.clone(),
+            });
+        }
+        let mut conn = open_configured(&self.path, None)?;
+        if bound.is_none() {
+            match bind_on(&mut conn, &self.path, root) {
+                Ok(()) => {}
+                Err(err) if err.is_corruption() => {}
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(conn)
+    }
+
+    /// Where this index lives, as [`open_location`](Self::open_location)
+    /// was given it: overridden when it is bound to a vault.
+    pub fn location(&self) -> crate::paths::IndexLocation {
+        crate::paths::IndexLocation {
+            path: self.path.clone(),
+            overridden: self.binding.is_some(),
+        }
     }
 
     /// Open the index at `location` for the vault at `vault_root`.
@@ -297,27 +613,7 @@ impl SqliteIndex {
     /// is refused rather than overwriting the first. `path` only names the
     /// file in the error.
     pub fn bind_vault_root(&self, path: &Path, root: &str) -> Result<(), IndexError> {
-        let mut conn = self.lock_conn();
-        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        tx.execute(
-            "INSERT OR IGNORE INTO index_meta (key, value) VALUES (?1, ?2)",
-            params![VAULT_ROOT_KEY, root],
-        )?;
-        let bound: String = tx.query_row(
-            "SELECT value FROM index_meta WHERE key = ?1",
-            params![VAULT_ROOT_KEY],
-            |r| r.get(0),
-        )?;
-        tx.commit()?;
-        if bound == root {
-            Ok(())
-        } else {
-            Err(IndexError::BoundToOtherVault {
-                index: path.display().to_string(),
-                bound,
-                root: root.to_owned(),
-            })
-        }
+        bind_on(&mut self.lock_conn(), path, root)
     }
 
     /// A read-only connection for probing a file before deciding whether
@@ -751,9 +1047,11 @@ impl SqliteIndex {
 
     /// Move the index files at `location` aside to `<index>.previous`, so
     /// the next [`open`](Self::open) starts from an empty file. The last
-    /// resort of a process that finds damage at open and cannot rebuild in
-    /// place; any other process still holding the file stays on the moved
-    /// one, so the caller must hold the vault write lock.
+    /// resort of a process that finds damage it cannot rebuild in place (at
+    /// open, in `cdno reindex`, or in a server's repair, which then
+    /// [`reopen`](Self::reopen)s); any other process still holding the file
+    /// stays on the moved one until it reopens or restarts, so the caller
+    /// must hold the vault write lock.
     ///
     /// At an overridden location an existing `.previous` that is not
     /// recognisably a cuaderno index is refused with
@@ -998,6 +1296,43 @@ fn remove_index_files(path: &Path) {
 fn move_index_files(from: &Path, to: &Path) {
     for suffix in ["-wal", "-shm", ""] {
         let _ = fs::rename(sibling(from, suffix), sibling(to, suffix));
+    }
+}
+
+/// Open, configure and migrate a connection at `path`, setting the page
+/// size first when one is given (it only takes effect on a new, empty
+/// file).
+fn open_configured(path: &Path, page_size: Option<u32>) -> Result<Connection, IndexError> {
+    let conn = Connection::open(path)?;
+    if let Some(size) = page_size {
+        conn.pragma_update(None, "page_size", size)?;
+    }
+    configure_connection(&conn)?;
+    apply_pending_migrations(&conn)?;
+    Ok(conn)
+}
+
+/// [`SqliteIndex::bind_vault_root`] on a bare connection.
+fn bind_on(conn: &mut Connection, path: &Path, root: &str) -> Result<(), IndexError> {
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    tx.execute(
+        "INSERT OR IGNORE INTO index_meta (key, value) VALUES (?1, ?2)",
+        params![VAULT_ROOT_KEY, root],
+    )?;
+    let bound: String = tx.query_row(
+        "SELECT value FROM index_meta WHERE key = ?1",
+        params![VAULT_ROOT_KEY],
+        |r| r.get(0),
+    )?;
+    tx.commit()?;
+    if bound == root {
+        Ok(())
+    } else {
+        Err(IndexError::BoundToOtherVault {
+            index: path.display().to_string(),
+            bound,
+            root: root.to_owned(),
+        })
     }
 }
 

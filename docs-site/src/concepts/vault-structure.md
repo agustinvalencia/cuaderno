@@ -145,7 +145,16 @@ CUADERNO_INDEX_PATH=/var/lib/cuaderno/surrogate-model.db \
   fresh file a rebuild builds, and the `.previous` copy it keeps of a damaged file, sit beside the
   override's database file, nothing is written under `.cuaderno/`, and the rebuilt index stays bound
   to its vault. A file the override refuses (not cuaderno's index, or another vault's) is refused at
-  start as above, never repaired or moved aside.
+  start as above, never repaired or moved aside. When the file is deleted or replaced under a
+  running server (a `--rebind`, a restore), the server reopens it on its next sweep through the same
+  guards: a file now bound to another vault is refused, and the server says so in `index_status`
+  rather than writing into it.
+- **The symptom of a shared index, without the override.** A process on another kernel that cannot
+  see the server's locks deletes the index's `-wal` and `-shm` each time it exits, taking itself for
+  the last user of the file. A server notices on its next sweep and reopens the index, logging each
+  reopen; after three within an hour it stops, and `index_status` reports
+  `repair: reopen_recurring`. That is the cue to set `CUADERNO_INDEX_PATH` on one side (see
+  [Troubleshooting](../reference/troubleshooting.md#the-index-files-keep-moving-under-the-server)).
 - **Keep it off the shared folder.** Use the machine's own storage. An override inside the vault
   works, but the file stays on the share, a file-sync tool picks it up, and only `cdno-mcp-server`'s
   git checkpoints exclude it: the CLI and the stdio server add no ignore rule, so your own

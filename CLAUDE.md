@@ -124,9 +124,14 @@ third lookup.
   vault write lock but outside `VaultTransaction`; it touches only the index, never a note.
   `cdno reindex` rebuilds through it too (#999), carrying the archival snapshots unless
   `--drop-snapshots`; never unlink or rename an index another process may hold. The only
-  remaining paths that do are a file too damaged to open or copy over (`reindex` moves it to
-  `.previous` under the lock and says to restart holders; `SqliteIndex::open`'s self-heal deletes
-  it unlocked) and `reindex --rebind`, whose file belongs to another vault. **Known exceptions that bypass the
+  remaining paths that do are a file too damaged to open or copy over (`reindex`, and a server's
+  repair, move it to `.previous` under the lock; `SqliteIndex::open`'s self-heal deletes it
+  unlocked) and `reindex --rebind`, whose file belongs to another vault. A server copes with
+  those by itself (#1000): `SqliteIndex::check_files` compares the files its connection holds
+  with the path's, and `SqliteIndex::reopen` swaps the connection behind the same mutex, closing
+  the old one with `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE` so it never checkpoints over, or deletes,
+  files that are no longer its own; a long-lived holder without the health loop (`cdno watch`)
+  still needs a restart. **Known exceptions that bypass the
   transaction AND the write lock**: `write_note_raw` (no live caller since the desktop was removed, kept per #601), template
   eject/save (and `templates sync`, which writes through `save_template`), and `save_config_raw` — these call `store.write_file` directly, so the cross-process
   serialisation guarantee does not cover them. Do not add new raw-write paths on their precedent.
@@ -186,7 +191,11 @@ print to it; log with `tracing` to stderr (`RUST_LOG=cdno_mcp=debug`). Tool desc
 instruction surface an agent sees, so they must state the vault's conventions themselves. Both
 binaries start the same reconcile-and-check sweep through `IndexHealth::start`
 (`crates/cdno-mcp/src/index_health.rs`; interval `CDNO_MCP_RECONCILE_INTERVAL_SECS`, default 300,
-`0` off): a change to it lands on both servers, so never give one binary a loop of its own.
+`0` off): a change to it lands on both servers, so never give one binary a loop of its own. Its
+order of responses, on a sweep and on a tool call's corruption error alike, is: file-identity check;
+reopen and reconcile when the files moved (counted apart from damage, and stopped past its own
+limit); then the integrity check; only then the in-place rebuild, or, for a file too damaged to
+write over, set-aside and reopen. Never rebuild or trust a check before the identity check.
 
 ## Testing
 

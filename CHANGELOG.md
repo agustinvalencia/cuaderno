@@ -14,7 +14,40 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   action note then loses its frozen-prefix check, and `cdno open` no longer warns before opening
   one. It says how many it dropped, or that there were none.
 
+- **`index_status` says whether the server still holds its index files** (#1000). New fields:
+  `files` (`held`, `found`, `at`: a check, run for the call, that the database file, its `-wal` and
+  its `-shm` are the ones at `index_path`), `last_reopen` (`at`, `trigger`, `found`, `reopened`,
+  `failure`), `reopens_recent`, and the `repair` state `reopen_recurring`; `healthy` is false while
+  the files are not held. In `cdno-core`, `SqliteIndex::check_files` and `SqliteIndex::reopen` are
+  the identity check and the reopen behind it.
+
 ### Fixed
+
+- **A long-lived server reopens index files deleted or replaced under it** (closes #1000, part of
+  #1005). A server opened the index once and never checked that the files it held were still the
+  ones on disk, so after `cdno reindex` set a damaged file aside, a `reindex --rebind`, the open's
+  self-heal, a restore, or a process on another kernel deleting the `-wal` and `-shm` as "the last
+  connection", it read and wrote files no other process saw, and its own integrity check described
+  that copy: damage on a sound file, or health on a file nobody else could read. Now every sweep,
+  and every tool call that meets a corruption error, first compares the files the connection holds
+  (device and inode of the database, with SQLite's `SQLITE_FCNTL_HAS_MOVED`, and of the sidecars)
+  with what the path names, a few `stat` calls. When they differ the server reopens the index on
+  the file at the path behind the same handle, reconciles, and only then checks and, if the file
+  itself is damaged, rebuilds as before; each reopen is a WARN naming what was found. The old
+  connection is closed without its checkpoint-on-close, so it never writes its orphaned log over
+  the shared file nor deletes the sidecars the path now names (SQLite's default close of the last
+  connection on a kernel does both). A reopen does not count towards the damage recurrence stop,
+  but three automatic reopens within an hour stop automatic reopening, said once in the log and in
+  every damaged-index error, with the advice to give this machine its own index; a `rebuild_index`
+  reopens first and ends that stop, and a reopen that fails refuses the rebuild. Nothing on one
+  machine trips the check: checkpoints keep the log's file, and no other process there can delete
+  it while the server holds it open. A file too damaged for the running server to write over (its
+  header), which used to stop the repairs and report `restart_required`, is now moved aside to
+  `.previous` under the vault write lock and replaced by a fresh one, filled from the notes, with no
+  restart (`set_aside` on the rebuild record): the `restart_required` state, its fields on
+  `index_status` and on the rebuild record, and its client hint are gone. `cdno reindex`'s set-aside
+  now says that an MCP server picks up the new file by itself, and to restart any other holder
+  (`cdno watch`).
 
 - **The stdio server sweeps the index like the HTTP server** (closes #1002, part of #1005). The
   stdio `cdno-mcp` used to reconcile once, at start, so a session that lived for hours never saw a

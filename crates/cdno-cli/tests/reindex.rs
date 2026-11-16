@@ -324,7 +324,10 @@ fn an_index_too_damaged_to_open_is_set_aside_and_the_output_says_to_restart() {
         .stdout(predicate::str::contains("too damaged to rebuild in place"))
         .stdout(predicate::str::contains(previous.display().to_string()))
         .stdout(predicate::str::contains(
-            "Restart any process that had the index open",
+            "An MCP server that had the index open reopens the new one",
+        ))
+        .stdout(predicate::str::contains(
+            "Restart any other process that had it open",
         ));
 
     assert_eq!(

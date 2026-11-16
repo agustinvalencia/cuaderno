@@ -159,6 +159,11 @@ fn a_sweep_of_a_sound_index_does_not_rebuild() {
     let status = health.status();
     assert!(status.healthy);
     assert!(status.last_rebuild.is_none());
+    assert!(status.files.held);
+    assert!(
+        status.last_reopen.is_none(),
+        "nothing moved, nothing reopened"
+    );
     let sweep = status.last_sweep.expect("the sweep is recorded");
     assert_eq!(sweep.errors, 0);
     assert!(sweep.scanned >= NOTES);
@@ -197,6 +202,9 @@ async fn index_status_and_rebuild_index_over_the_handlers() {
     assert_eq!(status["healthy"], true, "{status}");
     assert_eq!(status["check"]["kind"], "quick_check");
     assert!(status["damage_at_open"].is_null());
+    assert_eq!(status["files"]["held"], true, "{status}");
+    assert!(status["last_reopen"].is_null());
+    assert_eq!(status["reopens_recent"], 0);
 
     let rebuilt = decode_json(
         &server
@@ -393,10 +401,9 @@ fn writes_committed_during_a_rebuild_are_in_the_index_afterwards() {
 #[test]
 fn damage_to_the_file_header_under_a_live_connection_is_repaired_in_place() {
     // The server's connection holds the header in its cache, so the
-    // in-place copy writes it back: the running server repairs the file,
-    // and `restart_required` stays false. (That state is reached only when
-    // the copy itself fails as damage; no test reproduces that with a live
-    // connection.)
+    // in-place copy writes it back: the running server repairs the file in
+    // place, with nothing set aside. (A header the copy itself cannot
+    // write over is set aside and replaced: `index_health_unwritable.rs`.)
     let dir = vault_with_notes();
     let opened = open_vault_checked(dir.path(), None).unwrap();
     let path = index_path(dir.path());
@@ -408,9 +415,13 @@ fn damage_to_the_file_header_under_a_live_connection_is_repaired_in_place() {
     let record = health.rebuild("test").unwrap();
 
     assert!(record.rebuilt, "{:?}", record.failure);
-    assert!(!record.restart_required);
+    assert!(!record.set_aside);
     let status = health.status();
-    assert!(!status.restart_required);
+    assert!(status.files.held, "{:?}", status.files);
+    assert!(
+        status.last_reopen.is_none(),
+        "an in-place repair reopens nothing"
+    );
     assert_eq!(status.repair, RepairState::Automatic);
     // Closing the last connection checkpoints the copy into the main file.
     drop(health);
@@ -1075,4 +1086,134 @@ async fn tool_calls_are_counted_until_their_work_returns() {
     assert_eq!(done.load(Ordering::SeqCst), 2);
     assert_eq!(calls.in_flight(), 0);
     second.await.unwrap().unwrap();
+}
+
+/// How many inbox notes the index file at `path` holds, read through a new
+/// connection: what any other process opening the path sees.
+fn inbox_rows_on_disk(path: &Path) -> i64 {
+    rusqlite::Connection::open(path)
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM notes WHERE path LIKE 'inbox/%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+fn capture(opened: &cdno_mcp::bootstrap::OpenedVault, text: &str) {
+    let at = NaiveDate::from_ymd_opt(2026, 3, 2)
+        .unwrap()
+        .and_hms_opt(9, 0, 0)
+        .unwrap();
+    opened.vault.capture_to_inbox(at, text).unwrap();
+}
+
+#[test]
+fn a_sweep_reopens_an_index_whose_file_was_deleted_under_it_and_reports_it() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+    let path = index_path(dir.path());
+    // `reindex --rebind`, or the open's self-heal in another process.
+    cdno_core::index::SqliteIndex::remove(&path);
+    let before = health.status();
+    assert!(!before.files.held, "{:?}", before.files);
+    assert!(!before.healthy, "a copy nobody else sees is not healthy");
+
+    health.sweep();
+
+    let status = health.status();
+    assert!(status.files.held, "{:?}", status.files);
+    assert!(status.healthy, "{status:?}");
+    let reopen = status.last_reopen.clone().expect("the sweep reopened");
+    assert!(reopen.reopened, "{:?}", reopen.failure);
+    assert_eq!(reopen.trigger, "the sweep");
+    assert!(
+        reopen.found.contains("deleted or moved"),
+        "{}",
+        reopen.found
+    );
+    assert_eq!(status.reopens_recent, 1);
+    assert_eq!(status.damage_rebuilds_recent, 0, "a reopen is not a repair");
+    assert!(status.last_rebuild.is_none());
+    // The reconcile after the reopen refilled the file at the path.
+    assert!(indexed_notes(&opened) >= NOTES);
+    capture(&opened, "surrogate model after the reopen");
+    assert_eq!(inbox_rows_on_disk(&path), 1);
+}
+
+#[test]
+fn a_sweep_reopens_an_index_whose_sidecars_were_unlinked_and_its_writes_reach_the_file() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+    let path = index_path(dir.path());
+    // Another kernel's last connection closing.
+    std::fs::remove_file(beside(&path, "-wal")).unwrap();
+    std::fs::remove_file(beside(&path, "-shm")).unwrap();
+    capture(&opened, "into the orphaned log");
+
+    health.sweep();
+
+    let status = health.status();
+    let reopen = status.last_reopen.clone().expect("the sweep reopened");
+    assert!(reopen.reopened, "{:?}", reopen.failure);
+    assert!(reopen.found.contains("-wal"), "{}", reopen.found);
+    assert!(status.files.held);
+    assert!(status.healthy, "{status:?}");
+    // What only the orphaned log held is written again from the notes.
+    assert_eq!(inbox_rows_on_disk(&path), 1);
+    capture(&opened, "after the reopen");
+    assert_eq!(inbox_rows_on_disk(&path), 2);
+}
+
+#[test]
+fn a_corruption_signal_reopens_moved_files_before_checking_them() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+    let path = index_path(dir.path());
+    std::fs::remove_file(beside(&path, "-wal")).unwrap();
+    std::fs::remove_file(beside(&path, "-shm")).unwrap();
+
+    health.on_corruption_seen();
+
+    let status = health.status();
+    let reopen = status.last_reopen.clone().expect("the signal reopened");
+    assert!(reopen.reopened);
+    assert_eq!(reopen.trigger, "a tool call met a damaged index");
+    assert!(status.last_rebuild.is_none(), "a sound file is not rebuilt");
+    assert!(status.healthy, "{status:?}");
+}
+
+#[test]
+fn a_rebuild_asked_for_reopens_moved_files_first() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let health = IndexHealth::from_opened(&opened);
+    let path = index_path(dir.path());
+    cdno_core::index::SqliteIndex::remove(&path);
+
+    let record = health.rebuild("rebuild_index was called").unwrap();
+
+    assert!(record.rebuilt, "{:?}", record.failure);
+    let status = health.status();
+    assert!(status.files.held);
+    assert_eq!(
+        status.last_reopen.unwrap().trigger,
+        "rebuild_index was called"
+    );
+    assert_eq!(
+        status.reopens_recent, 0,
+        "a requested reopen is not counted"
+    );
+    let notes: i64 = rusqlite::Connection::open(&path)
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0))
+        .unwrap();
+    assert!(
+        notes as usize >= NOTES,
+        "the rebuild reached the file at the path"
+    );
 }

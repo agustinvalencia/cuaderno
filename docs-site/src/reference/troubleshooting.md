@@ -30,8 +30,9 @@ rebuilt index without a restart. See [Business rules](../concepts/business-rules
 [`cdno reindex`](cli/reindex.md#what-it-does).
 
 If `reindex` says the index was **too damaged to rebuild in place**, it has moved the damaged file
-aside (with `.previous` appended to its name) and built a new one. Restart any MCP server or
-`cdno watch` using the vault: until it restarts it keeps reading the old file.
+aside (with `.previous` appended to its name) and built a new one. An MCP server using the vault
+finds the file moved on its next sweep and reopens the new one by itself; restart `cdno watch`,
+which until it restarts keeps reading the old file.
 
 If it fails with `timed out … waiting for the vault write lock` (and "another cdno process is
 writing this vault"), another command or server was writing the vault the whole time; nothing was
@@ -70,9 +71,24 @@ Then restart the server. The stop also ends by itself once a check finds the fil
 while the other machine still writes the file.
 The copy of the first damaged file is kept beside the index, with `.previous` appended to its name.
 
-If `index_status` reports `restart_required`, the file is too damaged for the running server to
-write over, and it stops repairing by itself: restart the server, whose start replaces it. The
-notes are intact either way.
+A file too damaged for the running server to write over in place is moved aside the same way and
+replaced by a fresh one, filled from the notes; `last_rebuild.set_aside` in `index_status` says so.
+No restart is needed, and the notes are intact either way.
+
+## The index files keep moving under the server
+
+The symptom: the server log shows "the index files changed under this server; reopened the index"
+again and again, each with what it found (the database file deleted or replaced, or its `-wal`
+deleted), then one error saying automatic index reopening stopped, and `index_status` reports
+`repair: reopen_recurring` with `files.held` false. One such reopen is normal after a `cdno reindex`
+that had to set a damaged file aside, a `--rebind`, or a restore from backup: the server picks up
+the new file by itself. Repeated ones mean something else keeps deleting the server's files,
+almost always a process on another machine or kernel (a container sharing the vault folder with
+the host) that removes the index's `-wal` and `-shm` each time it exits, because it cannot see
+that the server still has them open. The fix is the same as above: give each machine its own index
+with `CUADERNO_INDEX_PATH` (or `--index-path`), then restart the server. Until then the server may
+answer from a copy of the index no other process sees; `rebuild_index` reopens it once more and
+ends the stop.
 
 ## The index path is refused
 

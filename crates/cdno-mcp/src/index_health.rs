@@ -7,21 +7,47 @@
 //! notes it failed to index, and a damaged database stayed damaged until
 //! somebody with a shell on the host deleted it.
 //!
-//! - **Assess.** Every sweep, on either server ([`IndexHealth::start`]
-//!   starts the loop for both, #1002), reconciles, then runs `PRAGMA quick_check`
-//!   (the thorough `integrity_check` when the sweep could not index some
-//!   notes, at most once an hour, and whenever damage only the thorough
-//!   check sees is still outstanding). Page-level damage can leave every
-//!   read working while writes to the damaged pages fail, so the check, not
-//!   a query error, is the signal that can be relied on. A tool call that
-//!   meets a corruption error wakes the loop at once ([`corruption_seen`])
-//!   for `integrity_check`.
-//! - **Repair.** A failed check rebuilds the index from the notes and
-//!   copies it into the live file in place
-//!   ([`cdno_core::reconcile::rebuild`]), with no restart, so every process
-//!   on this machine using the vault sees the repair. Rebuilds are
-//!   serialised and spaced at least [`RepairPolicy::min_rebuild_interval`]
-//!   apart.
+//! The order of responses to trouble, on every sweep and whenever a tool
+//! call meets a corruption error:
+//!
+//! 1. **Are the files still ours?** ([`SqliteIndex::check_files`], #1000.)
+//!    The server opens the index once, and its connection reads and writes
+//!    through descriptors, not the path. When the database file is deleted,
+//!    moved aside or replaced (`cdno reindex`'s set-aside, `reindex
+//!    --rebind`, the open's self-heal, a restore), or its `-wal` and `-shm`
+//!    are deleted under it (by a process on another kernel, whose locks this
+//!    one cannot see, closing as "the last connection"), the connection goes
+//!    on with files no other process sees, and every check through it
+//!    reports that private view: damage on a sound file, or health on a file
+//!    nobody else can read. So the identity check comes first, a few `stat`
+//!    calls.
+//! 2. **Reopen.** When the files are not ours, the connection is replaced
+//!    with a fresh one at the same path ([`SqliteIndex::reopen`]), behind
+//!    the same handle, and the index reconciled; then the checks below run
+//!    on the file as it is. A reopen is logged at WARN with what was found.
+//!    It fixes the view, not damage, so it does not count towards the
+//!    damage recurrence below; but files that keep moving mean something
+//!    else is managing this index file, so reopens are counted too, and
+//!    after [`RepairPolicy::reopen_limit`] of them in the window the server
+//!    stops reopening by itself and says so once, with the same advice.
+//! 3. **Assess.** Reconcile, then `PRAGMA quick_check` (the thorough
+//!    `integrity_check` when the sweep could not index some notes, at most
+//!    once an hour, and whenever damage only the thorough check sees is
+//!    still outstanding). Page-level damage can leave every read working
+//!    while writes to the damaged pages fail, so the check, not a query
+//!    error, is the signal that can be relied on. A tool call that meets a
+//!    corruption error wakes the loop at once ([`corruption_seen`]) for
+//!    `integrity_check`.
+//! 4. **Repair.** A failed check rebuilds the index from the notes and
+//!    copies it into the live file in place
+//!    ([`cdno_core::reconcile::rebuild`]), with no restart, so every process
+//!    on this machine using the vault sees the repair. A file too damaged to
+//!    be written over in place (its header) is set aside to `.previous`
+//!    under the vault write lock and the index reopened on a fresh file,
+//!    which the notes then fill: what a restart used to be needed for. Other
+//!    servers on this machine holding the old file find it moved on their
+//!    next sweep and reopen too. Rebuilds are serialised and spaced at least
+//!    [`RepairPolicy::min_rebuild_interval`] apart.
 //! - **Stop and say why.** This contains a fault on one machine: a torn
 //!   write, a crash, a bad page. It is not protection for an index file
 //!   shared between two machines or kernels (a container and its host, a
@@ -36,22 +62,16 @@
 //!   attempts keep the spacing and their own log line. The stop ends by
 //!   itself when a check as strong as the one that found the damage
 //!   passes; otherwise it stays until a `rebuild_index` succeeds (which
-//!   allows one more automatic repair, not a fresh count) or a restart.
+//!   allows one more automatic repair, not a fresh count) or a restart. The
+//!   reopen stop works the same way, and ends at a `rebuild_index` (which
+//!   reopens first, and allows one more automatic reopen) or a restart.
 //! - **Report.** Failing notes are logged with their reasons, and the
-//!   latest sweep, check and rebuild are kept for `index_status`.
+//!   latest file check, reopen, sweep, check and rebuild are kept for
+//!   `index_status`.
 //!
 //! What it never does: touch a note. Automatic repair stops at derived
 //! state; the notes are the source of truth, and `lint` reports on them
 //! without changing them.
-//!
-//! A known blind spot, left to #1000: the check reads through this
-//! server's one long-lived connection, so it reports the server's view of
-//! the file, not the file. When the database or its sidecars are unlinked
-//! or replaced under the server, the check can pass on a private copy no
-//! other process sees, or fail on a file that is sound, and a rebuild then
-//! lands in that private file or WAL too, so "every process on this machine
-//! sees the repair" does not hold in that state either; detecting it, and
-//! reopening the connection before rebuilding, is #1000's.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -59,7 +79,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use cdno_core::classify::NoteScope;
-use cdno_core::index::{SqliteIndex, VaultIndex};
+use cdno_core::error::IndexError;
+use cdno_core::index::{FileCheck, SqliteIndex, VaultIndex};
 use cdno_core::reconcile::{ReconciliationReport, rebuild, reconcile};
 use cdno_core::store::VaultStore;
 use schemars::JsonSchema;
@@ -121,11 +142,16 @@ pub fn parse_sweep_interval(value: Option<&std::ffi::OsStr>) -> Result<u64, Stri
 pub struct RepairPolicy {
     /// The shortest time between two rebuilds.
     pub min_rebuild_interval: Duration,
-    /// The window over which damage-triggered rebuilds are counted.
+    /// The window over which damage-triggered rebuilds, and automatic
+    /// reopens, are counted.
     pub recurrence_window: Duration,
     /// How many damage-triggered rebuilds within the window mean the damage
     /// keeps coming back: the next damage is reported, not repaired.
     pub recurrence_limit: usize,
+    /// How many automatic reopens within the window mean something else
+    /// keeps deleting or replacing the index's files: the next time they are
+    /// found gone is reported, not reopened (#1000).
+    pub reopen_limit: usize,
 }
 
 impl Default for RepairPolicy {
@@ -134,6 +160,7 @@ impl Default for RepairPolicy {
             min_rebuild_interval: MIN_REBUILD_INTERVAL,
             recurrence_window: Duration::from_secs(3600),
             recurrence_limit: 3,
+            reopen_limit: 3,
         }
     }
 }
@@ -160,7 +187,7 @@ pub fn corruption_seen() {
 pub fn damage_hint() -> &'static str {
     match HINT_STATE.load(Ordering::Acquire) {
         1 => DAMAGE_RECURRING_HINT,
-        2 => RESTART_REQUIRED_HINT,
+        2 => REOPEN_RECURRING_HINT,
         _ => REPAIRING_HINT,
     }
 }
@@ -183,13 +210,19 @@ const DAMAGE_RECURRING_HINT: &str = "the notes on disk are intact; the index (a 
      (`CUADERNO_INDEX_PATH`, or `--index-path` on cdno-mcp-server). `index_status` shows the \
      state; `rebuild_index` still forces one repair.";
 
-/// The advice when only a restart can repair the file.
-pub const RESTART_REQUIRED_ADVICE: &str = "the index file is too damaged for the running server \
-     to write over; restart the server, whose start replaces such a file. The notes are intact";
+/// The advice when the index's files keep being deleted or replaced under
+/// the server, in the log, in `index_status` and in the client hint.
+pub const REOPEN_RECURRING_ADVICE: &str = "the index's files keep being deleted or replaced \
+     under this server, so something else is managing this index file, most likely another \
+     machine or a container sharing the vault folder; give this machine its own index with \
+     `CUADERNO_INDEX_PATH` (or `--index-path` on cdno-mcp-server)";
 
-const RESTART_REQUIRED_HINT: &str = "the notes on disk are intact; the index (a cache of them) is \
-     too damaged for the running server to repair. Tell the person the server needs a restart. \
-     `index_status` shows the state.";
+const REOPEN_RECURRING_HINT: &str = "the notes on disk are intact; the index's files (a cache \
+     of them) keep being deleted or replaced under the server, so it has stopped reopening them \
+     by itself and may answer from a copy no other process sees: something else is managing the \
+     index file, most likely another machine or a container sharing the vault folder. Tell the \
+     person to give this machine its own index (`CUADERNO_INDEX_PATH`, or `--index-path` on \
+     cdno-mcp-server). `index_status` shows the state; `rebuild_index` reopens it once.";
 
 /// The index's health supervisor for one server process.
 pub struct IndexHealth {
@@ -200,6 +233,9 @@ pub struct IndexHealth {
     policy: RepairPolicy,
     state: Mutex<State>,
     rebuilding: AtomicBool,
+    /// Held while the files are checked and, if need be, reopened, so a
+    /// sweep and a tool call's signal that find the same move reopen once.
+    verifying: Mutex<()>,
 }
 
 #[derive(Default)]
@@ -208,11 +244,14 @@ struct State {
     last_check: Option<CheckRecord>,
     last_rebuild: Option<RebuildRecord>,
     last_rebuild_at: Option<Instant>,
+    last_files: Option<FilesRecord>,
+    last_reopen: Option<ReopenRecord>,
     damage_at_open: Option<Vec<String>>,
     /// The strongest check that has failed since the index was last known
-    /// sound. Cleared by a passing check at least that strong, or by a
-    /// rebuild. `quick_check` cannot see what `integrity_check` found, so
-    /// a later quick pass must not clear it.
+    /// sound. Cleared by a passing check at least that strong, by a
+    /// rebuild, or by a reopen (the check saw the old connection's view).
+    /// `quick_check` cannot see what `integrity_check` found, so a later
+    /// quick pass must not clear it.
     outstanding_damage: Option<CheckKind>,
     /// The latest `integrity_check`, kept so repeated asks within
     /// `min_rebuild_interval` reuse it rather than rescan the file.
@@ -230,16 +269,20 @@ struct State {
     /// until a check that strong passes, a requested rebuild succeeds, or
     /// the server restarts.
     recurring: Option<CheckKind>,
-    /// Set when a rebuild failed because the file is too damaged to write
-    /// over: automatic repair is off until a check passes (the file reads
-    /// and is sound again), a requested rebuild succeeds, or the server
-    /// restarts.
-    restart_required: bool,
     /// One automatic repair allowed past the recurrence limit, granted by a
     /// requested rebuild that succeeded while at the limit. A requested
     /// rebuild buys one round, not a fresh count, so answering every stop
     /// with `rebuild_index` cannot loop the repair on a shared index.
     grace: bool,
+    /// When each automatic reopen in the recurrence window happened. Failed
+    /// reopens are not counted, as failed rebuilds are not.
+    reopens: VecDeque<Instant>,
+    /// Set when the files kept being found gone after reopens: automatic
+    /// reopening is off until a requested rebuild reopens them, or the
+    /// server restarts.
+    reopen_stopped: bool,
+    /// One automatic reopen allowed past the limit, granted as `grace` is.
+    reopen_grace: bool,
 }
 
 /// One reconciliation sweep, as `index_status` reports it.
@@ -290,6 +333,37 @@ pub enum CheckKind {
     IntegrityCheck,
 }
 
+/// One look at whether the server's connection still holds the files at
+/// the index's path (#1000).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct FilesRecord {
+    /// When it looked.
+    pub at: String,
+    /// True when the database file, its `-wal` and its `-shm` are the ones
+    /// the connection has open. False means the server reads and writes a
+    /// copy no other process sees, until it reopens.
+    pub held: bool,
+    /// What was found when they are not: the file deleted, moved aside or
+    /// replaced, or a sidecar deleted or replaced.
+    pub found: Option<String>,
+}
+
+/// One reopen of the index on the files at its path.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ReopenRecord {
+    pub at: String,
+    /// What asked: the sweep, a tool call that met a damaged index, or a
+    /// `rebuild_index` call.
+    pub trigger: String,
+    /// What the file check found that called for it.
+    pub found: String,
+    /// True when the index now holds the files at its path.
+    pub reopened: bool,
+    /// Why the reopen failed, when it did (a file bound to another vault,
+    /// one that is not cuaderno's index, an I/O error).
+    pub failure: Option<String>,
+}
+
 /// What the server does about damage now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -299,9 +373,10 @@ pub enum RepairState {
     /// The damage kept coming back after repairs, so it has stopped
     /// repairing by itself; `advice` says why and what to do.
     DamageRecurring,
-    /// The file is too damaged for the running server to write over; only
-    /// a restart can replace it.
-    RestartRequired,
+    /// The index's files kept being deleted or replaced under the server,
+    /// so it has stopped reopening them by itself; `advice` says why and
+    /// what to do.
+    ReopenRecurring,
 }
 
 /// One rebuild of the index.
@@ -311,7 +386,8 @@ pub struct RebuildRecord {
     /// Why it ran: a failed sweep check, a corruption a tool call met, or
     /// a `rebuild_index` call.
     pub trigger: String,
-    /// True when the fresh index was copied in.
+    /// True when the index was rebuilt: a fresh index copied in, or (with
+    /// `set_aside`) the damaged file replaced.
     pub rebuilt: bool,
     /// Notes the rebuilt index holds.
     pub notes: usize,
@@ -327,39 +403,44 @@ pub struct RebuildRecord {
     /// Why the rebuild failed, when it did. The old index is then still
     /// the live one.
     pub failure: Option<String>,
-    /// True when the failure means the live file is too damaged to be
-    /// written over in place (its header, typically): a running server
-    /// cannot repair it, and a restart, whose open replaces such a file,
-    /// is needed. The notes are intact.
-    pub restart_required: bool,
+    /// True when the live file was too damaged to be written over in place
+    /// (its header, typically), so it was moved aside to `.previous` under
+    /// the vault write lock and the index reopened on a fresh file, filled
+    /// from the notes. No restart is needed; other servers on this machine
+    /// reopen on their next sweep. Its archival snapshots are lost.
+    pub set_aside: bool,
 }
 
 /// What `index_status` returns.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct IndexStatus {
-    /// The verdict on the index itself: true when the check reported for
+    /// The verdict on the index itself: true when the server holds the
+    /// files at the index's path (`files.held`), the check reported for
     /// this call found nothing, no stronger check has found damage since
-    /// the index was last known sound, and the damage is not recurring.
-    /// Notes that could not be indexed do not make it false: they are
-    /// nearly always notes that do not parse, which no rebuild can fix. It
-    /// describes this server's view of the file.
+    /// the index was last known sound, and neither damage nor reopens are
+    /// recurring. Notes that could not be indexed do not make it false:
+    /// they are nearly always notes that do not parse, which no rebuild can
+    /// fix.
     pub healthy: bool,
     /// What the server does about damage now: `automatic`,
-    /// `damage_recurring` or `restart_required`.
+    /// `damage_recurring` or `reopen_recurring`.
     pub repair: RepairState,
     /// What to do, when `repair` is not `automatic`.
     pub advice: Option<String>,
     /// Damage-triggered rebuilds within the last hour (the recurrence
     /// window).
     pub damage_rebuilds_recent: usize,
+    /// Automatic reopens within the last hour (the recurrence window).
+    pub reopens_recent: usize,
     /// The index database file this server uses, after the per-machine
     /// override was resolved (#998). Every file a rebuild writes (the
     /// fresh `.rebuild-*` index while it runs, the `.previous` copy of a
     /// damaged file) sits beside it.
     pub index_path: String,
-    /// True when the latest rebuild failed in a way only a restart can fix:
-    /// tell the person the server needs a restart. The notes are intact.
-    pub restart_required: bool,
+    /// A file check run for this call: whether the server's connection
+    /// still holds the files at `index_path`. When it does not, `check`
+    /// describes the server's own copy, not the file.
+    pub files: FilesRecord,
     /// The check reported for this call: a fresh `quick_check`, or, while
     /// damage only `integrity_check` sees is outstanding, a thorough check
     /// from the last minute or run for this call.
@@ -370,6 +451,8 @@ pub struct IndexStatus {
     pub notes_not_indexed: usize,
     pub last_sweep: Option<SweepRecord>,
     pub last_rebuild: Option<RebuildRecord>,
+    /// The latest reopen: when, why, what was found and whether it worked.
+    pub last_reopen: Option<ReopenRecord>,
     /// What the server found wrong with the index when it started, before
     /// it rebuilt it; null when nothing was.
     pub damage_at_open: Option<Vec<String>>,
@@ -385,9 +468,10 @@ pub enum RebuildRefused {
     /// An automatic rebuild only: the damage keeps coming back, so the
     /// server reports it instead.
     DamageRecurring,
-    /// An automatic rebuild only: the last one found the file too damaged
-    /// to write over, so another cannot succeed until a restart.
-    RestartRequired,
+    /// The server's connection does not hold the files at the index's path
+    /// and reopening them failed, so a rebuild would land in a copy no other
+    /// process sees. Carries why the reopen failed.
+    FilesNotHeld(String),
 }
 
 impl std::fmt::Display for RebuildRefused {
@@ -400,19 +484,36 @@ impl std::fmt::Display for RebuildRefused {
                 wait.as_secs().max(1)
             ),
             Self::DamageRecurring => write!(f, "{DAMAGE_RECURRING_ADVICE}"),
-            Self::RestartRequired => write!(f, "{RESTART_REQUIRED_ADVICE}"),
+            Self::FilesNotHeld(why) => write!(
+                f,
+                "the index file at its path is not the one this server has open, and reopening \
+                 it failed ({why}), so a rebuild would not reach it"
+            ),
         }
     }
 }
 
-/// Who asked for a rebuild.
+/// Who asked for a rebuild or a reopen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Trigger {
-    /// A failed check or a tool call's corruption: counted, and stopped
-    /// when the damage recurs.
+    /// The server itself: a sweep, a failed check, or a tool call's
+    /// corruption. Counted, and stopped when it recurs.
     Damage,
     /// `rebuild_index`: always runs, subject only to the spacing.
     Requested,
+}
+
+/// What looking at the files found, before anything acts on the
+/// connection's view of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Files {
+    /// The connection holds the files at the path.
+    Held,
+    /// It did not, and the index was reopened on the files at the path.
+    Reopened,
+    /// It does not, and was not reopened: the reopen stop, or a reopen
+    /// that failed.
+    NotHeld,
 }
 
 impl IndexHealth {
@@ -430,6 +531,7 @@ impl IndexHealth {
             policy: RepairPolicy::default(),
             state: Mutex::new(State::default()),
             rebuilding: AtomicBool::new(false),
+            verifying: Mutex::new(()),
         }
     }
 
@@ -470,6 +572,177 @@ impl IndexHealth {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// Look at whether the connection still holds the files at the index's
+    /// path ([`SqliteIndex::check_files`]), and record it.
+    pub fn check_files(&self) -> FilesRecord {
+        let found = self.sqlite.check_files();
+        let record = FilesRecord {
+            at: now(),
+            held: found.is_held(),
+            found: found.finding().map(str::to_owned),
+        };
+        self.lock().last_files = Some(record.clone());
+        record
+    }
+
+    /// The first response to trouble (#1000): check that the connection
+    /// still holds the files at the path, and when it does not, reopen it on
+    /// them, unless reopens keep recurring and this is automatic. A file at
+    /// the path that will not open is set aside under the vault write lock
+    /// and the index reopened on a fresh one. Logged at WARN per reopen.
+    fn verify_files(&self, trigger: &str, who: Trigger) -> Files {
+        let _one_at_a_time = self
+            .verifying
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let found = self.sqlite.check_files();
+        let files = FilesRecord {
+            at: now(),
+            held: found.is_held(),
+            found: found.finding().map(str::to_owned),
+        };
+        self.lock().last_files = Some(files);
+        let Some(finding) = found.finding().map(str::to_owned) else {
+            if who == Trigger::Requested {
+                self.end_reopen_stop();
+            }
+            return Files::Held;
+        };
+        if who == Trigger::Damage {
+            let mut state = self.lock();
+            let window = self.policy.recurrence_window;
+            while state
+                .reopens
+                .front()
+                .is_some_and(|at| at.elapsed() >= window)
+            {
+                state.reopens.pop_front();
+            }
+            if state.reopen_stopped {
+                // Said once, when the stop began.
+                tracing::debug!(found = %finding, "the index files are not held; reopening is stopped");
+                return Files::NotHeld;
+            }
+            if state.reopens.len() >= self.policy.reopen_limit {
+                if state.reopen_grace {
+                    state.reopen_grace = false;
+                } else {
+                    state.reopen_stopped = true;
+                    tracing::error!(
+                        reopens = state.reopens.len(),
+                        window_secs = window.as_secs(),
+                        found = %finding,
+                        index_path = %self.sqlite.path().display(),
+                        "automatic index reopening stopped: {REOPEN_RECURRING_ADVICE}"
+                    );
+                    publish_hint(&state);
+                    return Files::NotHeld;
+                }
+            }
+        }
+
+        let reopened = match self.sqlite.reopen() {
+            // The file at the path will not open: set it aside, as a restart
+            // would, and start from a fresh one.
+            Err(e) if e.is_corruption() => self
+                .set_aside_and_reopen()
+                .map_err(|aside| format!("{e}; setting it aside failed too: {aside}")),
+            other => other.map_err(|e| e.to_string()),
+        };
+        let mut state = self.lock();
+        let record = ReopenRecord {
+            at: now(),
+            trigger: trigger.to_owned(),
+            found: finding.clone(),
+            reopened: reopened.is_ok(),
+            failure: reopened.as_ref().err().cloned(),
+        };
+        state.last_reopen = Some(record);
+        let outcome = match reopened {
+            Ok(()) => {
+                tracing::warn!(
+                    found = %finding,
+                    trigger,
+                    index_path = %self.sqlite.path().display(),
+                    "the index files changed under this server; reopened the index on the file \
+                     at its path"
+                );
+                // What the checks found was the old connection's view.
+                state.outstanding_damage = None;
+                state.last_integrity = None;
+                state.last_files = Some(FilesRecord {
+                    at: now(),
+                    held: true,
+                    found: None,
+                });
+                match who {
+                    Trigger::Damage => state.reopens.push_back(Instant::now()),
+                    Trigger::Requested => {
+                        state.reopen_stopped = false;
+                        state.reopen_grace = state.reopens.len() >= self.policy.reopen_limit;
+                    }
+                }
+                Files::Reopened
+            }
+            Err(failure) => {
+                tracing::error!(
+                    found = %finding,
+                    failure = %failure,
+                    index_path = %self.sqlite.path().display(),
+                    "the index files changed under this server, and reopening them failed; it \
+                     keeps its old connection"
+                );
+                Files::NotHeld
+            }
+        };
+        publish_hint(&state);
+        outcome
+    }
+
+    /// A requested rebuild found the files held: it ends a reopen stop as it
+    /// ends a damage stop, allowing one more automatic reopen at the limit.
+    fn end_reopen_stop(&self) {
+        let mut state = self.lock();
+        if state.reopen_stopped {
+            state.reopen_stopped = false;
+            state.reopen_grace = state.reopens.len() >= self.policy.reopen_limit;
+            publish_hint(&state);
+        }
+    }
+
+    /// Replace a live file too damaged to open or to write over: under the
+    /// vault write lock, move it aside to `.previous` (the open's guards
+    /// first, for an overridden index) and reopen the index on a fresh file
+    /// at the path, for the caller's reconciliation to fill. Done before
+    /// only at a restart. When the path already names another file (another
+    /// process replaced it meanwhile), only the reopen. Other processes on
+    /// this machine holding the old file find it moved: a server reopens on
+    /// its next sweep, and a CLI command is short-lived.
+    fn set_aside_and_reopen(&self) -> Result<(), IndexError> {
+        let location = self.sqlite.location();
+        let _lock = self.store.acquire_write_lock().map_err(|e| {
+            IndexError::Update(format!(
+                "acquiring the vault write lock to set the damaged index aside: {e}"
+            ))
+        })?;
+        if !matches!(self.sqlite.check_files(), FileCheck::DatabaseMoved(_)) {
+            if let Some(root) = self.sqlite.binding() {
+                SqliteIndex::ensure_discardable(&location.path)?;
+                if let Some(bound) = SqliteIndex::bound_vault_root(&location.path)?
+                    && bound != root
+                {
+                    return Err(IndexError::BoundToOtherVault {
+                        index: location.path.display().to_string(),
+                        bound,
+                        root: root.to_owned(),
+                    });
+                }
+            }
+            SqliteIndex::set_aside(&location)?;
+        }
+        self.sqlite.reopen()
+    }
+
     /// Run the integrity check of `kind` and record it. A check that
     /// cannot run at all is recorded as a failed one, naming the error.
     pub fn check(&self, kind: CheckKind) -> CheckRecord {
@@ -506,24 +779,13 @@ impl IndexHealth {
                 );
                 publish_hint(&state);
             }
-            // A passing check reads the header, so the file is no longer
-            // too damaged to write over.
-            if state.restart_required {
-                state.restart_required = false;
-                tracing::info!(
-                    check = ?kind,
-                    "the index checks sound again; a restart is no longer needed"
-                );
-                publish_hint(&state);
-            }
         }
         record
     }
 
-    /// Whether automatic repair is stopped (recurring damage, or a file only
-    /// a restart can replace).
+    /// Whether automatic repair is stopped by recurring damage.
     fn repair_stopped(&self) -> bool {
-        repair_state(&self.lock()) != RepairState::Automatic
+        self.lock().recurring.is_some()
     }
 
     /// The latest `integrity_check`, when it ran less than
@@ -537,9 +799,9 @@ impl IndexHealth {
             .map(|(_, record)| record.clone())
     }
 
-    /// One sweep: reconcile, log what failed, check, and rebuild if the
-    /// check finds damage. Blocking; the loop runs it on the blocking pool.
-    pub fn sweep(&self) {
+    /// Reconcile the index with the notes, log what failed, and record it
+    /// as the latest sweep.
+    fn reconcile_and_record(&self) -> SweepRecord {
         let record = match reconcile(&self.store, &self.index, &self.scope) {
             Ok(report) => {
                 log_sweep(&report);
@@ -550,8 +812,22 @@ impl IndexHealth {
                 sweep_record(&ReconciliationReport::default(), Some(e.to_string()))
             }
         };
+        self.lock().last_sweep = Some(record.clone());
+        record
+    }
+
+    /// One sweep: check the files are still the server's and reopen them if
+    /// not, reconcile, log what failed, check, and rebuild if the check finds
+    /// damage. Blocking; the loop runs it on the blocking pool.
+    pub fn sweep(&self) {
+        let files = self.verify_files("the sweep", Trigger::Damage);
+        let record = self.reconcile_and_record();
+        if files == Files::NotHeld {
+            // The check would describe a copy no other process sees, and a
+            // rebuild would land in it.
+            return;
+        }
         let had_errors = record.errors > 0 || record.failure.is_some();
-        self.lock().last_sweep = Some(record);
 
         // A sweep that could not index some notes gets the thorough check:
         // damage confined to an index b-tree (rows missing from
@@ -605,14 +881,24 @@ impl IndexHealth {
         self.rebuild_for_damage("the sweep's integrity check failed");
     }
 
-    /// A tool call met a corruption error: run the thorough check now and
-    /// rebuild if it confirms the damage.
+    /// A tool call met a corruption error: check the files are still the
+    /// server's (reopening and reconciling them if not), then run the
+    /// thorough check and rebuild if it confirms the damage.
     pub fn on_corruption_seen(&self) {
+        let trigger = "a tool call met a damaged index";
+        let reopened = match self.verify_files(trigger, Trigger::Damage) {
+            Files::NotHeld => return,
+            Files::Reopened => {
+                self.reconcile_and_record();
+                true
+            }
+            Files::Held => false,
+        };
         // A client retrying in a loop sends a signal per call; one full
         // scan a minute answers them all.
         if self.recent_integrity().is_some() {
             if self.lock().outstanding_damage.is_some() && !self.repair_stopped() {
-                self.rebuild_for_damage("a tool call met a damaged index");
+                self.rebuild_for_damage(trigger);
             }
             return;
         }
@@ -624,23 +910,34 @@ impl IndexHealth {
         }
         let check = self.check(CheckKind::IntegrityCheck);
         if check.ok {
-            tracing::warn!(
-                "a tool call reported index corruption, but the integrity check found none; if \
-                 this repeats, another machine or container may be writing the index file \
-                 (give each its own with `CUADERNO_INDEX_PATH` / `--index-path`)"
-            );
+            if reopened {
+                tracing::info!("after the reopen the index checks sound");
+            } else {
+                tracing::warn!(
+                    "a tool call reported index corruption, but the integrity check found none; \
+                     if this repeats, another machine or container may be writing the index file \
+                     (give each its own with `CUADERNO_INDEX_PATH` / `--index-path`)"
+                );
+            }
             return;
         }
         tracing::warn!(
             problems = ?check.problems,
             "a tool call met a damaged index; rebuilding it from the notes"
         );
-        self.rebuild_for_damage("a tool call met a damaged index");
+        self.rebuild_for_damage(trigger);
     }
 
     /// An automatic rebuild, logged.
     fn rebuild_for_damage(&self, trigger: &str) {
         match self.run_rebuild(trigger, Trigger::Damage) {
+            Ok(record) if record.set_aside => tracing::warn!(
+                notes = record.notes,
+                errors = record.errors,
+                index_path = %self.sqlite.path().display(),
+                "the index file was too damaged to write over; it was set aside with `.previous` \
+                 appended to its name and the index reopened on a fresh file, filled from the notes"
+            ),
             Ok(record) if record.rebuilt => tracing::warn!(
                 notes = record.notes,
                 errors = record.errors,
@@ -648,30 +945,37 @@ impl IndexHealth {
                 "the index was rebuilt; the first damaged file of a streak is kept beside it, \
                  with `.previous` appended to its name"
             ),
-            Ok(record) if record.restart_required => tracing::error!(
-                failure = record.failure.as_deref().unwrap_or(""),
-                "rebuilding the index failed; the damaged index is still live, and only a \
-                 restart can replace it"
-            ),
             Ok(record) => tracing::error!(
                 failure = record.failure.as_deref().unwrap_or(""),
                 "rebuilding the index failed; the damaged index is still live"
             ),
             // Said once, when it was decided; a retrying client would
             // otherwise log a line per call.
-            Err(RebuildRefused::DamageRecurring | RebuildRefused::RestartRequired) => {}
+            Err(RebuildRefused::DamageRecurring) => {}
             Err(refused) => tracing::debug!(reason = %refused, "index rebuild skipped"),
         }
     }
 
     /// Rebuild the index now, as `rebuild_index` asks, unless another
     /// rebuild is running or the last finished less than the policy's
-    /// spacing ago. It runs whatever the recurrence count says: the person
-    /// asked. A rebuild that runs and fails is still `Ok`: its record says
-    /// why, and the old index stays live. One that succeeds ends a stop;
-    /// the count of earlier repairs stays, and at the limit it allows one
-    /// further automatic repair before the next stop. Blocking.
+    /// spacing ago. The files are checked first, and reopened when they are
+    /// not the server's, whatever the reopen count says; a reopen that fails
+    /// refuses the rebuild, which would otherwise land in a copy nobody else
+    /// sees. It runs whatever the recurrence count says: the person asked.
+    /// A rebuild that runs and fails is still `Ok`: its record says why, and
+    /// the old index stays live. One that succeeds ends a stop; the count of
+    /// earlier repairs stays, and at the limit it allows one further
+    /// automatic repair before the next stop. Blocking.
     pub fn rebuild(&self, trigger: &str) -> Result<RebuildRecord, RebuildRefused> {
+        if self.verify_files(trigger, Trigger::Requested) == Files::NotHeld {
+            let why = self
+                .lock()
+                .last_reopen
+                .as_ref()
+                .and_then(|r| r.failure.clone())
+                .unwrap_or_default();
+            return Err(RebuildRefused::FilesNotHeld(why));
+        }
         self.run_rebuild(trigger, Trigger::Requested)
     }
 
@@ -699,9 +1003,6 @@ impl IndexHealth {
                 state.damage_rebuilds.pop_front();
             }
             if who == Trigger::Damage {
-                if state.restart_required {
-                    return Err(RebuildRefused::RestartRequired);
-                }
                 if state.recurring.is_some() {
                     return Err(RebuildRefused::DamageRecurring);
                 }
@@ -759,24 +1060,7 @@ impl IndexHealth {
                 {
                     let mut state = self.lock();
                     state.last_sweep = Some(sweep_record(&errors, None));
-                    state.outstanding_damage = None;
-                    // A thorough check of the replaced file says nothing
-                    // about the new one.
-                    state.last_integrity = None;
-                    state.restart_required = false;
-                    match who {
-                        // Only a repair that copied in counts towards the
-                        // recurrence limit.
-                        Trigger::Damage => state.damage_rebuilds.push_back(Instant::now()),
-                        // The person's rebuild ends a stop, but keeps the
-                        // history: at the limit it buys one more automatic
-                        // repair, not a fresh count.
-                        Trigger::Requested => {
-                            state.recurring = None;
-                            state.grace =
-                                state.damage_rebuilds.len() >= self.policy.recurrence_limit;
-                        }
-                    }
+                    self.after_repair(&mut state, who);
                 }
                 RebuildRecord {
                     at: now(),
@@ -787,9 +1071,46 @@ impl IndexHealth {
                     snapshots_carried: report.snapshots_carried,
                     snapshots_lost: report.snapshots_lost,
                     failure: None,
-                    restart_required: false,
+                    set_aside: false,
                 }
             }
+            // Too damaged to write over in place (its header): what only a
+            // restart could replace before #1000. Set it aside and reopen.
+            Err(e) if e.is_corruption() => match self.set_aside_and_reopen() {
+                Ok(()) => {
+                    let sweep = self.reconcile_and_record();
+                    let notes = self.index.list_all_paths().map_or(0, |p| p.len());
+                    self.after_repair(&mut self.lock(), who);
+                    RebuildRecord {
+                        at: now(),
+                        trigger: trigger.to_string(),
+                        rebuilt: true,
+                        notes,
+                        errors: sweep.errors,
+                        snapshots_carried: 0,
+                        snapshots_lost: vec![format!(
+                            "the damaged file's archival snapshots could not be read ({e}); it \
+                             was set aside rather than rebuilt in place"
+                        )],
+                        failure: None,
+                        set_aside: true,
+                    }
+                }
+                Err(aside) => RebuildRecord {
+                    at: now(),
+                    trigger: trigger.to_string(),
+                    rebuilt: false,
+                    notes: 0,
+                    errors: 0,
+                    snapshots_carried: 0,
+                    snapshots_lost: Vec::new(),
+                    failure: Some(format!(
+                        "{e}; the file is too damaged to write over, and setting it aside failed: \
+                         {aside}"
+                    )),
+                    set_aside: false,
+                },
+            },
             Err(e) => RebuildRecord {
                 at: now(),
                 trigger: trigger.to_string(),
@@ -799,26 +1120,46 @@ impl IndexHealth {
                 snapshots_carried: 0,
                 snapshots_lost: Vec::new(),
                 failure: Some(e.to_string()),
-                restart_required: e.is_corruption(),
+                set_aside: false,
             },
         };
         let mut state = self.lock();
-        if record.restart_required {
-            state.restart_required = true;
-        }
         state.last_rebuild = Some(record.clone());
         state.last_rebuild_at = Some(Instant::now());
         publish_hint(&state);
         Ok(record)
     }
 
-    /// The status `index_status` reports: a fresh `quick_check` plus the
-    /// latest records. While damage only `integrity_check` sees is
-    /// outstanding, a quick pass cannot report healthy over it, so the
-    /// thorough check is reported instead: the one from the last minute
-    /// when there is one, else one run now, which reads the whole file and
-    /// holds the index while it does. Blocking.
+    /// The bookkeeping of a repair that replaced the index.
+    fn after_repair(&self, state: &mut State, who: Trigger) {
+        state.outstanding_damage = None;
+        // A thorough check of the replaced file says nothing about the new
+        // one.
+        state.last_integrity = None;
+        match who {
+            // Only a repair that replaced the index counts towards the
+            // recurrence limit.
+            Trigger::Damage => state.damage_rebuilds.push_back(Instant::now()),
+            // The person's rebuild ends a stop, but keeps the history: at
+            // the limit it buys one more automatic repair, not a fresh
+            // count.
+            Trigger::Requested => {
+                state.recurring = None;
+                state.grace = state.damage_rebuilds.len() >= self.policy.recurrence_limit;
+            }
+        }
+    }
+
+    /// The status `index_status` reports: a fresh file check and
+    /// `quick_check`, plus the latest records. While damage only
+    /// `integrity_check` sees is outstanding, a quick pass cannot report
+    /// healthy over it, so the thorough check is reported instead: the one
+    /// from the last minute when there is one, else one run now, which
+    /// reads the whole file and holds the index while it does. It reports
+    /// files that are not the server's; the sweep, or the next tool call to
+    /// meet damage, reopens them. Blocking.
     pub fn status(&self) -> IndexStatus {
+        let files = self.check_files();
         let outstanding = self.lock().outstanding_damage;
         let check = match outstanding {
             Some(CheckKind::IntegrityCheck) => self
@@ -828,25 +1169,36 @@ impl IndexHealth {
         };
         let state = self.lock();
         let repair = repair_state(&state);
+        let window = self.policy.recurrence_window;
         IndexStatus {
-            healthy: check.ok && state.outstanding_damage.is_none() && state.recurring.is_none(),
+            healthy: files.held
+                && check.ok
+                && state.outstanding_damage.is_none()
+                && state.recurring.is_none()
+                && !state.reopen_stopped,
             repair,
             advice: match repair {
                 RepairState::Automatic => None,
                 RepairState::DamageRecurring => Some(DAMAGE_RECURRING_ADVICE.to_string()),
-                RepairState::RestartRequired => Some(RESTART_REQUIRED_ADVICE.to_string()),
+                RepairState::ReopenRecurring => Some(REOPEN_RECURRING_ADVICE.to_string()),
             },
             damage_rebuilds_recent: state
                 .damage_rebuilds
                 .iter()
-                .filter(|at| at.elapsed() < self.policy.recurrence_window)
+                .filter(|at| at.elapsed() < window)
+                .count(),
+            reopens_recent: state
+                .reopens
+                .iter()
+                .filter(|at| at.elapsed() < window)
                 .count(),
             index_path: self.sqlite.path().display().to_string(),
-            restart_required: state.restart_required,
+            files,
             notes_not_indexed: state.last_sweep.as_ref().map_or(0, |s| s.errors),
             check,
             last_sweep: state.last_sweep.clone(),
             last_rebuild: state.last_rebuild.clone(),
+            last_reopen: state.last_reopen.clone(),
             damage_at_open: state.damage_at_open.clone(),
         }
     }
@@ -975,8 +1327,8 @@ fn random_u64() -> u64 {
 }
 
 fn repair_state(state: &State) -> RepairState {
-    if state.restart_required {
-        RepairState::RestartRequired
+    if state.reopen_stopped {
+        RepairState::ReopenRecurring
     } else if state.recurring.is_some() {
         RepairState::DamageRecurring
     } else {
@@ -989,7 +1341,7 @@ fn publish_hint(state: &State) {
     let byte = match repair_state(state) {
         RepairState::Automatic => 0,
         RepairState::DamageRecurring => 1,
-        RepairState::RestartRequired => 2,
+        RepairState::ReopenRecurring => 2,
     };
     HINT_STATE.store(byte, Ordering::Release);
 }
