@@ -24,17 +24,27 @@ conflict can occasionally confuse it. Rebuild it:
 cdno reindex
 ```
 
-The Markdown files are always authoritative, so a rebuild is safe. See
-[Business rules](../concepts/business-rules.md).
+The Markdown files are always authoritative, so a rebuild is safe. It rebuilds the index in place
+and keeps the archival snapshots, so a running server or `cdno watch` on this machine sees the
+rebuilt index without a restart. See [Business rules](../concepts/business-rules.md) and
+[`cdno reindex`](cli/reindex.md#what-it-does).
+
+If `reindex` says the index was **too damaged to rebuild in place**, it has moved the damaged file
+aside (with `.previous` appended to its name) and built a new one. Restart any MCP server or
+`cdno watch` using the vault: until it restarts it keeps reading the old file.
+
+If it fails with `timed out … waiting for the vault write lock` (and "another cdno process is
+writing this vault"), another command or server was writing the vault the whole time; nothing was
+changed, so run it again.
 
 On a server (`cdno-mcp`, `cdno-mcp-server`) the index is checked and repaired without you: see
 [The index looks after itself](mcp/overview.md#the-index-looks-after-itself). An error that says "the notes on disk are intact; the index … may be damaged" means the server
 is checking the index and rebuilds it if the check confirms the damage, and it also says whether
 that call's write was saved. Ask the assistant for `index_status` to see how it went (it also names
 the index file in use, which `CUADERNO_INDEX_PATH` may have moved), or `rebuild_index` to force it.
-Run `cdno reindex`
-against a vault a server has open only with the server stopped: two processes writing one index
-file is one way it gets damaged.
+`cdno reindex` on the same machine is safe beside a running server: it rebuilds the file in place,
+and the server reads the result. What damages an index is two machines or kernels writing one file
+(below).
 
 ## The index keeps being damaged
 
@@ -73,7 +83,8 @@ value that cannot be that file is refused before anything is opened:
 - **"belongs to the vault at …"**: the file is another vault's index. Each vault needs its own
   file; set the variable only for the process that serves this vault. To give the file to this vault
   on purpose, first stop whatever serves the vault it belongs to, then run `cdno reindex --rebind`
-  here, which rebuilds it and discards the other vault's index. Where only the server is installed,
+  here, which discards the other vault's index, archival snapshots included, and builds a new one
+  for this vault. Where only the server is installed,
   delete the file instead; the next start rebuilds it.
 
 See [Keeping the index on each machine](../concepts/vault-structure.md#keeping-the-index-on-each-machine).

@@ -125,9 +125,23 @@ impl SqliteIndex {
 
     /// Open or create the index at `path`, creating missing parent
     /// directories and applying any pending migrations.
+    ///
+    /// A file SQLite refuses to open (not a database, or a schema too
+    /// damaged to read) is deleted with its sidecars and a fresh one created
+    /// in its place, for the caller's reconciliation to fill (#206). That
+    /// self-heal takes no lock and cannot rebuild in place, since there is
+    /// no connection to copy into: a process that already has the file
+    /// open (a server, `cdno watch`) stays on the deleted file until it
+    /// restarts, as with any file that damaged. `cdno reindex` does not
+    /// use it: it opens through
+    /// [`open_location_unhealed`](Self::open_location_unhealed) and moves
+    /// such a file aside under the vault write lock (#999).
     pub fn open(path: impl AsRef<Path>) -> Result<Self, IndexError> {
-        let path = path.as_ref();
+        Self::open_healing(path.as_ref(), true)
+    }
 
+    /// [`open`](Self::open), with the self-heal only when `heal` is set.
+    fn open_healing(path: &Path, heal: bool) -> Result<Self, IndexError> {
         // Ensure the containing directory exists so rusqlite can create
         // the file on first open. Silently a no-op if already present.
         if let Some(parent) = path.parent()
@@ -146,7 +160,7 @@ impl SqliteIndex {
             // an *existing* file can be corrupt — a fresh-create failure
             // is a real environment problem, not a recoverable cache.
             // The caller's reconciliation repopulates the empty index.
-            Err(err) if path.exists() && is_recoverable_corruption(&err) => {
+            Err(err) if heal && path.exists() && is_recoverable_corruption(&err) => {
                 remove_index_files(path);
                 Self::open_connection(path)
             }
@@ -194,7 +208,7 @@ impl SqliteIndex {
     ///   from before migration 005) is bound on first use, atomically
     ///   ([`bind_vault_root`](Self::bind_vault_root)); one already bound to
     ///   this root is opened with no write for the binding. `cdno reindex
-    ///   --rebind`, which deletes and rebuilds the file, is the way to give
+    ///   --rebind`, which deletes and recreates the file, is the way to give
     ///   it to another vault.
     ///
     /// A first binding that fails because the file is damaged does not fail
@@ -207,8 +221,29 @@ impl SqliteIndex {
         location: &crate::paths::IndexLocation,
         vault_root: &Path,
     ) -> Result<Self, IndexError> {
+        Self::open_location_healing(location, vault_root, true)
+    }
+
+    /// [`open_location`](Self::open_location) without the self-heal: a file
+    /// SQLite refuses to open is returned as the error
+    /// ([`IndexError::is_corruption`]) and left where it is, rather than
+    /// deleted. For a caller that decides itself what to do with such a
+    /// file, under the vault write lock: `cdno reindex`, which moves it
+    /// aside there (#999).
+    pub fn open_location_unhealed(
+        location: &crate::paths::IndexLocation,
+        vault_root: &Path,
+    ) -> Result<Self, IndexError> {
+        Self::open_location_healing(location, vault_root, false)
+    }
+
+    fn open_location_healing(
+        location: &crate::paths::IndexLocation,
+        vault_root: &Path,
+        heal: bool,
+    ) -> Result<Self, IndexError> {
         if !location.overridden {
-            return Self::open(&location.path);
+            return Self::open_healing(&location.path, heal);
         }
         let path = location.path.as_path();
         Self::ensure_discardable(path)?;
@@ -223,7 +258,7 @@ impl SqliteIndex {
                 root,
             });
         }
-        let mut index = Self::open(path)?;
+        let mut index = Self::open_healing(path, heal)?;
         if bound.is_none() {
             match index.bind_vault_root(path, &root) {
                 Ok(()) => {}
@@ -420,10 +455,13 @@ impl SqliteIndex {
     }
 
     /// Delete the index file and its WAL/SHM sidecars. The index is a
-    /// rebuildable cache, so this is the recovery primitive behind both
-    /// the corruption self-heal in [`open`](Self::open) and the explicit
-    /// `cdno reindex` command — the next `open` + reconcile rebuilds it
-    /// from the markdown source of truth.
+    /// rebuildable cache, so the next `open` + reconcile rebuilds it from
+    /// the markdown source of truth. A process that has the file open keeps
+    /// the deleted one, so this is only for a file no process of this vault
+    /// can be using: `cdno reindex --rebind` uses it on a file bound to
+    /// another vault, which every open for this vault refuses. A rebuild of
+    /// this vault's index copies in place instead
+    /// ([`crate::reconcile::rebuild`]).
     pub fn remove(path: impl AsRef<Path>) {
         remove_index_files(path.as_ref());
     }
@@ -664,12 +702,15 @@ impl SqliteIndex {
     /// replaced when it is recognisably a cuaderno index
     /// ([`ensure_discardable`](Self::ensure_discardable)); otherwise no copy
     /// is kept.
-    pub fn keep_previous_copy(&self) {
+    ///
+    /// Returns the copy's path when the database file was copied, `None`
+    /// when no copy was kept.
+    pub fn keep_previous_copy(&self) -> Option<PathBuf> {
         let previous = sibling(&self.path, PREVIOUS_SUFFIX);
         if self.binding.is_some() && Self::ensure_discardable(&previous).is_err() {
-            return;
+            return None;
         }
-        keep_previous_copy(&self.path);
+        keep_previous_copy(&self.path).then_some(previous)
     }
 
     /// Remove the rebuild files a killed rebuild left beside the index at
@@ -852,15 +893,24 @@ impl Drop for FreshIndex {
 
 /// Copy the index file and its WAL to `<index>.previous` (and
 /// `.previous-wal`), replacing an older copy. Best effort: it is for
-/// diagnosis only, and a failure must not stop a repair.
-fn keep_previous_copy(path: &Path) {
+/// diagnosis only, and a failure must not stop a repair. True when the
+/// database file itself was copied.
+fn keep_previous_copy(path: &Path) -> bool {
     let previous = sibling(path, PREVIOUS_SUFFIX);
     remove_index_files(&previous);
-    let _ = fs::copy(path, &previous);
+    let copied = fs::copy(path, &previous).is_ok();
     let wal = sibling(path, "-wal");
     if wal.exists() {
         let _ = fs::copy(&wal, sibling(&previous, "-wal"));
     }
+    copied
+}
+
+/// The path of the `.previous` copy beside the index at `index_path`: where
+/// [`SqliteIndex::keep_previous_copy`] copies a damaged file and
+/// [`SqliteIndex::set_aside`] moves one.
+pub fn previous_copy_path(index_path: &Path) -> PathBuf {
+    sibling(index_path, PREVIOUS_SUFFIX)
 }
 
 /// Suffix of the copy of the replaced index a rebuild keeps, one

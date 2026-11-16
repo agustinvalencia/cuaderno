@@ -111,18 +111,44 @@ pub struct RebuildReport {
     /// without error but holds wrong bytes is carried as it is, and would
     /// show later as a false "frozen note edited" in `lint`.
     pub snapshots_carried: usize,
-    /// Rows that could not be carried, or a reason none could: the old
-    /// index's damage reached them, or their note is not in the rebuilt
-    /// index (it is gone, or it does not parse). Each lost row only loses
-    /// `lint`'s frozen-prefix check on that archived note; nothing else
-    /// depends on it.
+    /// Rows that could not be carried, one line each: `<path>: its note is
+    /// no longer indexed` when their note is not in the rebuilt index (it is
+    /// gone, or it does not parse), else the error the old index's damage
+    /// gave. Each lost row only loses `lint`'s frozen-prefix check on that
+    /// archived note; nothing else depends on it.
     pub snapshots_lost: Vec<String>,
+    /// Set when the old index's snapshots could not be read at all, so none
+    /// was carried and their number is unknown: the error. Not counted in
+    /// [`snapshots_lost`](Self::snapshots_lost).
+    pub snapshots_unreadable: Option<String>,
+    /// Snapshot rows the old index held that were left behind on purpose
+    /// ([`rebuild_without_snapshots`]); zero for [`rebuild`].
+    pub snapshots_dropped: usize,
+    /// From the last pass, as [`ReconciliationReport`] counts them: every
+    /// note the classifier found, and the markdown files left out by the
+    /// `ignore` globs and as attachment artefacts. The same counts a full
+    /// pass into an empty index reports, so `cdno reindex` prints what it
+    /// printed when it deleted the file and reconciled from nothing.
+    pub scanned: usize,
+    pub ignored: usize,
+    pub artefacts: usize,
+    /// True when a copy was asked for (`keep_copy`) and the live file's
+    /// check before the rebuild reported problems: the rebuild repaired
+    /// damage.
+    pub found_damage: bool,
+    /// Set when a copy was asked for and that check could not run at all
+    /// (a busy or unreadable file): the error. Whether the file was damaged
+    /// is then unknown; a copy is still kept, as for damage.
+    pub check_error: Option<String>,
+    /// Where the copy of the live file was kept, when one was.
+    pub previous_copy: Option<std::path::PathBuf>,
 }
 
 /// Rebuild `index` from the markdown and copy the result into it in place
 /// ([`SqliteIndex::replace_contents_from`](crate::index::SqliteIndex::replace_contents_from)):
 /// the repair for a damaged index, seen at once by every process on this
-/// machine that has it open.
+/// machine that has it open. The servers' self-repair and `cdno reindex`
+/// (#999) both rebuild through it.
 ///
 /// It contains a fault on one machine (a torn write, a crash, a bad page).
 /// It is no protection for an index shared between two machines or
@@ -162,6 +188,22 @@ pub fn rebuild(
     rebuild_with(store, index, scope, keep_copy, || {})
 }
 
+/// [`rebuild`], carrying no archival snapshot across: the rebuilt index
+/// holds none, and each row the old index held is counted in
+/// [`RebuildReport::snapshots_dropped`]. For `cdno reindex
+/// --drop-snapshots`, the way out of a snapshot `lint` reports that can
+/// never verify again (one that predates the masked hash on a note renamed
+/// on another clone, #901), at the cost of every archived note's
+/// frozen-prefix check.
+pub fn rebuild_without_snapshots(
+    store: &Arc<dyn VaultStore>,
+    index: &crate::index::SqliteIndex,
+    scope: &NoteScope,
+    keep_copy: bool,
+) -> Result<RebuildReport, IndexError> {
+    rebuild_inner(store, index, scope, keep_copy, false, || {})
+}
+
 /// [`rebuild`], running `before_lock` after the unlocked passes and the
 /// check, just before the vault write lock is taken: the window in which
 /// another writer's commit reaches the notes but not yet the fresh index.
@@ -174,10 +216,35 @@ pub fn rebuild_with(
     keep_copy: bool,
     before_lock: impl FnOnce(),
 ) -> Result<RebuildReport, IndexError> {
+    rebuild_inner(store, index, scope, keep_copy, true, before_lock)
+}
+
+fn rebuild_inner(
+    store: &Arc<dyn VaultStore>,
+    index: &crate::index::SqliteIndex,
+    scope: &NoteScope,
+    keep_copy: bool,
+    carry_snapshots: bool,
+    before_lock: impl FnOnce(),
+) -> Result<RebuildReport, IndexError> {
     let fresh = index.open_fresh_beside()?;
     let fresh_index = fresh.index();
-    reconcile(store, &fresh_index, scope)?;
-    reconcile(store, &fresh_index, scope)?;
+    // The unlocked passes write only the fresh index, a file no other
+    // process knows of, and reconciliation never writes a note, so their
+    // per-note transactions skip the vault lock: without this each would
+    // wait out the lock's timeout while another process holds it, and a
+    // rebuild beside a long writer would take one timeout per note. The
+    // lock is taken once, below, for the pass that decides what is copied
+    // in. Without the lock a pass can read the vault in the middle of
+    // another process's commit (one of its notes already renamed into
+    // place, another not yet, or a note moved between the walk and the
+    // read), so the fresh index may briefly mix before and after; the
+    // locked pass settles it, since no commit is in flight under the lock
+    // and it re-reads every note whose mtime or size changed since and
+    // drops every row whose file is gone, as any reconciliation does.
+    let unlocked: Arc<dyn VaultStore> = Arc::new(crate::store::LockHeldStore(store.clone()));
+    reconcile(&unlocked, &fresh_index, scope)?;
+    reconcile(&unlocked, &fresh_index, scope)?;
     let problems = fresh.quick_check()?;
     if !problems.is_empty() {
         return Err(IndexError::Update(format!(
@@ -185,9 +252,19 @@ pub fn rebuild_with(
             problems.join("; ")
         )));
     }
-    if keep_copy && !index.quick_check().map(|p| p.is_empty()).unwrap_or(false) {
-        index.keep_previous_copy();
-    }
+    let (found_damage, check_error) = if keep_copy {
+        match index.quick_check() {
+            Ok(problems) => (!problems.is_empty(), None),
+            Err(e) => (false, Some(e.to_string())),
+        }
+    } else {
+        (false, None)
+    };
+    let previous_copy = if found_damage || check_error.is_some() {
+        index.keep_previous_copy()
+    } else {
+        None
+    };
 
     before_lock();
     let _lock = store.acquire_write_lock().map_err(|e| {
@@ -200,22 +277,37 @@ pub fn rebuild_with(
     let last = reconcile(&held, &fresh_index, scope)?;
     let mut report = RebuildReport {
         errors: last.errors,
+        scanned: last.scanned,
+        ignored: last.ignored,
+        artefacts: last.artefacts,
+        found_damage,
+        check_error,
+        previous_copy,
         ..RebuildReport::default()
     };
+    let fresh_paths: HashSet<VaultPath> = fresh_index.list_all_paths()?.into_iter().collect();
     match index.list_archival_snapshots() {
+        Ok(rows) if !carry_snapshots => report.snapshots_dropped = rows.len(),
+        // Asked to drop them and unable to count them: none is carried
+        // either way, so there is nothing to report as lost.
+        Err(_) if !carry_snapshots => {}
         Ok(rows) => {
             for (path, snapshot) in rows {
+                if !fresh_paths.contains(&path) {
+                    report
+                        .snapshots_lost
+                        .push(format!("{path}: its note is no longer indexed"));
+                    continue;
+                }
                 match fresh_index.record_archival_snapshot(&path, &snapshot) {
                     Ok(()) => report.snapshots_carried += 1,
                     Err(e) => report.snapshots_lost.push(format!("{path}: {e}")),
                 }
             }
         }
-        Err(e) => report
-            .snapshots_lost
-            .push(format!("the old index's snapshots could not be read: {e}")),
+        Err(e) => report.snapshots_unreadable = Some(e.to_string()),
     }
-    report.notes = fresh_index.list_all_paths()?.len();
+    report.notes = fresh_paths.len();
     index.replace_contents_from(&fresh)?;
     Ok(report)
 }
