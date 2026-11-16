@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-11-16
+
 ### Added
 
 - **A per-machine index location** (closes #998). `CUADERNO_INDEX_PATH`, the absolute path of
