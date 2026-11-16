@@ -368,7 +368,7 @@ uniqueness rule, so a pasted derivation with its own `## Proof` must be demoted 
 
 | Tool | Inputs | Returns |
 |------|--------|---------|
-| `rebuild_index` | — | Rebuilds the index from every note into a fresh file, checks it, and copies it into the live index in place, without a restart, so every process on this machine using the vault sees it; when the old file is damaged, a copy of it is kept beside it with `.previous` appended to its name (`.cuaderno/index.db.previous` at the default location; `index_status` gives the path in use), and a repeat of the same damage keeps the first copy. Search and context keep answering from the old index while it builds. It first checks that the server still holds the index files at the index path, and reopens them when another process deleted or replaced them, so the rebuild reaches the file every other process sees. Returns `rebuilt`, the `notes` indexed, `errors` (notes it could not index), `snapshots_carried` and `snapshots_lost` (the archival snapshots), `trigger`, `failure` (set when nothing was replaced; the old index is then still live), and `set_aside` (true when the file was too damaged to write over in place, so it was moved aside with `.previous` appended and replaced by a fresh one, filled from the notes, with no restart; its archival snapshots are lost; the notes are intact). |
+| `rebuild_index` | — | Rebuilds the index from every note into a fresh file, checks it, and copies it into the live index in place, without a restart, so every process on this machine using the vault sees it; when the old file is damaged, a copy of it is kept beside it with `.previous` appended to its name (`.cuaderno/index.db.previous` at the default location; `index_status` gives the path in use), and a repeat of the same damage keeps the first copy. Search and context keep answering from the old index while it builds. It first checks that the server still holds the index files at the index path, and reopens them when another process deleted or replaced them, so the rebuild reaches the file every other process sees. Returns `rebuilt`, the `notes` indexed, `errors` (notes it could not index), `snapshots_carried` and `snapshots_lost` (the archival snapshots), `trigger`, `failure` (set when nothing was replaced; the old index is then still live), `reopen` (the reopen this call made first, if the server's files had moved), and `set_aside` (true when this server found the file too damaged to write over in place, so it moved it aside with `.previous` appended, or deleted it when the first damaged copy of a streak is already kept, and replaced it by a fresh one, filled from the notes, with no restart; its archival snapshots are lost; false when another process had already replaced it; the notes are intact). |
 
 The server already rebuilds a damaged index on its own, so this is for when
 [`index_status`](reads.md) stays unhealthy. It still runs when the server has stopped repairing by
@@ -381,11 +381,10 @@ protection for an index shared between machines. It does not help with `notes_no
 notes that do not parse, and `lint` names them. It changes no note. It is the same in-place rebuild
 as [`cdno reindex`](../cli/reindex.md): no restart, and the archival snapshots are kept. A second call while one is
 running in the same server, or within a minute of the last, is refused with code `rebuild_refused`, and
-`details.reason` says which; so is a call whose reopen of moved files failed (a file now bound to
-another vault, say), since the rebuild would land in a copy no other process sees. It also ends a
-`repair: reopen_recurring` stop (the files kept moving under the server), allowing one more
-automatic reopen; that state, too, means something else is managing the index file, which only its
-own index per machine fixes.
+`details.reason` says which, and `details.kind` names it (`in_progress`, `too_soon`); so is a call
+whose reopen of moved files failed (`files_not_held`: a file now bound to another vault, say), since
+the rebuild would land in a copy no other process sees. A call that reopened and was then refused
+has still reconciled the reopened file, and says so (`details.reopen`).
 
 ## Notes
 

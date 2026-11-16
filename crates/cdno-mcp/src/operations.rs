@@ -1354,7 +1354,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Rebuild the vault's index from the notes now: build a fresh index from every note on disk, check it, and copy it into the live index file in place, so every process on this machine using the vault sees it at once. When the old file is damaged, a copy of it is kept beside it with `.previous` appended to its name (`index_status` gives the path); a repeat of the same damage keeps the first copy. No note is changed: the index is a cache. It is the same rebuild as `cdno reindex`: no restart, and the archival snapshots `lint` checks archived actions against are kept. The server already repairs a damaged index by itself, so call this only when `index_status` stays unhealthy, or when the person asks. It first reopens the index files if another process deleted or replaced them, so the rebuild reaches the file every process sees. It also runs, and ends the stop, when `index_status` says `damage_recurring` or `reopen_recurring`, allowing one more automatic repair or reopen; but those mean another machine or container is using the same index file, which no rebuild fixes: tell the person to give this machine its own index (`CUADERNO_INDEX_PATH` / `--index-path`). It does not fix `notes_not_indexed` (notes that do not parse; see `lint`). Refused with `rebuild_refused` while another rebuild runs, within a minute of the last, or when reopening moved files failed (`details.reason` says which). Returns `rebuilt`, `notes` indexed, `errors` (notes it could not index), `snapshots_carried` / `snapshots_lost`, `failure` when nothing was replaced (the old index is still live), and `set_aside`: the file was too damaged to write over, so it was moved aside to `.previous` and replaced by a fresh one filled from the notes, with no restart and its snapshots lost. The notes are intact either way."
+        description = "Rebuild the vault's index from the notes now: build a fresh index from every note on disk, check it, and copy it into the live index file in place, so every process on this machine using the vault sees it at once. When the old file is damaged, a copy of it is kept beside it with `.previous` appended to its name (`index_status` gives the path); a repeat of the same damage keeps the first copy. No note is changed: the index is a cache. It is the same rebuild as `cdno reindex`: no restart, and the archival snapshots `lint` checks archived actions against are kept. The server already repairs a damaged index by itself, so call this only when `index_status` stays unhealthy, or when the person asks. It first reopens the index files if another process deleted or replaced them, and reconciles the reopened file, so the rebuild reaches the file every process sees. It also runs, and ends the stop, under `repair: damage_recurring`, allowing one more automatic repair; but that means another machine or container is writing the same index file, which no rebuild fixes: tell the person to give this machine its own index (`CUADERNO_INDEX_PATH` / `--index-path`). It does not fix `notes_not_indexed` (notes that do not parse; see `lint`). Refused with `rebuild_refused` while another rebuild runs, within a minute of the last, or when reopening moved files failed; `details.kind` is `in_progress`, `too_soon` or `files_not_held`, and `details.reopen` the reopen this call made first, if any. Returns `rebuilt`, `notes` indexed, `errors`, `snapshots_carried` / `snapshots_lost`, `failure` when nothing was replaced (the old index is still live), `reopen`, and `set_aside`: the file was too damaged to write over, so it was moved aside and replaced by a fresh one filled from the notes, with no restart and its snapshots lost. The notes are intact either way."
     )]
     pub async fn rebuild_index(
         &self,
@@ -1384,10 +1384,14 @@ impl CuadernoServer {
             }
             // A refusal the caller can act on (wait, or let the running
             // rebuild finish), so a rejection, not a protocol error.
-            Err(refused) => Err(crate::rejection::reject(
+            Err(refusal) => Err(crate::rejection::reject(
                 crate::rejection::RejectionCode::RebuildRefused,
-                refused.to_string(),
-                serde_json::json!({ "reason": refused.to_string() }),
+                refusal.to_string(),
+                serde_json::json!({
+                    "reason": refusal.to_string(),
+                    "kind": refusal.refused.code(),
+                    "reopen": refusal.reopen,
+                }),
             )),
         }
     }

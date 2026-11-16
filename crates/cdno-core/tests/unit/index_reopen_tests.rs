@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use cdno_core::error::IndexError;
-use cdno_core::index::{FileCheck, SqliteIndex, VaultIndex, canonical_vault_root};
+use cdno_core::index::{
+    ArchivalSnapshot, FileCheck, SqliteIndex, VaultIndex, canonical_vault_root,
+};
+use cdno_core::path::VaultPath;
 use cdno_core::paths::IndexLocation;
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -52,13 +55,6 @@ fn probe(index: &SqliteIndex) -> Option<String> {
             .optional()
         })
         .unwrap()
-}
-
-/// The device and inode of the file at `path`.
-fn identity(path: &Path) -> (u64, u64) {
-    use std::os::unix::fs::MetadataExt;
-    let meta = std::fs::metadata(path).unwrap();
-    (meta.dev(), meta.ino())
 }
 
 /// A finished index file at `path` holding `value`, closed, as a restore
@@ -225,30 +221,18 @@ fn sidecars_recreated_by_another_process_are_found_replaced() {
     assert!(found.finding().unwrap().contains("replaced"), "{found}");
 }
 
-#[test]
-fn the_old_connection_s_close_never_deletes_the_sidecars_another_connection_holds() {
-    let (dir, path, index) = new_index();
-    put(&index, "old");
-    // The path now names another database, held open by another
-    // connection whose last commit is only in its log.
-    SqliteIndex::set_aside(&IndexLocation {
-        path: path.clone(),
-        overridden: false,
-    })
-    .unwrap();
-    let other = SqliteIndex::open(&path).unwrap();
-    put(&other, "only in the new log");
-    let wal = identity(&beside(&path, "-wal"));
-    let shm = identity(&beside(&path, "-shm"));
+/// An open descriptor on the file at `path` now, and a way to ask later
+/// whether that file still has a name: a file deleted and recreated under
+/// the same name can come back with the same inode number (ext4 reuses
+/// them readily), but the descriptor still points at the deleted one, whose
+/// link count is then zero.
+fn hold(path: &Path) -> std::fs::File {
+    std::fs::File::open(path).unwrap()
+}
 
-    index.reopen().unwrap();
-    drop(index);
-
-    assert_eq!(identity(&beside(&path, "-wal")), wal);
-    assert_eq!(identity(&beside(&path, "-shm")), shm);
-    assert_eq!(read_in_another_process(&path), "only in the new log");
-    drop(other);
-    drop(dir);
+fn still_linked(file: &std::fs::File) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    file.metadata().unwrap().nlink() > 0
 }
 
 #[test]
@@ -260,16 +244,59 @@ fn a_reopen_after_the_sidecars_went_leaves_the_files_at_the_path_alone() {
         std::fs::remove_file(beside(&path, suffix)).unwrap();
         std::fs::write(beside(&path, suffix), b"").unwrap();
     }
-    let wal = identity(&beside(&path, "-wal"));
-    let shm = identity(&beside(&path, "-shm"));
+    let wal = hold(&beside(&path, "-wal"));
+    let shm = hold(&beside(&path, "-shm"));
 
     index.reopen().unwrap();
 
-    // The old connection closed without deleting them, so the new one
-    // opened the same files rather than creating others.
-    assert_eq!(identity(&beside(&path, "-wal")), wal);
-    assert_eq!(identity(&beside(&path, "-shm")), shm);
+    // The old connection closed without deleting them.
+    assert!(still_linked(&wal), "the -wal at the path was deleted");
+    assert!(still_linked(&shm), "the -shm at the path was deleted");
     assert_eq!(index.check_files(), FileCheck::Held);
+}
+
+#[test]
+fn dropping_an_index_that_does_not_hold_its_files_deletes_nothing_at_the_path() {
+    let (_dir, path, index) = new_index();
+    put(&index, "old");
+    for suffix in ["-wal", "-shm"] {
+        std::fs::remove_file(beside(&path, suffix)).unwrap();
+        std::fs::write(beside(&path, suffix), b"someone else's").unwrap();
+    }
+    let wal = hold(&beside(&path, "-wal"));
+    let shm = hold(&beside(&path, "-shm"));
+    let main_before = std::fs::read(&path).unwrap();
+
+    // A server shutting down on its orphans.
+    drop(index);
+
+    assert!(still_linked(&wal), "the -wal at the path was deleted");
+    assert!(still_linked(&shm), "the -shm at the path was deleted");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        main_before,
+        "the orphaned log was checkpointed into the shared file"
+    );
+}
+
+#[test]
+fn dropping_an_index_that_holds_its_files_checkpoints_and_cleans_up_as_before() {
+    let (_dir, path, index) = new_index();
+    put(&index, "kept");
+    drop(index);
+    assert!(
+        !beside(&path, "-wal").exists(),
+        "the last close removes its log"
+    );
+    let conn = Connection::open(&path).unwrap();
+    let value: String = conn
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'probe'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(value, "kept");
 }
 
 /// The behaviour the reopen guards against, kept as evidence: SQLite's own
@@ -286,11 +313,98 @@ fn without_the_guard_sqlite_s_close_deletes_the_sidecars_the_path_names() {
         std::fs::remove_file(beside(&path, suffix)).unwrap();
         std::fs::write(beside(&path, suffix), b"someone else's").unwrap();
     }
+    let wal = hold(&beside(&path, "-wal"));
 
     drop(conn);
 
-    assert!(!beside(&path, "-wal").exists());
+    assert!(!still_linked(&wal));
     assert!(!beside(&path, "-shm").exists());
+}
+
+#[test]
+fn a_restore_that_replaces_only_the_main_file_is_read_after_the_old_sidecars_are_set_aside() {
+    let (dir, path, index) = new_index();
+    put(&index, "old");
+    // Keep the old commit in the log, as a busy server's would be.
+    let restored = dir.path().join("backup.db");
+    index_file_holding(&restored, "restored");
+    // `mv backup.db index.db`: the server's own -wal and -shm stay.
+    std::fs::rename(&restored, &path).unwrap();
+    assert!(matches!(index.check_files(), FileCheck::DatabaseMoved(_)));
+
+    let refused = index.reopen().unwrap_err();
+    assert!(
+        matches!(refused, IndexError::StaleSidecars(_)),
+        "{refused:?}"
+    );
+    assert_eq!(probe(&index).as_deref(), Some("old"), "nothing changed");
+
+    let reopened = index.reopen_setting_aside_stale_sidecars().unwrap();
+
+    assert_eq!(reopened.stale_sidecars_moved_to.len(), 2);
+    assert!(beside(&path, ".stale-wal").exists());
+    assert_eq!(probe(&index).as_deref(), Some("restored"));
+    assert_eq!(index.check_files(), FileCheck::Held);
+    assert_eq!(read_in_another_process(&path), "restored");
+}
+
+#[test]
+fn a_reopen_hands_back_the_snapshots_the_old_connection_could_read() {
+    let (_dir, path, index) = new_index();
+    let note = VaultPath::new("actions/_done/2026/surrogate-model-sweep.md").unwrap();
+    let snapshot = ArchivalSnapshot {
+        frozen_size: 3,
+        frozen_hash: "abc".into(),
+        archived_at_ns: 1,
+        masked_hash: None,
+        mask_version: None,
+        masked_size: None,
+    };
+    index
+        .with_connection(|c| {
+            c.execute(
+                "INSERT INTO notes (path, note_type, title, content_hash, mtime_ns, size, \
+                 frontmatter, indexed_at_ns) VALUES (?1, 'action', 't', 'h', 0, 0, '{}', 0)",
+                [note.to_string()],
+            )
+        })
+        .unwrap();
+    index.record_archival_snapshot(&note, &snapshot).unwrap();
+    std::fs::remove_file(beside(&path, "-wal")).unwrap();
+    std::fs::remove_file(beside(&path, "-shm")).unwrap();
+
+    let reopened = index.reopen().unwrap();
+
+    let salvaged = reopened.salvaged.expect("read").expect("readable");
+    assert_eq!(salvaged, vec![(note.clone(), snapshot)]);
+    assert_eq!(
+        index.find_archival_snapshot(&note).unwrap(),
+        None,
+        "the row was only in the orphaned log; carrying it is the caller's"
+    );
+}
+
+#[test]
+fn a_sidecar_that_cannot_be_checked_is_not_taken_for_a_move() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new().unwrap();
+    let inner = dir.path().join("locked");
+    std::fs::create_dir(&inner).unwrap();
+    let path = inner.join("index.db");
+    let index = SqliteIndex::open(&path).unwrap();
+    // No search permission on the directory: every `stat` in it fails
+    // with EACCES (not as root, which CI and contributors are not).
+    std::fs::set_permissions(&inner, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let found = index.check_files();
+    std::fs::set_permissions(&inner, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    if std::fs::metadata(&path).is_ok() && found.is_held() {
+        // Running as root: permissions do not apply; nothing to show.
+        return;
+    }
+    assert!(matches!(found, FileCheck::Unchecked(_)), "{found:?}");
+    assert!(!found.needs_reopen());
+    assert_eq!(index.check_files(), FileCheck::Held);
 }
 
 #[test]
@@ -354,8 +468,8 @@ fn a_reopen_that_cannot_open_the_same_file_again_leaves_the_index_detached_until
     assert!(failed.is_corruption(), "{failed:?}");
     assert!(matches!(index.check_files(), FileCheck::Detached(_)));
     assert!(
-        index.list_all_paths().is_err(),
-        "a detached index answers nothing"
+        matches!(index.list_all_paths(), Err(IndexError::Detached)),
+        "a detached index answers nothing, and says why"
     );
 
     std::fs::write(&path, saved).unwrap();

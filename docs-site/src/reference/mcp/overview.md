@@ -105,20 +105,34 @@ and replaced by a fresh one, filled from the notes, without a restart (`last_reb
 through its open files, not its path. When another process deletes, moves aside or replaces the
 database file (`cdno reindex` setting a damaged file aside, `cdno reindex --rebind`, the open-time
 self-heal, a restore from backup), or deletes its `-wal` and `-shm` (a process on another kernel,
-which cannot see this one's locks, closing as "the last connection"), the server would go on with
-files no other process sees, and its own check would describe that copy rather than the file. So
-the first thing every sweep does, and every tool call that meets a damaged index, is a cheap check
-that the files the server holds are still the ones at the index path. When they are not, the server
-reopens the index on the file at the path, reconciles it, and only then checks it, rebuilding it as
-above if the file itself is damaged. Each reopen is logged at WARN with what was found, and
-`index_status` reports the latest one (`last_reopen`) and whether the server holds its files now
-(`files`). A reopen fixes the server's view, not damage, so it does not count towards the stop
-above; but files that keep moving mean something else is managing the index file, so after three
-automatic reopens within an hour the server stops reopening by itself, says so once in the log, and
-reports `repair: reopen_recurring` with the same advice: give this machine its own index. A
-`rebuild_index` reopens first and ends that stop. Nothing on one machine trips the check while the
-server is running: checkpoints keep the log's file, and no other process there can delete it while
-the server holds it open.
+which cannot see this one's locks, closing as "the last connection"; or `rm`, `git clean -x`, a
+sync tool), the server would go on with files no other process sees, and its own check would
+describe that copy rather than the file. So the first thing every sweep does, and every tool call
+that meets a damaged index, is a cheap check that the files the server holds are still the ones at
+the index path. When they are not, the server reopens the index on the file at the path, reconciles
+it, and only then checks it, rebuilding it as above if the file itself is damaged. It always
+reopens, at most once a minute; until it has, it neither reconciles into nor checks its own copy,
+and `index_status` says `files.held: false` and runs no check. Two cases are handled under the
+vault write lock first: a restore that replaced only `index.db` leaves the old file's `-wal` and
+`-shm` at the path, which are moved aside to `.stale-wal` / `.stale-shm` (opening the restored file
+beside them would replay the old log onto it), and a file at the path that will not open is set
+aside like any damaged file. Each reopen is one WARN line saying what was found and what was done,
+and `index_status` reports the latest (`last_reopen`).
+
+What a reopen loses: anything the old connection had committed only to files nobody else could see
+is dropped. The notes' rows are written again by the reconciliation; the archival snapshots `lint`
+checks archived actions against cannot be, so the old connection's rows are carried into the
+reopened file where it has none for that note, the note is indexed, and the note still verifies
+against the snapshot; the rest are listed in `last_reopen.snapshots_lost`. A reopen fixes the
+server's view, not damage, so it never counts towards the stop above. Reopens that recur (three
+within an hour) are reported once in the log and as `repair: reopen_recurring`, and the report
+ends by itself when they stop; the server keeps reopening throughout. What it means depends on what
+moved: vanished `-wal`/`-shm` are the signature of another machine or container sharing the index
+file, and the advice is to give this machine its own index; a database file that keeps being
+replaced is nearly always something on this machine, and the advice is to find what replaces it.
+Only SQLite is kept from tripping the check: checkpoints keep the log's file, and no other SQLite
+connection on the machine can delete it while the server holds it open, but `rm`, `git clean -x` or
+a sync tool can, and each such move is a reopen. Off unix (Windows) nothing is checked.
 
 ## Focus
 

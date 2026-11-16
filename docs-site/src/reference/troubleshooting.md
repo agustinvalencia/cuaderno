@@ -78,17 +78,25 @@ No restart is needed, and the notes are intact either way.
 ## The index files keep moving under the server
 
 The symptom: the server log shows "the index files changed under this server; reopened the index"
-again and again, each with what it found (the database file deleted or replaced, or its `-wal`
-deleted), then one error saying automatic index reopening stopped, and `index_status` reports
-`repair: reopen_recurring` with `files.held` false. One such reopen is normal after a `cdno reindex`
-that had to set a damaged file aside, a `--rebind`, or a restore from backup: the server picks up
-the new file by itself. Repeated ones mean something else keeps deleting the server's files,
-almost always a process on another machine or kernel (a container sharing the vault folder with
-the host) that removes the index's `-wal` and `-shm` each time it exits, because it cannot see
-that the server still has them open. The fix is the same as above: give each machine its own index
-with `CUADERNO_INDEX_PATH` (or `--index-path`), then restart the server. Until then the server may
-answer from a copy of the index no other process sees; `rebuild_index` reopens it once more and
-ends the stop.
+again and again, each line with what it found and what it did, then one error saying the index
+files keep changing, and `index_status` reports `repair: reopen_recurring`. The server keeps
+reopening every time (at most once a minute), so nothing stays stale for longer than that, and the
+report ends by itself once the moves stop. One reopen is normal after a `cdno reindex` that had to
+set a damaged file aside, a `--rebind`, or a restore from backup: the server picks up the new file
+by itself. What to do depends on `last_reopen.kind`:
+
+- **`sidecars_moved`** (the `-wal` or `-shm` deleted): almost always a process on another machine
+  or kernel (a container sharing the vault folder with the host) that removes them each time it
+  exits, because it cannot see that the server still has them open. Give each machine its own
+  index with `CUADERNO_INDEX_PATH` (or `--index-path`), then restart the server. Until then, between
+  reopens the server reads and writes a copy no other process sees.
+- **`database_moved`** (the database file deleted or replaced): nearly always something on this
+  machine: repeated `cdno reindex` set-asides or `--rebind`, restores, `git clean -x` in a vault
+  that is a git repository, or a sync tool syncing the index file. Find what replaces it; a
+  separate index does not help.
+
+A reopen drops what only the old copy held; archival snapshots it could not carry are listed in
+`last_reopen.snapshots_lost`, and each costs `lint`'s frozen-prefix check on that note.
 
 ## The index path is refused
 

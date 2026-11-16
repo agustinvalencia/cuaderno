@@ -152,8 +152,9 @@ CUADERNO_INDEX_PATH=/var/lib/cuaderno/surrogate-model.db \
 - **The symptom of a shared index, without the override.** A process on another kernel that cannot
   see the server's locks deletes the index's `-wal` and `-shm` each time it exits, taking itself for
   the last user of the file. A server notices on its next sweep and reopens the index, logging each
-  reopen; after three within an hour it stops, and `index_status` reports
-  `repair: reopen_recurring`. That is the cue to set `CUADERNO_INDEX_PATH` on one side (see
+  reopen; three within an hour are reported as `repair: reopen_recurring` with
+  `last_reopen.kind: sidecars_moved` (the server keeps reopening). That is the cue to set
+  `CUADERNO_INDEX_PATH` on one side (see
   [Troubleshooting](../reference/troubleshooting.md#the-index-files-keep-moving-under-the-server)).
 - **Keep it off the shared folder.** Use the machine's own storage. An override inside the vault
   works, but the file stays on the share, a file-sync tool picks it up, and only `cdno-mcp-server`'s
