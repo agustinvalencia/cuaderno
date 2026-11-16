@@ -191,6 +191,29 @@ fn remove_deletes_the_db_and_sidecars() {
     assert!(!shm.exists(), "shm sidecar removed");
 }
 
+/// `open_location_unhealed` (#999): a file SQLite refuses is the error, and
+/// it stays where it is, byte for byte, for the caller to set aside under
+/// the vault lock. The ordinary open still heals it.
+#[test]
+fn open_location_unhealed_returns_corruption_and_leaves_the_file() {
+    let (_dir, path) = new_db_path();
+    let mut corrupt = b"SQLite format 3\0".to_vec();
+    corrupt.extend(std::iter::repeat_n(0xFFu8, 4096));
+    std::fs::write(&path, &corrupt).unwrap();
+    let location = cdno_core::paths::IndexLocation {
+        path: path.clone(),
+        overridden: false,
+    };
+
+    let err = SqliteIndex::open_location_unhealed(&location, path.parent().unwrap())
+        .expect_err("a file SQLite cannot open");
+    assert!(err.is_corruption(), "{err}");
+    assert_eq!(std::fs::read(&path).unwrap(), corrupt, "left as it was");
+
+    SqliteIndex::open_location(&location, path.parent().unwrap()).expect("healed");
+    assert_ne!(std::fs::read(&path).unwrap(), corrupt);
+}
+
 #[test]
 fn migration_003_adds_via_alias() {
     // A database left at schema version 2 (001 + 002, as every vault opened

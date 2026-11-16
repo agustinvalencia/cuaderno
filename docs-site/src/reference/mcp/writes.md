@@ -378,8 +378,8 @@ which no rebuild fixes: give this machine its own index, as
 [Keeping the index on each machine](../../concepts/vault-structure.md#keeping-the-index-on-each-machine)
 explains. The repair contains a fault on one machine (a torn write, a crash, a bad page); it is not
 protection for an index shared between machines. It does not help with `notes_not_indexed`: those are
-notes that do not parse, and `lint` names them. It changes no note. Unlike
-[`cdno reindex`](../cli/reindex.md), it needs no restart and keeps the archival snapshots. A second call while one is
+notes that do not parse, and `lint` names them. It changes no note. It is the same in-place rebuild
+as [`cdno reindex`](../cli/reindex.md): no restart, and the archival snapshots are kept. A second call while one is
 running in the same server, or within a minute of the last, is refused with code `rebuild_refused`, and
 `details.reason` says which.
 

@@ -138,13 +138,21 @@ enum Commands {
     },
 
     /// Rebuild the SQLite index from scratch off the markdown source of
-    /// truth. The recovery path for a corrupt or stale index.
+    /// truth, in place, so a running server or `cdno watch` sees the new
+    /// index. The recovery path for a corrupt or stale index.
     Reindex {
         /// With `CUADERNO_INDEX_PATH` set: rebuild the file even when it is
         /// bound to another vault, giving it to this one and discarding the
         /// other vault's index. Stop whatever serves the other vault first.
         #[arg(long)]
         rebind: bool,
+
+        /// Leave the archival snapshots behind instead of carrying them
+        /// into the rebuilt index. Every archived action note then loses
+        /// `cdno lint`'s frozen-prefix check; for a snapshot that can never
+        /// verify again.
+        #[arg(long)]
+        drop_snapshots: bool,
     },
 
     /// Record the Research Logbook Method version this cdno implements in
@@ -587,9 +595,12 @@ fn dispatch(cli: Cli) -> Result<()> {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::lint::run(&root, Local::now().date_naive(), strict)
         }
-        Commands::Reindex { rebind } => {
+        Commands::Reindex {
+            rebind,
+            drop_snapshots,
+        } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::reindex::run(&root, rebind)
+            commands::reindex::run(&root, rebind, drop_snapshots)
         }
         Commands::Migrate { dry_run } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

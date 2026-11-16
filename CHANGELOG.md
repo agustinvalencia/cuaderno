@@ -55,6 +55,29 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+- **`cdno reindex` rebuilds the index in place** (closes #999, part of #1005). It used to delete
+  `index.db` and its sidecars and start a new file, so a process that already had the index open
+  (an MCP server, `cdno watch`) carried on against the deleted file with no error on either side.
+  Now:
+  - it builds a fresh index beside the live one and copies it over the live file in place, under
+    the vault write lock, through the same rebuild the servers repair with; every process on this
+    machine holding the file reads the rebuilt index on its next query, and no commit lands half
+    before and half after. A held lock makes it wait, then fail with the usual lock error, the index
+    as it was;
+  - the archival snapshots `cdno lint` checks archived action notes against are carried across
+    instead of lost. The new `--drop-snapshots` flag leaves them behind, and is now the way out
+    `lint` names for a snapshot that predates the masked hash on a note renamed on another clone;
+  - an index that fails its integrity check is reported, and a copy of it is kept beside it with
+    `.previous` appended;
+  - a file too damaged to rebuild in place (SQLite refuses to open it, or to write over it) is moved
+    aside to `.previous` under the vault write lock and a new index built; the output says so and
+    tells you to restart any process that had the old file open;
+  - `--rebind` still deletes the other vault's file and builds a new one for this vault, so none of
+    that vault's rows or its snapshots carry over; it now does so under the vault write lock and
+    says that a process still serving the other vault from the file keeps its old copy.
+    The override's refusals (not cuaderno's index, bound to another vault) are unchanged.
+  The ordinary open's self-heal, which deletes a file SQLite cannot open, is unchanged; it is now
+  documented that a process holding such a file stays on it until it restarts.
 - **A long-running server repairs a damaged index itself** (closes #526, part of #520). Page-level damage
   to `index.db` could leave every read working while each write to a damaged page failed with
   `index stale after successful commit`, and the periodic sweep logged only a count. A restart

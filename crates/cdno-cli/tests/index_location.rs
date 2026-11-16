@@ -366,16 +366,27 @@ fn plain_reindex_refuses_an_index_bound_to_another_vault() {
 
     let a_root = a.path().canonicalize().unwrap();
     let b_root = b.path().canonicalize().unwrap();
-    cdno(b.path())
-        .env(paths::INDEX_PATH_ENV, &index)
-        .arg("reindex")
-        .timeout(Duration::from_secs(15))
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains(a_root.to_string_lossy()))
-        .stderr(predicate::str::contains(b_root.to_string_lossy()))
-        .stderr(predicate::str::contains("cdno reindex --rebind"))
-        .stderr(predicate::str::contains("first stop whatever serves"));
+    let files = || {
+        ["", "-wal", "-shm"].map(|suffix| {
+            let mut name = index.as_os_str().to_owned();
+            name.push(suffix);
+            std::fs::read(Path::new(&name)).ok()
+        })
+    };
+    let before = files();
+    for args in [&["reindex"][..], &["reindex", "--drop-snapshots"]] {
+        cdno(b.path())
+            .env(paths::INDEX_PATH_ENV, &index)
+            .args(args)
+            .timeout(Duration::from_secs(15))
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(a_root.to_string_lossy()))
+            .stderr(predicate::str::contains(b_root.to_string_lossy()))
+            .stderr(predicate::str::contains("cdno reindex --rebind"))
+            .stderr(predicate::str::contains("first stop whatever serves"));
+        assert!(files() == before, "{args:?} left the file byte-identical");
+    }
 
     // Untouched: still A's index.
     search(a.path(), &index, "surrogate")

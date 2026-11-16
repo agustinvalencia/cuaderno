@@ -117,12 +117,29 @@ pub struct RebuildReport {
     /// `lint`'s frozen-prefix check on that archived note; nothing else
     /// depends on it.
     pub snapshots_lost: Vec<String>,
+    /// Snapshot rows the old index held that were left behind on purpose
+    /// ([`rebuild_without_snapshots`]); zero for [`rebuild`].
+    pub snapshots_dropped: usize,
+    /// From the last pass, as [`ReconciliationReport`] counts them: every
+    /// note the classifier found, and the markdown files left out by the
+    /// `ignore` globs and as attachment artefacts. The same counts a full
+    /// pass into an empty index reports, so `cdno reindex` prints what it
+    /// printed when it deleted the file and reconciled from nothing.
+    pub scanned: usize,
+    pub ignored: usize,
+    pub artefacts: usize,
+    /// True when a copy was asked for (`keep_copy`) and the live file failed
+    /// its check before the rebuild: the rebuild repaired damage.
+    pub found_damage: bool,
+    /// Where the copy of the damaged file was kept, when one was.
+    pub previous_copy: Option<std::path::PathBuf>,
 }
 
 /// Rebuild `index` from the markdown and copy the result into it in place
 /// ([`SqliteIndex::replace_contents_from`](crate::index::SqliteIndex::replace_contents_from)):
 /// the repair for a damaged index, seen at once by every process on this
-/// machine that has it open.
+/// machine that has it open. The servers' self-repair and `cdno reindex`
+/// (#999) both rebuild through it.
 ///
 /// It contains a fault on one machine (a torn write, a crash, a bad page).
 /// It is no protection for an index shared between two machines or
@@ -162,6 +179,22 @@ pub fn rebuild(
     rebuild_with(store, index, scope, keep_copy, || {})
 }
 
+/// [`rebuild`], carrying no archival snapshot across: the rebuilt index
+/// holds none, and each row the old index held is counted in
+/// [`RebuildReport::snapshots_dropped`]. For `cdno reindex
+/// --drop-snapshots`, the way out of a snapshot `lint` reports that can
+/// never verify again (one that predates the masked hash on a note renamed
+/// on another clone, #901), at the cost of every archived note's
+/// frozen-prefix check.
+pub fn rebuild_without_snapshots(
+    store: &Arc<dyn VaultStore>,
+    index: &crate::index::SqliteIndex,
+    scope: &NoteScope,
+    keep_copy: bool,
+) -> Result<RebuildReport, IndexError> {
+    rebuild_inner(store, index, scope, keep_copy, false, || {})
+}
+
 /// [`rebuild`], running `before_lock` after the unlocked passes and the
 /// check, just before the vault write lock is taken: the window in which
 /// another writer's commit reaches the notes but not yet the fresh index.
@@ -172,6 +205,17 @@ pub fn rebuild_with(
     index: &crate::index::SqliteIndex,
     scope: &NoteScope,
     keep_copy: bool,
+    before_lock: impl FnOnce(),
+) -> Result<RebuildReport, IndexError> {
+    rebuild_inner(store, index, scope, keep_copy, true, before_lock)
+}
+
+fn rebuild_inner(
+    store: &Arc<dyn VaultStore>,
+    index: &crate::index::SqliteIndex,
+    scope: &NoteScope,
+    keep_copy: bool,
+    carry_snapshots: bool,
     before_lock: impl FnOnce(),
 ) -> Result<RebuildReport, IndexError> {
     let fresh = index.open_fresh_beside()?;
@@ -185,9 +229,12 @@ pub fn rebuild_with(
             problems.join("; ")
         )));
     }
-    if keep_copy && !index.quick_check().map(|p| p.is_empty()).unwrap_or(false) {
-        index.keep_previous_copy();
-    }
+    let found_damage = keep_copy && !index.quick_check().map(|p| p.is_empty()).unwrap_or(false);
+    let previous_copy = if found_damage {
+        index.keep_previous_copy()
+    } else {
+        None
+    };
 
     before_lock();
     let _lock = store.acquire_write_lock().map_err(|e| {
@@ -200,9 +247,18 @@ pub fn rebuild_with(
     let last = reconcile(&held, &fresh_index, scope)?;
     let mut report = RebuildReport {
         errors: last.errors,
+        scanned: last.scanned,
+        ignored: last.ignored,
+        artefacts: last.artefacts,
+        found_damage,
+        previous_copy,
         ..RebuildReport::default()
     };
     match index.list_archival_snapshots() {
+        Ok(rows) if !carry_snapshots => report.snapshots_dropped = rows.len(),
+        // Asked to drop them and unable to count them: none is carried
+        // either way, so there is nothing to report as lost.
+        Err(_) if !carry_snapshots => {}
         Ok(rows) => {
             for (path, snapshot) in rows {
                 match fresh_index.record_archival_snapshot(&path, &snapshot) {

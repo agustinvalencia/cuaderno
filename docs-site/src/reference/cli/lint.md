@@ -67,8 +67,9 @@ reference-field value set aside. The cost of that rule is that a hand edit which
 reference inside a frozen prefix is no longer detected; any other change still is. This holds on every
 clone that opened the vault once on this version with the backfill completing (it is retried at every open, and a lock timeout only postpones it) before the renamed file arrived: a note archived on an
 older version and renamed elsewhere first is reported as an error that names
-[`cdno reindex`](reindex.md), which clears it by rebuilding the index without any archival snapshots,
-so every archived note loses this check. On a renamed note, a hand addition that follows an unmatched
+[`cdno reindex --drop-snapshots`](reindex.md#archival-snapshots), which clears it by rebuilding the
+index without any archival snapshots, so every archived note loses this check. A plain `cdno reindex`
+carries the snapshots across and leaves the error in place. On a renamed note, a hand addition that follows an unmatched
 backtick at the end of the prefix with no blank line in between is reported too; start a late addition
 after a blank line. A note archived by
 a newer cdno, whose snapshot this cdno cannot read in the second form, gets a warning naming the

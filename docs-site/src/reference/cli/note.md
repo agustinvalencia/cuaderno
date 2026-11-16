@@ -325,8 +325,9 @@ that merges. Three things apply:
   addresses, which is how `cdno lint` tells a corrected link from an edit. A clone that receives a
   renamed archived note before it has done so reports an archived action note error from `cdno
   lint` (`modified an existing line`, or `truncated below its frozen prefix` after a shorter slug)
-  that names [`cdno reindex`](reindex.md). `cdno reindex` clears it, at the cost of the stored
-  records: every archived action note then loses that check.
+  that names [`cdno reindex --drop-snapshots`](reindex.md#archival-snapshots), which clears it at
+  the cost of the stored records: every archived action note then loses that check. A plain
+  `cdno reindex` keeps the records, and the error with them.
 
 ## Examples
 

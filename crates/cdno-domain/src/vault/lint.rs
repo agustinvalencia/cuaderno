@@ -1381,7 +1381,8 @@ fn orphan_folder_for(
 /// "truncated" or "modified" whenever the row has a masked hash at a known
 /// version; the plain verdict picks only otherwise. A row with no masked
 /// hash at all (archived before migration 004, never backfilled) adds that
-/// the snapshot predates it and what `cdno reindex` would cost.
+/// the snapshot predates it and what `cdno reindex --drop-snapshots` would
+/// cost.
 fn check_append_only(
     store: &std::sync::Arc<dyn cdno_core::store::VaultStore>,
     path: &cdno_core::path::VaultPath,
@@ -1440,9 +1441,9 @@ fn check_append_only(
         // for it again (#901); say so, and name the way out with its cost.
         message.push_str(
             "; this snapshot predates the masked hash, so a rename made on another clone also \
-             reads as an edit here: if that is the cause, `cdno reindex` clears it, but the \
-             rebuilt index holds no archival snapshots, so every archived action note loses \
-             its frozen-prefix check",
+             reads as an edit here: if that is the cause, `cdno reindex --drop-snapshots` \
+             clears it, but the rebuilt index then holds no archival snapshots, so every \
+             archived action note loses its frozen-prefix check",
         );
     }
     issues.push(LintIssue::error(path.clone(), message));
