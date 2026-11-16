@@ -22,7 +22,7 @@ The **index location** is decided for all three by `paths::resolve_index_path` (
 absolute path bound to one vault; never a config key, and the workspace `.cargo/config.toml` forces
 it empty under cargo so tests never see a contributor's value.
 **The repo root is
-itself a dev vault** (`.cuaderno/config.toml` is tracked; `index.db` and `.lock` are gitignored), so
+itself a dev vault** (`.cuaderno/config.toml` is tracked; `index.db`, `.lock` and `.write-lock*` are gitignored), so
 `cdno` run from here works against the repo — and, per the ordering above, does so even when
 `CUADERNO_VAULT_PATH` points elsewhere.
 
@@ -140,9 +140,19 @@ third lookup.
   the raw writes listed above bypass it, as they bypass the lock, and reconciliation is ungated.
 - **Startup reconciliation runs inside `Vault::new`**, so any domain method may assume the index
   matches the filesystem on entry.
-- **Cross-process writes serialise** on an OS advisory lock (`.cuaderno/.lock`) held for the life of
-  a transaction, with a 5s timeout rather than an unbounded hang. That `flock` holds within one
-  kernel only, so **a commit also compares before it renames** (#1001,
+- **Cross-process writes serialise** on two locks, both taken by `FsVaultStore::acquire_write_lock`
+  and held for the life of a transaction (or of any other holder: a rebuild's locked pass, the git
+  checkpoint), within one 5s timeout rather than an unbounded hang: an OS advisory `flock` on
+  `.cuaderno/.lock`, which orders one kernel's writers, and then the **lock file every kernel sees**,
+  `.cuaderno/.write-lock` (#1012, `cdno-core/src/shared_lock.rs`): created exclusively with its owner
+  record inside (temp file, then `link`), broken by rename-aside once 30s old by the folder's clock,
+  never refreshed. Because a suspended holder can be broken, **the commit checks it still holds the
+  lock before every file op** (`VaultWriteLock::verify`) and otherwise stops, rolls back and fails
+  with `StoreError::LockLost`; release removes only its own lock. The lock files are cdno's, never
+  notes (`classify` skips `.cuaderno/`; the checkpoint excludes `.write-lock*`). A new holder of the
+  vault lock goes through `acquire_write_lock`, never `flock` alone, and must not hold it across slow
+  work near the stale interval. Writers that take no lock (an editor, a sync tool, an older cdno)
+  remain, so **a commit also compares before it renames** (#1001,
   `docs/concurrent-writers.md`): while a transaction is open the store records what the opening
   thread reads of each path into the transaction's `ReadJournal` (`cdno-core/src/read_journal.rs`;
   the first read is the baseline, and a later one that disagrees refuses the commit). The commit
@@ -156,8 +166,8 @@ third lookup.
   transaction fails a debug assertion in its tests. `read_journals`, `write_file_expecting` and
   `append_to_file_expecting` have no default on `VaultStore`: every store states its behaviour,
   and a wrapping store delegates them. Bare moves of an unread source are not compared; a gap of
-  one `stat` before each rename remains, so this narrows the cross-kernel race and does not close
-  it (the shared lock is #1012). `Vault::retry_on_conflict` re-runs the append-shaped verbs; the
+  one `stat` before each rename remains, which the lock file closes between cdno writers and
+  nothing closes against the others. `Vault::retry_on_conflict` re-runs the append-shaped verbs; the
   verbs that replace caller-composed content return the conflict (`vault/conflict_retry.rs` lists
   both).
 - **Index schema changes are append-only**: add an entry to `MIGRATIONS` in `cdno-core/src/index.rs`

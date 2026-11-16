@@ -9,12 +9,17 @@ use crate::error::StoreError;
 use crate::file_meta::FileMeta;
 use crate::path::VaultPath;
 use crate::read_journal::{Observed, ReadJournals};
+use crate::shared_lock::{self, SharedLock};
 
 /// How long [`VaultStore::acquire_write_lock`] waits for the vault write
 /// lock before giving up. Bounded so a wedged holder surfaces as a
-/// [`StoreError::LockTimeout`] rather than an unbounded hang; mirrors the
-/// SQLite index's `busy_timeout`. The OS releases the lock on process
-/// death, so a crashed holder never deadlocks the next writer.
+/// [`StoreError::LockTimeout`] (or, for the lock file, a
+/// [`StoreError::LockBusy`] naming its holder) rather than an unbounded
+/// hang; mirrors the SQLite index's `busy_timeout`. One deadline covers
+/// both locks. The OS releases the `flock` on process death; a crashed
+/// holder's lock file is broken once it is
+/// [`STALE_AFTER`](crate::shared_lock::STALE_AFTER) old, so until then a
+/// writer waits this long and fails as busy.
 const WRITE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Filename prefix for the in-progress temp file that atomic writes
@@ -24,24 +29,52 @@ const WRITE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 /// of any lock. Exposed for the checkpoint to build its exclude rule.
 pub const WIP_TEMP_PREFIX: &str = ".cdno-wip-";
 
-/// Guard for the vault write lock (#196). For [`FsVaultStore`] it holds an
-/// OS advisory lock on `.cuaderno/.lock`; for in-memory stores it is a
-/// no-op. The lock releases when this guard drops — and, being tied to an
-/// open file descriptor, on process death too.
+/// Guard for the vault write lock (#196, #1012). For [`FsVaultStore`] it
+/// holds an OS advisory lock on `.cuaderno/.lock` (which orders the
+/// writers of one kernel) and then the lock file every kernel sees,
+/// `.cuaderno/.write-lock` (see [`crate::shared_lock`]); for in-memory
+/// stores it is a no-op. Both release when this guard drops, the lock file
+/// first. On process death the OS frees the `flock`; the lock file is left,
+/// and broken by the next writer once it is stale.
 #[derive(Debug)]
 pub struct VaultWriteLock {
     file: Option<File>,
+    shared: Option<SharedLock>,
 }
 
 impl VaultWriteLock {
     /// A no-op guard, for stores that share no on-disk lock file.
     fn noop() -> Self {
-        Self { file: None }
+        Self {
+            file: None,
+            shared: None,
+        }
+    }
+
+    /// Whether this guard still holds the vault write lock file (#1012):
+    /// `Err(`[`StoreError::LockLost`]`)` when another writer broke it as
+    /// stale. A no-op guard, and one taken without the lock file, always
+    /// holds. A commit checks this before each file operation, so a holder
+    /// whose lock was broken never replaces a file after that.
+    pub fn verify(&self) -> Result<(), StoreError> {
+        match &self.shared {
+            Some(shared) => shared.verify(),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether taking this lock broke a stale lock file left by another
+    /// writer (#1012). Diagnostic: a warning is logged when it happens.
+    pub fn broke_stale_lock(&self) -> bool {
+        self.shared.as_ref().is_some_and(SharedLock::broke_stale)
     }
 }
 
 impl Drop for VaultWriteLock {
     fn drop(&mut self) {
+        // The lock file first, while the `flock` still keeps this kernel's
+        // other writers waiting, so none of them polls for it.
+        drop(self.shared.take());
         if let Some(file) = &self.file {
             // Dropping the file closes the fd, which releases the lock
             // anyway; the explicit unlock just makes release prompt.
@@ -257,7 +290,10 @@ pub trait VaultStore: Send + Sync {
     ///
     /// The default is a no-op — correct for in-memory stores and test
     /// doubles, which share no on-disk file across processes.
-    /// [`FsVaultStore`] overrides it with an OS advisory lock.
+    /// [`FsVaultStore`] overrides it with an OS advisory lock, then the lock
+    /// file every kernel sees (#1012, [`crate::shared_lock`]). Every holder
+    /// of the vault write lock comes through here, so every one takes both:
+    /// transactions, an index rebuild's locked pass, the git checkpoint.
     fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
         Ok(VaultWriteLock::noop())
     }
@@ -697,6 +733,15 @@ pub struct FsVaultStore {
     /// Where the write lock lives when not `.cuaderno/.lock`; see
     /// `with_lock_file` (a test seam behind the `test-support` feature).
     lock_file: Option<PathBuf>,
+    /// Whether the write lock takes the lock file every kernel sees
+    /// (#1012) after the `flock`. Always true outside tests; see
+    /// `without_shared_lock`.
+    shared_lock: bool,
+    /// How the lock file is taken: production values outside tests.
+    shared_lock_options: shared_lock::Options,
+    /// How long the write lock is waited for: [`WRITE_LOCK_TIMEOUT`]
+    /// outside tests.
+    lock_timeout: Duration,
     /// Reads recorded for open transactions (#1001). Per instance: a
     /// clone starts with none open.
     journals: ReadJournals,
@@ -730,6 +775,9 @@ impl Clone for FsVaultStore {
         // re-memoises lazily, keeping the OnceLock semantics simple.
         let mut clone = Self::new(self.root.clone());
         clone.lock_file.clone_from(&self.lock_file);
+        clone.shared_lock = self.shared_lock;
+        clone.shared_lock_options = self.shared_lock_options.clone();
+        clone.lock_timeout = self.lock_timeout;
         clone.hooks = self.hooks.clone();
         clone
     }
@@ -738,7 +786,7 @@ impl Clone for FsVaultStore {
 /// Whether a failed no-clobber rename means the filesystem cannot do one
 /// at all (no rename flag, no hard links), as opposed to an ordinary
 /// failure that must be reported.
-fn noclobber_unsupported(e: &io::Error) -> bool {
+pub(crate) fn noclobber_unsupported(e: &io::Error) -> bool {
     if matches!(
         e.kind(),
         io::ErrorKind::Unsupported | io::ErrorKind::InvalidInput
@@ -764,22 +812,57 @@ impl FsVaultStore {
             root: root.into(),
             root_canon: std::sync::OnceLock::new(),
             lock_file: None,
+            shared_lock: true,
+            shared_lock_options: shared_lock::Options::default(),
+            lock_timeout: WRITE_LOCK_TIMEOUT,
             journals: ReadJournals::new(),
             hooks: TestHooks::default(),
         }
     }
 
-    /// Take the write lock on `lock_file` (an absolute path) instead of
-    /// the vault's `.cuaderno/.lock`.
+    /// Take the `flock` on `lock_file` (an absolute path) instead of the
+    /// vault's `.cuaderno/.lock`.
     ///
     /// A test seam, compiled only with the `test-support` feature: two
-    /// stores over one folder with different lock files hold their locks
-    /// independently, which is how a test reproduces a folder written from
-    /// two kernels, where `flock` is not shared (#1001). A real vault
-    /// always locks `.cuaderno/.lock`.
+    /// stores over one folder with different lock files hold their
+    /// `flock`s independently, which is how a test reproduces a folder
+    /// written from two kernels, where `flock` is not shared (#1001). They
+    /// still contend for the lock file in the vault's `.cuaderno/` (#1012),
+    /// as two kernels do; add [`without_shared_lock`](Self::without_shared_lock)
+    /// for writers no lock excludes. A real vault always locks
+    /// `.cuaderno/.lock`.
     #[cfg(feature = "test-support")]
     pub fn with_lock_file(mut self, lock_file: impl Into<PathBuf>) -> Self {
         self.lock_file = Some(lock_file.into());
+        self
+    }
+
+    /// Take only the `flock`, never the lock file every kernel sees
+    /// (#1012): a writer that predates it, such as an older cdno (test
+    /// seam, `test-support` only). Two such stores over one folder with
+    /// their own lock files ([`with_lock_file`](Self::with_lock_file)) hold
+    /// transactions at the same moment, which is how the compare before
+    /// rename (#1001) is tested against writers no lock excludes.
+    #[cfg(feature = "test-support")]
+    pub fn without_shared_lock(mut self) -> Self {
+        self.shared_lock = false;
+        self
+    }
+
+    /// Wait `timeout` for the write lock instead of five seconds (test
+    /// seam, `test-support` only).
+    #[cfg(feature = "test-support")]
+    pub fn with_lock_timeout(mut self, timeout: Duration) -> Self {
+        self.lock_timeout = timeout;
+        self
+    }
+
+    /// Run `hook` when this store has judged the lock file stale, right
+    /// before it renames it aside to break it (test seam, `test-support`
+    /// only).
+    #[cfg(feature = "test-support")]
+    pub fn with_before_break_hook(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
+        self.shared_lock_options.hooks.before_break = Some(Arc::new(hook));
         self
     }
 
@@ -1323,18 +1406,16 @@ impl VaultStore for FsVaultStore {
     }
 
     fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
-        // The lock file lives in `.cuaderno/` — present in any real vault,
-        // but create it defensively so a freshly-`init`ed vault locks too.
+        // Both locks live in `.cuaderno/` — present in any real vault, but
+        // create it defensively so a freshly-`init`ed vault locks too.
+        let dir = self.root.join(crate::paths::CUADERNO_DIR);
+        fs::create_dir_all(&dir).map_err(|e| StoreError::Io {
+            path: crate::paths::CUADERNO_DIR.to_string(),
+            source: e,
+        })?;
         let lock_path = match &self.lock_file {
             Some(lock_file) => lock_file.clone(),
-            None => {
-                let dir = self.root.join(crate::paths::CUADERNO_DIR);
-                fs::create_dir_all(&dir).map_err(|e| StoreError::Io {
-                    path: crate::paths::CUADERNO_DIR.to_string(),
-                    source: e,
-                })?;
-                dir.join(".lock")
-            }
+            None => dir.join(".lock"),
         };
         let lock_name = ".cuaderno/.lock";
         let file = OpenOptions::new()
@@ -1350,13 +1431,14 @@ impl VaultStore for FsVaultStore {
         // Poll `try_lock` to a deadline rather than block forever: a wedged
         // holder times out, and the OS frees the lock on process death so a
         // crashed holder never deadlocks us.
-        let deadline = Instant::now() + WRITE_LOCK_TIMEOUT;
+        let started = Instant::now();
+        let deadline = started + self.lock_timeout;
         loop {
             match file.try_lock() {
-                Ok(()) => return Ok(VaultWriteLock { file: Some(file) }),
+                Ok(()) => break,
                 Err(TryLockError::WouldBlock) => {
                     if Instant::now() >= deadline {
-                        return Err(StoreError::LockTimeout(WRITE_LOCK_TIMEOUT));
+                        return Err(StoreError::LockTimeout(self.lock_timeout));
                     }
                     std::thread::sleep(Duration::from_millis(20));
                 }
@@ -1368,5 +1450,23 @@ impl VaultStore for FsVaultStore {
                 }
             }
         }
+
+        // Then the lock file another kernel sees (#1012), within the same
+        // deadline. Under the `flock`, so only one process of this kernel
+        // polls for it. On failure the `flock` is released with `file`.
+        let shared = if self.shared_lock {
+            Some(shared_lock::acquire(
+                &dir,
+                deadline,
+                started,
+                &self.shared_lock_options,
+            )?)
+        } else {
+            None
+        };
+        Ok(VaultWriteLock {
+            file: Some(file),
+            shared,
+        })
     }
 }

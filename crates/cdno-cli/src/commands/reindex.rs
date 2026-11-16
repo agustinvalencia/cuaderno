@@ -307,7 +307,9 @@ fn rebuild_or_set_aside(
             "rebuilding the index at {}; it was left as it was",
             location.path.display()
         );
-        if e.to_string().contains(LOCK_TIMEOUT_TEXT) {
+        // The lock file's busy error (#1012) names its holder itself.
+        let text = e.to_string();
+        if text.contains(LOCK_TIMEOUT_TEXT) && !text.contains("another cdno process") {
             context.push_str(LOCK_HINT);
         }
         anyhow::Error::new(e).context(context)

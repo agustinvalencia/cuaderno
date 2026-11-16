@@ -3,8 +3,11 @@
 //! kernels and `flock` is not seen across them.
 //!
 //! Each test gives every store its own lock file
-//! ([`FsVaultStore::with_lock_file`]), so both writers hold "the" lock at
-//! once, exactly as on a bind mount, and drives the interleaving by hand.
+//! ([`FsVaultStore::with_lock_file`]) and leaves out the lock file every
+//! kernel sees ([`FsVaultStore::without_shared_lock`], as a cdno from
+//! before #1012 writes), so both writers hold "the" lock at once, exactly
+//! as on a bind mount without that lock, and drives the interleaving by
+//! hand. The lock file itself is tested in `shared_lock_tests`.
 //! The single-machine behaviour (shared lock, rollback, `IndexStale`) is
 //! pinned at the end and in `transaction_tests`.
 
@@ -46,10 +49,16 @@ impl Folder {
         self.vault.path()
     }
 
-    /// A store over the folder with its own lock file `name`: two stores
-    /// with different names do not exclude each other.
+    /// A store over the folder with its own lock file `name` and without
+    /// the lock file every kernel sees (#1012), as an older cdno writes:
+    /// two stores with different names do not exclude each other, so the
+    /// comparison is all that stands between them.
     fn writer(&self, name: &str) -> Arc<FsVaultStore> {
-        Arc::new(FsVaultStore::new(self.root()).with_lock_file(self.locks.path().join(name)))
+        Arc::new(
+            FsVaultStore::new(self.root())
+                .with_lock_file(self.locks.path().join(name))
+                .without_shared_lock(),
+        )
     }
 
     fn put(&self, path: &str, content: &str) {

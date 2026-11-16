@@ -1566,7 +1566,9 @@ fn failed_path(error: &cdno_core::error::StoreError) -> Option<VaultPath> {
         | StoreError::OutsideVault(p)
         | StoreError::Io { path: p, .. } => p,
         StoreError::Changed(p) => return Some(p.clone()),
-        StoreError::LockTimeout(_) => return None,
+        StoreError::LockTimeout(_) | StoreError::LockBusy { .. } | StoreError::LockLost { .. } => {
+            return None;
+        }
     };
     VaultPath::new(raw.as_str()).ok()
 }

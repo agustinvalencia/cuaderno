@@ -27,6 +27,15 @@
 //! refuses with [`TransactionError::Conflict`], writing nothing, when a
 //! file it is about to replace, append to or delete no longer holds what
 //! was read. `docs/concurrent-writers.md` states the windows that remain.
+//!
+//! **The lock every kernel sees (#1012).** The write lock now also takes a
+//! lock file that a second kernel sees ([`crate::shared_lock`]), so cdno
+//! writers exclude each other there too, and the comparison is left to
+//! catch writers that take no lock. A lock file can be broken as stale
+//! under a holder that was suspended; so before each file op the commit
+//! checks that it still holds it, and otherwise stops, rolls back what it
+//! applied, and fails with [`StoreError::LockLost`] inside
+//! [`TransactionError::FileWrite`].
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -56,8 +65,10 @@ pub struct VaultTransaction {
     /// The vault write lock, held from construction until this
     /// transaction drops (after `commit`) so the whole read-modify-write
     /// of the owning operation serialises against other processes (#196).
-    /// Held, never read — its `Drop` does the work.
-    _lock: VaultWriteLock,
+    /// Released by its `Drop`, on commit, on a refused commit and on a
+    /// transaction dropped uncommitted alike. The commit asks it before
+    /// each file op whether this process still holds it (#1012).
+    lock: VaultWriteLock,
     /// What this transaction's own thread observed of each path while it
     /// was open, recorded by the store on every read and by the staging
     /// methods for a path staged without being read (#1001). Taken, and so
@@ -169,7 +180,7 @@ impl VaultTransaction {
             index,
             file_ops: Vec::new(),
             index_ops: Vec::new(),
-            _lock: lock,
+            lock,
             journal: Some(journal),
             reads_required: false,
         })
@@ -476,6 +487,18 @@ impl VaultTransaction {
         // Phase 1: file ops with undo capture.
         let mut applied: Vec<Undo> = Vec::with_capacity(self.file_ops.len());
         for op in &self.file_ops {
+            // Still the holder of the vault write lock (#1012)? A holder
+            // suspended past the stale interval has had its lock broken and
+            // may have a successor writing now: it must not replace a file,
+            // so it stops here and undoes what it applied (conditionally,
+            // so the successor's changes are never overwritten).
+            if let Err(source) = self.lock.verify() {
+                let rollback_failures = rollback(&*self.store, applied);
+                return Err(TransactionError::FileWrite {
+                    source,
+                    rollback_failures,
+                });
+            }
             match apply_file_op(&*self.store, op, &mut expect) {
                 Ok(undo) => applied.push(undo),
                 Err(source) => {

@@ -61,6 +61,7 @@ vault/
 └── .cuaderno/
     ├── config.toml               # vault configuration
     ├── index.db                  # SQLite index cache (auto-created, rebuildable)
+    ├── .lock, .write-lock        # the vault write lock (.write-lock only while a write runs)
     └── templates/                # note templates (override the built-ins)
 ```
 
@@ -94,6 +95,34 @@ vault/
   instead; see [Keeping the index on each machine](#keeping-the-index-on-each-machine).
 - **`templates/`** — the note templates `cdno` fills when scaffolding a note. The built-ins are
   written here at `init` so you can edit them; pure variable substitution, no logic.
+- **`.lock`** and **`.write-lock`** — the vault write lock. Every write takes both, one after the
+  other, and holds them while it reads and rewrites notes. `.lock` stays (an empty file the
+  operating system locks), and only processes on the same machine see that lock. `.write-lock`
+  exists only while a write holds it, and processes on another machine or in a container that share
+  the folder see it too (see [Sharing a vault between machines](#sharing-a-vault-between-machines)).
+  Files named `.write-lock.<…>` beside it live for an instant while a write takes or breaks the
+  lock. None of them is a note; keep them out of git and out of a sync tool.
+
+## Sharing a vault between machines
+
+When one vault folder is reachable from two operating systems at once (a host and a container that
+mounts it, or two computers on a network share), the writes of both are kept apart by
+`.cuaderno/.write-lock`, a lock file both sides see: a write on one side waits for a write on the
+other, so neither replaces a note the other has just changed. What still matters:
+
+- **Every side must run a version that takes it** (a release after 0.46.0). An older `cdno` or
+  `cdno-mcp-server` does not know the lock file, and is no more excluded than an editor is.
+- **Writers that take no lock** (an editor, a sync tool) are not excluded by it. A write that finds
+  the note changed under it refuses, writing nothing (see
+  [Troubleshooting](../reference/troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared)).
+- **A writer that crashes holding the lock** leaves `.write-lock` behind. Writes then fail as busy
+  for up to 30 seconds, after which the next write takes the lock over by itself (see
+  [Troubleshooting](../reference/troubleshooting.md#a-write-fails-with-timed-out--waiting-for-the-vault-write-lock)).
+- **The config and the templates are not covered.** Editing `config.toml` or a template through
+  cdno (`cdno config` edits, `cdno templates` eject, save and sync) takes no lock, on one machine
+  or two; do that from one side at a time.
+- **Give each machine its own index**, next section: the lock keeps the notes safe, not a SQLite file
+  shared between two kernels.
 
 ## Keeping the index on each machine
 
@@ -179,10 +208,10 @@ seconds (300 by default; `--reconcile-interval-secs` on the HTTP server; see
 window search and backlinks can miss the other side's latest notes, and the active-project cap and
 the check that a new note's name is unique are made against that stale view, so the cap can be
 exceeded or a name taken twice until someone reconciles. The override separates the index only.
-For the notes themselves, a write now refuses to replace a note that changed while it was being
-prepared ([a write fails with "changed on disk …"](../reference/troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared)),
-which makes a lost line rare but not impossible: the two machines' write locks still do not see each
-other, and a lock they both see is [#1012](https://github.com/agustinvalencia/cuaderno/issues/1012).
+For the notes themselves, the two machines' writes are kept apart by the lock file both see
+([Sharing a vault between machines](#sharing-a-vault-between-machines)), and a write still refuses
+to replace a note that something else changed while it was being prepared
+([a write fails with "changed on disk …"](../reference/troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared)).
 
 **Moving an index.** No migration is needed: the new file starts empty and the next open rebuilds
 it from the Markdown. A new file starts without the archival snapshots (only a rebuild of an

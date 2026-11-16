@@ -27,6 +27,22 @@ fn lint_succeeds_silently_on_a_freshly_inited_vault() {
 }
 
 #[test]
+fn lint_does_not_report_the_write_lock_files() {
+    // The lock file's siblings (#1012), as a crash leaves them, and a
+    // Markdown-looking one among them: `.cuaderno/` is not the vault's.
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+    for name in [
+        ".write-lock.a1b2.new",
+        ".write-lock.c3d4.stale",
+        ".write-lock.e5f6.probe.md",
+    ] {
+        fs::write(dir.path().join(".cuaderno").join(name), "token: 00\n").unwrap();
+    }
+    lint::run(dir.path(), lint_day(), false).expect("lint finds nothing to report");
+}
+
+#[test]
 fn lint_returns_err_when_a_note_has_an_unknown_type() {
     let dir = tempdir().unwrap();
     init::run(dir.path()).expect("init");

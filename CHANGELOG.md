@@ -41,6 +41,39 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+- **cdno writers on two kernels exclude each other: a write lock both sides see** (closes #1012,
+  part of #1005). The vault write lock was an `flock`, which one kernel enforces and another does
+  not see, so a host and a container (or two machines on a share) writing one folder both held it,
+  and even with the compare before rename below a line could be lost. Every holder of the write
+  lock (every write, an index rebuild's locked pass, reconciliation, the git checkpoint) now also
+  takes `.cuaderno/.write-lock`, a lock file created exclusively with its owner record already
+  inside, after the `flock` and within the same 5 s wait, for the life of the transaction.
+  - A lock held for the whole wait fails the write with "timed out after 5s waiting for the vault
+    write lock: .cuaderno/.write-lock is held by <program> (process <n> on the machine that took
+    it, at <time> by that machine's clock), and is <n>s old; …", which says the lock of a writer
+    that crashed is broken once it is 30 s old. It is: the next write renames it aside (exactly one
+    contender can) and takes the lock, with a warning naming the old owner. So a crash makes writes
+    fail as busy for up to 30 s and then heals with nobody's help. Age is read from the folder's own
+    clock (the lock's mtime against a probe file made beside it), never from a process id.
+  - A holder whose lock was broken while it was suspended (a laptop asleep, a paused container)
+    finds out before its next file operation: it stops, rolls back what it had written, and fails
+    with "the vault write lock .cuaderno/.write-lock was broken as stale by another writer while
+    this write held it, … run the operation again". Its release never removes the new holder's lock.
+  - `cdno now` and shell completion still take no lock and touch nothing in `.cuaderno/`.
+  - Every side must run this version or later; an older binary takes only the `flock`, and is no
+    more excluded than an editor, against which the compare before rename stays the protection.
+    Config and template writes take neither lock, as before.
+  - The HTTP server's git checkpoint excludes `/.cuaderno/.write-lock*`; a vault kept in git by
+    hand should ignore it too (the user guide's `.gitignore` lines now include it).
+  - Cost on a macOS SSD: about 0.35 ms to take and release the lock, about 2 ms more per write
+    transaction (the note's own full device flush now also flushes the lock's metadata), and about
+    0.36 ms per note when an empty index is first filled. `docs/concurrent-writers.md` has the
+    protocol, each holder's hold time and the measurements.
+  - In `cdno-core`: `shared_lock` (the mechanics, `LOCK_PATH`, `STALE_AFTER`),
+    `VaultWriteLock::verify` and `broke_stale_lock`, and the `StoreError` variants `LockBusy` and
+    `LockLost`. `FsVaultStore` gains the `test-support` seams `without_shared_lock`,
+    `with_lock_timeout` and `with_before_break_hook`.
+
 - **A commit refuses to replace a note that changed while the write was being prepared** (part of
   #1001, #1005). The vault write lock is an `flock`, which one kernel enforces and another does not
   see, so a folder written from a host and a container at once lost lines from a daily note (7 and

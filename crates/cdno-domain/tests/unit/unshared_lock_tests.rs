@@ -498,3 +498,113 @@ fn an_action_added_from_a_stale_read_of_its_map_is_retried_onto_the_fresh_map() 
         );
     }
 }
+
+/// The acceptance case of #1012: two stores over one real folder whose
+/// `flock`s are independent (two kernels), each behind its own `Vault`,
+/// logging concurrently through the domain's log path. The lock file both
+/// see serialises them, so no line is lost or doubled, and every call
+/// succeeds.
+#[test]
+fn two_stores_with_independent_flocks_logging_to_one_daily_note_lose_no_line() {
+    use cdno_core::store::FsVaultStore;
+    const LINES: usize = 40;
+    let dir = tempfile::tempdir().unwrap();
+    let flocks = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".cuaderno")).unwrap();
+    let vaults: Vec<Vault> = ["a", "b"]
+        .iter()
+        .map(|name| {
+            let store = FsVaultStore::new(dir.path())
+                .with_lock_file(flocks.path().join(format!("{name}.lock")));
+            vault_over(Arc::new(store) as Arc<dyn VaultStore>)
+        })
+        .collect();
+    let start = Arc::new(AtomicBool::new(false));
+    let handles: Vec<_> = vaults
+        .into_iter()
+        .zip(["a", "b"])
+        .map(|(vault, name)| {
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                while !start.load(Ordering::SeqCst) {
+                    std::hint::spin_loop();
+                }
+                for n in 0..LINES {
+                    vault
+                        .log_to_daily_note(at(), &format!("kernel {name} line {n}"))
+                        .expect("a writer the lock file excludes never needs a retry budget");
+                }
+            })
+        })
+        .collect();
+    start.store(true, Ordering::SeqCst);
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    let note = std::fs::read_to_string(dir.path().join(DAILY)).unwrap();
+    for name in ["a", "b"] {
+        for n in 0..LINES {
+            let line = format!("kernel {name} line {n}");
+            assert_eq!(count(&note, &line), 1, "{line:?} lost or doubled:\n{note}");
+        }
+    }
+    let lock = dir
+        .path()
+        .join(".cuaderno")
+        .join(cdno_core::shared_lock::LOCK_NAME);
+    assert!(
+        !lock.exists(),
+        "the lock file is released after the last write"
+    );
+}
+
+/// What the lock file (#1012) adds to opening a vault whose index is new:
+/// reconciliation indexes each note in a transaction of its own, so each
+/// takes the vault write lock. Opens a vault of `NOTES` inbox notes into a
+/// fresh in-memory index with and without the lock file, alternately. Run
+/// by hand (`--ignored --nocapture`); `docs/concurrent-writers.md` records
+/// the figure.
+#[test]
+#[ignore = "a measurement, run by hand"]
+fn measure_what_the_lock_file_adds_to_a_first_reconciliation() {
+    use cdno_core::store::FsVaultStore;
+    const NOTES: usize = 500;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".cuaderno")).unwrap();
+    std::fs::create_dir_all(dir.path().join("inbox")).unwrap();
+    for n in 0..NOTES {
+        std::fs::write(
+            dir.path().join(format!("inbox/2026-06-13-note-{n}.md")),
+            format!("---\ntype: inbox\ncreated: 2026-06-13\n---\n\nNote {n}.\n"),
+        )
+        .unwrap();
+    }
+    let mut times = [Vec::new(), Vec::new()];
+    for _ in 0..5 {
+        for (slot, shared) in [true, false].into_iter().enumerate() {
+            let store = FsVaultStore::new(dir.path());
+            let store = if shared {
+                store
+            } else {
+                store.without_shared_lock()
+            };
+            let started = std::time::Instant::now();
+            let (_vault, report) = Vault::new(
+                Arc::new(store) as Arc<dyn VaultStore>,
+                Arc::new(MemoryIndex::new()) as Arc<dyn VaultIndex>,
+                VaultConfig::default(),
+            )
+            .unwrap();
+            times[slot].push(started.elapsed());
+            assert_eq!(report.added, NOTES, "{report:?}");
+        }
+    }
+    for t in &mut times {
+        t.sort();
+    }
+    eprintln!(
+        "opening {NOTES} new notes, median of 5: {:?} with the lock file, {:?} without",
+        times[0][2], times[1][2]
+    );
+}

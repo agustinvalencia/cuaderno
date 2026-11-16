@@ -91,8 +91,11 @@ control**: `git init` the vault and commit as you go, or keep it in a synced fol
 cd ~/notebook
 git init && git add . && git commit -m "Initial vault"
 # The index is regenerated on demand, so it's safe to ignore,
-# with the files beside it (its WAL, and a rebuild's copies):
+# with the files beside it (its WAL, and a rebuild's copies),
+# and so are the write lock's files:
 echo ".cuaderno/index.db*" >> .gitignore
+echo ".cuaderno/.lock" >> .gitignore
+echo ".cuaderno/.write-lock*" >> .gitignore
 ```
 
 Because the Markdown is the source of truth, your history is just your commits — nothing is locked

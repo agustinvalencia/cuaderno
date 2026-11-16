@@ -633,10 +633,17 @@ fn warn_paused_op(last_warned: &AtomicU64, op: &PausedGitOp) {
 /// cache all the same. An override inside the vault gets its own rule on
 /// top ([`relocated_index_exclude_pattern`]); one outside the vault needs
 /// none.
-fn excluded_patterns() -> [String; 2] {
+///
+/// The third is the vault write lock file (#1012) and its siblings (the
+/// temp file a new lock is written to, the age probe, a broken lock's
+/// aside name): the sweep runs holding the lock, so `git add -A` would
+/// otherwise stage it, and the release right after would leave the tree
+/// dirty again.
+fn excluded_patterns() -> [String; 3] {
     [
         format!("{}*", cdno_core::store::WIP_TEMP_PREFIX),
         format!("/{}*", cdno_core::paths::INDEX_DB),
+        format!("/{}*", cdno_core::shared_lock::LOCK_PATH),
     ]
 }
 
@@ -946,6 +953,32 @@ mod tests {
         let status = String::from_utf8_lossy(&out.stdout);
         assert!(status.contains("config.toml"), "{status}");
         assert!(!status.contains("index.db"), "{status}");
+    }
+
+    #[test]
+    fn the_write_lock_file_and_its_siblings_are_never_staged() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        ensure_wip_excluded(dir.path()).unwrap();
+        let cuaderno = dir.path().join(".cuaderno");
+        std::fs::create_dir_all(&cuaderno).unwrap();
+        for name in [
+            ".write-lock",
+            ".write-lock.a1b2.new",
+            ".write-lock.c3d4.probe",
+            ".write-lock.e5f6.stale",
+        ] {
+            std::fs::write(cuaderno.join(name), b"x").unwrap();
+        }
+        std::fs::write(cuaderno.join("config.toml"), b"x").unwrap();
+        let out = run_git(
+            dir.path(),
+            &["status", "--porcelain", "--untracked-files=all"],
+        )
+        .unwrap();
+        let status = String::from_utf8_lossy(&out.stdout);
+        assert!(status.contains("config.toml"), "{status}");
+        assert!(!status.contains("write-lock"), "{status}");
     }
 
     #[test]

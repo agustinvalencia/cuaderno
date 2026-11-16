@@ -44,6 +44,7 @@
 //!   condition in two different shapes depending on which layer noticed.
 //!
 //! The rest of `StoreError` (`PermissionDenied`, `Io`, `LockTimeout`,
+//! `LockBusy` and `LockLost`, #1012,
 //! `OutsideVault`, `Changed`) is machinery, as are `Index`, `Transaction`
 //! (except its `Conflict`, `concurrent_change`: a file changed underneath
 //! the write, nothing was written, and the caller's remedy is to call
@@ -639,6 +640,8 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             StoreError::PermissionDenied(_)
             | StoreError::Io { .. }
             | StoreError::LockTimeout(_)
+            | StoreError::LockBusy { .. }
+            | StoreError::LockLost { .. }
             | StoreError::OutsideVault(_)
             | StoreError::Changed(_),
         )

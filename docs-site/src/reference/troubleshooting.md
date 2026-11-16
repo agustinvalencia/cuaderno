@@ -323,17 +323,47 @@ the project state, the core question, frontmatter, a revision, a rename) and the
 lifecycle verbs (creating a note, promoting an action, handing off, parking, closing) return it at
 once. A script that retries should still stop after a few attempts.
 
-Inside one operating system cdno's write lock keeps its own writers apart, so the usual cause is a
-vault folder written from two at once, whose locks do not see each other: the host and a container
-that mounts the same folder, or a network share. Another program saving the note at that moment (an
-editor, a sync tool) does it too. If it happens often, give each side its own copy of the vault and
-sync them, or make one side the only writer.
+cdno's write lock keeps its own writers apart, on one machine and across machines or a container
+sharing the folder (see
+[Sharing a vault between machines](../concepts/vault-structure.md#sharing-a-vault-between-machines)),
+so the usual cause is a program that takes no lock saving the note at that moment: an editor, a sync
+tool, or a `cdno` from before the lock both sides see (0.46.0 or older) on the other side of a
+share.
 
-The check narrows the risk; it does not remove it. A write that lands in the instant between cdno's
-last check and its own write can still be overwritten: one append of 1,200 in a measurement across
-a container's file share with both sides writing steadily. Do not run two writers on one shared
-folder and rely on this; a lock both sides see is planned in
-[#1012](https://github.com/agustinvalencia/cuaderno/issues/1012).
+The check narrows the risk from such a writer; it does not remove it. A write that lands in the
+instant between cdno's last check and its own write can still be overwritten: one append of 1,200
+in a measurement across a container's file share, with an older `cdno` writing steadily on both
+sides. Keep every side on a current version, and do not let an editor or a sync tool write a note
+while cdno does.
+
+## A write fails with "timed out … waiting for the vault write lock"
+
+```text
+Error: appending log entry to daily note
+
+Caused by:
+    timed out after 5s waiting for the vault write lock: .cuaderno/.write-lock is held by cdno 0.46.0 (process 4242 on the machine that took it, at 2026-06-13T09:00:00+02:00 by that machine's clock), and is 12s old; another cdno process is writing this vault, here or on another machine. A lock left by a writer that crashed is broken by the next write once it is 30s old
+```
+
+Another `cdno` command or server held the vault's write lock for the whole five seconds this write
+waited. **Nothing was changed**, so run it again. The message names who holds it: the program, its
+process number on the machine that took it (which may be another computer or a container sharing
+the folder), and how old the lock is.
+
+- **A long write elsewhere** (a rename rewriting many notes, a migration) holds it for a few
+  seconds; the next attempt goes through.
+- **A writer that crashed or was killed while writing** leaves `.cuaderno/.write-lock` behind. Writes
+  fail like this until the lock is 30 seconds old; then the next write takes it over by itself and
+  logs a warning naming the old owner. You do not need to delete it, and should not while any side
+  may still be writing.
+- **A writer that was suspended** (a laptop asleep, a paused container) while holding it has its
+  lock taken over the same way once it is 30 seconds old. When it wakes, its write stops before
+  replacing anything and fails with "the vault write lock .cuaderno/.write-lock was broken as stale
+  by another writer while this write held it, … run the operation again"; what it had written is
+  undone, so running it again is safe.
+
+A shorter message, `timed out after 5s waiting for the vault write lock` with no holder named, means
+the wait was for another process on this machine (the operating-system lock in `.cuaderno/.lock`).
 
 ## A link to an old name still works in cdno but not in my editor
 

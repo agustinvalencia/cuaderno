@@ -132,6 +132,34 @@ pub enum StoreError {
     #[error("timed out after {0:?} waiting for the vault write lock")]
     LockTimeout(std::time::Duration),
 
+    /// The vault write lock file every kernel sees (#1012) stayed held by
+    /// another writer for the whole wait. `owner` is what its record says,
+    /// in words; `age_secs` its age by the folder's clock.
+    #[error(
+        "timed out after {waited:?} waiting for the vault write lock: {lock} is held by {owner}, \
+         and is {age_secs}s old; another cdno process is writing this vault, here or on another \
+         machine. A lock left by a writer that crashed is broken by the next write once it is \
+         {stale_after_secs}s old"
+    )]
+    LockBusy {
+        lock: String,
+        owner: String,
+        age_secs: u64,
+        stale_after_secs: u64,
+        waited: std::time::Duration,
+    },
+
+    /// This writer's hold on the vault write lock file (#1012) is gone:
+    /// another writer judged it stale (this one was suspended, or ran past
+    /// the stale interval) and broke it, so this one stopped before its
+    /// next file operation. What it had applied was rolled back.
+    #[error(
+        "the vault write lock {lock} was broken as stale by another writer while this write \
+         held it, so the write stopped before replacing anything more and was rolled back; run \
+         the operation again"
+    )]
+    LockLost { lock: String },
+
     /// The path escapes the vault root once symlinks are resolved —
     /// or its confinement could not be verified (fail closed).
     /// `VaultPath` already rejects `..`/absolute lexically; this
