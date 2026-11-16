@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-11-16
+
 ### Added
 
 - **`cdno reindex --drop-snapshots`** (#999). Rebuilds the index without carrying the archival
