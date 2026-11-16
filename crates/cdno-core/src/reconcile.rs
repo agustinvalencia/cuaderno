@@ -220,8 +220,16 @@ fn rebuild_inner(
 ) -> Result<RebuildReport, IndexError> {
     let fresh = index.open_fresh_beside()?;
     let fresh_index = fresh.index();
-    reconcile(store, &fresh_index, scope)?;
-    reconcile(store, &fresh_index, scope)?;
+    // The unlocked passes write only the fresh index, a file no other
+    // process knows of, and reconciliation never writes a note, so their
+    // per-note transactions skip the vault lock: without this each would
+    // wait out the lock's timeout while another process holds it, and a
+    // rebuild beside a long writer would take one timeout per note. The
+    // lock is taken once, below, for the pass that decides what is copied
+    // in.
+    let unlocked: Arc<dyn VaultStore> = Arc::new(crate::store::LockHeldStore(store.clone()));
+    reconcile(&unlocked, &fresh_index, scope)?;
+    reconcile(&unlocked, &fresh_index, scope)?;
     let problems = fresh.quick_check()?;
     if !problems.is_empty() {
         return Err(IndexError::Update(format!(

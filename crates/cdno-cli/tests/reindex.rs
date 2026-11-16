@@ -132,7 +132,17 @@ fn a_connection_holding_the_index_reads_the_rebuilt_contents_on_the_same_file() 
 fn a_held_vault_lock_makes_reindex_wait_then_fail_with_the_index_as_it_was() {
     let vault = tempdir().unwrap();
     init(vault.path());
-    write_zettel(vault.path(), "surrogate-model", "Surrogate model");
+    // Several notes: the rebuild's passes into its private fresh index
+    // take no vault lock, so a held lock costs one timeout, at the swap,
+    // not one per note.
+    for (stem, title) in [
+        ("surrogate-model", "Surrogate model"),
+        ("kernel-choice", "Kernel choice"),
+        ("length-scale", "Length scale"),
+        ("noise-floor", "Noise floor"),
+    ] {
+        write_zettel(vault.path(), stem, title);
+    }
     cdno(vault.path()).arg("reindex").assert().success();
     let index = vault.path().join(paths::INDEX_DB);
     let before_inode = inode(&index);
@@ -146,15 +156,19 @@ fn a_held_vault_lock_makes_reindex_wait_then_fail_with_the_index_as_it_was() {
         .failure()
         .stderr(predicate::str::contains("waiting for the vault write lock"))
         .stderr(predicate::str::contains("it was left as it was"));
+    let waited = started.elapsed();
+    assert!(waited >= Duration::from_secs(5), "it waited for the lock");
+    // One 5 s timeout, with room for a slow machine; a wait per note and
+    // pass would be 45 s here.
     assert!(
-        started.elapsed() >= Duration::from_secs(5),
-        "it waited for the lock"
+        waited < Duration::from_secs(15),
+        "one lock timeout, not one per note: {waited:?}"
     );
     drop(lock);
 
     assert_eq!(inode(&index), before_inode, "nothing deleted or replaced");
     let conn = rusqlite::Connection::open(&index).unwrap();
-    assert_eq!(note_count(&conn), 1, "the index still holds its note");
+    assert_eq!(note_count(&conn), 4, "the index still holds its notes");
     assert_eq!(
         leftovers(&index),
         Vec::<String>::new(),
