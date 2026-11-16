@@ -1361,16 +1361,17 @@ impl CuadernoServer {
         Parameters(_input): Parameters<EmptyInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let health = crate::context::index_health_or_error(self)?;
-        let outcome =
-            tokio::task::spawn_blocking(move || health.rebuild("rebuild_index was called"))
-                .await
-                .map_err(|e| {
-                    tracing::error!(error = %e, "rebuild_index panicked on the blocking pool");
-                    ErrorData::internal_error(
-                        "internal error while rebuilding the index".to_string(),
-                        None,
-                    )
-                })?;
+        let outcome = self
+            .tool_calls()
+            .run_index_only(move || health.rebuild("rebuild_index was called"))
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "rebuild_index panicked on the blocking pool");
+                ErrorData::internal_error(
+                    "internal error while rebuilding the index".to_string(),
+                    None,
+                )
+            })?;
         match outcome {
             Ok(record) => {
                 tracing::warn!(

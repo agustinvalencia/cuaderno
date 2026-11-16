@@ -27,11 +27,12 @@ cdno reindex
 The Markdown files are always authoritative, so a rebuild is safe. See
 [Business rules](../concepts/business-rules.md).
 
-An assistant connected through an MCP server catches up with notes changed outside it on its next
-sweep, every `CDNO_MCP_RECONCILE_INTERVAL_SECS` seconds (300 by default): a note you just saved may
-be missing from its searches for up to that long. Set a shorter interval in the client's `env`
-block, or restart the client, if that is too long; a value of `0` turns the sweep off, and then
-only a restart catches the server up. See
+An assistant connected through an MCP server catches up with notes changed outside cuaderno (in
+your editor, by a sync) on its next sweep, every `CDNO_MCP_RECONCILE_INTERVAL_SECS` seconds (300 by
+default): a note you just saved in an editor may be missing from its searches for up to that long.
+Any `cdno` command that opens the index (`cdno lint`, `cdno search`, …) catches every server on the
+machine up at once; or set a shorter interval in the client's `env` block. A value of `0` turns the
+sweep off, and then only such a command or a restart catches the server up. See
 [Keeping up with changes made elsewhere](mcp/overview.md#keeping-up-with-changes-made-elsewhere).
 
 On a server (`cdno-mcp`, `cdno-mcp-server`) the index is checked and repaired without you: see

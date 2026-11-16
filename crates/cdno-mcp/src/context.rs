@@ -504,7 +504,9 @@ impl CuadernoServer {
         Parameters(_input): Parameters<EmptyInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let health = index_health_or_error(self)?;
-        let status = tokio::task::spawn_blocking(move || health.status())
+        let status = self
+            .tool_calls()
+            .run_index_only(move || health.status())
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, "index_status panicked on the blocking pool");

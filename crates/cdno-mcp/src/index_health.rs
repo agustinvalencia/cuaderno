@@ -89,17 +89,20 @@ pub const DEFAULT_SWEEP_INTERVAL_SECS: u64 = 300;
 pub const SWEEP_INTERVAL_ENV: &str = "CDNO_MCP_RECONCILE_INTERVAL_SECS";
 
 /// The sweep interval in seconds from [`SWEEP_INTERVAL_ENV`], for the stdio
-/// server: unset or empty (as with `CUADERNO_INDEX_PATH`) means
-/// [`DEFAULT_SWEEP_INTERVAL_SECS`]. A value that is not a whole number of
-/// seconds is an error naming the variable, so a typo stops the server at
-/// start rather than silently running on the default.
+/// server: unset, empty or only spaces (as with `CUADERNO_INDEX_PATH`)
+/// means [`DEFAULT_SWEEP_INTERVAL_SECS`]. Spaces around a number are
+/// ignored, which the HTTP server's flag parser does not do. A value that
+/// is not a whole number of seconds is an error naming the variable, so a
+/// typo stops the server at start rather than silently running on the
+/// default.
 pub fn sweep_interval_secs_from_env() -> Result<u64, String> {
     parse_sweep_interval(std::env::var_os(SWEEP_INTERVAL_ENV).as_deref())
 }
 
 /// [`sweep_interval_secs_from_env`] on a given value, for tests.
 pub fn parse_sweep_interval(value: Option<&std::ffi::OsStr>) -> Result<u64, String> {
-    let Some(value) = value.filter(|v| !v.is_empty()) else {
+    let blank = |v: &&std::ffi::OsStr| v.to_str().is_some_and(|s| s.trim().is_empty());
+    let Some(value) = value.filter(|v| !blank(v)) else {
         return Ok(DEFAULT_SWEEP_INTERVAL_SECS);
     };
     value
@@ -871,7 +874,9 @@ impl IndexHealth {
     ///
     /// A sweep runs on the blocking pool, one at a time: the next tick
     /// waits for the running sweep to finish, and a tick missed meanwhile
-    /// is delayed rather than replayed. Aborting the returned task stops
+    /// is delayed rather than replayed. The first sweep comes after a
+    /// random [`first_sweep_delay`], between half an interval and one.
+    /// Aborting the returned task stops
     /// further sweeps; a sweep already running finishes on its thread.
     ///
     /// Known benign race (PR #304 review, correctness finding 2): a sweep
@@ -882,16 +887,16 @@ impl IndexHealth {
     pub fn spawn_loop(self: &Arc<Self>, every: Option<Duration>) -> tokio::task::JoinHandle<()> {
         let health = Arc::clone(self);
         tokio::spawn(async move {
+            // Opening the vault has just reconciled and checked, so the first
+            // sweep waits; how long is drawn between half an interval and a
+            // whole one, so servers started together (sessions a client
+            // restores at once) do not sweep in phase for ever.
             let mut interval = every.map(|every| {
-                let mut interval = tokio::time::interval(every);
+                let first = tokio::time::Instant::now() + first_sweep_delay(every, random_u64());
+                let mut interval = tokio::time::interval_at(first, every);
                 interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 interval
             });
-            // The first tick fires immediately; skip it, since opening the
-            // vault has just reconciled and checked.
-            if let Some(interval) = interval.as_mut() {
-                interval.tick().await;
-            }
             loop {
                 let corruption = match interval.as_mut() {
                     Some(interval) => tokio::select! {
@@ -918,6 +923,32 @@ impl IndexHealth {
             }
         })
     }
+}
+
+/// The wait before the first sweep: half of `every` plus a share of the
+/// other half picked by `random`, so always in `[every / 2, every)` (or
+/// `every` itself when it is too short to split).
+pub fn first_sweep_delay(every: Duration, random: u64) -> Duration {
+    let half = every / 2;
+    let spread = (every - half).as_millis() as u64;
+    if spread == 0 {
+        return every;
+    }
+    half + Duration::from_millis(random % spread)
+}
+
+/// A random number from the standard library's per-process hash seed: no
+/// dependency, and different in every process, which is all the jitter
+/// needs.
+fn random_u64() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos()),
+    );
+    hasher.finish()
 }
 
 fn repair_state(state: &State) -> RepairState {

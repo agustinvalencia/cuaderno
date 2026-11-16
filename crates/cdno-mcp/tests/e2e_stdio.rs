@@ -1394,9 +1394,12 @@ fn the_stdio_server_exits_promptly_when_stdin_closes_between_sweeps() {
 
     let (took, status) = mcp.close_and_wait(Duration::from_secs(10));
     assert!(status.success(), "{status:?}");
+    // Normally a few milliseconds. The bound is the sweep grace: an idle
+    // server must not spend it, and a runner slowed by instrumentation
+    // still exits well inside it.
     assert!(
-        took < Duration::from_secs(2),
-        "exit took {took:?} with no sweep running"
+        took < Duration::from_secs(5),
+        "exit took {took:?} with nothing running"
     );
 }
 
@@ -1426,8 +1429,116 @@ fn the_stdio_server_exits_within_the_grace_when_stdin_closes_during_a_sweep() {
     let (took, status) = mcp.close_and_wait(Duration::from_secs(30));
     drop(lock);
     assert!(status.success(), "{status:?}");
+    // No tool call is in flight, so rmcp's drain and the tool-call drain
+    // are immediate and the exit is the 5s grace: at least most of it
+    // (the sweep was holding the exit), and far less than the sweep's ~40s.
+    assert!(
+        took >= Duration::from_secs(4),
+        "exit took {took:?}: the grace was not exercised, so no sweep was running"
+    );
     assert!(
         took < Duration::from_secs(9),
         "exit took {took:?}; the grace is 5s and the sweep had ~40s left"
     );
+}
+
+/// A write still running when the client disconnects completes, every file
+/// of it and its index rows, before the process exits (#1002). The write is
+/// a rename that rewrites references in three notes, made slow
+/// deterministically: `git` on the server's PATH is a wrapper that sleeps
+/// 1.5s per call (under the 2s probe timeout), and the rename probes git
+/// four times before taking the lock and four again under it, so the call
+/// runs some 12s after stdin closes: past rmcp's 5s drain and the 5s sweep
+/// grace together, which is what used to cut it.
+#[cfg(unix)]
+#[test]
+fn a_write_in_flight_at_disconnect_completes_before_the_stdio_server_exits() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let real_git = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|dir| dir.join("git"))
+        .find(|path| path.is_file())
+        .expect("git on PATH");
+    let fake_bin = TempDir::new().unwrap();
+    let wrapper = fake_bin.path().join("git");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nsleep 1.5\nexec '{}' \"$@\"\n",
+            real_git.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::join_paths(std::iter::once(fake_bin.path().to_path_buf()).chain(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+    ))
+    .unwrap();
+
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    std::fs::write(
+        dir.path().join("projects/surrogate-model.md"),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Surrogate model\n\n## Current State\nCalibrating.\n\n## Next Actions\n\n## Milestones\n",
+    )
+    .unwrap();
+    let linking = ["2026-05-08-one", "2026-05-08-two", "2026-05-08-three"];
+    for stem in linking {
+        write_inbox_note(dir.path(), stem, "See [[surrogate-model]].");
+    }
+    let init = Command::new(&real_git)
+        .arg("-C")
+        .arg(dir.path())
+        .args(["init", "-q"])
+        .output()
+        .expect("git init");
+    assert!(init.status.success());
+
+    let path = path.to_string_lossy().into_owned();
+    let mut mcp = McpSubprocess::spawn_with_env(dir.path(), None, &[("PATH", &path)]);
+    initialise(&mut mcp);
+    mcp.send(&json!({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": { "name": "rename_note", "arguments": {
+            "note": "surrogate-model", "to": "emulator-study"
+        } }
+    }));
+    // Let rmcp read the request before the input ends.
+    thread::sleep(Duration::from_millis(300));
+    let (took, status) = mcp.close_and_wait(Duration::from_secs(90));
+    assert!(status.success(), "{status:?}");
+    assert!(
+        took > Duration::from_secs(10),
+        "exit took {took:?}: the rename was meant to outlast rmcp's drain and the grace"
+    );
+
+    // Every file of the rename landed.
+    assert!(dir.path().join("projects/emulator-study.md").is_file());
+    assert!(!dir.path().join("projects/surrogate-model.md").exists());
+    for stem in linking {
+        let body = std::fs::read_to_string(dir.path().join(format!("inbox/{stem}.md"))).unwrap();
+        assert!(body.contains("[[emulator-study]]"), "{stem}: {body}");
+    }
+    let today = chrono::Local::now().date_naive();
+    let daily = dir
+        .path()
+        .join(format!("journal/{}/daily/{today}.md", today.format("%Y")));
+    let log = std::fs::read_to_string(&daily).unwrap_or_default();
+    assert!(log.contains("renamed [[emulator-study]]"), "{log}");
+
+    // And its index update: the rows already name the new path, read
+    // straight from the file, with no open that would reconcile first.
+    let index = rusqlite::Connection::open_with_flags(
+        dir.path().join(cdno_core::paths::INDEX_DB),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let paths: Vec<String> = index
+        .prepare("SELECT path FROM notes WHERE path LIKE 'projects/%'")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(paths, vec!["projects/emulator-study.md".to_owned()]);
 }
