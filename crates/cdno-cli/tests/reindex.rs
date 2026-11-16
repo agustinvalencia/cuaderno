@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use assert_cmd::Command;
+use cdno_cli::commands::reindex;
 use cdno_core::paths;
 use cdno_core::store::{FsVaultStore, VaultStore};
 use predicates::prelude::*;
@@ -494,14 +495,25 @@ fn index_bound_to_a() -> (
     (a, b, elsewhere, index)
 }
 
+/// What a racing `cdno reindex --rebind` printed, and how it ended.
+struct RaceOutput {
+    success: bool,
+    stdout: String,
+    stderr: String,
+}
+
 /// Start `cdno reindex --rebind` in `vault` while the test holds its vault
-/// lock, give it time to pass its unlocked checks and reach the lock, run
-/// `meanwhile`, then release the lock and wait for it.
-fn rebind_racing(vault: &Path, index: &Path, meanwhile: impl FnOnce()) -> std::process::Output {
+/// lock, wait until the child says it is about to take the lock (its unlocked
+/// checks are done), run `meanwhile`, then release the lock and wait for it.
+fn rebind_racing(vault: &Path, index: &Path, meanwhile: impl FnOnce()) -> RaceOutput {
+    use std::io::{BufRead, BufReader, Read};
+    use std::sync::mpsc;
+
     let lock = FsVaultStore::new(vault).acquire_write_lock().unwrap();
-    let child = std::process::Command::new(assert_cmd::cargo::cargo_bin("cdno"))
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("cdno"))
         .env_remove("CUADERNO_VAULT_PATH")
         .env(paths::INDEX_PATH_ENV, index)
+        .env(reindex::REBIND_LOCK_SIGNAL_ENV, "1")
         .env("NO_COLOR", "1")
         .arg("--vault")
         .arg(vault)
@@ -510,11 +522,43 @@ fn rebind_racing(vault: &Path, index: &Path, meanwhile: impl FnOnce()) -> std::p
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    // Well inside the lock's 5 s timeout.
-    std::thread::sleep(Duration::from_secs(2));
+    let mut stdout_pipe = child.stdout.take().unwrap();
+    let stdout = std::thread::spawn(move || {
+        let mut out = String::new();
+        stdout_pipe.read_to_string(&mut out).unwrap();
+        out
+    });
+    let (signalled, signal) = mpsc::channel();
+    let stderr_pipe = child.stderr.take().unwrap();
+    let stderr = std::thread::spawn(move || {
+        let mut lines = Vec::new();
+        for line in BufReader::new(stderr_pipe).lines() {
+            let line = line.unwrap();
+            if line == reindex::REBIND_LOCK_SIGNAL {
+                let _ = signalled.send(());
+            } else {
+                lines.push(line);
+            }
+        }
+        lines.join("\n")
+    });
+    // Generous: a slow runner only delays the signal; it cannot skip it.
+    if signal.recv_timeout(Duration::from_secs(60)).is_err() {
+        let _ = child.kill();
+        panic!(
+            "the child never reached the vault lock: {}",
+            stderr.join().unwrap()
+        );
+    }
+    // The child now waits on the lock, for at most its 5 s timeout.
     meanwhile();
     drop(lock);
-    child.wait_with_output().unwrap()
+    let status = child.wait().unwrap();
+    RaceOutput {
+        success: status.success(),
+        stdout: stdout.join().unwrap(),
+        stderr: stderr.join().unwrap(),
+    }
 }
 
 #[test]
@@ -532,12 +576,8 @@ fn a_rebind_whose_file_is_bound_to_this_vault_under_the_lock_rebuilds_in_place()
         )
         .unwrap();
     });
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        out.status.success(),
-        "{stdout}{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let stdout = &out.stdout;
+    assert!(out.success, "{stdout}{}", out.stderr);
     assert!(stdout.contains("Reindexed 1 note(s)"), "{stdout}");
     assert!(!stdout.contains("Rebound"), "not deleted: {stdout}");
     assert_eq!(
@@ -561,8 +601,8 @@ fn a_rebind_whose_binding_cannot_be_read_under_the_lock_is_refused() {
         }
         std::fs::write(&index, &corrupt).unwrap();
     });
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
+    let stderr = &out.stderr;
+    assert!(!out.success, "{stderr}");
     assert!(stderr.contains("no binding can be read"), "{stderr}");
     assert!(stderr.contains("nothing was changed"), "{stderr}");
     assert_eq!(std::fs::read(&index).unwrap(), corrupt, "left as it was");

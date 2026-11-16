@@ -85,6 +85,14 @@ enum Rebind {
 /// as it reaches here inside a rebuild's error message.
 const LOCK_TIMEOUT_TEXT: &str = "waiting for the vault write lock";
 
+/// Test-only, undocumented: when set, `--rebind` prints
+/// [`REBIND_LOCK_SIGNAL`] to stderr just before it takes the vault write
+/// lock (`tests/reindex.rs` waits for it).
+pub const REBIND_LOCK_SIGNAL_ENV: &str = "CDNO_TEST_SIGNAL_REBIND_LOCK";
+
+/// The line printed for [`REBIND_LOCK_SIGNAL_ENV`].
+pub const REBIND_LOCK_SIGNAL: &str = "cdno-test: rebind taking the vault write lock";
+
 /// Appended to the message of a lock timeout.
 const LOCK_HINT: &str = "; another cdno process is writing this vault; run it again";
 
@@ -411,6 +419,12 @@ fn discard_for_rebind(
     here: &str,
     from: &str,
 ) -> Result<Rebind> {
+    // A test seam, not an interface: with the variable set, say on stderr
+    // that the unlocked checks are done and the lock is next, so a test can
+    // change the file in exactly that window. Unset, nothing happens.
+    if std::env::var_os(REBIND_LOCK_SIGNAL_ENV).is_some() {
+        eprintln!("{REBIND_LOCK_SIGNAL}");
+    }
     let _lock = store.acquire_write_lock().map_err(|e| {
         lock_error(
             "taking the vault write lock to rebind the index; nothing was changed",
@@ -418,6 +432,9 @@ fn discard_for_rebind(
         )
     })?;
     if !location.path.exists() {
+        // A `-wal` or `-shm` the other vault's file left must not end up
+        // beside the new one, where SQLite would replay it.
+        SqliteIndex::remove(&location.path);
         return Ok(Rebind::Discarded);
     }
     SqliteIndex::ensure_discardable(&location.path)?;
