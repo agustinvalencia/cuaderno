@@ -188,7 +188,15 @@ struct HeldFiles {
     /// again: the mutex then holds a placeholder, and every query fails
     /// with [`IndexError::Detached`] until a reopen succeeds.
     detached: Option<String>,
+    /// The snapshot rows a reopen read from the old connection before it
+    /// closed it and then failed to open the file: kept with the detached
+    /// state for the reopen that succeeds to hand on.
+    salvaged: Option<Salvaged>,
 }
+
+/// Archival snapshot rows read from an old connection, or why they could not
+/// be.
+pub type Salvaged = Result<Vec<(VaultPath, ArchivalSnapshot)>, String>;
 
 impl HeldFiles {
     fn of(conn: &Connection, path: &Path) -> Self {
@@ -202,6 +210,7 @@ impl HeldFiles {
             shm: Recorded::of(&sibling(&db_path, "-shm")),
             db_path,
             detached: None,
+            salvaged: None,
         }
     }
 }
@@ -300,7 +309,10 @@ pub struct Reopened {
 /// Suffix the old database's sidecars are moved aside under when a restore
 /// replaced only the main file: `<index>.stale-wal`, `<index>.stale-shm`.
 /// No database is named `<index>.stale`, so SQLite never pairs them with
-/// one.
+/// one. They are the old file's log, kept only for diagnosis, replaced at
+/// the next such set-aside and safe to delete at any time; at an overridden
+/// location an existing one is replaced only when it is recognisably
+/// SQLite's.
 pub const STALE_SUFFIX: &str = ".stale";
 
 /// Whether SQLite itself reports the database file `conn` has open as
@@ -403,6 +415,61 @@ fn held_sidecars_at_path(_held: &HeldFiles) -> bool {
     false
 }
 
+/// Whether the database file at the path is not the one `held` records
+/// (deleted, moved or replaced); an error when a `stat` failed and nothing
+/// can be told. A record that was not known is judged by SQLite's own
+/// check.
+#[cfg(unix)]
+fn database_differs(conn: &Connection, held: &HeldFiles) -> Result<bool, String> {
+    match (held.db, stat_file(&held.db_path)) {
+        (_, Stat::Failed(e)) => Err(e),
+        (Recorded::Known(was), Stat::Present(id)) => Ok(was != id || sqlite_says_moved(conn)),
+        (Recorded::Known(_), Stat::Absent) => Ok(true),
+        (_, now) => Ok(now == Stat::Absent || sqlite_says_moved(conn)),
+    }
+}
+
+#[cfg(not(unix))]
+fn database_differs(_conn: &Connection, _held: &HeldFiles) -> Result<bool, String> {
+    Ok(false)
+}
+
+/// Whether an existing `<index>.stale-wal` / `.stale-shm` at an overridden
+/// location may be replaced: absent, empty, or recognisably SQLite's (the
+/// write-ahead log's magic number, or the wal-index header's version). The
+/// same care [`SqliteIndex::ensure_discardable`] takes with `.previous`, so
+/// a mistyped override never deletes another application's file.
+fn is_discardable_sidecar(path: &Path, suffix: &str) -> bool {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) => return e.kind() == std::io::ErrorKind::NotFound,
+    };
+    let Some(head) = bytes.get(..4) else {
+        return bytes.is_empty();
+    };
+    let head = [head[0], head[1], head[2], head[3]];
+    match suffix {
+        "-wal" => matches!(u32::from_be_bytes(head), 0x377f_0682 | 0x377f_0683),
+        _ => u32::from_ne_bytes(head) == 3_007_000,
+    }
+}
+
+/// Whether the index file at `path` reads as a sound cuaderno index through
+/// a read-only probe ([`SqliteIndex::open_probe`]): one that migrates,
+/// binds and writes nothing, and whose close deletes nothing. For a caller
+/// that must know whether another process repaired a file before it moves
+/// it aside.
+pub fn probe_reads_sound(path: &Path) -> bool {
+    let Ok(conn) = SqliteIndex::open_probe(path) else {
+        return false;
+    };
+    forbid_checkpoint_on_close(&conn);
+    let ok = conn
+        .query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))
+        .is_ok_and(|r| r == "ok");
+    ok && has_cuaderno_mark_on(&conn).unwrap_or(false)
+}
+
 /// Make a connection's close touch no file by name. The last connection
 /// to a WAL database normally checkpoints on close and then deletes `-wal`
 /// and `-shm` AT THE PATH: when the database file has moved, SQLite skips
@@ -495,7 +562,14 @@ impl SqliteIndex {
     /// no connection to copy into: a process that already has the file
     /// open stays on the deleted file until it reopens (a server finds it
     /// moved on its next sweep, [`check_files`](Self::check_files)) or, for
-    /// one that never checks (`cdno watch`), restarts. `cdno reindex` does not
+    /// one that never checks (`cdno watch`), restarts. The removal takes no
+    /// lock (there is no store here to take one from), so it leaves a window
+    /// of microseconds: a server whose check lands between the sidecars'
+    /// removal and the main file's sees only the sidecars gone and reopens on
+    /// the doomed file, recreating sidecars at the path for it. The server's
+    /// health loop checks the files again right after every reopen and
+    /// reopens once more when the database moved meanwhile; the opener here,
+    /// on a new empty file, discards a log left beside it. `cdno reindex` does not
     /// use it: it opens through
     /// [`open_location_unhealed`](Self::open_location_unhealed) and moves
     /// such a file aside under the vault write lock (#999).
@@ -661,12 +735,18 @@ impl SqliteIndex {
         let mut held = self.lock_held();
         let mut reopened = Reopened::default();
         let detached = held.detached.is_some();
-        #[cfg(unix)]
-        let same_file =
-            !detached && !matches!(compare_held(&conn, &mut held), FileCheck::DatabaseMoved(_));
-        #[cfg(not(unix))]
-        let same_file = !detached;
-        let stale = !detached && !same_file && held_sidecars_at_path(&held);
+        // Decided from the files, not from the detached flag: after a failed
+        // set-aside of stale sidecars the index is detached and the old
+        // sidecars may still be at the path. A `stat` that fails decides
+        // nothing, so nothing is closed or opened.
+        let differs = database_differs(&conn, &held).map_err(|e| {
+            IndexError::Update(format!(
+                "could not check the index files, so the index was not reopened: {e}"
+            ))
+        })?;
+        // Only when the database differs: a same-file reopen must never move
+        // the database's own sidecars.
+        let stale = differs && held_sidecars_at_path(&held);
         if stale && !set_aside_stale {
             return Err(IndexError::StaleSidecars(format!(
                 "the database file {} was replaced but its -wal and -shm were left at the \
@@ -674,9 +754,25 @@ impl SqliteIndex {
                 held.db_path.display()
             )));
         }
-        if !detached {
-            reopened.salvaged = Some(snapshots_on(&conn).map_err(|e| e.to_string()));
+        if stale && self.binding.is_some() {
+            for suffix in ["-wal", "-shm"] {
+                let to = sibling(&held.db_path, &format!("{STALE_SUFFIX}{suffix}"));
+                if !is_discardable_sidecar(&to, suffix) {
+                    return Err(IndexError::NotAnIndex {
+                        path: to.display().to_string(),
+                    });
+                }
+            }
         }
+        let same_file = !detached && !differs;
+        // Read before the old connection closes; a detached index hands on
+        // what the reopen that detached it read, so the reopen that finally
+        // succeeds carries it.
+        reopened.salvaged = if detached {
+            held.salvaged.take()
+        } else {
+            Some(snapshots_on(&conn).map_err(|e| e.to_string()))
+        };
         if same_file || stale {
             let placeholder = Connection::open_in_memory()?;
             close_detached(std::mem::replace(&mut *conn, placeholder));
@@ -697,6 +793,7 @@ impl SqliteIndex {
                                 source: e,
                             };
                             held.detached = Some(e.to_string());
+                            held.salvaged = reopened.salvaged.take();
                             return Err(e);
                         }
                     }
@@ -706,11 +803,20 @@ impl SqliteIndex {
                 Ok(fresh) => *conn = fresh,
                 Err(e) => {
                     held.detached = Some(e.to_string());
+                    held.salvaged = reopened.salvaged.take();
                     return Err(e);
                 }
             }
         } else {
-            let fresh = self.open_for_reopen()?;
+            let fresh = match self.open_for_reopen() {
+                Ok(fresh) => fresh,
+                Err(e) => {
+                    if detached {
+                        held.salvaged = reopened.salvaged.take();
+                    }
+                    return Err(e);
+                }
+            };
             close_detached(std::mem::replace(&mut *conn, fresh));
         }
         *held = HeldFiles::of(&conn, &self.path);
@@ -1484,7 +1590,11 @@ fn sibling(path: &Path, suffix: &str) -> PathBuf {
 /// (`index_meta`, `schema_migrations`) is too generic to count. A
 /// corruption error is returned as is, for the caller to decide.
 fn has_cuaderno_mark(path: &Path) -> rusqlite::Result<bool> {
-    let conn = SqliteIndex::open_probe(path)?;
+    has_cuaderno_mark_on(&SqliteIndex::open_probe(path)?)
+}
+
+/// [`has_cuaderno_mark`] on an open connection.
+fn has_cuaderno_mark_on(conn: &Connection) -> rusqlite::Result<bool> {
     let has_migrations: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' \
          AND name = 'schema_migrations')",

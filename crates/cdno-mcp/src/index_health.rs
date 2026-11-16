@@ -180,21 +180,46 @@ impl Default for RepairPolicy {
     }
 }
 
-/// Woken when a tool call meets a corruption error. Process-wide because
-/// the errors are converted in free functions with no server at hand
-/// (`util::into_mcp_error`), and one process serves one vault. A wake
-/// with no loop listening is kept as a permit, so the next loop to wait
-/// still sees it.
-static CORRUPTION_SEEN: Notify = Notify::const_new();
+/// The signal of every live [`IndexHealth`] in the process. A tool call
+/// that meets a corruption error has no server at hand (the errors are
+/// converted in free functions, `util::into_mcp_error`), so the hook is
+/// process-wide, but each supervisor has its own `Notify`: one shared
+/// `notify_one` would wake whichever loop polled first, possibly another
+/// supervisor's. A server process has one supervisor, so in production this
+/// holds one entry; tests hold several. A wake with no loop listening is
+/// kept as a permit on that supervisor's signal, so its next wait still
+/// sees it.
+static SIGNALS: Mutex<Vec<std::sync::Weak<Notify>>> = Mutex::new(Vec::new());
 
 /// What the hint on a damaged-index error may promise, for the same
-/// process-wide reason as [`CORRUPTION_SEEN`]: a [`RepairState`] as a byte.
+/// process-wide reason as [`SIGNALS`]: a [`RepairState`] as a byte.
 static HINT_STATE: AtomicU8 = AtomicU8::new(0);
 
-/// Tell the health loop that a tool call met a damaged index, or one that
-/// is between connections, so it looks now rather than at the next sweep.
+/// Tell every health loop in the process that a tool call met a damaged
+/// index, or one that is between connections, so it looks now rather than
+/// at the next sweep.
 pub fn corruption_seen() {
-    CORRUPTION_SEEN.notify_one();
+    let mut signals = SIGNALS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    signals.retain(|signal| match signal.upgrade() {
+        Some(signal) => {
+            signal.notify_one();
+            true
+        }
+        None => false,
+    });
+}
+
+/// A new signal, registered with [`corruption_seen`].
+fn register_signal() -> Arc<Notify> {
+    let signal = Arc::new(Notify::new());
+    let mut signals = SIGNALS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    signals.retain(|s| s.strong_count() > 0);
+    signals.push(Arc::downgrade(&signal));
+    signal
 }
 
 /// The sentence appended to every client error caused by a damaged index,
@@ -274,6 +299,11 @@ pub struct IndexHealth {
     /// aside, so a sweep, a tool call's signal and a rebuild that find the
     /// same move act on it once.
     verifying: Mutex<()>,
+    /// This supervisor's own signal, registered with [`corruption_seen`].
+    signal: Arc<Notify>,
+    /// Set while a deferred reopen is armed for the end of the reopen
+    /// spacing, so a burst of signals arms one wake-up, not one each.
+    deferred: Arc<AtomicBool>,
 }
 
 /// What a reopen found.
@@ -521,6 +551,11 @@ pub struct IndexStatus {
     pub damage_rebuilds_recent: usize,
     /// Automatic reopens within the last hour (the recurrence window).
     pub reopens_recent: usize,
+    /// While `files.held` is false: seconds until the reopen spacing lets
+    /// the server reopen, which it then does by itself. Null when it may
+    /// reopen now (at its next sweep or the next tool call that meets
+    /// damage), or when the files are held.
+    pub next_reopen_in_secs: Option<u64>,
     /// The index database file this server uses, after the per-machine
     /// override was resolved (#998). Every file a rebuild writes (the
     /// fresh `.rebuild-*` index while it runs, the `.previous` copy of a
@@ -670,6 +705,8 @@ impl IndexHealth {
             state: Mutex::new(State::default()),
             rebuilding: AtomicBool::new(false),
             verifying: Mutex::new(()),
+            signal: register_signal(),
+            deferred: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -733,16 +770,13 @@ impl IndexHealth {
         record
     }
 
-    /// Whether a first damaged copy is still to be kept in this window, and
-    /// if so, mark it as kept now.
-    fn take_first_copy(&self) -> bool {
-        let mut state = self.lock();
+    /// Whether a first damaged copy is still to be kept in this window. The
+    /// set-aside marks it when it keeps one.
+    fn first_copy_due(&self) -> bool {
         let window = self.policy.recurrence_window;
-        let first = state.copy_kept_at.is_none_or(|at| at.elapsed() >= window);
-        if first {
-            state.copy_kept_at = Some(Instant::now());
-        }
-        first
+        self.lock()
+            .copy_kept_at
+            .is_none_or(|at| at.elapsed() >= window)
     }
 
     /// The first response to trouble (#1000): check that the connection
@@ -776,16 +810,37 @@ impl IndexHealth {
                 && let Some(at) = state.last_reopen_attempt
                 && at.elapsed() < self.policy.min_reopen_interval
             {
-                tracing::debug!(found = %finding, "the index files are not held; the next reopen is spaced");
+                let wait = self.policy.min_reopen_interval.saturating_sub(at.elapsed());
+                self.arm_deferred_reopen(wait);
+                tracing::debug!(
+                    found = %finding,
+                    wait_ms = wait.as_millis() as u64,
+                    "the index files are not held; the next reopen is spaced and armed"
+                );
                 return Files::NotHeld(format!(
-                    "{finding}; the server reopens at most every {}s, and will again",
-                    self.policy.min_reopen_interval.as_secs().max(1)
+                    "{finding}; the server reopens at most every {}s, and does so again by itself \
+                     in {}s",
+                    self.policy.min_reopen_interval.as_secs().max(1),
+                    wait.as_secs().max(1)
                 ));
             }
             state.last_reopen_attempt = Some(Instant::now());
         }
 
-        let outcome = self.reopen_now();
+        let mut outcome = self.reopen_now();
+        // The database can move between the check and the open (a self-heal
+        // removes the sidecars, then the main file, with no lock): look once
+        // more, and reopen again at once if it did, keeping what the first
+        // reopen salvaged.
+        if let Ok(first) = &mut outcome
+            && matches!(self.sqlite.check_files(), FileCheck::DatabaseMoved(_))
+        {
+            let salvaged = first.reopened.salvaged.take();
+            outcome = self.reopen_now().map(|mut again| {
+                again.reopened.salvaged = salvaged;
+                again
+            });
+        }
         let mut record = ReopenRecord {
             at: now(),
             trigger: trigger.to_owned(),
@@ -861,6 +916,38 @@ impl IndexHealth {
         Files::Reopened(sweep)
     }
 
+    /// When a reopen is refused by the spacing, wake this supervisor's loop
+    /// once the spacing has passed, so the reopen happens then (with sweeps
+    /// off too) rather than at the next sweep or failing call. Armed once:
+    /// signals inside the gap do not arm more. A wake with no loop
+    /// listening stays a permit for the loop's next wait.
+    fn arm_deferred_reopen(&self, wait: Duration) {
+        if self.deferred.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let signal = Arc::clone(&self.signal);
+        let deferred = Arc::clone(&self.deferred);
+        let spawned = std::thread::Builder::new()
+            .name("cdno-index-reopen".into())
+            .spawn(move || {
+                std::thread::sleep(wait);
+                deferred.store(false, Ordering::Release);
+                signal.notify_one();
+            });
+        if spawned.is_err() {
+            self.deferred.store(false, Ordering::Release);
+        }
+    }
+
+    /// Seconds until an automatic reopen is next allowed, while the spacing
+    /// holds one back; `None` when one may run at once.
+    fn reopen_wait(&self) -> Option<u64> {
+        let state = self.lock();
+        let at = state.last_reopen_attempt?;
+        let wait = self.policy.min_reopen_interval.checked_sub(at.elapsed())?;
+        (!wait.is_zero()).then(|| wait.as_secs().max(1))
+    }
+
     /// Reopen on the file at the path, handling what the plain reopen
     /// refuses: the old file's sidecars at the path (moved aside under the
     /// vault lock) and a file that will not open (set aside under it).
@@ -880,7 +967,7 @@ impl IndexHealth {
                     Ok(reopened) => Ok(plain(reopened)),
                     Err(e) if e.is_corruption() => {
                         drop(_lock);
-                        self.set_aside_unopenable(self.take_first_copy())
+                        self.set_aside_unopenable(self.first_copy_due())
                             .map_err(|aside| {
                                 format!("the file at the path will not open ({e}), and setting it aside failed: {aside}")
                             })
@@ -891,7 +978,7 @@ impl IndexHealth {
             // The file at the path will not open: set it aside, as a
             // restart would, and start from a fresh one.
             Err(e) if e.is_corruption() => self
-                .set_aside_unopenable(self.take_first_copy())
+                .set_aside_unopenable(self.first_copy_due())
                 .map_err(|aside| {
                     format!("the file at the path will not open ({e}), and setting it aside failed: {aside}")
                 }),
@@ -917,9 +1004,11 @@ impl IndexHealth {
                 "acquiring the vault write lock to set the damaged index aside: {e}"
             ))
         })?;
-        let root = std::path::PathBuf::from(self.sqlite.binding().unwrap_or_default());
-        let repaired = SqliteIndex::open_location_unhealed(&location, &root)
-            .is_ok_and(|probe| probe.quick_check().is_ok_and(|p| p.is_empty()));
+        // Read-only: the probe migrates, binds and writes nothing on a file
+        // suspected damaged, and its close deletes nothing, even when it is
+        // the last connection on this kernel and the sidecars at the path
+        // are another kernel's.
+        let repaired = cdno_core::index::probe_reads_sound(&location.path);
         let mut previous = None;
         if !repaired {
             if let Some(root) = self.sqlite.binding() {
@@ -937,6 +1026,8 @@ impl IndexHealth {
             if keep_copy {
                 SqliteIndex::set_aside(&location)?;
                 previous = Some(cdno_core::index::previous_copy_path(&location.path));
+                // The first copy of a streak is marked only once it is kept.
+                self.lock().copy_kept_at = Some(Instant::now());
             } else {
                 SqliteIndex::remove(&location.path);
             }
@@ -1073,6 +1164,18 @@ impl IndexHealth {
             CheckKind::QuickCheck => self.sqlite.quick_check(),
             CheckKind::IntegrityCheck => self.sqlite.integrity_check(),
         };
+        // An index between connections says nothing about the file: not
+        // damage, and not recorded as a check.
+        if let Err(e) = &result
+            && e.is_detached()
+        {
+            return CheckRecord {
+                at: now(),
+                kind,
+                ok: false,
+                problems: vec![format!("not checked: {e}")],
+            };
+        }
         let problems = result.unwrap_or_else(|e| vec![format!("the check could not run: {e}")]);
         let record = CheckRecord {
             at: now(),
@@ -1445,16 +1548,10 @@ impl IndexHealth {
                 match aside {
                     Ok(aside) => {
                         let sweep = self.reconcile_and_record();
-                        let (carried, mut lost) = self.carry_snapshots(aside.reopened.salvaged);
-                        if aside.done {
-                            lost.insert(
-                                0,
-                                format!(
-                                    "the damaged file's archival snapshots could not be read \
-                                     ({e}); it was set aside rather than rebuilt in place"
-                                ),
-                            );
-                        }
+                        // One account of the snapshots: what the salvage
+                        // read and carried, or the one line saying why it
+                        // could not read them.
+                        let (carried, lost) = self.carry_snapshots(aside.reopened.salvaged);
                         let notes = self.index.list_all_paths().map_or(0, |p| p.len());
                         self.after_repair(&mut self.lock(), who);
                         self.record_files(&self.sqlite.check_files());
@@ -1542,6 +1639,8 @@ impl IndexHealth {
                 _ => self.check(CheckKind::QuickCheck),
             }
         };
+        // Before the state lock below, which `reopen_wait` takes too.
+        let next_reopen_in_secs = if files.held { None } else { self.reopen_wait() };
         let mut state = self.lock();
         self.refresh_reopen_recurring(&mut state);
         let repair = repair_state(&state);
@@ -1555,11 +1654,18 @@ impl IndexHealth {
             repair,
             advice: match repair {
                 RepairState::Automatic => None,
-                RepairState::DamageRecurring => Some(DAMAGE_RECURRING_ADVICE.to_string()),
+                // Both at once: both pieces of advice, damage first.
+                RepairState::DamageRecurring => Some(match state.reopen_recurring {
+                    Some(moved) => {
+                        format!("{DAMAGE_RECURRING_ADVICE}. Also: {}", reopen_advice(moved))
+                    }
+                    None => DAMAGE_RECURRING_ADVICE.to_string(),
+                }),
                 RepairState::ReopenRecurring => state
                     .reopen_recurring
                     .map(|moved| reopen_advice(moved).to_string()),
             },
+            next_reopen_in_secs,
             damage_repair_stopped: state.recurring.is_some(),
             damage_rebuilds_recent: state
                 .damage_rebuilds
@@ -1646,10 +1752,10 @@ impl IndexHealth {
                 let corruption = match interval.as_mut() {
                     Some(interval) => tokio::select! {
                         _ = interval.tick() => false,
-                        _ = CORRUPTION_SEEN.notified() => true,
+                        _ = health.signal.notified() => true,
                     },
                     None => {
-                        CORRUPTION_SEEN.notified().await;
+                        health.signal.notified().await;
                         true
                     }
                 };

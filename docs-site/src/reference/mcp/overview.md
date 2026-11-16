@@ -111,7 +111,9 @@ describe that copy rather than the file. So the first thing every sweep does, an
 that meets a damaged index, is a cheap check that the files the server holds are still the ones at
 the index path. When they are not, the server reopens the index on the file at the path, reconciles
 it, and only then checks it, rebuilding it as above if the file itself is damaged. It always
-reopens, at most once a minute; until it has, it neither reconciles into nor checks its own copy,
+reopens, at its next sweep or the next call that meets damage, and never twice within a minute (a
+call inside that minute has the reopen made at its end, `next_reopen_in_secs` in `index_status`);
+until it has, it neither reconciles into nor checks its own copy,
 and `index_status` says `files.held: false` and runs no check. Two cases are handled under the
 vault write lock first: a restore that replaced only `index.db` leaves the old file's `-wal` and
 `-shm` at the path, which are moved aside to `.stale-wal` / `.stale-shm` (opening the restored file

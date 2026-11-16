@@ -80,8 +80,12 @@ No restart is needed, and the notes are intact either way.
 The symptom: the server log shows "the index files changed under this server; reopened the index"
 again and again, each line with what it found and what it did, then one error saying the index
 files keep changing, and `index_status` reports `repair: reopen_recurring`. The server keeps
-reopening every time (at most once a minute), so nothing stays stale for longer than that, and the
-report ends by itself once the moves stop. One reopen is normal after a `cdno reindex` that had to
+reopening every time: at its next sweep (every `CDNO_MCP_RECONCILE_INTERVAL_SECS`, 300 s by
+default, never when sweeps are off) or the next tool call that meets the damage, and never twice
+within a minute; a call that meets it inside that minute has the reopen made at the minute's end.
+So between a move and the reopen the server can answer from its own copy for up to a sweep
+interval when nothing fails; `files.held` and `next_reopen_in_secs` in `index_status` say where it
+stands. The report ends by itself once the moves stop. One reopen is normal after a `cdno reindex` that had to
 set a damaged file aside, a `--rebind`, or a restore from backup: the server picks up the new file
 by itself. What to do depends on `last_reopen.kind`:
 
@@ -95,7 +99,9 @@ by itself. What to do depends on `last_reopen.kind`:
   that is a git repository, or a sync tool syncing the index file. Find what replaces it; a
   separate index does not help.
 
-A reopen drops what only the old copy held; archival snapshots it could not carry are listed in
+After a restore that replaced only `index.db`, the old file's log is moved aside as
+`<index>.stale-wal` / `.stale-shm`: kept for diagnosis only, and safe to delete. A reopen drops what
+only the old copy held; archival snapshots it could not carry are listed in
 `last_reopen.snapshots_lost`, and each costs `lint`'s frozen-prefix check on that note.
 
 ## The index path is refused

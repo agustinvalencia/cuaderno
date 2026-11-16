@@ -33,7 +33,9 @@ fn recurring_reopens_are_reported_once_never_stop_reopening_and_end_by_themselve
     let dir = TempDir::new().unwrap();
     cdno_cli::commands::init::run(dir.path()).expect("cdno init");
     let opened = open_vault_checked(dir.path(), None).unwrap();
-    let window = std::time::Duration::from_secs(2);
+    // Room for slow, instrumented runs (coverage): four sweeps must land
+    // inside it.
+    let window = std::time::Duration::from_secs(8);
     let health = IndexHealth::from_opened(&opened).with_policy(RepairPolicy {
         min_rebuild_interval: std::time::Duration::ZERO,
         min_reopen_interval: std::time::Duration::ZERO,

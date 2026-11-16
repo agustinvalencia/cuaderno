@@ -17,7 +17,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - **`index_status` says whether the server still holds its index files** (#1000). New fields:
   `files` (`held`, `kind`, `found`, `at`: a check, run for the call, that the database file, its
   `-wal` and its `-shm` are the ones at `index_path`), `last_reopen` (what was found, what was done,
-  the snapshots carried and lost, any failure), `reopens_recent`, `damage_repair_stopped`, and the
+  the snapshots carried and lost, any failure), `reopens_recent`, `next_reopen_in_secs`,
+  `damage_repair_stopped`, and the
   `repair` value `reopen_recurring`; `healthy` is false while the files are not held, and no check
   runs then. The rebuild record gains `set_aside` and `reopen`, and a `rebuild_refused` rejection
   gains `details.kind` (`in_progress`, `too_soon`, `files_not_held`) and `details.reopen`. An index
@@ -50,7 +51,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   (device and inode of the database, with SQLite's `SQLITE_FCNTL_HAS_MOVED`, and of the sidecars;
   unix only) with what the path names, a few `stat` calls; a `stat` that fails other than with
   not-found concludes nothing. When they differ the server always reopens the index on the file at
-  the path behind the same handle (at most once a minute), reconciles, carries over the archival
+  the path behind the same handle (at its next sweep or the next failing call, never twice a
+  minute; a signal inside that minute has the reopen made at its end), reconciles, carries over the archival
   snapshots the old connection held where the new file lacks them and the note still verifies, and
   only then checks and, if the file itself is damaged, rebuilds as before. Until it has reopened it
   neither reconciles into nor checks its own copy. Each reopen is one WARN saying what was found
@@ -68,7 +70,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   refuses a `rebuild_index`, and a `rebuild_index` refused after it reopened has still reconciled
   and says so. `cdno reindex`'s set-aside now says that an MCP server picks up the new file by
   itself, and to restart any other holder (`cdno watch`); index files are now removed sidecars
-  first.
+  first. Each health supervisor now has its own corruption signal, woken through the process-wide
+  hook, so one loop can no longer take another's wake-up.
 
 - **The stdio server sweeps the index like the HTTP server** (closes #1002, part of #1005). The
   stdio `cdno-mcp` used to reconcile once, at start, so a session that lived for hours never saw a

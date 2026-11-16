@@ -1516,3 +1516,49 @@ fn a_file_replaced_by_one_that_will_not_open_is_set_aside_on_the_reopen_and_reco
     assert!(indexed_notes(&opened) >= NOTES);
     assert!(reopen.failure.is_none(), "{reopen:?}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_signal_inside_the_reopen_spacing_is_deferred_to_its_end_not_dropped() {
+    let dir = vault_with_notes();
+    let opened = open_vault_checked(dir.path(), None).unwrap();
+    let spacing = std::time::Duration::from_millis(500);
+    let health = Arc::new(IndexHealth::from_opened(&opened).with_policy(RepairPolicy {
+        min_reopen_interval: spacing,
+        ..RepairPolicy::default()
+    }));
+    // A sweep interval far longer than the spacing: a reopen within the
+    // deadline below can only come from the deferral.
+    health.spawn_loop(Some(std::time::Duration::from_secs(3600)));
+    let path = index_path(dir.path());
+
+    unlink_sidecars(&path);
+    let h = Arc::clone(&health);
+    tokio::task::spawn_blocking(move || h.on_corruption_seen())
+        .await
+        .unwrap();
+    assert_eq!(health.status().reopens_recent, 1);
+
+    // Again inside the spacing: refused now, armed for its end.
+    unlink_sidecars(&path);
+    let h = Arc::clone(&health);
+    tokio::task::spawn_blocking(move || h.on_corruption_seen())
+        .await
+        .unwrap();
+    let waiting = health.status();
+    assert!(!waiting.files.held);
+    assert!(waiting.next_reopen_in_secs.is_some(), "{waiting:?}");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let status = health.status();
+        if status.files.held && status.reopens_recent == 2 {
+            assert!(status.next_reopen_in_secs.is_none());
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the deferred reopen never came: {status:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}

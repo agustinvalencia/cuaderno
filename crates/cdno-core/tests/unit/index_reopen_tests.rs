@@ -476,3 +476,62 @@ fn a_reopen_that_cannot_open_the_same_file_again_leaves_the_index_detached_until
     index.reopen().unwrap();
     assert_eq!(index.check_files(), FileCheck::Held);
 }
+
+#[test]
+fn a_failed_set_aside_of_stale_sidecars_is_retried_as_stale_and_keeps_what_it_salvaged() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, path, index) = new_index();
+    put(&index, "old");
+    let restored = dir.path().join("backup.db");
+    index_file_holding(&restored, "restored");
+    std::fs::rename(&restored, &path).unwrap();
+    // No write permission on the directory: the renames fail (not as root,
+    // where permissions do not apply).
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+    let failed = index.reopen_setting_aside_stale_sidecars();
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let Err(failed) = failed else {
+        // Running as root: nothing to show.
+        return;
+    };
+    assert!(
+        matches!(failed, IndexError::Open { .. }),
+        "the rename failed: {failed:?}"
+    );
+    assert!(matches!(index.check_files(), FileCheck::Detached(_)));
+    assert!(
+        beside(&path, "-wal").exists(),
+        "the old log is still at the path"
+    );
+
+    // Detached, the retry still sees the old sidecars at the path, and
+    // refuses to open on top of them.
+    let refused = index.reopen().unwrap_err();
+    assert!(
+        matches!(refused, IndexError::StaleSidecars(_)),
+        "{refused:?}"
+    );
+
+    let reopened = index.reopen_setting_aside_stale_sidecars().unwrap();
+    assert_eq!(probe(&index).as_deref(), Some("restored"));
+    assert!(
+        matches!(reopened.salvaged, Some(Ok(_))),
+        "the rows read before the first close are handed on: {:?}",
+        reopened.salvaged
+    );
+    assert_eq!(read_in_another_process(&path), "restored");
+}
+
+#[test]
+fn a_read_only_probe_neither_writes_nor_deletes_at_the_path() {
+    let (_dir, path, index) = new_index();
+    put(&index, "kept");
+    drop(index);
+    let before = std::fs::read(&path).unwrap();
+    assert!(cdno_core::index::probe_reads_sound(&path));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(!beside(&path, "-wal").exists(), "the probe created no log");
+    // A file that is not an index does not read as sound.
+    std::fs::write(&path, b"not a database").unwrap();
+    assert!(!cdno_core::index::probe_reads_sound(&path));
+}
