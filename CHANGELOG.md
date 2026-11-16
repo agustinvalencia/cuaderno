@@ -41,6 +41,28 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+- **A commit refuses to replace a note that changed while the write was being prepared** (part of
+  #1001, #1005). The vault write lock is an `flock`, which one kernel enforces and another does not
+  see, so a folder written from a host and a container at once lost lines from a daily note (7 and
+  8 of 160 in two runs across a VM file share). A commit now compares every file it is about to
+  replace, append to or delete with what the operation read of it, again right before the rename,
+  and creates a new file with a rename that refuses to overwrite. On a mismatch it writes nothing
+  and fails with "… changed on disk while this write was being prepared, most likely by another
+  writer; nothing was written, run the operation again". This narrows the loss and does not end it:
+  in the same setup, 1 of 1,200 appends was still lost, through the gap between the last check and
+  the rename. The lock both sides see, which closes that gap, is #1012;
+  `docs/concurrent-writers.md` lists every window left open. On one machine nothing changes except
+  the cost, a read and two `stat`s more per replaced file.
+  - The verbs that add to a note (`log`, notes entries, section appends, captures and discards, the
+    action, milestone, waiting-on and tracking verbs) run again, up to five attempts, before
+    returning the refusal; the others return it at once.
+  - Over MCP the refusal is a tool result with code `concurrent_change` and the paths. The CLI
+    exits with status 75 (`EX_TEMPFAIL`) and, under `--json`, prints the same `code` and
+    `details`.
+  - `capture`, discarding an inbox item and creating a stewardship read before taking the write
+    lock, so even on one machine two of them at once could overwrite each other or log the wrong
+    text. They take it first now.
+
 - **A long-lived server reopens index files deleted or replaced under it** (closes #1000, part of
   #1005). A server opened the index once and never checked that the files it held were still the
   ones on disk, so after `cdno reindex` set a damaged file aside, a `reindex --rebind`, the open's

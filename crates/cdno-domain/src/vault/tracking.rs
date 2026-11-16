@@ -148,7 +148,21 @@ impl Vault {
     /// `## Notes` and its metrics are folded into the frontmatter. The
     /// returned [`TemplateSource`] is `None` for a merge, since no template
     /// is resolved.
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn add_tracking_entry(
+        &self,
+        now: NaiveDateTime,
+        draft: TrackingEntryDraft,
+    ) -> Result<(WriteOutcome, Option<TemplateSource>), DomainError> {
+        self.retry_on_conflict(|| self.add_tracking_entry_once(now, draft.clone()))
+    }
+
+    /// One attempt of [`add_tracking_entry`](Self::add_tracking_entry).
+    fn add_tracking_entry_once(
         &self,
         now: NaiveDateTime,
         draft: TrackingEntryDraft,

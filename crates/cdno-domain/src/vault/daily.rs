@@ -222,6 +222,12 @@ impl Vault {
     /// transaction's write lock: it reads the note to test for duplicate
     /// headings, so running it before the lock would be a check-then-act
     /// race with a concurrent `## Notes` writer.
+    ///
+    /// An append that is refused because the daily note changed underneath
+    /// it (#1001) runs again a few times before the conflict is returned:
+    /// it adds to whatever the section holds now. A replace does not: its
+    /// content may have been composed from what the caller saw of the
+    /// section, so the conflict goes back to the caller to look again.
     pub fn upsert_daily_section(
         &self,
         date: NaiveDate,
@@ -235,7 +241,23 @@ impl Vault {
                 section: section.heading().to_string(),
             });
         }
+        if append {
+            self.retry_on_conflict(|| {
+                self.upsert_daily_section_once(date, section, content, append)
+            })
+        } else {
+            self.upsert_daily_section_once(date, section, content, append)
+        }
+    }
 
+    /// One attempt of [`upsert_daily_section`](Self::upsert_daily_section).
+    fn upsert_daily_section_once(
+        &self,
+        date: NaiveDate,
+        section: DailySection,
+        content: &str,
+        append: bool,
+    ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         // Validate only once the lock is held: the duplicate-heading
         // check reads the note, and the read must see what this write

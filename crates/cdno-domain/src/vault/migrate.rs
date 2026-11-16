@@ -139,6 +139,10 @@ struct PlannedWrite {
 impl MigrationPlan {
     /// Plan a whole-file write of `content` to `path`. A later write to the
     /// same path replaces an earlier one, whichever step planned it.
+    /// A step reads the file it rewrites through the store, inside the
+    /// runner's transaction, so the commit compares it like any other write
+    /// (#1001); a step that writes a file it did not read fails a debug
+    /// assertion.
     pub fn write(&mut self, path: VaultPath, content: impl Into<String>) {
         let content = content.into();
         let step = self.step;
@@ -328,10 +332,10 @@ impl Vault {
     /// and checks the version itself, re-read under this same lock; every
     /// other write goes through the gated `Vault::transaction`.
     fn transaction_ungated(&self) -> Result<VaultTransaction, DomainError> {
-        Ok(VaultTransaction::new(
-            Arc::clone(&self.store),
-            Arc::clone(&self.index),
-        )?)
+        Ok(
+            VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))?
+                .require_reads(),
+        )
     }
 
     /// Read the version and the config, decide whether the run stamps, and

@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::path::VaultPath;
+
 /// Errors from vault configuration loading.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -136,6 +138,13 @@ pub enum StoreError {
     /// variant is the filesystem-level backstop (GH #303).
     #[error("path resolves outside the vault: {0}")]
     OutsideVault(String),
+
+    /// A conditional write, move or delete found the file holding
+    /// something other than what the caller last observed there (#1001):
+    /// another writer changed it, or created or removed it. The store
+    /// wrote nothing to the path.
+    #[error("{0} changed on disk since it was read")]
+    Changed(VaultPath),
 }
 
 /// Errors from the vault index (VaultIndex).
@@ -322,6 +331,30 @@ pub enum TransactionError {
     /// per-note failure read the same and none named its cause.
     #[error("index stale after successful commit ({} error(s)){}", .0.len(), first_cause(.0))]
     IndexStale(Vec<IndexError>),
+
+    /// A file this commit was about to replace, append to or delete no longer
+    /// holds what the operation read from it (#1001): another writer
+    /// changed it in between, one the vault write lock did not exclude (a
+    /// second kernel writing the same folder, or a program that does not
+    /// take the lock). **Nothing was written**: the check runs before any
+    /// file op, and a mismatch found during the file ops rolls the applied
+    /// ones back first (a rollback that itself fails is a
+    /// [`FileWrite`](Self::FileWrite) instead). The index is untouched.
+    /// Running the whole operation again re-reads the file and is safe.
+    #[error(
+        "{} changed on disk while this write was being prepared, most likely by another \
+         writer; nothing was written, run the operation again",
+        join_paths(paths)
+    )]
+    Conflict { paths: Vec<VaultPath> },
+}
+
+fn join_paths(paths: &[VaultPath]) -> String {
+    paths
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 impl TransactionError {
@@ -331,7 +364,7 @@ impl TransactionError {
     pub fn is_index_corruption(&self) -> bool {
         match self {
             Self::IndexStale(errors) => errors.iter().any(IndexError::is_corruption),
-            Self::FileWrite { .. } => false,
+            Self::FileWrite { .. } | Self::Conflict { .. } => false,
         }
     }
 }

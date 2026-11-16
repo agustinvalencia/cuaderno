@@ -380,6 +380,27 @@ impl VaultStore for RecordingStore {
     fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
         self.inner.acquire_write_lock()
     }
+    fn read_journals(&self) -> Option<&cdno_core::read_journal::ReadJournals> {
+        self.inner.read_journals()
+    }
+    fn write_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        self.writes.lock().unwrap().push(path.to_string());
+        self.inner.write_file_expecting(path, content, expected)
+    }
+    fn append_to_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        self.writes.lock().unwrap().push(path.to_string());
+        self.inner.append_to_file_expecting(path, content, expected)
+    }
 }
 
 #[test]
@@ -488,6 +509,27 @@ impl VaultStore for PoisonedStore {
     fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
         self.check(dest)?;
         self.inner.import_external(src, dest)
+    }
+    fn read_journals(&self) -> Option<&cdno_core::read_journal::ReadJournals> {
+        self.inner.read_journals()
+    }
+    fn write_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        self.check(path)?;
+        self.inner.write_file_expecting(path, content, expected)
+    }
+    fn append_to_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        self.check(path)?;
+        self.inner.append_to_file_expecting(path, content, expected)
     }
 }
 

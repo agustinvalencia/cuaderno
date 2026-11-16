@@ -141,7 +141,25 @@ third lookup.
 - **Startup reconciliation runs inside `Vault::new`**, so any domain method may assume the index
   matches the filesystem on entry.
 - **Cross-process writes serialise** on an OS advisory lock (`.cuaderno/.lock`) held for the life of
-  a transaction, with a 5s timeout rather than an unbounded hang.
+  a transaction, with a 5s timeout rather than an unbounded hang. That `flock` holds within one
+  kernel only, so **a commit also compares before it renames** (#1001,
+  `docs/concurrent-writers.md`): while a transaction is open the store records what the opening
+  thread reads of each path into the transaction's `ReadJournal` (`cdno-core/src/read_journal.rs`;
+  the first read is the baseline, and a later one that disagrees refuses the commit). The commit
+  compares every file it will replace, append to or delete with that, before any file op and again
+  right before each rename, and on a mismatch writes nothing and returns
+  `TransactionError::Conflict` (MCP `concurrent_change`, CLI exit 75). So: **open the transaction
+  before any read a write depends on** (#196), read through the store, never add a read path that
+  bypasses `VaultStore::read_file`/`read_bytes`/`exists` for a file a write derives from, and stage
+  a new file whose path you chose as free with `tx.create_file`. Domain transactions declare
+  `require_reads`, so a verb that replaces or deletes a file it did not read inside its
+  transaction fails a debug assertion in its tests. `read_journals`, `write_file_expecting` and
+  `append_to_file_expecting` have no default on `VaultStore`: every store states its behaviour,
+  and a wrapping store delegates them. Bare moves of an unread source are not compared; a gap of
+  one `stat` before each rename remains, so this narrows the cross-kernel race and does not close
+  it (the shared lock is #1012). `Vault::retry_on_conflict` re-runs the append-shaped verbs; the
+  verbs that replace caller-composed content return the conflict (`vault/conflict_retry.rs` lists
+  both).
 - **Index schema changes are append-only**: add an entry to `MIGRATIONS` in `cdno-core/src/index.rs`
   plus a file under `crates/cdno-core/migrations/`. Never edit a migration that has shipped.
 - **Method migrations follow the same rule** (`FILE_MIGRATIONS` in `cdno-domain/src/vault/migrate.rs`,

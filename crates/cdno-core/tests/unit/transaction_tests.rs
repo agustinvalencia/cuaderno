@@ -265,6 +265,32 @@ fn index_failure_after_files_succeeded_reports_index_stale() {
 }
 
 #[test]
+fn index_failure_after_a_read_modify_write_on_disk_is_still_index_stale() {
+    // The compare-before-rename check (#1001) passes on one machine and
+    // leaves the index phase as it was: files land, the index error is
+    // `IndexStale`.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".cuaderno")).unwrap();
+    std::fs::write(dir.path().join("foo.md"), "base\n").unwrap();
+    let store: Arc<dyn VaultStore> = Arc::new(cdno_core::store::FsVaultStore::new(dir.path()));
+    let index: Arc<dyn VaultIndex> = Arc::new(FailingIndex::new(
+        Arc::new(MemoryIndex::new()),
+        FailPoint::UpsertNote,
+    ));
+
+    let mut tx = VaultTransaction::new(store.clone(), index).expect("write lock");
+    let base = store.read_file(&vp("foo.md")).unwrap();
+    tx.write_file(vp("foo.md"), format!("{base}more\n"));
+    tx.upsert_note(sample_note("foo.md", "daily"));
+
+    match tx.commit().unwrap_err() {
+        TransactionError::IndexStale(errs) => assert_eq!(errs.len(), 1),
+        other => panic!("unexpected error: {other:?}"),
+    }
+    assert_eq!(store.read_file(&vp("foo.md")).unwrap(), "base\nmore\n");
+}
+
+#[test]
 fn multiple_index_failures_are_all_collected() {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let backing_index = Arc::new(MemoryIndex::new());
@@ -516,6 +542,31 @@ impl VaultStore for FailingStore {
             return Err(StoreError::PermissionDenied(dest.to_string()));
         }
         self.inner.import_external(src, dest)
+    }
+    fn read_journals(&self) -> Option<&cdno_core::read_journal::ReadJournals> {
+        self.inner.read_journals()
+    }
+    fn write_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        if self.tick() {
+            return Err(StoreError::PermissionDenied(path.to_string()));
+        }
+        self.inner.write_file_expecting(path, content, expected)
+    }
+    fn append_to_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        if self.tick() {
+            return Err(StoreError::PermissionDenied(path.to_string()));
+        }
+        self.inner.append_to_file_expecting(path, content, expected)
     }
 }
 

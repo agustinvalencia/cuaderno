@@ -310,6 +310,7 @@ dependencies = [
 name = "cdno-core"
 version = "0.46.0"
 dependencies = [
+ "cdno-core",
  "chrono",
  "globset",
  "libc",
@@ -325,6 +326,7 @@ dependencies = [
  "thiserror",
  "toml",
  "toml_edit 0.22.27",
+ "tracing",
  "typst-syntax",
  "xxhash-rust",
 ]

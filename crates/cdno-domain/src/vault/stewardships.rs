@@ -28,6 +28,7 @@ use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
 use cdno_core::store::VaultStore;
 use cdno_core::template::VariableContext;
+use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
 use crate::frontmatter::{Context, StewardshipFrontmatter, TrackingFrontmatter};
@@ -194,6 +195,10 @@ impl Vault {
         // in the first place. Its folder name does answer a bare `[[slug]]`
         // (the last resolution rule), unless a portfolio or another folder
         // note shares the name, which leaves that bare link unresolved.
+        //
+        // The transaction opens first, so the paths are found free with
+        // the write lock held (#196, #1001).
+        let tx = self.transaction()?;
         let (slug, flat_path, expanded_path) = self.stewardship_paths(name, slug)?;
         if self.store.exists(&flat_path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
@@ -207,7 +212,7 @@ impl Vault {
         }
 
         let content = self.render_stewardship(name, context, prompted)?;
-        write_stewardship(self, at, &slug, &flat_path, &content, name)
+        write_stewardship(self, tx, at, &slug, &flat_path, &content, name)
     }
 
     /// Create an expanded stewardship at
@@ -235,6 +240,7 @@ impl Vault {
         slug: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         // Excluded from #225 global-slug suffixing — see the flat variant.
+        let tx = self.transaction()?; // before the paths are found free (#196)
         let (slug, flat_path, expanded_path) = self.stewardship_paths(name, slug)?;
         if self.store.exists(&expanded_path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
@@ -248,7 +254,7 @@ impl Vault {
         }
 
         let content = self.render_stewardship(name, context, prompted)?;
-        write_stewardship(self, at, &slug, &expanded_path, &content, name)
+        write_stewardship(self, tx, at, &slug, &expanded_path, &content, name)
     }
 
     /// The slug and both candidate paths for a create. An explicit `slug` is
@@ -578,8 +584,13 @@ fn resolve_paths_for(slug: &str) -> Result<(String, VaultPath, VaultPath), Domai
 /// form (`stewardships/<slug>`), which the resolver maps to
 /// `_index.md` for the expanded variant, so the line reads the same
 /// regardless of which layout the stewardship uses.
+///
+/// `tx` is the caller's, opened before it found the paths free; the note
+/// is staged as a create, so one another writer made meanwhile is never
+/// replaced (#1001).
 fn write_stewardship(
     vault: &Vault,
+    mut tx: VaultTransaction,
     at: NaiveDateTime,
     slug: &str,
     path: &VaultPath,
@@ -588,8 +599,7 @@ fn write_stewardship(
 ) -> Result<VaultPath, DomainError> {
     let entry = build_index_entry_for(path, content, NoteType::Stewardship.as_str())?;
     let target_path = VaultPath::new(format!("{}/{slug}", cdno_core::paths::STEWARDSHIPS))?;
-    let mut tx = vault.transaction()?;
-    tx.write_file(path.clone(), content.to_owned());
+    tx.create_file(path.clone(), content.to_owned());
     tx.upsert_note(entry);
     vault.stage_created_line(&mut tx, at, "stewardship", &target_path, title, None)?;
     tx.commit()?;

@@ -53,6 +53,26 @@ fn server_announces_name_and_tools_capability() {
     }
 }
 
+/// A `concurrent_change` rejection (#1001) wrote nothing, unlike an
+/// unverified write, so the instructions say it may be repeated. The
+/// sentence sits past the part of the instructions a default client reads,
+/// so it is a backstop for clients that read the whole text: what reaches
+/// every agent is the rejection's own message (pinned in `rejection.rs`).
+#[test]
+fn instructions_say_a_concurrent_change_can_be_repeated() {
+    let server = empty_server();
+    let info = server.get_info();
+    let instructions = info.instructions.as_deref().unwrap_or_default();
+    for phrase in [
+        "`concurrent_change`",
+        "nothing was written",
+        "make the same call again",
+        "re-reading the note first",
+    ] {
+        assert!(instructions.contains(phrase), "missing {phrase:?}");
+    }
+}
+
 #[test]
 fn advertised_catalogue_matches_expected_surface() {
     let server = empty_server();

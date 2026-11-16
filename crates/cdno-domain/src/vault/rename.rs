@@ -1311,6 +1311,15 @@ impl Vault {
         let stale_errors = match tx.commit() {
             Ok(_) => None,
             Err(TransactionError::IndexStale(errors)) => Some(errors),
+            // A file the plan read changed underneath it (#1001): nothing
+            // was written, or what was is rolled back, and the destination
+            // folder may be left empty as after a failed write.
+            Err(conflict @ TransactionError::Conflict { .. }) => {
+                if let Some((_, new_folder)) = &folders {
+                    prune_folder_tree(&*self.store, new_folder);
+                }
+                return Err(DomainError::Transaction(conflict));
+            }
             Err(TransactionError::FileWrite {
                 source,
                 rollback_failures,
@@ -1556,6 +1565,7 @@ fn failed_path(error: &cdno_core::error::StoreError) -> Option<VaultPath> {
         | StoreError::PermissionDenied(p)
         | StoreError::OutsideVault(p)
         | StoreError::Io { path: p, .. } => p,
+        StoreError::Changed(p) => return Some(p.clone()),
         StoreError::LockTimeout(_) => return None,
     };
     VaultPath::new(raw.as_str()).ok()

@@ -215,6 +215,30 @@ denied, a contended write lock, an index that would not answer, a transaction th
 Nothing the caller passed can fix those, so there is nothing to branch on. Malformed calls — an
 unknown tool, unparseable arguments — are protocol errors too (`-32602`), per the spec.
 
+**One rolled-back write is a rejection on purpose: `concurrent_change`.** A file the write would
+replace changed on disk while it was being prepared, most likely because another program or another
+machine wrote it, and nothing was written. It fails the test above deliberately: the same argument
+succeeds on the next call, because what was wrong was the moment, not the call.
+
+| Code | `details` | When |
+|---|---|---|
+| `concurrent_change` | `paths` | The files that changed underneath the write. Nothing was written. Make the same call again, reading the file first if what you are writing was composed from an earlier read of it. If it is refused again, tell the person another program is writing that file. |
+
+The tools that add to a note have already made up to five attempts before you see it:
+`append_to_log`, `note_to_daily`, `upsert_daily_section` with `append`, `capture`,
+`discard_inbox_item`, the action tools (`add_action`, `start_action`, `start_unplanned_action`,
+`switch_action`, `switch_unplanned_action`, `pause_action`, `resume_action`, `complete_action`,
+`drop_action`), the milestone tools (`add_milestone`, `complete_milestone`, `drop_milestone`),
+`add_waiting_on`, `resolve_waiting_on` and `create_tracking_entry`. The others return it at once: the
+ones that replace content you may have composed from an earlier read (a section replace,
+`update_project_state`, `set_core_question`, `set_frontmatter`, `revise_note`), `rename_note`, and
+the create and lifecycle tools (`create_*`, `promote_action`, `hand_off_project`, parking,
+activating and closing projects, commitments, questions, filing to a portfolio).
+
+`concurrent_change` is not a stale-read check: it compares what the server read during this call,
+not what you read in an earlier one. See
+[troubleshooting](../troubleshooting.md#a-write-fails-with-changed-on-disk-while-this-write-was-being-prepared).
+
 The practical upshot for a client: **read `isError` on the result, not just the presence of `error`**.
 A rejection is a normal, expected answer to a call that was itself well-formed.
 

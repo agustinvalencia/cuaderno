@@ -125,7 +125,22 @@ impl Vault {
     /// (a `### <heading>` repeated inside `body`) is refused with the same
     /// variant. That check runs under the transaction's write lock, and
     /// on any error nothing is written.
+    ///
+    /// A commit refused because a file it would replace changed underneath
+    /// it (#1001) runs the whole operation again, a few times, before the
+    /// conflict is returned: every input is the arguments and the vault,
+    /// so running it again is exactly the change asked for.
     pub fn note_to_daily(
+        &self,
+        at: NaiveDateTime,
+        heading: &str,
+        body: &str,
+    ) -> Result<NoteToDailyOutcome, DomainError> {
+        self.retry_on_conflict(|| self.note_to_daily_once(at, heading, body))
+    }
+
+    /// One attempt of [`note_to_daily`](Self::note_to_daily).
+    fn note_to_daily_once(
         &self,
         at: NaiveDateTime,
         heading: &str,

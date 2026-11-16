@@ -99,6 +99,31 @@ impl VaultStore for SwallowingStore {
     fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
         self.inner.acquire_write_lock()
     }
+    fn read_journals(&self) -> Option<&cdno_core::read_journal::ReadJournals> {
+        self.inner.read_journals()
+    }
+    fn write_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        if self.swallows(path) {
+            return Ok(());
+        }
+        self.inner.write_file_expecting(path, content, expected)
+    }
+    fn append_to_file_expecting(
+        &self,
+        path: &VaultPath,
+        content: &str,
+        expected: cdno_core::read_journal::Observed,
+    ) -> Result<(), StoreError> {
+        if self.swallows(path) {
+            return Ok(());
+        }
+        self.inner.append_to_file_expecting(path, content, expected)
+    }
 }
 
 // ---------------------------------------------------------------------

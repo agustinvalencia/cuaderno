@@ -39,6 +39,7 @@ mod catalog;
 mod closure;
 mod commitments;
 pub mod config;
+mod conflict_retry;
 mod context;
 mod custom_notes;
 mod daily;
@@ -171,6 +172,9 @@ pub use tracking::TrackingEntryDraft;
 pub use weekly::{WeeklyNoteView, WeeklySection};
 pub use weekly_context::{ReviewProject, WeeklyContext};
 pub use write_outcome::WriteOutcome;
+// Exported so the unit suite can pin how many attempts a retried verb makes.
+#[doc(hidden)]
+pub use conflict_retry::CONFLICT_ATTEMPTS;
 
 // Re-exported for the targeted test in `tests/unit/projects_tests.rs`
 // to reach the helper's defensive error branches without any
@@ -334,7 +338,10 @@ impl Vault {
     /// `save_config_raw`. The migration runner takes the lock without the
     /// gate, through its own `transaction_ungated` (`vault/migrate.rs`).
     pub(in crate::vault) fn transaction(&self) -> Result<VaultTransaction, DomainError> {
-        let tx = VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))?;
+        // Every domain write reads what it rewrites inside its transaction
+        // (#196, #1001); a verb that does not fails a debug assertion.
+        let tx = VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))?
+            .require_reads();
         let recorded = self.recorded_method_version()?;
         self.method_notice.record(recorded);
         match method_gate(METHOD_VERSION, recorded) {

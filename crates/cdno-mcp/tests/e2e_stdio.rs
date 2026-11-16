@@ -1443,9 +1443,16 @@ fn the_stdio_server_exits_within_the_grace_when_stdin_closes_during_a_sweep() {
 }
 
 /// Serve the named pipe at `fifo` to whoever opens it for reading: report
-/// the first reader through `reader_seen`, hold every reader until
-/// `release`, then hand it `content` and close, once per open, until the
-/// path is no longer a pipe (the write replaced it) or `stop`.
+/// the first reader through `reader_seen`, hold it until `release`, then
+/// put a regular file holding `content` in the pipe's place and hand the
+/// held reader `content` too, or give up at `stop`.
+///
+/// The pipe is swapped out before the held read ends because a write
+/// compares a note again before replacing it (#1001): a later read of the
+/// pipe would wait for a writer that is not there, and a pipe's times
+/// change with every write into it, so the comparison would refuse the
+/// commit. After the swap every read finds a stable file with the content
+/// the held read returned.
 #[cfg(unix)]
 fn serve_fifo(
     fifo: std::path::PathBuf,
@@ -1477,11 +1484,11 @@ fn serve_fifo(
                     while !release.load(Ordering::SeqCst) && !stop.load(Ordering::SeqCst) {
                         thread::sleep(Duration::from_millis(20));
                     }
+                    let swap = fifo.with_file_name(".cdno-wip-held-note");
+                    std::fs::write(&swap, &content).expect("write the replacement file");
+                    std::fs::rename(&swap, &fifo).expect("put the file in the pipe's place");
                     let _ = writer.write_all(content.as_bytes());
-                    drop(writer);
-                    // Let the reader see the end of input before another
-                    // open could hand it the content twice.
-                    thread::sleep(Duration::from_millis(300));
+                    return;
                 }
                 Err(_) => thread::sleep(Duration::from_millis(20)),
             }

@@ -523,6 +523,7 @@ fn main() -> Result<()> {
     // `output::style` from here on, and nothing else threads a flag.
     cdno_cli::output::style::init(cli.color);
     let notice = shows_method_notice(&cli.command);
+    let json = cli.json;
     let result = dispatch(cli);
     // The method-version skew notice, once per run, after the command has
     // opened its vault and finished (so it never lands inside a prompt or
@@ -536,6 +537,22 @@ fn main() -> Result<()> {
         && let Some(line) = bootstrap::method_notice(&status)
     {
         eprintln!("{line}");
+    }
+    // A write refused because its note changed underneath it exits with
+    // its own status, so a script can retry it (#1001). Under `--json` it
+    // prints the `{code, message, details}` object other refusals print, on
+    // stdout; otherwise the report the default `main` error prints.
+    if let Err(e) = &result
+        && let Some(status) = cdno_cli::exit::special_status(e)
+    {
+        match cdno_cli::exit::rejection(e).filter(|_| json) {
+            Some(object) => println!(
+                "{}",
+                serde_json::to_string_pretty(&object).unwrap_or_default()
+            ),
+            None => eprintln!("Error: {e:?}"),
+        }
+        std::process::exit(status);
     }
     result
 }

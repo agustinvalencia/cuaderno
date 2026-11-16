@@ -146,6 +146,16 @@ impl DomainError {
             _ => None,
         }
     }
+
+    /// Whether this is a commit refused because a file it would replace
+    /// changed underneath it (#1001), in which case nothing was written and
+    /// running the operation again is safe.
+    pub fn is_concurrent_change(&self) -> bool {
+        matches!(
+            self,
+            DomainError::Transaction(TransactionError::Conflict { .. })
+        )
+    }
 }
 
 /// Errors from domain-level business logic.
