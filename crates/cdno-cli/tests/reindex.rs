@@ -126,6 +126,71 @@ fn a_connection_holding_the_index_reads_the_rebuilt_contents_on_the_same_file() 
         "the database and its sidecars are the same files"
     );
     assert_eq!(leftovers(&index), Vec::<String>::new());
+
+    // The holder is still on the live file: a write it makes now reaches
+    // a fresh open of the path.
+    conn.execute(
+        "INSERT INTO index_meta (key, value) VALUES ('after', 'holder')",
+        [],
+    )
+    .unwrap();
+    let fresh = rusqlite::Connection::open(&index).unwrap();
+    let after: String = fresh
+        .query_row(
+            "SELECT value FROM index_meta WHERE key = 'after'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("the holder's later write is in the file at the path");
+    assert_eq!(after, "holder");
+}
+
+#[test]
+fn an_in_place_reindex_reports_the_ignore_glob_and_artefact_counts() {
+    let vault = tempdir().unwrap();
+    init(vault.path());
+    write_zettel(vault.path(), "surrogate-model", "Surrogate model");
+    let config = vault.path().join(paths::CONFIG_FILE);
+    let text = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(
+        &config,
+        // A top-level key, so before the first table.
+        format!("ignore = [\"drafts/**\"]\n{text}"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(vault.path().join("drafts")).unwrap();
+    std::fs::write(vault.path().join("drafts/kernel.md"), "# Kernel\n").unwrap();
+    // An attachment stub and the markdown file it owns.
+    let panel = vault.path().join("portfolios/surrogate-model");
+    std::fs::create_dir_all(panel.join("2026-07-03-panel")).unwrap();
+    std::fs::write(
+        panel.join("2026-07-03-panel.md"),
+        "---\ntype: evidence\ncreated: 2026-07-03\nsource: A filed document\n\
+         portfolio: surrogate-model\norigin: \"[[surrogate-model]]\"\nkind: file\n---\n\
+         # A filed document\n",
+    )
+    .unwrap();
+    std::fs::write(
+        panel.join("2026-07-03-panel/02-reviewer-b.md"),
+        "# Reviewer notes\n",
+    )
+    .unwrap();
+    cdno(vault.path()).arg("reindex").assert().success();
+    let index = vault.path().join(paths::INDEX_DB);
+    let before_inode = inode(&index);
+
+    cdno(vault.path())
+        .arg("reindex")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Reindexed 2 note(s) (2 scanned)."))
+        .stdout(predicate::str::contains(
+            "1 file(s) excluded by `ignore` globs",
+        ))
+        .stdout(predicate::str::contains(
+            "1 markdown file(s) skipped as attachment artefacts",
+        ));
+    assert_eq!(inode(&index), before_inode, "in place");
 }
 
 #[test]
@@ -155,7 +220,10 @@ fn a_held_vault_lock_makes_reindex_wait_then_fail_with_the_index_as_it_was() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("waiting for the vault write lock"))
-        .stderr(predicate::str::contains("it was left as it was"));
+        .stderr(predicate::str::contains("it was left as it was"))
+        .stderr(predicate::str::contains(
+            "another cdno process is writing this vault; run it again",
+        ));
     let waited = started.elapsed();
     assert!(waited >= Duration::from_secs(5), "it waited for the lock");
     // One 5 s timeout, with room for a slow machine; a wait per note and
@@ -385,4 +453,117 @@ fn drop_snapshots_rebuilds_in_place_without_them() {
         .stdout(predicate::str::contains("Dropped 1 archival snapshot(s)"));
     assert_eq!(marker_snapshots(&index), 0);
     assert_eq!(inode(&index), before_inode, "still in place");
+
+    // Nothing left to drop: said, not silent.
+    cdno(vault.path())
+        .args(["reindex", "--drop-snapshots"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No archival snapshots to drop."));
+}
+
+/// Two vaults, and an overridden index bound to A holding a marker
+/// snapshot.
+fn index_bound_to_a() -> (
+    tempfile::TempDir,
+    tempfile::TempDir,
+    tempfile::TempDir,
+    PathBuf,
+) {
+    let a = tempdir().unwrap();
+    let b = tempdir().unwrap();
+    let elsewhere = tempdir().unwrap();
+    let index = elsewhere.path().join("index.db");
+    init(a.path());
+    init(b.path());
+    write_zettel(a.path(), "surrogate-model", "Surrogate model");
+    write_zettel(b.path(), "surrogate-model", "Surrogate model");
+    cdno(a.path())
+        .env(paths::INDEX_PATH_ENV, &index)
+        .arg("reindex")
+        .assert()
+        .success();
+    let conn = rusqlite::Connection::open(&index).unwrap();
+    conn.execute(
+        "INSERT INTO archived_action_snapshots \
+         (note_path, frozen_size, frozen_hash, archived_at_ns) \
+         VALUES ('surrogate-model.md', 3, 'surrogate-marker', 42)",
+        [],
+    )
+    .unwrap();
+    (a, b, elsewhere, index)
+}
+
+/// Start `cdno reindex --rebind` in `vault` while the test holds its vault
+/// lock, give it time to pass its unlocked checks and reach the lock, run
+/// `meanwhile`, then release the lock and wait for it.
+fn rebind_racing(vault: &Path, index: &Path, meanwhile: impl FnOnce()) -> std::process::Output {
+    let lock = FsVaultStore::new(vault).acquire_write_lock().unwrap();
+    let child = std::process::Command::new(assert_cmd::cargo::cargo_bin("cdno"))
+        .env_remove("CUADERNO_VAULT_PATH")
+        .env(paths::INDEX_PATH_ENV, index)
+        .env("NO_COLOR", "1")
+        .arg("--vault")
+        .arg(vault)
+        .args(["reindex", "--rebind"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Well inside the lock's 5 s timeout.
+    std::thread::sleep(Duration::from_secs(2));
+    meanwhile();
+    drop(lock);
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn a_rebind_whose_file_is_bound_to_this_vault_under_the_lock_rebuilds_in_place() {
+    let (_a, b, _elsewhere, index) = index_bound_to_a();
+    let b_root = b.path().canonicalize().unwrap();
+    let before_inode = inode(&index);
+
+    let out = rebind_racing(b.path(), &index, || {
+        // Another process of B rebinds the file before the lock is free.
+        let conn = rusqlite::Connection::open(&index).unwrap();
+        conn.execute(
+            "UPDATE index_meta SET value = ?1 WHERE key = 'vault_root'",
+            [b_root.to_string_lossy().as_ref()],
+        )
+        .unwrap();
+    });
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout.contains("Reindexed 1 note(s)"), "{stdout}");
+    assert!(!stdout.contains("Rebound"), "not deleted: {stdout}");
+    assert_eq!(
+        inode(&index),
+        before_inode,
+        "rebuilt in place, not unlinked"
+    );
+    assert_eq!(marker_snapshots(&index), 1, "carried, as by any reindex");
+}
+
+#[test]
+fn a_rebind_whose_binding_cannot_be_read_under_the_lock_is_refused() {
+    let (_a, b, _elsewhere, index) = index_bound_to_a();
+    let mut corrupt = b"SQLite format 3\0".to_vec();
+    corrupt.extend(std::iter::repeat_n(0xFFu8, 4096));
+
+    let out = rebind_racing(b.path(), &index, || {
+        // The file is replaced by one whose binding no probe can read.
+        for suffix in ["-wal", "-shm"] {
+            let _ = std::fs::remove_file(sibling(&index, suffix));
+        }
+        std::fs::write(&index, &corrupt).unwrap();
+    });
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(stderr.contains("no binding can be read"), "{stderr}");
+    assert!(stderr.contains("nothing was changed"), "{stderr}");
+    assert_eq!(std::fs::read(&index).unwrap(), corrupt, "left as it was");
 }

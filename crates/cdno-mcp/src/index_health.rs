@@ -694,7 +694,14 @@ impl IndexHealth {
         };
 
         let record = match rebuild(&self.store, &self.sqlite, &self.scope, keep_copy) {
-            Ok(report) => {
+            Ok(mut report) => {
+                // The record keeps one list: a failure to read any snapshot
+                // at all is its one line, as before the report split it out.
+                if let Some(e) = report.snapshots_unreadable.take() {
+                    report
+                        .snapshots_lost
+                        .push(format!("the old index's snapshots could not be read: {e}"));
+                }
                 if !report.snapshots_lost.is_empty() {
                     tracing::warn!(
                         lost = ?report.snapshots_lost,
@@ -705,7 +712,9 @@ impl IndexHealth {
                 // The rebuild's last pass is now the latest word on which
                 // notes index; a sweep from before it would read stale.
                 let errors = ReconciliationReport {
-                    scanned: report.notes,
+                    scanned: report.scanned,
+                    ignored: report.ignored,
+                    artefacts: report.artefacts,
                     errors: report.errors,
                     ..ReconciliationReport::default()
                 };

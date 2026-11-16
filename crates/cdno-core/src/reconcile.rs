@@ -111,12 +111,16 @@ pub struct RebuildReport {
     /// without error but holds wrong bytes is carried as it is, and would
     /// show later as a false "frozen note edited" in `lint`.
     pub snapshots_carried: usize,
-    /// Rows that could not be carried, or a reason none could: the old
-    /// index's damage reached them, or their note is not in the rebuilt
-    /// index (it is gone, or it does not parse). Each lost row only loses
-    /// `lint`'s frozen-prefix check on that archived note; nothing else
-    /// depends on it.
+    /// Rows that could not be carried, one line each: `<path>: its note is
+    /// no longer indexed` when their note is not in the rebuilt index (it is
+    /// gone, or it does not parse), else the error the old index's damage
+    /// gave. Each lost row only loses `lint`'s frozen-prefix check on that
+    /// archived note; nothing else depends on it.
     pub snapshots_lost: Vec<String>,
+    /// Set when the old index's snapshots could not be read at all, so none
+    /// was carried and their number is unknown: the error. Not counted in
+    /// [`snapshots_lost`](Self::snapshots_lost).
+    pub snapshots_unreadable: Option<String>,
     /// Snapshot rows the old index held that were left behind on purpose
     /// ([`rebuild_without_snapshots`]); zero for [`rebuild`].
     pub snapshots_dropped: usize,
@@ -128,10 +132,15 @@ pub struct RebuildReport {
     pub scanned: usize,
     pub ignored: usize,
     pub artefacts: usize,
-    /// True when a copy was asked for (`keep_copy`) and the live file failed
-    /// its check before the rebuild: the rebuild repaired damage.
+    /// True when a copy was asked for (`keep_copy`) and the live file's
+    /// check before the rebuild reported problems: the rebuild repaired
+    /// damage.
     pub found_damage: bool,
-    /// Where the copy of the damaged file was kept, when one was.
+    /// Set when a copy was asked for and that check could not run at all
+    /// (a busy or unreadable file): the error. Whether the file was damaged
+    /// is then unknown; a copy is still kept, as for damage.
+    pub check_error: Option<String>,
+    /// Where the copy of the live file was kept, when one was.
     pub previous_copy: Option<std::path::PathBuf>,
 }
 
@@ -226,7 +235,13 @@ fn rebuild_inner(
     // wait out the lock's timeout while another process holds it, and a
     // rebuild beside a long writer would take one timeout per note. The
     // lock is taken once, below, for the pass that decides what is copied
-    // in.
+    // in. Without the lock a pass can read the vault in the middle of
+    // another process's commit (one of its notes already renamed into
+    // place, another not yet, or a note moved between the walk and the
+    // read), so the fresh index may briefly mix before and after; the
+    // locked pass settles it, since no commit is in flight under the lock
+    // and it re-reads every note whose mtime or size changed since and
+    // drops every row whose file is gone, as any reconciliation does.
     let unlocked: Arc<dyn VaultStore> = Arc::new(crate::store::LockHeldStore(store.clone()));
     reconcile(&unlocked, &fresh_index, scope)?;
     reconcile(&unlocked, &fresh_index, scope)?;
@@ -237,8 +252,15 @@ fn rebuild_inner(
             problems.join("; ")
         )));
     }
-    let found_damage = keep_copy && !index.quick_check().map(|p| p.is_empty()).unwrap_or(false);
-    let previous_copy = if found_damage {
+    let (found_damage, check_error) = if keep_copy {
+        match index.quick_check() {
+            Ok(problems) => (!problems.is_empty(), None),
+            Err(e) => (false, Some(e.to_string())),
+        }
+    } else {
+        (false, None)
+    };
+    let previous_copy = if found_damage || check_error.is_some() {
         index.keep_previous_copy()
     } else {
         None
@@ -259,9 +281,11 @@ fn rebuild_inner(
         ignored: last.ignored,
         artefacts: last.artefacts,
         found_damage,
+        check_error,
         previous_copy,
         ..RebuildReport::default()
     };
+    let fresh_paths: HashSet<VaultPath> = fresh_index.list_all_paths()?.into_iter().collect();
     match index.list_archival_snapshots() {
         Ok(rows) if !carry_snapshots => report.snapshots_dropped = rows.len(),
         // Asked to drop them and unable to count them: none is carried
@@ -269,17 +293,21 @@ fn rebuild_inner(
         Err(_) if !carry_snapshots => {}
         Ok(rows) => {
             for (path, snapshot) in rows {
+                if !fresh_paths.contains(&path) {
+                    report
+                        .snapshots_lost
+                        .push(format!("{path}: its note is no longer indexed"));
+                    continue;
+                }
                 match fresh_index.record_archival_snapshot(&path, &snapshot) {
                     Ok(()) => report.snapshots_carried += 1,
                     Err(e) => report.snapshots_lost.push(format!("{path}: {e}")),
                 }
             }
         }
-        Err(e) => report
-            .snapshots_lost
-            .push(format!("the old index's snapshots could not be read: {e}")),
+        Err(e) => report.snapshots_unreadable = Some(e.to_string()),
     }
-    report.notes = fresh_index.list_all_paths()?.len();
+    report.notes = fresh_paths.len();
     index.replace_contents_from(&fresh)?;
     Ok(report)
 }

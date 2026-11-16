@@ -25,16 +25,17 @@ cdno reindex
 ```
 
 The Markdown files are always authoritative, so a rebuild is safe. It rebuilds the index in place
-and keeps the archival snapshots, so a running server or `cdno watch` sees the rebuilt index without
-a restart. See [Business rules](../concepts/business-rules.md) and
+and keeps the archival snapshots, so a running server or `cdno watch` on this machine sees the
+rebuilt index without a restart. See [Business rules](../concepts/business-rules.md) and
 [`cdno reindex`](cli/reindex.md#what-it-does).
 
 If `reindex` says the index was **too damaged to rebuild in place**, it has moved the damaged file
 aside (with `.previous` appended to its name) and built a new one. Restart any MCP server or
 `cdno watch` using the vault: until it restarts it keeps reading the old file.
 
-If it fails with `timed out … waiting for the vault write lock`, another command or server was
-writing the vault the whole time; nothing was changed, so run it again.
+If it fails with `timed out … waiting for the vault write lock` (and "another cdno process is
+writing this vault"), another command or server was writing the vault the whole time; nothing was
+changed, so run it again.
 
 On a server (`cdno-mcp`, `cdno-mcp-server`) the index is checked and repaired without you: see
 [The index looks after itself](mcp/overview.md#the-index-looks-after-itself). An error that says "the notes on disk are intact; the index … may be damaged" means the server

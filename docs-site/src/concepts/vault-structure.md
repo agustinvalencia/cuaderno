@@ -130,6 +130,11 @@ CUADERNO_INDEX_PATH=/var/lib/cuaderno/surrogate-model.db \
   the old vault's index, archival snapshots included, builds a new file for that vault, and says
   so. Where only the server is installed, delete the file instead. (An ordinary `cdno reindex` in
   the vault the file belongs to rebuilds it in place and keeps the snapshots.)
+- **The binding is the vault's path.** Move or rename the vault folder and the index reads as
+  another vault's: every open is refused, naming the old path. The way out is the same
+  `cdno reindex --rebind`, run in the vault at its new path, and it costs that vault's **own**
+  archival snapshots, since the file is rebuilt from nothing (see
+  [Rebinding](../reference/cli/reindex.md#rebinding)). Deleting the file costs the same.
 - **Persistent storage, in a directory the process owns.** SQLite's `-wal` and `-shm` files, and any
   file a rebuild writes, are created beside the database file, so its directory must be writable
   and must not be a single file mounted on its own. A missing parent directory is created. An index

@@ -9,7 +9,9 @@ The files on disk are canonical. The SQLite index in `.cuaderno/index.db` is a *
 search, linting, and link lookups fast, but it can always be rebuilt from the Markdown. A stale
 index is recoverable; a stale *file* would be data loss, so the tool never lets the cache override
 the files. You can rebuild it explicitly with [`cdno reindex`](../reference/cli/reindex.md), which
-rebuilds it in place, so a running MCP server or `cdno watch` sees the result. Deleting `index.db`
+rebuilds it in place, so a running MCP server or `cdno watch` on the same machine sees the result
+(a process on another machine sharing the file does not; see
+[Keeping the index on each machine](vault-structure.md#keeping-the-index-on-each-machine)). Deleting `index.db`
 by hand also loses no note, but a process that has it open keeps reading the deleted file until it
 restarts, and the archival snapshots are gone with it.
 

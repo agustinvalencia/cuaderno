@@ -11,7 +11,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - **`cdno reindex --drop-snapshots`** (#999). Rebuilds the index without carrying the archival
   snapshots across, now that a plain `reindex` keeps them. It is the way out `cdno lint` names for
   a snapshot that predates the masked hash on a note renamed on another clone; every archived
-  action note then loses its frozen-prefix check.
+  action note then loses its frozen-prefix check, and `cdno open` no longer warns before opening
+  one. It says how many it dropped, or that there were none.
 
 ### Fixed
 
@@ -23,18 +24,23 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
     the vault write lock, through the same rebuild the servers repair with; every process on this
     machine holding the file reads the rebuilt index on its next query, and no commit lands half
     before and half after. A held lock makes it wait one lock timeout (5 seconds), then fail with
-    the usual lock error, the index as it was: the rebuild's passes into its private fresh index no
-    longer take the vault lock per note, which servers' repairs benefit from too;
+    the usual lock error and "another cdno process is writing this vault; run it again", the index
+    as it was: the rebuild's passes into its private fresh index no longer take the vault lock per
+    note, which servers' repairs benefit from too. A process on another machine sharing the file is
+    not covered;
   - the archival snapshots `cdno lint` checks archived action notes against are carried across
     instead of lost (`--drop-snapshots`, under Added, leaves them behind);
-  - an index that fails its integrity check is reported, and a copy of it is kept beside it with
-    `.previous` appended;
+  - an index that fails its integrity check is reported (or, when the check could not run, that is
+    said instead), and a copy of it is kept beside it with `.previous` appended;
   - a file too damaged to rebuild in place (SQLite refuses to open it, or to write over it) is moved
     aside to `.previous` under the vault write lock and a new index built; the output says so and
     tells you to restart any process that had the old file open;
-  - `--rebind` still deletes the other vault's file and builds a new one for this vault, so none of
-    that vault's rows or its snapshots carry over; it now does so under the vault write lock and
-    says that a process still serving the other vault from the file keeps its old copy.
+  - `--rebind` still deletes the file bound to the other vault path and builds a new one for this
+    vault, so none of its rows or its snapshots carry over; it now does so under the vault write
+    lock, only while the file is still bound to that path (bound to this vault by then, it is
+    rebuilt in place; with no readable binding, it is refused), and says that a process still using
+    the file for the old path keeps its old copy. The output and docs now say that for a vault
+    folder that was moved or renamed, the snapshots discarded are its own.
     The override's refusals (not cuaderno's index, bound to another vault) are unchanged.
   The ordinary open's self-heal, which deletes a file SQLite cannot open, is unchanged; it is now
   documented that a process holding such a file stays on it until it restarts.

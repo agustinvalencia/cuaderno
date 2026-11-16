@@ -138,8 +138,8 @@ enum Commands {
     },
 
     /// Rebuild the SQLite index from scratch off the markdown source of
-    /// truth, in place, so a running server or `cdno watch` sees the new
-    /// index. The recovery path for a corrupt or stale index.
+    /// truth, in place, so a running server or `cdno watch` on this machine
+    /// sees the new index. The recovery path for a corrupt or stale index.
     Reindex {
         /// With `CUADERNO_INDEX_PATH` set: rebuild the file even when it is
         /// bound to another vault, giving it to this one and discarding the
@@ -149,7 +149,8 @@ enum Commands {
 
         /// Leave the archival snapshots behind instead of carrying them
         /// into the rebuilt index. Every archived action note then loses
-        /// `cdno lint`'s frozen-prefix check; for a snapshot that can never
+        /// `cdno lint`'s frozen-prefix check, and `cdno open` no longer warns
+        /// before opening one in an editor; for a snapshot that can never
         /// verify again.
         #[arg(long)]
         drop_snapshots: bool,
